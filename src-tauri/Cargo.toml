@@ -1,0 +1,17 @@
+[package]
+name = "product-atelier"
+version = "1.0.0"
+description = "AI-powered product photography studio desktop app"
+authors = ["Product Atelier"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"

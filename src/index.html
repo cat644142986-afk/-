@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Product Atelier</title>
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body class="sidebar-collapsed">
+
+<!-- ═══════════════ APP SHELL ═══════════════ -->
+<div class="app-shell">
+
+  <!-- ── LEFT SIDEBAR: NAVIGATION ONLY ── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-drag-region" data-tauri-drag-region></div>
+
+    <div class="sidebar-header">
+      <button class="sidebar-logo" id="sidebar-logo" data-tauri-no-drag title="展开">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="8" fill="#ff6b35"/>
+          <circle cx="12" cy="12" r="3" fill="rgba(255,255,255,0.35)"/>
+        </svg>
+      </button>
+      <button class="sidebar-collapse" id="sidebar-collapse" data-tauri-no-drag title="收起">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <span class="sidebar-brand">Product Atelier</span>
+    </div>
+
+    <nav class="sidebar-nav" id="sidebar-nav">
+      <button class="nav-item active" data-page="process" title="图片处理" data-tauri-no-drag>
+        <div class="nav-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        </div>
+        <span class="nav-label">图片处理</span>
+      </button>
+      <button class="nav-item" data-page="compare" title="对比预览" data-tauri-no-drag>
+        <div class="nav-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="16" rx="2"/><rect x="14" y="4" width="7" height="16" rx="2"/></svg>
+        </div>
+        <span class="nav-label">对比预览</span>
+      </button>
+      <button class="nav-item" data-page="history" title="历史记录" data-tauri-no-drag>
+        <div class="nav-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 106 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+        </div>
+        <span class="nav-label">历史记录</span>
+      </button>
+      <button class="nav-item" data-page="settings" title="设置" data-tauri-no-drag>
+        <div class="nav-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06-.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        </div>
+        <span class="nav-label">设置</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="conn-status" id="conn-status" title="连接状态">
+        <span class="conn-dot" id="conn-dot"></span>
+        <span class="conn-text" id="conn-text">连接中</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── WINDOW CONTROLS (floating) ── -->
+  <div class="win-controls" id="win-controls" data-tauri-no-drag>
+    <button class="win-btn" id="btn-minimize" title="最小化" data-tauri-no-drag>
+      <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="4.5" width="8" height="1" fill="currentColor" rx="0.5"/></svg>
+    </button>
+    <button class="win-btn" id="btn-maximize" title="最大化" data-tauri-no-drag>
+      <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1.5" stroke="currentColor" fill="none" stroke-width="1.2"/></svg>
+    </button>
+    <button class="win-btn win-close" id="btn-close" title="关闭" data-tauri-no-drag>
+      <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+
+  <!-- ── MAIN CONTENT CARD ── -->
+  <div class="content-wrapper" id="content-wrapper">
+
+    <!-- Drag bar for expanded state -->
+    <div class="content-dragbar" data-tauri-drag-region></div>
+
+    <!-- ═══ PAGE: PROCESS (图片处理) ═══ -->
+    <section class="page active" id="page-process">
+
+      <!-- Toolbar -->
+      <header class="toolbar" data-tauri-drag-region>
+        <div class="toolbar-left">
+          <h1 class="page-title">图片处理</h1>
+          <span class="page-subtitle" id="page-subtitle">上传图片，一键生成商拍主图</span>
+        </div>
+        <div class="toolbar-right" data-tauri-no-drag>
+          <div class="mode-segmented" id="mode-segmented">
+            <button class="seg-btn active" data-mode="single" data-tauri-no-drag>单产品</button>
+            <button class="seg-btn" data-mode="multi" data-tauri-no-drag>多产品</button>
+            <button class="seg-btn" data-mode="cutout" data-tauri-no-drag>快速抠图</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Workspace (left: canvas, right: settings) -->
+      <div class="workspace">
+
+        <!-- ── CANVAS AREA (center) ── -->
+        <div class="canvas-area">
+
+          <!-- Upload Zone (empty state) -->
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="file-input" accept="image/*" multiple hidden data-tauri-no-drag />
+            <div class="dropzone-inner" id="dropzone-empty">
+              <div class="dropzone-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+              </div>
+              <div class="dropzone-title">拖拽图片到此处</div>
+              <div class="dropzone-desc">支持 JPG / PNG / WEBP · 点击或粘贴（Ctrl+V）上传</div>
+              <button class="dropzone-btn" id="btn-browse" data-tauri-no-drag>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                选择图片
+              </button>
+            </div>
+            <div class="dropzone-preview" id="dropzone-preview" style="display:none;">
+              <div class="preview-grid" id="preview-grid"></div>
+              <button class="preview-replace" id="btn-replace" data-tauri-no-drag title="替换图片">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+                替换
+              </button>
+              <button class="preview-clear" id="btn-clear" data-tauri-no-drag title="清除">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Progress Panel (shown during generation) -->
+          <div class="progress-panel" id="progress-panel" style="display:none;">
+            <div class="progress-header">
+              <div class="spinner"></div>
+              <span class="progress-title" id="progress-title">正在处理...</span>
+              <span class="progress-percent" id="progress-percent">0%</span>
+            </div>
+            <div class="progress-bar-wrap">
+              <div class="progress-bar-fill" id="progress-bar-fill"></div>
+            </div>
+            <div class="progress-log" id="progress-log"></div>
+          </div>
+
+          <!-- Results Panel (shown after generation) -->
+          <div class="results-panel" id="results-panel" style="display:none;">
+            <div class="results-header">
+              <h3 class="results-title">生成结果</h3>
+              <div class="results-actions" data-tauri-no-drag>
+                <div class="result-tabs" id="result-tabs">
+                  <button class="r-tab active" data-rtab="main" data-tauri-no-drag>白底主图</button>
+                  <button class="r-tab" data-rtab="cutout" data-tauri-no-drag>透明PNG</button>
+                </div>
+                <button class="icon-btn" id="btn-save-all" title="批量保存" data-tauri-no-drag>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                </button>
+                <button class="icon-btn" id="btn-open-folder" title="打开输出文件夹" data-tauri-no-drag>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+                </button>
+                <button class="icon-btn" id="btn-compare-now" title="对比原图" data-tauri-no-drag style="display:none;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="16" rx="2"/><rect x="14" y="4" width="7" height="16" rx="2"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="results-grid" id="results-grid"></div>
+          </div>
+
+        </div><!-- /canvas-area -->
+
+        <!-- ── SETTINGS PANEL (right) ── -->
+        <aside class="settings-panel" id="settings-panel">
+          <div class="settings-scroll">
+
+            <!-- Group: AI Model -->
+            <div class="setting-group" data-group="model">
+              <button class="group-toggle" data-tauri-no-drag>
+                <span class="group-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.56 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                </span>
+                <span class="group-name">AI 模型</span>
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div class="group-body">
+                <label class="field">
+                  <select id="param-model" class="field-select" data-tauri-no-drag>
+                    <option value="gpt-image-2">GPT-Image-2 · 最高质量</option>
+                    <option value="gemini-3-pro-image-preview">Nano Banana Pro</option>
+                    <option value="gemini-3.1-flash-image-preview">Nano Banana 2 · 快速</option>
+                    <option value="qwen-image">千问-Image · 中文优化</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <!-- Group: Composition (画面控制) -->
+            <div class="setting-group" data-group="composition">
+              <button class="group-toggle" data-tauri-no-drag>
+                <span class="group-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                </span>
+                <span class="group-name">画面控制</span>
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div class="group-body">
+                <div class="field" id="field-platter">
+                  <span class="field-label">器皿 / 摆盘</span>
+                  <div class="chip-group">
+                    <label class="chip" data-tauri-no-drag><input type="radio" name="platter" value="auto" checked data-tauri-no-drag><span>AI判断</span></label>
+                    <label class="chip" data-tauri-no-drag><input type="radio" name="platter" value="keep" data-tauri-no-drag><span>保留</span></label>
+                    <label class="chip" data-tauri-no-drag><input type="radio" name="platter" value="remove" data-tauri-no-drag><span>去器皿</span></label>
+                  </div>
+                </div>
+                <div class="field" id="field-angle">
+                  <span class="field-label">拍摄角度</span>
+                  <select id="param-angle" class="field-select" data-tauri-no-drag>
+                    <option value="auto">AI 自动判断</option>
+                    <option value="keep">保留原图角度</option>
+                    <option value="45top">45° 俯视 · 经典电商</option>
+                    <option value="front">正面平视 · 包装首选</option>
+                    <option value="30side">30° 斜侧 · 立体感</option>
+                    <option value="90top">90° 正俯视 · 平铺</option>
+                  </select>
+                </div>
+                <div class="field" id="field-fidelity">
+                  <span class="field-label">AI 美化度</span>
+                  <span class="field-value" id="fid-val">40%</span>
+                  <input type="range" id="param-fidelity" min="10" max="100" value="40" step="5" class="field-range" data-tauri-no-drag />
+                  <div class="range-sublabels"><span>忠实原图</span><span>创意美化</span></div>
+                </div>
+                <div class="field" id="field-refine" style="display:none;">
+                  <label class="toggle-field" data-tauri-no-drag>
+                    <span>启用二次精修</span>
+                    <input type="checkbox" id="param-refine" checked class="toggle-input" data-tauri-no-drag />
+                    <span class="toggle-switch"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Group: Output (输出设置) -->
+            <div class="setting-group" data-group="output">
+              <button class="group-toggle" data-tauri-no-drag>
+                <span class="group-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </span>
+                <span class="group-name">输出设置</span>
+                <svg class="group-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div class="group-body">
+                <div class="field" id="field-batch">
+                  <span class="field-label">生成数量</span>
+                  <span class="field-value" id="batch-val">1</span>
+                  <input type="range" id="param-batch" min="1" max="4" value="1" step="1" class="field-range" data-tauri-no-drag />
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /settings-scroll -->
+
+          <!-- Primary Action Button (the ONLY primary CTA) -->
+          <div class="cta-area">
+            <button class="btn-primary" id="btn-generate" disabled data-tauri-no-drag>
+              <span class="btn-label">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <span id="generate-text">开始生成</span>
+              </span>
+              <span class="btn-loader"><span class="btn-spinner"></span></span>
+            </button>
+            <p class="cta-hint" id="cta-hint">请先上传图片</p>
+          </div>
+        </aside><!-- /settings-panel -->
+
+      </div><!-- /workspace -->
+    </section>
+
+    <!-- ═══ PAGE: COMPARE ═══ -->
+    <section class="page" id="page-compare">
+      <header class="toolbar" data-tauri-drag-region>
+        <div class="toolbar-left">
+          <h1 class="page-title">对比预览</h1>
+          <span class="page-subtitle">原图与效果图并列对比，拖动滑块查看细节差异</span>
+        </div>
+      </header>
+      <div class="compare-workspace">
+        <div class="compare-empty" id="compare-empty">
+          <div class="empty-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"><rect x="3" y="4" width="7" height="16" rx="2"/><rect x="14" y="4" width="7" height="16" rx="2"/></svg>
+          </div>
+          <p class="empty-text">请先生成图片，或在历史记录中选择图片进行对比</p>
+        </div>
+        <div class="compare-view" id="compare-view" style="display:none;">
+          <div class="compare-layer compare-before">
+            <span class="compare-tag">原图</span>
+            <img id="compare-img-original" alt="原图" />
+          </div>
+          <div class="compare-layer compare-after" id="compare-after">
+            <span class="compare-tag">效果图</span>
+            <img id="compare-img-result" alt="效果图" />
+          </div>
+          <div class="compare-divider" id="compare-slider">
+            <div class="compare-handle">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 4l-6 8 6 8M16 4l6 8-6 8"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ PAGE: HISTORY ═══ -->
+    <section class="page" id="page-history">
+      <header class="toolbar" data-tauri-drag-region>
+        <div class="toolbar-left">
+          <h1 class="page-title">历史记录</h1>
+          <span class="page-subtitle">查看之前生成的所有图片</span>
+        </div>
+        <div class="toolbar-right" data-tauri-no-drag>
+          <button class="btn-secondary" id="btn-refresh-history" data-tauri-no-drag>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 019-9 9.75 9.75 0 016.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 01-9 9 9.75 9.75 0 01-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+            刷新
+          </button>
+        </div>
+      </header>
+      <div class="history-workspace">
+        <div class="history-grid" id="history-grid">
+          <div class="history-empty">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <p>暂无历史记录</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ PAGE: SETTINGS ═══ -->
+    <section class="page" id="page-settings">
+      <header class="toolbar" data-tauri-drag-region>
+        <div class="toolbar-left">
+          <h1 class="page-title">设置</h1>
+          <span class="page-subtitle">配置 API 密钥与默认参数</span>
+        </div>
+      </header>
+      <div class="settings-workspace">
+        <div class="settings-card">
+          <h3 class="card-title">API 配置</h3>
+          <label class="field">
+            <span class="field-label">LK AI API Key</span>
+            <div class="field-row">
+              <input type="password" id="setting-api-key" class="field-input" placeholder="已配置（留空则不修改）" data-tauri-no-drag />
+              <button class="btn-secondary" id="btn-save-key" data-tauri-no-drag>保存</button>
+            </div>
+          </label>
+          <p class="field-hint">API Key 存储在本地配置文件，不会上传至任何服务器</p>
+          <button class="btn-secondary" id="btn-check-balance" data-tauri-no-drag style="margin-top:8px;">查询余额</button>
+          <div class="balance-text" id="balance-display"></div>
+        </div>
+        <div class="settings-card">
+          <h3 class="card-title">默认参数</h3>
+          <label class="field">
+            <span class="field-label">默认模型</span>
+            <select id="setting-model" class="field-select" data-tauri-no-drag>
+              <option value="gpt-image-2">GPT-Image-2</option>
+              <option value="gemini-3-pro-image-preview">Nano Banana Pro</option>
+              <option value="gemini-3.1-flash-image-preview">Nano Banana 2</option>
+              <option value="qwen-image">千问-Image</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">默认器皿选项</span>
+            <select id="setting-platter" class="field-select" data-tauri-no-drag>
+              <option value="auto">AI 智能判断</option>
+              <option value="keep">保留摆盘</option>
+              <option value="remove">纯白底</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">默认拍摄角度</span>
+            <select id="setting-angle" class="field-select" data-tauri-no-drag>
+              <option value="auto">AI 自动判断</option>
+              <option value="keep">保留原图角度</option>
+              <option value="45top">45° 俯视</option>
+              <option value="front">正面平视</option>
+              <option value="30side">30° 斜侧</option>
+              <option value="90top">90° 正俯视</option>
+            </select>
+          </label>
+          <div class="field">
+            <span class="field-label">默认美化度</span>
+            <span class="field-value" id="setting-fid-val">40%</span>
+            <input type="range" id="setting-fidelity" min="10" max="100" value="40" step="5" class="field-range" data-tauri-no-drag />
+          </div>
+          <button class="btn-accent" id="btn-save-settings" data-tauri-no-drag style="margin-top:8px;">保存设置</button>
+        </div>
+        <div class="settings-card about-card">
+          <div class="about-logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="6" fill="#ff6b35"/></svg>
+          </div>
+          <p class="about-name">Product Atelier</p>
+          <p class="about-version">v1.0.0</p>
+          <p class="about-desc">AI 驱动的电商商拍工作台<br/>本地 BiRefNet-HD 抠图 · LK AI 云端生成</p>
+          <p class="about-path">输出目录: <span id="output-dir">-</span></p>
+        </div>
+      </div>
+    </section>
+
+  </div><!-- /content-wrapper -->
+</div><!-- /app-shell -->
+
+<!-- Image Viewer Modal -->
+<div class="img-modal" id="img-modal" style="display:none;">
+  <div class="img-modal-backdrop" id="modal-backdrop"></div>
+  <div class="img-modal-box">
+    <button class="img-modal-close" id="modal-close" data-tauri-no-drag>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <img id="modal-img" alt="预览" />
+    <div class="img-modal-actions" id="modal-actions"></div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script type="module" src="./js/api.js"></script>
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>

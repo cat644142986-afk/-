@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+release/
+
+# Rust build
+src-tauri/target/
+
+# Compiled Python binaries (sidecar)
+src-tauri/bin/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+python/__pycache__/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files (may contain keys)
+.env
+.env.local
+
+# Logs
+*.log
