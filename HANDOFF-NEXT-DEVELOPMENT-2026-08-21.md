@@ -1,10 +1,15 @@
 # Product Atelier 下一阶段开发总交接（执行版）
 
-> 更新日期：2026-08-21  
-> 正式源码：`D:\ProductAtelier-Desktop`  
-> GitHub：`https://github.com/cat644142986-afk/-.git`  
-> 当前可信基线提交：`9b51da4e95339896726f1895c21ca0b816a5f68e`  
-> 回滚标签：`baseline-2026-08-21-pre-workspace-refactor`  
+> 更新日期：2026-08-21
+>
+> 正式源码：`D:\ProductAtelier-Desktop`
+>
+> GitHub：`https://github.com/cat644142986-afk/-.git`
+>
+> 当前可信基线提交：`9b51da4e95339896726f1895c21ca0b816a5f68e`
+>
+> 回滚标签：`baseline-2026-08-21-pre-workspace-refactor`
+>
 > 本文用途：供下一位 Codex 直接接管开发；它补充并修正 `HANDOFF-2026-08-21.md` 的“下一阶段”部分。
 
 ---
@@ -664,4 +669,3 @@ git switch -c restore/baseline-2026-08-21 baseline-2026-08-21-pre-workspace-refa
 - `D:\ProductAtelier-Backups\restore-audit-9b51da4`
 
 回滚后仍需重新运行 Vite、Python、memory smoke test 和 Rust 验证，不能只看应用能否打开。
-
