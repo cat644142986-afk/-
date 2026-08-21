@@ -1,765 +1,736 @@
-// ============================================================
-// Product Atelier — Application Logic
-// All business features preserved; IA & interaction restructured
-// ============================================================
 import * as API from './api.js';
 
-// ── Constants ──
-const COLLAPSED_W = 68;
-const EXPANDED_MIN_W = 960;
-const DEFAULT_EXPANDED = { w: 1280, h: 800 };
-
-// ── State ──
-const state = {
-  currentMode: 'single',
-  currentPage: 'process',
-  selectedFiles: [],
-  originalDataUrl: null,
-  generating: false,
-  currentTaskId: null,
-  results: null,
-  resultTab: 'main',
-  compareData: null,
-  settings: null,
-  sidebarCollapsed: true,
-  lastExpandedSize: { ...DEFAULT_EXPANDED },
-  isMaximized: false,
-  pollTimer: null,
+const PAGE_CONFIG = {
+  process: { eyebrow: 'CREATIVE WORKSPACE', title: '你好，伊建', subtitle: '让知识、判断与生成留在同一条创作链里' },
+  compare: { eyebrow: 'QUALITY REVIEW', title: '版本对比', subtitle: '检查轮廓、材质、颜色与构图偏差' },
+  history: { eyebrow: 'CREATION LEDGER', title: '创作会话', subtitle: '每次生成都有来源、理由和版本' },
+  memory: { eyebrow: 'DESIGN DNA', title: '成长中心', subtitle: '把反复出现的判断沉淀为可审核的偏好' },
+  settings: { eyebrow: 'SYSTEM & KNOWLEDGE', title: '应用设置', subtitle: '管理模型、知识库与本地存储' },
 };
 
-// ── DOM ──
-const $ = s => document.querySelector(s);
-const $$ = s => document.querySelectorAll(s);
+const MODE_CONFIG = {
+  single: {
+    label: '单产品商业精修', badge: 'SINGLE', action: '开始生成', multiple: false, maxFiles: 1,
+    title: '从一张可信的产品图开始', eyebrow: 'START WITH ONE SOURCE', limit: '1 FILE · 20 MB',
+    description: '主体完整、包装清晰；系统会保留素材血缘并调用你的设计知识。',
+    note: '一张主图，保真生成与透明底同步输出', outputKind: 'ecommerce-main',
+  },
+  'multi-file': {
+    label: '多文件独立批量', badge: 'BATCH', action: '运行批量队列', multiple: true, maxFiles: 12,
+    title: '建立一组独立商品队列', eyebrow: 'MULTI-SOURCE QUEUE', limit: 'UP TO 12 FILES · 160 MB',
+    description: '每张图片都是独立任务；可统一风格，也会保留各自素材与失败状态。',
+    note: '多张源图逐一生成，不把它们误当成同一画面', outputKind: 'ecommerce-main',
+  },
+  'group-split': {
+    label: '组合图智能拆分', badge: 'GROUP SPLIT', action: '识别并拆分', multiple: false, maxFiles: 1,
+    title: '上传一张包含多个产品的合照', eyebrow: 'ONE GROUP SHOT', limit: '1 GROUP IMAGE · 20 MB',
+    description: '先识别画面中的产品，再逐个裁切、精修和抠图；不等同于多文件批量。',
+    note: '一张合照识别多个主体，再分别生成交付图', outputKind: 'group-split',
+  },
+  'cutout-batch': {
+    label: '本地批量抠图', badge: 'LOCAL CUTOUT', action: '开始批量抠图', multiple: true, maxFiles: 24,
+    title: '一次导入多张待抠图素材', eyebrow: 'LOCAL MULTI-CUTOUT', limit: 'UP TO 24 FILES · 160 MB',
+    description: '逐张输出透明 PNG，记录边缘结果；不调用云端生成，不消耗生图额度。',
+    note: '多文件本地抠图，逐张保留结果与失败原因', outputKind: 'cutout',
+  },
+};
 
-// ── Toast (minimal, for errors/success only) ──
-function toast(msg, type = 'info', dur = 2800) {
+const STAGE_IDS = { empty: 'canvas-empty', ready: 'canvas-image', processing: 'canvas-processing', success: 'canvas-results', error: 'canvas-error' };
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+let modalReturnFocus = null;
+
+const state = {
+  currentPage: 'process', currentMode: 'single', stage: 'empty', selectedFiles: [], fileUrls: [],
+  originalDataUrl: '', results: null, resultTab: 'main', viewerIndex: 0, compareData: null,
+  currentTaskId: '', currentSessionId: '', currentGenerationId: '', generating: false,
+  knowledgeStatus: null, knowledgeBundle: null, settings: null, lastFeedbackSignal: '',
+};
+window.ProductAtelier = { state };
+
+function escapeHtml(value) {
+  const node = document.createElement('div');
+  node.textContent = String(value ?? '');
+  return node.innerHTML;
+}
+
+function toast(message, type = 'info', duration = 3200) {
   const wrap = $('#toast-wrap');
-  const el = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.textContent = msg;
-  wrap.appendChild(el);
-  setTimeout(() => {
-    el.style.transition = 'opacity .25s, transform .25s';
-    el.style.opacity = '0';
-    el.style.transform = 'translateX(16px)';
-    setTimeout(() => el.remove(), 260);
-  }, dur);
+  const item = document.createElement('div');
+  item.className = `toast ${type}`;
+  item.textContent = message;
+  wrap.appendChild(item);
+  window.setTimeout(() => {
+    item.style.opacity = '0';
+    item.style.transform = 'translateX(12px)';
+    window.setTimeout(() => item.remove(), 220);
+  }, duration);
 }
 
-// ── Sidebar ──
-async function toggleSidebar() {
-  const { appWindow, LogicalSize } = await import('@tauri-apps/api/window');
-  if (state.sidebarCollapsed) {
-    state.sidebarCollapsed = false;
-    document.body.classList.remove('sidebar-collapsed');
-    localStorage.setItem('sidebarCollapsed', '0');
-    if (state.isMaximized) return;
-    const s = state.lastExpandedSize;
-    await appWindow.setSize(new LogicalSize(Math.max(s.w, EXPANDED_MIN_W), Math.max(s.h, 600))).catch(() => {});
-    await appWindow.center().catch(() => {});
-  } else {
-    if (state.isMaximized) {
-      await appWindow.unmaximize().catch(() => {});
-      state.isMaximized = false;
-    }
-    try {
-      const cur = await appWindow.innerSize();
-      if (cur.width >= EXPANDED_MIN_W) state.lastExpandedSize = { w: cur.width, h: cur.height };
-    } catch {}
-    state.sidebarCollapsed = true;
-    document.body.classList.add('sidebar-collapsed');
-    await appWindow.setSize(new LogicalSize(COLLAPSED_W, state.lastExpandedSize.h)).catch(() => {});
-  }
+function setBackendStatus(status, text) {
+  const dot = $('#conn-dot');
+  dot.className = `conn-dot ${status}`;
+  $('#conn-text').textContent = text;
+  $('#conn-status').title = `后端状态：${text}`;
 }
 
-// ── Connection status ──
-function setBackendStatus(online, text) {
-  const dot = $('#conn-dot'), txt = $('#conn-text');
-  if (!dot || !txt) return;
-  dot.className = 'conn-dot' + (online ? ' online' : '');
-  txt.textContent = online ? (text || '已连接') : (text || '连接中');
+function setStage(stage) {
+  if (!STAGE_IDS[stage]) return;
+  state.stage = stage;
+  $('#preview-card').dataset.stage = stage;
+  Object.entries(STAGE_IDS).forEach(([name, id]) => { document.getElementById(id).hidden = name !== stage; });
+  renderFileMeta();
 }
 
-// ── Navigation ──
 function switchPage(page) {
+  if (!PAGE_CONFIG[page]) return;
   state.currentPage = page;
-  $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-  $$('.page').forEach(p => p.classList.toggle('active', p.id === `page-${page}`));
-  if (state.sidebarCollapsed) toggleSidebar();
-  if (page === 'history') loadHistory();
-}
-
-// ── Mode switching ──
-function switchMode(mode) {
-  state.currentMode = mode;
-  state.resultTab = mode === 'cutout' ? 'cutout' : 'main';
-  $$('.seg-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
-
-  const sub = $('#page-subtitle');
-  const fidField = $('#field-fidelity');
-  const angleField = $('#field-angle');
-  const platterField = $('#field-platter');
-  const batchField = $('#field-batch');
-  const refineField = $('#field-refine');
-  const modelSel = $('#param-model');
-  const ctaHint = $('#cta-hint');
-  const genText = $('#generate-text');
-
-  const show = el => { if (el) el.style.display = ''; };
-  const hide = el => { if (el) el.style.display = 'none'; };
-
-  if (mode === 'single') {
-    show(platterField); show(angleField); show(fidField); show(batchField); hide(refineField);
-    sub.textContent = '上传产品图片，一键生成商业影棚级主图';
-    genText.textContent = '开始生成';
-  } else if (mode === 'multi') {
-    show(platterField); show(angleField); show(fidField); hide(batchField); show(refineField);
-    if (modelSel.value === 'gpt-image-2') modelSel.value = 'gemini-3.1-flash-image-preview';
-    sub.textContent = '上传包含多个产品的图片，自动分割并逐个精修';
-    genText.textContent = '批量处理';
-  } else { // cutout
-    hide(platterField); hide(angleField); hide(fidField); hide(batchField); hide(refineField);
-    sub.textContent = '上传图片，使用本地 BiRefNet 模型自动抠图';
-    genText.textContent = '开始抠图';
-  }
-
-  // Update group visibility — open first group, collapse others as needed
-  // (model group always visible, composition hidden for cutout, output hidden for cutout/multi)
-  const compGroup = document.querySelector('[data-group="composition"]');
-  const outGroup = document.querySelector('[data-group="output"]');
-  if (mode === 'cutout') {
-    compGroup.style.display = 'none';
-    outGroup.style.display = 'none';
-  } else {
-    compGroup.style.display = '';
-    outGroup.style.display = mode === 'multi' ? 'none' : '';
-  }
-
-  updateCtaState();
-}
-
-// ── Settings groups (collapsible) ──
-function setupGroups() {
-  $$('.group-toggle').forEach(btn => {
-    btn.addEventListener('click', () => {
-      btn.closest('.setting-group').classList.toggle('collapsed');
-    });
+  $$('.app-page').forEach((section) => {
+    const active = section.dataset.pageName === page;
+    section.hidden = !active;
+    section.classList.toggle('active', active);
   });
-  // Expand model & composition by default, collapse output
-  document.querySelector('[data-group="model"]')?.classList.remove('collapsed');
-  document.querySelector('[data-group="composition"]')?.classList.remove('collapsed');
-  document.querySelector('[data-group="output"]')?.classList.add('collapsed');
+  $$('.rail-button[data-page]').forEach((button) => {
+    const active = button.dataset.page === page;
+    button.classList.toggle('active', active);
+    if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+  });
+  const config = PAGE_CONFIG[page];
+  $('#page-eyebrow').textContent = config.eyebrow;
+  $('#page-title').textContent = config.title;
+  $('#page-subtitle').textContent = config.subtitle;
+  if (page === 'history') loadSessions();
+  if (page === 'memory') loadMemory();
+  if (page === 'settings') loadSettings();
 }
 
-// ── Sliders with fill ──
-function updateSliderFill(slider) {
-  const min = parseFloat(slider.min) || 0;
-  const max = parseFloat(slider.max) || 100;
-  const val = parseFloat(slider.value);
-  const pct = ((val - min) / (max - min)) * 100;
-  slider.style.background = `linear-gradient(to right, var(--accent) 0%, var(--accent) ${pct}%, rgba(0,0,0,0.06) ${pct}%, rgba(0,0,0,0.06) 100%)`;
-}
-
-function setupSliders() {
-  const batch = $('#param-batch'), fid = $('#param-fidelity'), sfid = $('#setting-fidelity');
-  [batch, fid, sfid].forEach(s => {
-    if (!s) return;
-    const update = () => {
-      updateSliderFill(s);
-      if (s === batch) $('#batch-val').textContent = s.value;
-      if (s === fid) $('#fid-val').textContent = s.value + '%';
-      if (s === sfid) $('#setting-fid-val').textContent = s.value + '%';
-    };
-    s.addEventListener('input', update);
-    update();
+function setupTheme() {
+  const saved = localStorage.getItem('pa-theme') || 'light';
+  document.documentElement.dataset.theme = saved;
+  const paint = () => {
+    const dark = document.documentElement.dataset.theme === 'dark';
+    $('#theme-icon-moon').hidden = dark;
+    $('#theme-icon-sun').hidden = !dark;
+  };
+  paint();
+  $('#theme-toggle').addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('pa-theme', next);
+    paint();
   });
 }
 
-// ── File handling ──
-function handleFiles(fileList) {
-  const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
-  if (!files.length) { toast('请选择图片文件', 'error'); return; }
-  state.selectedFiles = files;
-
-  const reader0 = new FileReader();
-  reader0.onload = e => { state.originalDataUrl = e.target.result; };
-  reader0.readAsDataURL(files[0]);
-
-  renderPreview();
-  hideProgress();
-  hideResults();
-  updateCtaState();
+function releaseFileUrls() {
+  state.fileUrls.forEach((url) => URL.revokeObjectURL(url));
+  state.fileUrls = [];
 }
 
-function renderPreview() {
-  const empty = $('#dropzone-empty');
-  const preview = $('#dropzone-preview');
-  const grid = $('#preview-grid');
-  const dz = $('#dropzone');
-
-  if (!state.selectedFiles.length) {
-    empty.style.display = '';
-    preview.style.display = 'none';
-    dz.classList.remove('has-preview');
-    return;
-  }
-  empty.style.display = 'none';
-  preview.style.display = '';
-  dz.classList.add('has-preview');
-  grid.innerHTML = '';
-
-  state.selectedFiles.forEach((file, i) => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const img = document.createElement('img');
-      img.src = e.target.result;
-      img.className = 'preview-thumb';
-      img.title = file.name;
-      grid.appendChild(img);
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-function clearFiles() {
+function clearSession(keepMode = true) {
+  if (state.generating) return;
+  API.stopPolling();
+  releaseFileUrls();
   state.selectedFiles = [];
-  state.originalDataUrl = null;
-  renderPreview();
-  hideProgress();
-  hideResults();
+  state.originalDataUrl = '';
+  state.results = null;
+  state.compareData = null;
+  state.currentTaskId = '';
+  state.currentSessionId = '';
+  state.currentGenerationId = '';
+  state.resultTab = state.currentMode === 'cutout-batch' ? 'cutout' : 'main';
+  state.viewerIndex = 0;
+  state.knowledgeBundle = null;
+  $('#file-input').value = '';
+  $('#brief-input').value = '';
+  $('#canvas-img-preview').removeAttribute('src');
+  $('#file-queue').innerHTML = '';
+  $('#source-preview').parentElement.classList.remove('is-queue');
+  $('#summary-result').textContent = '等待第一张素材';
+  $('#summary-result-note').textContent = '每次生成、采用与调整都会留下可解释证据';
+  $('#knowledge-summary').textContent = '等待知识编译';
+  renderKnowledge(null);
+  setStage('empty');
+  if (!keepMode) switchMode('single', false);
   updateCtaState();
 }
 
-function setupDropzone() {
-  const dz = $('#dropzone');
+function switchMode(mode, clearExisting = true) {
+  if (!MODE_CONFIG[mode] || state.generating) return;
+  const changed = state.currentMode !== mode;
+  if (changed && clearExisting && state.selectedFiles.length) clearSession(true);
+  state.currentMode = mode;
+  const config = MODE_CONFIG[mode];
+  $$('.mode-button').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
   const input = $('#file-input');
-
-  dz.addEventListener('click', e => {
-    if (e.target.closest('.preview-replace') || e.target.closest('.preview-clear')) return;
-    if (state.selectedFiles.length > 0 && !e.target.closest('#btn-browse')) return;
-    input.click();
-  });
-  input.addEventListener('change', () => { if (input.files.length) handleFiles(input.files); });
-
-  // Browse button
-  $('#btn-browse')?.addEventListener('click', e => { e.stopPropagation(); input.click(); });
-  $('#btn-replace')?.addEventListener('click', e => { e.stopPropagation(); input.click(); });
-  $('#btn-clear')?.addEventListener('click', e => { e.stopPropagation(); clearFiles(); input.value = ''; });
-
-  // Drag & drop
-  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
-  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-  dz.addEventListener('drop', e => {
-    e.preventDefault(); dz.classList.remove('dragover');
-    if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
-  });
-
-  // Paste
-  document.addEventListener('paste', e => {
-    if (state.currentPage !== 'process') return;
-    if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA' || document.activeElement.type === 'password') return;
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files = [];
-    for (const item of items) {
-      if (item.type.startsWith('image/')) { const f = item.getAsFile(); if (f) files.push(f); }
-    }
-    if (files.length) handleFiles(files);
-  });
+  input.multiple = config.multiple;
+  $('#upload-eyebrow').textContent = config.eyebrow;
+  $('#upload-title').textContent = config.title;
+  $('#upload-description').textContent = config.description;
+  $('#upload-limit').textContent = config.limit;
+  $('#canvas-title').textContent = config.label.replace('商业', ' · 商业');
+  $('#info-mode-badge').textContent = config.badge;
+  $('#summary-mode').textContent = config.label;
+  $('#summary-note').textContent = config.note;
+  $('#field-model').hidden = mode === 'cutout-batch';
+  $('#field-composition').hidden = mode === 'cutout-batch';
+  $('#field-refine').hidden = mode !== 'group-split';
+  $('#batch-field-label').firstChild.textContent = mode === 'multi-file' ? '每图方案数 ' : '生成方案数 ';
+  if (mode === 'multi-file' && $('#param-model').value === 'gpt-image-2') $('#model-reason').textContent = '每张独立处理';
+  else if (mode === 'cutout-batch') $('#model-reason').textContent = '本地 BiRefNet';
+  else $('#model-reason').textContent = '质量优先';
+  state.resultTab = mode === 'cutout-batch' ? 'cutout' : 'main';
+  renderFileMeta();
+  updateCtaState();
 }
 
-// ── CTA button state ──
-function updateCtaState() {
-  const btn = $('#btn-generate');
-  const hint = $('#cta-hint');
-  if (state.generating) {
-    btn.disabled = false;
-    btn.classList.add('loading');
+function renderFileMeta() {
+  const count = state.selectedFiles.length;
+  $('#btn-replace').hidden = count === 0 || state.generating;
+  $('#btn-clear').hidden = count === 0 || state.generating;
+  if (count) {
+    $('#info-filename').textContent = count === 1 ? state.selectedFiles[0].name : `${count} 张源图已加入队列`;
+    $('#ready-count').textContent = `${count} SOURCE${count > 1 ? 'S' : ''} READY`;
+  }
+}
+
+function renderQueue() {
+  const ready = $('#canvas-image');
+  const queue = $('#file-queue');
+  const isQueue = MODE_CONFIG[state.currentMode].multiple;
+  ready.classList.toggle('is-queue', isQueue);
+  if (!state.selectedFiles.length) return;
+  $('#canvas-img-preview').src = state.fileUrls[0];
+  queue.innerHTML = state.selectedFiles.map((file, index) => `
+    <article class="queue-item" data-index="${index}">
+      <img src="${state.fileUrls[index]}" alt="${escapeHtml(file.name)}" />
+      <div><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><span>${String(index + 1).padStart(2, '0')}</span></div>
+    </article>`).join('');
+}
+
+async function handleFiles(fileList) {
+  if (state.generating) return;
+  const incoming = Array.from(fileList || []);
+  if (!incoming.length) return;
+  const config = MODE_CONFIG[state.currentMode];
+  const valid = incoming.filter((file) => {
+    if (!/^image\/(png|jpeg|webp)$/i.test(file.type)) { toast(`${file.name} 不是支持的图片格式`, 'error'); return false; }
+    if (file.size > 20 * 1024 * 1024) { toast(`${file.name} 超过 20 MB`, 'error'); return false; }
+    return true;
+  });
+  if (!valid.length) return;
+  let next = config.multiple ? [...state.selectedFiles, ...valid] : [valid[0]];
+  if (next.length > config.maxFiles) {
+    toast(`当前模式单次最多 ${config.maxFiles} 张`, 'error');
+    next = next.slice(0, config.maxFiles);
+  }
+  releaseFileUrls();
+  state.selectedFiles = next;
+  state.fileUrls = next.map((file) => URL.createObjectURL(file));
+  state.originalDataUrl = state.fileUrls[0] || '';
+  state.results = null;
+  state.compareData = null;
+  renderQueue();
+  setStage('ready');
+  $('#summary-result').textContent = `${next.length} 张素材已就绪`;
+  $('#summary-result-note').textContent = '知识规则正在按任务语义预编译';
+  updateCtaState();
+  await compileKnowledgePreview();
+  $('#file-input').value = '';
+}
+
+function getIntentLocks() {
+  const locks = {};
+  $$('[data-lock]').forEach((input) => { locks[input.dataset.lock] = Boolean(input.checked); });
+  if ($('#param-angle').value === 'keep') locks.angle = true;
+  return locks;
+}
+
+function getPlatter() {
+  return $('input[name="platter"]:checked')?.value || 'auto';
+}
+
+function buildBrief() {
+  const request = $('#brief-input').value.trim();
+  return {
+    objective: request || '将产品原图转化为可交付的商业图片',
+    user_request: request,
+    mode: state.currentMode,
+    category: 'general',
+    platform: 'ecommerce',
+    output_kind: MODE_CONFIG[state.currentMode].outputKind,
+    angle: $('#param-angle').value,
+    platter: getPlatter(),
+    fidelity: Number($('#param-fidelity').value),
+    intent_locks: getIntentLocks(),
+    output_spec: { ratio: '1:1', size: '2048x2048', format: state.currentMode === 'cutout-batch' ? 'transparent PNG' : 'JPG+transparent PNG' },
+  };
+}
+
+let compileTimer = null;
+async function compileKnowledgePreview() {
+  if (!state.selectedFiles.length && !$('#brief-input').value.trim()) return;
+  try {
+    const bundle = await API.compileKnowledge(buildBrief());
+    state.knowledgeBundle = bundle;
+    renderKnowledge(bundle);
+  } catch (error) {
+    $('#knowledge-summary').textContent = '知识编译暂不可用，使用安全默认值';
+  }
+}
+
+function scheduleKnowledgeCompile() {
+  window.clearTimeout(compileTimer);
+  compileTimer = window.setTimeout(compileKnowledgePreview, 480);
+}
+
+function renderKnowledge(bundle) {
+  if (!bundle) {
+    $('#knowledge-source-count').textContent = '0 条来源';
+    $('#knowledge-source-list').innerHTML = '<div class="page-empty">尚未编译知识。</div>';
+    $('#knowledge-conflicts').innerHTML = '<div class="conflict-item ok"><span>✓</span><p>当前没有检测到规则冲突</p></div>';
+    $('#intelligence-brief').textContent = '等待输入创作意图';
+    $('#intelligence-context').textContent = '选择模式与素材后，系统会把目标编译成可检查的创作合同。';
     return;
   }
-  btn.classList.remove('loading');
+  const sources = bundle.sources || [];
+  const rules = (bundle.positive_rules || []).length + (bundle.negative_rules || []).length;
+  $('#knowledge-summary').textContent = `${sources.length} 份知识 · ${rules} 条执行规则`;
+  $('#knowledge-source-count').textContent = `${sources.length} 条来源`;
+  $('#knowledge-source-list').innerHTML = sources.length ? sources.map((source, index) => `<div class="source-item"><span>${String(index + 1).padStart(2, '0')}</span><div><strong>${escapeHtml(source.title || source.id || '设计规则')}</strong><small>${escapeHtml(source.relative_path || source.path || '')}</small></div></div>`).join('') : '<div class="page-empty">本次使用安全默认规则。</div>';
+  const brief = bundle.creative_brief || {};
+  $('#intelligence-brief').textContent = brief.objective || '本次商业图片任务';
+  $('#intelligence-context').textContent = `${MODE_CONFIG[state.currentMode].label} · ${brief.output_kind || '商业输出'} · ${Object.values(brief.intent_locks || {}).filter(Boolean).length} 项 Intent Locks`;
+  const conflicts = bundle.conflicts || [];
+  $('#knowledge-conflicts').innerHTML = conflicts.length ? conflicts.map((item) => `<div class="conflict-item"><span>!</span><p>${escapeHtml(item.message)}</p></div>`).join('') : '<div class="conflict-item ok"><span>✓</span><p>当前没有检测到规则冲突</p></div>';
+}
+
+function updateCtaState() {
+  const button = $('#btn-generate');
   const hasFiles = state.selectedFiles.length > 0;
-  btn.disabled = !hasFiles;
-  if (hint) {
-    if (state.currentMode === 'cutout') {
-      hint.textContent = hasFiles ? '准备就绪，点击按钮开始抠图' : '请先上传图片';
-    } else {
-      hint.textContent = hasFiles ? '准备就绪，点击按钮开始生成' : '请先上传图片';
-    }
-    hint.className = 'cta-hint' + (hasFiles ? ' ready' : '');
+  button.disabled = !hasFiles || state.generating;
+  if (state.generating) $('#generate-text').textContent = 'Atelier 正在工作';
+  else if (!hasFiles) $('#generate-text').textContent = '选择图片开始';
+  else $('#generate-text').textContent = MODE_CONFIG[state.currentMode].action;
+  $('#cta-hint').textContent = !hasFiles ? '上传后会先编译 Creative Brief' : `${state.selectedFiles.length} 张素材 · ${Object.values(getIntentLocks()).filter(Boolean).length} 项锁定`;
+}
+
+function updateQuickControls() {
+  const angleLabels = { auto: 'Auto', keep: 'Locked', front: 'Front', '45top': '45° Top', '30side': '30° Side', '90top': 'Top' };
+  $('#quick-angle').textContent = angleLabels[$('#param-angle').value] || $('#param-angle').value;
+  $('#quick-fidelity').textContent = `${$('#param-fidelity').value}%`;
+  $('#quick-batch').textContent = state.currentMode === 'multi-file' ? `${$('#param-batch').value} / file` : $('#param-batch').value;
+  $('#fid-val').textContent = `${$('#param-fidelity').value}%`;
+  $('#batch-val').textContent = $('#param-batch').value;
+  updateCtaState();
+  scheduleKnowledgeCompile();
+}
+
+function showProgress(message = '建立本地创作会话…') {
+  state.generating = true;
+  $('#progress-title').textContent = '编译创作意图';
+  $('#progress-percent').textContent = '0%';
+  $('#progress-bar-fill').style.width = '0%';
+  $('#progress-log').textContent = message;
+  setStage('processing');
+  updateCtaState();
+}
+
+function updateProgress(data) {
+  const progress = Math.max(0, Math.min(1, Number(data.progress || 0)));
+  $('#progress-percent').textContent = `${Math.round(progress * 100)}%`;
+  $('#progress-bar-fill').style.width = `${Math.round(progress * 100)}%`;
+  $('#progress-title').textContent = data.message || (progress < .18 ? '读取知识与素材' : progress < .72 ? '生成商业版本' : '整理交付结果');
+  const logs = Array.isArray(data.logs) ? data.logs : [];
+  $('#progress-log').textContent = logs.length ? logs[logs.length - 1] : (data.message || '处理中…');
+}
+
+function showError(error) {
+  state.generating = false;
+  $('#error-message').textContent = String(error || '未知错误').replace(/^Error:\s*/, '').slice(0, 280);
+  setStage('error');
+  updateCtaState();
+  toast('任务没有完成，创作会话已保留错误证据', 'error');
+}
+
+async function handleGenerate() {
+  if (state.generating || !state.selectedFiles.length) return;
+  showProgress();
+  try {
+    await compileKnowledgePreview();
+    const params = {
+      files: state.selectedFiles,
+      file: state.selectedFiles[0],
+      model: $('#param-model').value,
+      variations: Number($('#param-batch').value),
+      batch: Number($('#param-batch').value),
+      platter: getPlatter(),
+      fidelity: Number($('#param-fidelity').value),
+      angle: $('#param-angle').value,
+      refine: $('#param-refine').checked,
+      brief: buildBrief(),
+      intent_locks: getIntentLocks(),
+      category: 'general',
+    };
+    let response;
+    if (state.currentMode === 'single') response = await API.startSingle(params);
+    else if (state.currentMode === 'multi-file') response = await API.startMultiFile(params);
+    else if (state.currentMode === 'group-split') response = await API.startGroupSplit(params);
+    else response = await API.cutoutBatch(params);
+    state.currentTaskId = response.task_id || '';
+    state.currentSessionId = response.session_id || '';
+    state.currentGenerationId = response.generation_id || '';
+    API.startPolling(state.currentTaskId, handleTaskUpdate, 900);
+  } catch (error) {
+    showError(error);
   }
 }
 
-// ── Progress ──
-function showProgress() {
-  $('#progress-panel').style.display = '';
-  $('#results-panel').style.display = 'none';
-  updateProgress(0, '准备中...', []);
-}
-function hideProgress() { $('#progress-panel').style.display = 'none'; }
-function updateProgress(pct, msg, logs) {
-  const p = Math.min(100, Math.max(0, Math.round((pct || 0) * 100)));
-  $('#progress-percent').textContent = p + '%';
-  $('#progress-bar-fill').style.width = p + '%';
-  if (msg) $('#progress-title').textContent = msg;
-  if (logs && logs.length) {
-    const logEl = $('#progress-log');
-    logEl.innerHTML = logs.slice(-20).map(l => `<div>${escapeHtml(l)}</div>`).join('');
-    logEl.scrollTop = logEl.scrollHeight;
-  }
-}
-
-// ── Results ──
-function showResults(results) {
-  state.results = results;
-  hideProgress();
-  const panel = $('#results-panel');
-  panel.style.display = '';
-
-  // Show compare button if we have original
-  const cmpBtn = $('#btn-compare-now');
-  if (cmpBtn) cmpBtn.style.display = state.originalDataUrl ? '' : 'none';
-
+async function handleTaskUpdate(data) {
+  if (data.status === 'error') { showError(data.error || '任务失败'); return; }
+  updateProgress(data);
+  if (data.status !== 'completed') return;
+  state.generating = false;
+  state.results = data.results || { main: [], cutout: [] };
+  if (state.currentMode === 'cutout-batch') state.resultTab = 'cutout';
+  else state.resultTab = (state.results.main || []).length ? 'main' : 'cutout';
+  state.viewerIndex = 0;
+  await refreshCurrentSession();
   renderResults();
+  setStage('success');
+  updateCtaState();
+  const count = (state.results.main || []).length + (state.results.cutout || []).length;
+  $('#summary-result').textContent = `${count} 个结果已写入创作账本`;
+  $('#summary-result-note').textContent = '请选择、反馈或回传终稿，让下一版更接近你';
+  toast('任务完成：知识来源、Prompt 和结果血缘已记录', 'success');
 }
-function hideResults() {
-  state.results = null;
-  const el = $('#results-panel');
-  if (el) el.style.display = 'none';
+
+async function refreshCurrentSession() {
+  if (!state.currentSessionId) return;
+  try {
+    const session = await API.getSession(state.currentSessionId);
+    const generations = session.generations || [];
+    if (!state.currentGenerationId && generations.length) state.currentGenerationId = generations[generations.length - 1].id;
+    const generation = generations.find((item) => item.id === state.currentGenerationId) || generations[generations.length - 1];
+    if (generation?.knowledge_refs?.length) {
+      const bundle = { ...(state.knowledgeBundle || {}), sources: generation.knowledge_refs };
+      state.knowledgeBundle = bundle;
+      renderKnowledge(bundle);
+    }
+  } catch (_) { /* ledger is non-blocking */ }
+}
+
+function getResultItems(tab = state.resultTab) {
+  return state.results && Array.isArray(state.results[tab]) ? state.results[tab] : [];
+}
+
+function resultDataUrl(item, tab = state.resultTab) {
+  if (!item) return '';
+  if (item.data && String(item.data).startsWith('data:')) return item.data;
+  if (item.data) return API.b64ToDataURL(item.data, tab === 'cutout' ? 'image/png' : 'image/jpeg');
+  return item.url || '';
 }
 
 function renderResults() {
-  if (!state.results) return;
-  const grid = $('#results-grid');
-  grid.innerHTML = '';
-  const items = state.resultTab === 'main' ? state.results.main : state.results.cutout;
-  const isPng = state.resultTab === 'cutout';
-
-  $$('.r-tab').forEach(b => b.classList.toggle('active', b.dataset.rtab === state.resultTab));
-
-  if (!items || !items.length) {
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--t3);font-size:13px;">暂无结果</div>';
+  $$('.result-tab').forEach((button) => {
+    const active = button.dataset.rtab === state.resultTab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  const items = getResultItems();
+  if (!items.length) {
+    const fallback = state.resultTab === 'main' ? 'cutout' : 'main';
+    if (getResultItems(fallback).length) { state.resultTab = fallback; renderResults(); }
     return;
   }
-  items.forEach((item, idx) => {
-    const div = document.createElement('div');
-    div.className = 'result-item';
-    const dataUrl = API.b64ToDataURL(item.data, isPng ? 'image/png' : 'image/jpeg');
-    div.innerHTML = `
-      <img src="${dataUrl}" alt="${item.name}" loading="lazy" />
-      <div class="result-item-ovr">
-        ${state.originalDataUrl ? `<button class="act-compare" title="对比原图" data-idx="${idx}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="16" rx="2"/><rect x="14" y="4" width="7" height="16" rx="2"/></svg>
-        </button>` : ''}
-        <button class="act-save" title="保存" data-idx="${idx}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-        </button>
-        ${item.path ? `<button class="act-folder" title="打开位置" data-idx="${idx}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-        </button>` : ''}
-      </div>`;
-    div.querySelector('img').addEventListener('click', () => openModal(dataUrl, item));
-    div.querySelector('.act-save').addEventListener('click', e => { e.stopPropagation(); saveResultImage(item); });
-    const folderBtn = div.querySelector('.act-folder');
-    if (folderBtn) folderBtn.addEventListener('click', e => { e.stopPropagation(); API.openInFolder(item.path).catch(err => toast('打开失败: ' + err, 'error')); });
-    const cmpBtn2 = div.querySelector('.act-compare');
-    if (cmpBtn2) cmpBtn2.addEventListener('click', e => { e.stopPropagation(); setCompareView(state.originalDataUrl, dataUrl); });
-    grid.appendChild(div);
+  state.viewerIndex = Math.max(0, Math.min(state.viewerIndex, items.length - 1));
+  const item = items[state.viewerIndex];
+  const src = resultDataUrl(item);
+  $('#viewer-main-img').src = src;
+  $('#viewer-main-img').onclick = () => openModal(src);
+  $('#viewer-nav').hidden = items.length < 2;
+  $('#viewer-counter').textContent = `${state.viewerIndex + 1} / ${items.length}`;
+  $('#viewer-thumbs').innerHTML = items.map((entry, index) => `<button class="viewer-thumb ${index === state.viewerIndex ? 'active' : ''}" type="button" data-index="${index}"><img src="${resultDataUrl(entry)}" alt="结果 ${index + 1}" /></button>`).join('');
+  $$('.viewer-thumb').forEach((button) => button.addEventListener('click', () => { state.viewerIndex = Number(button.dataset.index); renderResults(); }));
+  if (state.originalDataUrl && src) state.compareData = { original: state.originalDataUrl, result: src };
+}
+
+async function saveCurrentResults() {
+  const items = getResultItems();
+  if (!items.length) return;
+  let saved = 0;
+  for (const item of items) {
+    if (!item.data) continue;
+    try { await API.saveImage(item.name || `product-atelier-${saved + 1}.${state.resultTab === 'cutout' ? 'png' : 'jpg'}`, item.data.replace(/^data:[^,]+,/, '')); saved += 1; }
+    catch (error) { toast(`保存失败：${error}`, 'error'); break; }
+  }
+  if (saved) toast(`已保存 ${saved} 个结果`, 'success');
+}
+
+async function openOutputFolder() {
+  const item = getResultItems()[state.viewerIndex];
+  if (!item?.path) { toast('当前结果没有可定位的本地路径', 'error'); return; }
+  try { await API.openInFolder(item.path); } catch (error) { toast(`无法打开目录：${error}`, 'error'); }
+}
+
+async function recordFeedback(signal, reason = '') {
+  if (!state.currentSessionId) { toast('当前没有可反馈的创作会话', 'error'); return; }
+  try {
+    await API.recordFeedback(state.currentSessionId, {
+      signal,
+      generation_id: state.currentGenerationId || null,
+      reason,
+      scope: 'session',
+      structured: { mode: state.currentMode, result_tab: state.resultTab, result_index: state.viewerIndex, brief: $('#brief-input').value.trim() },
+    });
+    toast(signal === 'adopted' ? '已记录采用：这版会成为成功证据' : '反馈已进入本地学习证据', 'success');
+    $('#feedback-input').value = '';
+  } catch (error) { toast(`反馈记录失败：${error}`, 'error'); }
+}
+
+function openDrawer(name) {
+  const drawer = name === 'advanced' ? $('#advanced-drawer') : $('#intelligence-drawer');
+  drawer.hidden = false;
+}
+
+function closeDrawer(name) {
+  const drawer = name === 'advanced' ? $('#advanced-drawer') : $('#intelligence-drawer');
+  drawer.hidden = true;
+  updateQuickControls();
+}
+
+function openModal(src) {
+  if (!src) return;
+  modalReturnFocus = document.activeElement;
+  $('#modal-img').src = src;
+  $('#img-modal').hidden = false;
+  $('#modal-close').focus();
+}
+function closeModal() {
+  $('#img-modal').hidden = true;
+  $('#modal-img').removeAttribute('src');
+  if (modalReturnFocus instanceof HTMLElement) modalReturnFocus.focus();
+  modalReturnFocus = null;
+}
+
+function renderCompare() {
+  const has = Boolean(state.compareData?.original && state.compareData?.result);
+  $('#compare-empty').hidden = has;
+  $('#compare-view').hidden = !has;
+  if (!has) return;
+  $('#compare-img-original').src = state.compareData.original;
+  $('#compare-img-result').src = state.compareData.result;
+  setComparePosition(50);
+}
+
+function setComparePosition(percent) {
+  const value = Math.max(3, Math.min(97, percent));
+  $('#compare-after').style.left = `${value}%`;
+  $('#compare-slider').style.left = `${value}%`;
+  $('#compare-slider').setAttribute('aria-valuenow', String(Math.round(value)));
+}
+
+function setupCompare() {
+  const view = $('#compare-view');
+  const slider = $('#compare-slider');
+  let dragging = false;
+  const move = (clientX) => {
+    const rect = view.getBoundingClientRect();
+    if (rect.width) setComparePosition(((clientX - rect.left) / rect.width) * 100);
+  };
+  slider.addEventListener('pointerdown', (event) => { dragging = true; slider.setPointerCapture(event.pointerId); move(event.clientX); });
+  slider.addEventListener('pointermove', (event) => { if (dragging) move(event.clientX); });
+  slider.addEventListener('pointerup', () => { dragging = false; });
+  view.addEventListener('click', (event) => move(event.clientX));
+  slider.addEventListener('keydown', (event) => {
+    const current = Number(slider.getAttribute('aria-valuenow') || 50);
+    const delta = event.shiftKey ? 10 : 2;
+    if (event.key === 'ArrowLeft') { event.preventDefault(); setComparePosition(current - delta); }
+    if (event.key === 'ArrowRight') { event.preventDefault(); setComparePosition(current + delta); }
+    if (event.key === 'Home') { event.preventDefault(); setComparePosition(3); }
+    if (event.key === 'End') { event.preventDefault(); setComparePosition(97); }
   });
 }
 
-async function saveResultImage(item) {
-  try {
-    const path = await API.saveImage(item.name, item.data);
-    toast('已保存', 'success', 2000);
-  } catch (e) {
-    if (String(e).includes('取消')) return;
-    toast('保存失败: ' + e, 'error');
-  }
+function formatTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-// ── Generate flow ──
-async function handleGenerate() {
-  if (state.generating) return;
-  if (!state.selectedFiles.length) { toast('请先上传图片', 'error'); return; }
-
-  state.generating = true;
-  state.currentTaskId = null;
-  const btn = $('#btn-generate');
-  btn.classList.add('loading');
-  btn.disabled = false;
-  hideResults();
-  showProgress();
-
-  try {
-    const file = state.selectedFiles[0];
-    let result;
-
-    if (state.currentMode === 'cutout') {
-      updateProgress(15, '本地抠图中 (BiRefNet)...', []);
-      result = await API.cutoutOnly(file);
-      updateProgress(100, '抠图完成！', ['抠图完成']);
-      state.results = { main: [], cutout: [{ name: 'cutout.png', data: result.data, path: result.path || '' }] };
-      state.resultTab = 'cutout';
-      showResults(state.results);
-      toast('抠图完成！', 'success');
-    } else {
-      const params = {
-        file,
-        model: $('#param-model').value,
-        platter: document.querySelector('input[name="platter"]:checked')?.value || 'auto',
-        fidelity: parseInt($('#param-fidelity').value),
-        angle: $('#param-angle').value,
-      };
-      if (state.currentMode === 'single') {
-        params.product_name = ''; // VLM auto-detect
-        params.batch = parseInt($('#param-batch').value);
-        result = await API.startSingle(params);
-      } else {
-        params.refine = $('#param-refine').checked;
-        result = await API.startMulti(params);
-      }
-      state.currentTaskId = result.task_id;
-
-      await new Promise((resolve, reject) => {
-        API.startPolling(state.currentTaskId, data => {
-          updateProgress(data.progress, data.message || '处理中...', data.logs);
-          if (data.status === 'completed') {
-            showResults(data.results);
-            state.results = data.results;
-            toast('生成完成！', 'success');
-            resolve();
-          } else if (data.status === 'error') {
-            toast('生成失败: ' + (data.error || '未知错误'), 'error', 6000);
-            hideProgress();
-            reject(new Error(data.error || '生成失败'));
-          }
-        }, 2000);
-      });
-    }
-  } catch (e) {
-    console.error(e);
-    if (!String(e.message).includes('生成失败')) toast('出错了: ' + e.message, 'error', 5000);
-    hideProgress();
-  } finally {
-    state.generating = false;
-    btn.classList.remove('loading');
-    updateCtaState();
-  }
-}
-
-// ── Image modal ──
-function openModal(dataUrl, item) {
-  const modal = $('#img-modal'), img = $('#modal-img'), actions = $('#modal-actions');
-  img.src = dataUrl;
-  actions.innerHTML = '';
-  if (item) {
-    const saveBtn = document.createElement('button');
-    saveBtn.className = 'm-save';
-    saveBtn.textContent = '保存图片';
-    saveBtn.addEventListener('click', () => saveResultImage(item));
-    actions.appendChild(saveBtn);
-    if (item.path) {
-      const folderBtn = document.createElement('button');
-      folderBtn.className = 'm-folder';
-      folderBtn.textContent = '打开位置';
-      folderBtn.addEventListener('click', () => { API.openInFolder(item.path).catch(err => toast('打开失败: ' + err, 'error')); });
-      actions.appendChild(folderBtn);
-    }
-  }
-  modal.style.display = '';
-}
-function closeModal() { $('#img-modal').style.display = 'none'; $('#modal-img').src = ''; }
-
-// ── Compare view ──
-function setupCompare() {
-  const container = $('.compare-view');
-  if (!container) return;
-  const slider = $('#compare-slider');
-  const resultDiv = $('#compare-after');
-  let dragging = false;
-
-  function setPos(pct) {
-    pct = Math.max(0, Math.min(100, pct));
-    slider.style.left = pct + '%';
-    resultDiv.style.clipPath = `inset(0 0 0 ${pct}%)`;
-  }
-  function getPct(e) {
-    const rect = container.getBoundingClientRect();
-    const cx = e.touches ? e.touches[0].clientX : e.clientX;
-    return ((cx - rect.left) / rect.width) * 100;
-  }
-  container.addEventListener('mousedown', e => { if (!state.compareData) return; dragging = true; setPos(getPct(e)); });
-  container.addEventListener('touchstart', e => { if (!state.compareData) return; dragging = true; setPos(getPct(e)); });
-  document.addEventListener('mousemove', e => { if (dragging) setPos(getPct(e)); });
-  document.addEventListener('touchmove', e => { if (dragging) setPos(getPct(e)); });
-  document.addEventListener('mouseup', () => dragging = false);
-  document.addEventListener('touchend', () => dragging = false);
-}
-
-function setCompareView(originalUrl, resultUrl) {
-  state.compareData = { original: originalUrl, result: resultUrl };
-  $('#compare-empty').style.display = 'none';
-  $('#compare-view').style.display = '';
-  $('#compare-img-original').src = originalUrl;
-  $('#compare-img-result').src = resultUrl;
-  switchPage('compare');
-  setTimeout(() => {
-    $('#compare-slider').style.left = '50%';
-    $('#compare-after').style.clipPath = 'inset(0 0 0 50%)';
-  }, 100);
-}
-
-// ── History ──
-async function loadHistory() {
+async function loadSessions() {
   const grid = $('#history-grid');
-  grid.innerHTML = '<div class="history-empty"><p>加载中...</p></div>';
+  grid.innerHTML = '<div class="page-empty">正在读取本地创作账本…</div>';
   try {
-    const items = await API.getHistory();
-    grid.innerHTML = '';
-    if (!items.length) {
-      grid.innerHTML = '<div class="history-empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><p>暂无历史记录</p></div>';
-      return;
-    }
-    const thumbs = await Promise.all(items.map(async item => {
-      if (item.batch) return { item, url: null };
-      try { return { item, url: await API.getThumbnailUrl(item.path) }; }
-      catch { return { item, url: null }; }
+    const sessions = await API.getSessions(60);
+    if (!sessions.length) { grid.innerHTML = '<div class="page-empty">还没有创作会话。完成第一项任务后，版本链会出现在这里。</div>'; return; }
+    grid.innerHTML = sessions.map((session) => `<article class="session-card" data-session-id="${escapeHtml(session.id)}"><div class="session-card__top"><span class="session-card__mode">${escapeHtml(MODE_CONFIG[session.mode]?.badge || String(session.mode).toUpperCase())}</span><span class="session-card__status">${escapeHtml(session.status || 'draft')}</span></div><div><h3>${escapeHtml(session.title || '未命名会话')}</h3><p>${escapeHtml(session.brief?.objective || session.brief?.user_request || '保留了素材、参数与生成证据')}</p></div><div class="session-card__meta"><span>${session.asset_count || 0} assets · ${session.generation_count || 0} versions</span><span>${formatTime(session.updated_at)}</span></div></article>`).join('');
+    $$('.session-card', grid).forEach((card) => card.addEventListener('click', async () => {
+      try {
+        const session = await API.getSession(card.dataset.sessionId);
+        const generations = session.generations || [];
+        const generation = generations[generations.length - 1];
+        state.knowledgeBundle = { creative_brief: session.brief || {}, sources: generation?.knowledge_refs || [], positive_rules: [], negative_rules: [], conflicts: [] };
+        renderKnowledge(state.knowledgeBundle);
+        openDrawer('intelligence');
+      } catch (error) { toast(`无法读取会话：${error}`, 'error'); }
     }));
-    thumbs.forEach(({ item, url }) => {
-      const div = document.createElement('div');
-      div.className = 'history-item';
-      if (url) {
-        const img = document.createElement('img'); img.alt = item.name; img.src = url; img.loading = 'lazy'; div.appendChild(img);
-      } else {
-        const fb = document.createElement('div');
-        fb.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;color:var(--t3);font-size:11px;padding:12px;text-align:center;';
-        fb.textContent = item.batch ? item.name : item.name;
-        div.appendChild(fb);
-      }
-      const label = document.createElement('div');
-      label.className = 'history-item-label';
-      const d = new Date(item.time * 1000);
-      label.textContent = `${item.name} · ${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-      div.appendChild(label);
-      div.addEventListener('click', () => {
-        if (item.batch) { toast('批量文件夹，请前往输出目录查看', 'info'); API.openInFolder(item.path).catch(() => {}); }
-        else { API.openInFolder(item.path).catch(() => {}); }
-      });
-      grid.appendChild(div);
-    });
-  } catch (e) {
-    grid.innerHTML = `<div class="history-empty"><p>加载失败: ${escapeHtml(e.message)}</p></div>`;
-  }
+  } catch (error) { grid.innerHTML = `<div class="page-empty">读取失败：${escapeHtml(error)}</div>`; }
 }
 
-// ── Settings ──
+async function loadMemory() {
+  try {
+    await API.synthesizeMemory().catch(() => null);
+    const [ledger, suggestions] = await Promise.all([API.getLedgerStatus(), API.getMemorySuggestions('pending')]);
+    const counts = ledger.counts || {};
+    $('#memory-session-count').textContent = counts.sessions || 0;
+    $('#memory-feedback-count').textContent = counts.feedback || 0;
+    $('#memory-pending-count').textContent = ledger.pending_memory || suggestions.length || 0;
+    const list = $('#memory-list');
+    if (!suggestions.length) { list.innerHTML = '<div class="page-empty">暂无待审核偏好。继续使用后，重复模式会在这里出现。</div>'; return; }
+    list.innerHTML = suggestions.map((item) => {
+      const proposed = item.proposed_value || {};
+      const evidenceCount = Number(proposed.distinct_sessions || (item.evidence || []).length || 0);
+      const contradictionCount = Number(proposed.contradiction_count || 0);
+      return `<article class="memory-item" data-id="${escapeHtml(item.id)}"><div class="memory-item__copy"><div class="memory-item__meta"><span>${escapeHtml(item.scope_type || 'designer')} · ${escapeHtml(item.category || 'general')}</span><strong>${Math.round(Number(item.confidence || 0) * 100)}%</strong></div><h3>${escapeHtml(proposed.label || item.rule_key || '新偏好建议')}</h3><p>${escapeHtml(proposed.directive || JSON.stringify(proposed))}</p><small>${evidenceCount} 个独立会话支持${contradictionCount ? ` · ${contradictionCount} 条反例` : ' · 暂无反例'}</small></div><div class="memory-actions"><button type="button" data-review="approved">采用</button><button type="button" data-review="rejected">拒绝</button></div></article>`;
+    }).join('');
+    $$('[data-review]', list).forEach((button) => button.addEventListener('click', async () => {
+      const item = button.closest('.memory-item');
+      try { await API.reviewMemorySuggestion(item.dataset.id, button.dataset.review); item.remove(); toast('审核结果已记录', 'success'); loadMemory(); }
+      catch (error) { toast(`审核失败：${error}`, 'error'); }
+    }));
+  } catch (error) { $('#memory-list').innerHTML = `<div class="page-empty">读取失败：${escapeHtml(error)}</div>`; }
+}
+
 async function loadSettings() {
   try {
     const settings = await API.getSettings();
     state.settings = settings;
-    if (settings.api_key_set) $('#setting-api-key').placeholder = '已配置（留空则不修改）';
-    if (settings.default_model) $('#setting-model').value = settings.default_model;
-    if (settings.default_platter) $('#setting-platter').value = settings.default_platter;
-    if (settings.default_angle) $('#setting-angle').value = settings.default_angle;
-    if (settings.default_fidelity) {
-      $('#setting-fidelity').value = settings.default_fidelity;
-      updateSliderFill($('#setting-fidelity'));
-      $('#setting-fid-val').textContent = settings.default_fidelity + '%';
-    }
-    if (settings.output_dir) $('#output-dir').textContent = settings.output_dir;
-    if (settings.default_model) $('#param-model').value = settings.default_model;
-    if (settings.default_platter) {
-      const r = document.querySelector(`input[name="platter"][value="${settings.default_platter}"]`);
-      if (r) r.checked = true;
-    }
-    if (settings.default_angle) $('#param-angle').value = settings.default_angle;
-    if (settings.default_fidelity) {
-      $('#param-fidelity').value = settings.default_fidelity;
-      updateSliderFill($('#param-fidelity'));
-      $('#fid-val').textContent = settings.default_fidelity + '%';
-    }
-  } catch (e) { console.error('Settings load error:', e); }
+    if (settings.default_model) { $('#setting-model').value = settings.default_model; $('#param-model').value = settings.default_model; }
+    if (settings.default_platter) { const radio = $(`input[name="platter"][value="${settings.default_platter}"]`); if (radio) radio.checked = true; $('#setting-platter').value = settings.default_platter; }
+    if (settings.default_angle) { $('#setting-angle').value = settings.default_angle; $('#param-angle').value = settings.default_angle; }
+    if (settings.default_fidelity) { $('#setting-fidelity').value = settings.default_fidelity; $('#param-fidelity').value = settings.default_fidelity; }
+    $('#setting-fid-val').textContent = `${$('#setting-fidelity').value}%`;
+    $('#output-dir').textContent = settings.output_dir || '—';
+    $('#setting-api-key').placeholder = settings.api_key_set ? '已配置（留空不修改）' : '输入 API Key';
+    $('#setting-knowledge-path').value = settings.knowledge_base_path || '';
+    renderKnowledgeStatus(settings.knowledge);
+    updateQuickControls();
+  } catch (error) { toast(`读取设置失败：${error}`, 'error'); }
 }
 
-async function saveAppSettings() {
-  const key = $('#setting-api-key').value.trim();
+function renderKnowledgeStatus(status) {
+  if (!status) return;
+  state.knowledgeStatus = status;
+  $('#knowledge-pill-text').textContent = status.available ? `${status.document_count} docs · ${status.rule_count} rules` : '知识库未连接';
+  $('#setting-knowledge-status').textContent = status.available ? '只读连接正常' : '未找到知识库';
+  $('#setting-knowledge-detail').textContent = status.available ? `${status.document_count} 份文档 · ${status.rule_count} 条规则` : status.design_path || '—';
+}
+
+async function saveSettings(includeKey = false) {
   const payload = {
     default_model: $('#setting-model').value,
     default_platter: $('#setting-platter').value,
     default_angle: $('#setting-angle').value,
-    default_fidelity: parseInt($('#setting-fidelity').value),
+    default_fidelity: Number($('#setting-fidelity').value),
+    knowledge_base_path: $('#setting-knowledge-path').value.trim(),
   };
-  if (key) payload.api_key = key;
-  try {
-    await API.saveSettings(payload);
-    const cfg = await API.getAppConfig();
-    cfg.default_model = payload.default_model;
-    cfg.default_platter = payload.default_platter;
-    cfg.default_angle = payload.default_angle;
-    cfg.default_fidelity = payload.default_fidelity;
-    if (key) cfg.api_key = key;
-    await API.setAppConfig(cfg);
-    toast('设置已保存', 'success');
-    $('#setting-api-key').value = '';
-    $('#setting-api-key').placeholder = '已配置（留空则不修改）';
-    await loadSettings();
-  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
+  if (includeKey && $('#setting-api-key').value.trim()) payload.api_key = $('#setting-api-key').value.trim();
+  try { const result = await API.saveSettings(payload); state.settings = result; $('#setting-api-key').value = ''; renderKnowledgeStatus(result.knowledge); toast('设置已保存', 'success'); }
+  catch (error) { toast(`保存失败：${error}`, 'error'); }
+}
+
+async function reloadKnowledge() {
+  try { const status = await API.reloadKnowledge($('#setting-knowledge-path').value.trim()); renderKnowledgeStatus(status); toast('知识库已重新编译', 'success'); await compileKnowledgePreview(); }
+  catch (error) { toast(`知识编译失败：${error}`, 'error'); }
 }
 
 async function checkBalance() {
-  const el = $('#balance-display');
-  el.textContent = '查询中...';
-  try {
-    const r = await API.checkBalance();
-    if (r.error) { el.textContent = '查询失败: ' + r.error; el.style.color = '#f87171'; }
-    else { el.textContent = '余额: ' + r.balance; el.style.color = ''; }
-  } catch (e) { el.textContent = '查询失败: ' + e.message; }
+  $('#balance-display').textContent = '正在查询…';
+  try { const result = await API.checkBalance(); $('#balance-display').textContent = result.error ? result.error : `当前余额：${result.balance}`; }
+  catch (error) { $('#balance-display').textContent = `查询失败：${error}`; }
 }
 
-// ── Window controls ──
-function setupWindowControls() {
-  $('#btn-minimize').addEventListener('click', () => API.minimizeWindow());
-  $('#btn-maximize').addEventListener('click', () => API.toggleMaximize());
-  $('#btn-close').addEventListener('click', () => API.closeApp());
-}
-
-// ── Keyboard ──
-function setupKeyboard() {
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { if ($('#img-modal').style.display !== 'none') closeModal(); }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { if (state.currentPage === 'process' && !state.generating && state.selectedFiles.length) handleGenerate(); }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
-  });
-}
-
-// ── Maximize tracking ──
-async function trackMaximize() {
-  try {
-    const { appWindow } = await import('@tauri-apps/api/window');
-    const check = async () => { try { state.isMaximized = await appWindow.isMaximized(); } catch {} };
-    await check();
-    await appWindow.onResized(() => check());
-  } catch {}
-}
-
-// ── Double-click dragbar to toggle maximize ──
-function setupDragbar() {
-  const dragbar = $('.sidebar-drag-region');
-  if (dragbar) {
-    dragbar.addEventListener('dblclick', async e => {
-      e.stopPropagation();
-      try { const { appWindow } = await import('@tauri-apps/api/window'); await appWindow.toggleMaximize(); } catch {}
-    });
-  }
-  const cdb = $('.content-dragbar');
-  if (cdb) {
-    cdb.addEventListener('dblclick', async e => {
-      try { const { appWindow } = await import('@tauri-apps/api/window'); await appWindow.toggleMaximize(); } catch {}
-    });
-  }
-}
-
-// ── Util ──
-function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
-// ── Init ──
-async function init() {
-  // Restore sidebar state
-  const saved = localStorage.getItem('sidebarCollapsed');
-  if (saved === '0') {
-    state.sidebarCollapsed = false;
-    document.body.classList.remove('sidebar-collapsed');
-  } else {
-    state.sidebarCollapsed = true;
-    document.body.classList.add('sidebar-collapsed');
-  }
-
-  setupWindowControls();
-  setupDropzone();
-  setupSliders();
-  setupGroups();
-  setupCompare();
-  setupKeyboard();
-  setupDragbar();
-
-  // Sidebar
-  $('#sidebar-collapse').addEventListener('click', e => { e.stopPropagation(); toggleSidebar(); });
-  $('#sidebar-logo').addEventListener('click', e => { e.stopPropagation(); if (state.sidebarCollapsed) toggleSidebar(); });
-
-  // Nav
-  $$('.nav-item').forEach(btn => btn.addEventListener('click', () => switchPage(btn.dataset.page)));
-
-  // Mode segmented
-  $$('.seg-btn').forEach(btn => btn.addEventListener('click', () => switchMode(btn.dataset.mode)));
-
-  // Result tabs
-  $$('.r-tab').forEach(btn => btn.addEventListener('click', () => {
-    state.resultTab = btn.dataset.rtab;
-    renderResults();
-  }));
-
-  // Result action buttons
-  $('#btn-save-all')?.addEventListener('click', () => {
-    if (!state.results) return;
-    const items = state.resultTab === 'main' ? state.results.main : state.results.cutout;
-    if (items?.length) { items.forEach((item, i) => setTimeout(() => saveResultImage(item), i * 300)); toast(`正在保存 ${items.length} 张图片...`, 'info'); }
-    else toast('没有可保存的结果', 'error');
-  });
-  $('#btn-open-folder')?.addEventListener('click', () => {
-    API.getSettings().then(s => { if (s.output_dir) API.openInFolder(s.output_dir).catch(() => toast('打开文件夹失败', 'error')); }).catch(() => toast('无法获取输出目录', 'error'));
-  });
-  $('#btn-compare-now')?.addEventListener('click', () => {
-    if (state.originalDataUrl && state.results) {
-      const items = state.resultTab === 'main' ? state.results.main : state.results.cutout;
-      if (items?.[0]) setCompareView(state.originalDataUrl, API.b64ToDataURL(items[0].data, state.resultTab === 'cutout' ? 'image/png' : 'image/jpeg'));
-    }
-  });
-
-  // Primary CTA
+function bindEvents() {
+  $$('.rail-button[data-page]').forEach((button) => button.addEventListener('click', () => switchPage(button.dataset.page)));
+  $$('.mode-button').forEach((button) => button.addEventListener('click', () => switchMode(button.dataset.mode)));
+  const input = $('#file-input');
+  $('#btn-browse').addEventListener('click', () => input.click());
+  $('#btn-replace').addEventListener('click', () => input.click());
+  input.addEventListener('change', () => handleFiles(input.files));
+  $('#btn-clear').addEventListener('click', () => clearSession(true));
+  $('#btn-new-session').addEventListener('click', () => { clearSession(true); switchPage('process'); });
   $('#btn-generate').addEventListener('click', handleGenerate);
-
-  // Modal
-  $('#modal-close').addEventListener('click', closeModal);
-  $('#modal-backdrop').addEventListener('click', closeModal);
-
-  // Settings
-  $('#btn-save-key').addEventListener('click', saveAppSettings);
-  $('#btn-save-settings').addEventListener('click', saveAppSettings);
+  $('#btn-retry').addEventListener('click', handleGenerate);
+  $('#btn-error-reset').addEventListener('click', () => { state.generating = false; setStage(state.selectedFiles.length ? 'ready' : 'empty'); updateCtaState(); });
+  $('#brief-input').addEventListener('input', scheduleKnowledgeCompile);
+  $('#param-angle').addEventListener('change', updateQuickControls);
+  $('#param-fidelity').addEventListener('input', updateQuickControls);
+  $('#param-batch').addEventListener('input', updateQuickControls);
+  $$('input[name="platter"]').forEach((radio) => radio.addEventListener('change', updateQuickControls));
+  $$('[data-lock]').forEach((input) => input.addEventListener('change', () => { input.closest('.lock-chip').classList.toggle('active', input.checked); updateCtaState(); scheduleKnowledgeCompile(); }));
+  $('#btn-advanced').addEventListener('click', () => openDrawer('advanced'));
+  $$('[data-open-advanced]').forEach((button) => button.addEventListener('click', () => openDrawer('advanced')));
+  $('#btn-open-intelligence').addEventListener('click', () => openDrawer('intelligence'));
+  $('#btn-knowledge-card').addEventListener('click', () => openDrawer('intelligence'));
+  $$('[data-close-drawer]').forEach((button) => button.addEventListener('click', () => closeDrawer(button.dataset.closeDrawer)));
+  $$('.result-tab').forEach((button) => button.addEventListener('click', () => { state.resultTab = button.dataset.rtab; state.viewerIndex = 0; renderResults(); }));
+  $('#viewer-prev').addEventListener('click', () => { const items = getResultItems(); if (items.length) { state.viewerIndex = (state.viewerIndex - 1 + items.length) % items.length; renderResults(); } });
+  $('#viewer-next').addEventListener('click', () => { const items = getResultItems(); if (items.length) { state.viewerIndex = (state.viewerIndex + 1) % items.length; renderResults(); } });
+  $('#btn-open-compare').addEventListener('click', () => { renderCompare(); switchPage('compare'); });
+  $('#btn-compare-back').addEventListener('click', () => switchPage('process'));
+  $('#btn-save-all').addEventListener('click', saveCurrentResults);
+  $('#btn-open-folder').addEventListener('click', openOutputFolder);
+  $('#btn-adopt').addEventListener('click', () => { state.lastFeedbackSignal = 'adopted'; recordFeedback('adopted', $('#feedback-input').value.trim()); });
+  $('#btn-reject').addEventListener('click', () => { state.lastFeedbackSignal = 'rejected'; $('#feedback-input').focus(); toast('请说出具体原因，它会成为下一版证据'); });
+  $('#btn-feedback').addEventListener('click', () => { const reason = $('#feedback-input').value.trim(); if (!reason) { toast('请先写下具体判断'); return; } recordFeedback(state.lastFeedbackSignal === 'rejected' ? 'rejected' : 'note', reason); });
+  $('#btn-refresh-history').addEventListener('click', loadSessions);
+  $('#btn-refresh-memory').addEventListener('click', loadMemory);
+  $('#btn-save-key').addEventListener('click', () => saveSettings(true));
+  $('#btn-save-settings').addEventListener('click', () => saveSettings(false));
+  $('#btn-reload-knowledge').addEventListener('click', reloadKnowledge);
   $('#btn-check-balance').addEventListener('click', checkBalance);
-  $('#btn-refresh-history').addEventListener('click', loadHistory);
+  $('#setting-fidelity').addEventListener('input', () => { $('#setting-fid-val').textContent = `${$('#setting-fidelity').value}%`; });
+  $('#modal-backdrop').addEventListener('click', closeModal);
+  $('#modal-close').addEventListener('click', closeModal);
+  $('#btn-min-dot').addEventListener('click', () => API.minimizeWindow().catch(() => {}));
+  $('#btn-max-dot').addEventListener('click', () => API.toggleMaximize().catch(() => {}));
+  $('#btn-close-dot').addEventListener('click', () => API.closeApp().catch(() => window.close()));
+  const canvas = $('#preview-canvas');
+  canvas.addEventListener('dragover', (event) => { event.preventDefault(); if (!state.generating) canvas.style.outline = '2px solid var(--coral)'; });
+  canvas.addEventListener('dragleave', () => { canvas.style.outline = ''; });
+  canvas.addEventListener('drop', (event) => { event.preventDefault(); canvas.style.outline = ''; handleFiles(event.dataTransfer.files); });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (!$('#img-modal').hidden) closeModal();
+    if (!$('#advanced-drawer').hidden) closeDrawer('advanced');
+    if (!$('#intelligence-drawer').hidden) closeDrawer('intelligence');
+  });
+}
 
-  // Init mode
-  switchMode('single');
-  trackMaximize();
-
-  // Backend health
-  setBackendStatus(false, '连接中');
-  let retries = 0;
-  const hc = setInterval(async () => {
-    try {
-      const h = await API.checkHealth();
-      if (h.status === 'ok' || h.ok) {
-        clearInterval(hc);
-        setBackendStatus(true, '已连接');
-        await loadSettings();
-      } else {
-        retries++;
-        if (retries >= 30) { clearInterval(hc); setBackendStatus(false, '离线'); toast('无法连接到后端，请重启应用', 'error', 5000); }
-      }
-    } catch {
-      retries++;
-      if (retries >= 30) { clearInterval(hc); setBackendStatus(false, '离线'); }
+async function connectBackend() {
+  setBackendStatus('connecting', '连接中');
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const health = await API.checkHealth();
+    if (health.ok) {
+      setBackendStatus('connected', '已连接');
+      try { const status = await API.getKnowledgeStatus(); renderKnowledgeStatus(status); } catch (_) { /* keep app usable */ }
+      return;
     }
-  }, 1500);
-
-  // Initial collapsed size
-  if (state.sidebarCollapsed) {
-    try {
-      const { appWindow, LogicalSize } = await import('@tauri-apps/api/window');
-      await appWindow.setSize(new LogicalSize(COLLAPSED_W, DEFAULT_EXPANDED.h)).catch(() => {});
-    } catch {}
+    await new Promise((resolve) => window.setTimeout(resolve, 700));
   }
+  setBackendStatus('disconnected', '未连接');
+  toast('本地服务尚未就绪，稍后可重试', 'error');
+}
+
+async function init() {
+  setupTheme();
+  bindEvents();
+  setupCompare();
+  switchMode('single', false);
+  setStage('empty');
+  updateQuickControls();
+  connectBackend();
+  loadSettings();
 }
 
 document.addEventListener('DOMContentLoaded', init);

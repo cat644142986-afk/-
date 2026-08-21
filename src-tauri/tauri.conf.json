@@ -13,17 +13,14 @@
     "windows": [
       {
         "title": "Product Atelier",
-        "width": 68,
-        "height": 800,
-        "minWidth": 64,
-        "minHeight": 500,
+        "width": 1280, "height": 800, "minWidth": 960, "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
         "decorations": false,
-        "transparent": true,
+        "transparent": false,
         "center": true,
-        "shadow": false,
-        "backgroundColor": "#1c1f28"
+        "shadow": true,
+        "backgroundColor": "#EEEAE3"
       }
     ],
     "security": {
@@ -32,7 +29,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -47,7 +46,9 @@
         "language": "zh-CN"
       },
       "nsis": {
-        "languages": ["SimpChinese"],
+        "languages": [
+          "SimpChinese"
+        ],
         "installMode": "currentUser"
       }
     }

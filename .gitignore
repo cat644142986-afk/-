@@ -35,3 +35,46 @@ desktop.ini
 
 # Logs
 *.log
+
+# Local Product Atelier runtime data (may include private API settings)
+config.json
+*.sqlite3
+output/
+history/
+
+# Local backups and scratch artifacts
+backup/
+backups/
+*.bak*
+*.oldbackup
+*.testbak
+*.v*bak
+*.v*backup
+*.broken*
+/_*
+/fix*.py
+/fix*.cjs
+/patch*.py
+/write*.py
+/write*.cjs
+/test-*.png
+
+# Retired UI experiment layers not referenced by the current entry point
+/src/body-structure.html
+/src/css/tailwind.css
+/src/css/ui-clean.css
+/src/css/v*.css
+/src/js/_appjs_parts/
+/src/js/shoelace-setup.js
+/src/js/ui-clean.js
+/src/js/v*.js
+/src/js/vfinal-ui.js
+/src/public/
+/src/v*.css
+/src/v*.js
+/scripts/copy-assets.cjs
+
+# Local design references and visual-regression captures
+/design-references/
+/tools/*.png
+/tools/__pycache__/

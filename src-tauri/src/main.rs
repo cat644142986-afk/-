@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::net::TcpStream;
 use std::io::{Read, Write};
-use tauri::{Manager, State};
+use tauri::{Manager, State, LogicalPosition, LogicalSize, Position, Size};
+
 use serde::{Deserialize, Serialize};
 
 // ---- State ----
@@ -107,6 +108,18 @@ fn current_exe_dir() -> Option<PathBuf> {
 fn find_server_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<(PathBuf, bool)> {
     let exe_dir = current_exe_dir();
     let mut candidates: Vec<(PathBuf, bool)> = Vec::new();
+
+    // Development must run the current source tree instead of a stale resource
+    // copy left in target/debug by an earlier PyInstaller build.
+    #[cfg(debug_assertions)]
+    {
+        candidates.push((PathBuf::from("python/server.py"), false));
+        candidates.push((PathBuf::from(r"D:\ProductAtelier-Desktop\python\server.py"), false));
+        if let Some(d) = &exe_dir {
+            candidates.push((d.join("../../../../python/server.py"), false));
+            candidates.push((d.join("../../python/server.py"), false));
+        }
+    }
 
     // Production: compiled python-server directory (Tauri resources / portable)
     if let Some(d) = &exe_dir {
@@ -300,6 +313,24 @@ fn open_in_folder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn select_folder_dialog(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+    app.dialog().file().pick_folder(move |path| {
+        let _ = tx.lock().unwrap().take().unwrap().send(path.map(|p| p.to_string()));
+    });
+    let path_str = rx.recv().map_err(|e| e.to_string())?;
+    path_str.ok_or_else(|| "已取消".to_string())
+}
+
+#[tauri::command]
+fn verify_folder_exists(path: String) -> bool {
+    let p = PathBuf::from(&path);
+    p.exists() && p.is_dir()
+}
+
+#[tauri::command]
 fn close_app(app: tauri::AppHandle, state: State<AppState>) {
     if let Some(mut child) = state.python_child.lock().unwrap().take() {
         let _ = child.kill();
@@ -314,6 +345,59 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
 }
 
 // ---- Main ----
+
+// ---- Docking / Edge Snap Commands ----
+
+#[tauri::command]
+fn get_window_position(app: tauri::AppHandle) -> Result<(i32, i32), String> {
+    let win = app.get_webview_window("main").ok_or("Window not found")?;
+    let pos = win.outer_position().map_err(|e| e.to_string())?;
+    Ok((pos.x, pos.y))
+}
+
+#[tauri::command]
+fn get_window_size(app: tauri::AppHandle) -> Result<(u32, u32), String> {
+    let win = app.get_webview_window("main").ok_or("Window not found")?;
+    let sz = win.outer_size().map_err(|e| e.to_string())?;
+    Ok((sz.width, sz.height))
+}
+
+#[tauri::command]
+fn get_monitor_info(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let win = app.get_webview_window("main").ok_or("Window not found")?;
+    let monitor = win.current_monitor().map_err(|e| e.to_string())?
+        .ok_or("No monitor found")?;
+    let sz = monitor.size();
+    let pos = monitor.position();
+    let ws = monitor.work_area();
+    Ok(serde_json::json!({
+        "width": sz.width,
+        "height": sz.height,
+        "x": pos.x,
+        "y": pos.y,
+        "work_x": ws.position.x,
+        "work_y": ws.position.y,
+        "work_width": ws.size.width,
+        "work_height": ws.size.height,
+        "scale_factor": monitor.scale_factor(),
+    }))
+}
+
+#[tauri::command]
+fn set_window_always_on_top(app: tauri::AppHandle, always_on_top: bool) -> Result<(), String> {
+    let win = app.get_webview_window("main").ok_or("Window not found")?;
+    win.set_always_on_top(always_on_top).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_window_pos_size(app: tauri::AppHandle, x: i32, y: i32, w: u32, h: u32) -> Result<(), String> {
+    let win = app.get_webview_window("main").ok_or("Window not found")?;
+    win.set_size(Size::Logical(LogicalSize { width: w as f64, height: h as f64 })).map_err(|e| e.to_string())?;
+    win.set_position(Position::Logical(LogicalPosition { x: x as f64, y: y as f64 })).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -338,21 +422,31 @@ fn main() {
                 api_port: Mutex::new(port),
                 config: Mutex::new(cfg),
             });
+            // Windows 11 supplies the outer shadow and rounded window region.
+            // The web surface stays opaque so no underlying window can bleed
+            // through the anti-aliased corners.
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_api_port, get_app_config, set_app_config,
             save_base64_image, open_in_folder,
-            close_app
+            select_folder_dialog, verify_folder_exists,
+            close_app,
+            get_window_position, get_window_size, get_monitor_info,
+            set_window_always_on_top, set_window_pos_size
         ])
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                let state_mutex = window.state::<AppState>();
-                let mut child_opt = state_mutex.python_child.lock().unwrap();
-                if let Some(mut child) = child_opt.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
+            match event {
+                tauri::WindowEvent::CloseRequested { .. } => {
+                    let state_mutex = window.state::<AppState>();
+                    let mut child_opt = state_mutex.python_child.lock().unwrap();
+                    if let Some(mut child) = child_opt.take() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
                 }
+                tauri::WindowEvent::Focused(_) => {}
+                _ => {}
             }
         })
         .run(tauri::generate_context!())
