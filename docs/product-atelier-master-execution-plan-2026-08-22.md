@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 日期：2026-08-22<br>
-> 状态：Phase 0–3 已完成；Phase 4 正式前端工作区检查点已通过，打包壳/DPI/窄屏与模块拆分继续收尾<br>
+> 状态：Phase 0–3 已完成；Phase 4 正式前端、960×600 抽屉与 Studio 排版检查点已通过，打包壳/DPI 与模块拆分继续收尾<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -401,10 +401,11 @@ DIY 外观要求：
 
 - 已接入后端持久工作区：三个素材域、四个独立草稿、revision 冲突恢复、不可变提交快照和最近结果恢复。
 - 已落地融合左栏、精简顶部、中央单舞台、单一控制区、24px 根圆角、44px Logo 和 12px 红绿灯；移除常驻底部大卡与一级对比入口。
-- 已在隔离账本完成四工作流 20 次切换恢复实测；1280×720 Task Dock 无内部滚动，浏览器无 error/warning。
+- 已在隔离账本完成四工作流 20 次切换恢复实测；1280×720 Task Dock 无内部滚动；960×600 控制区变为带焦点管理的抽屉，主 CTA 可见，浏览器无 error/warning。
 - 已修复 CORS 漏掉 `PUT/DELETE` 导致“读取可用但草稿无法保存”的真实故障，sidecar contract 升级为 `2026-08-22.4`。
 - 已明确快速去背景不读取文字、数量、Intent Locks 或知识规则，不再伪装为语义选物。
-- 尚未完成：`app.js` 全职责拆分、约 960×600 控制抽屉、Tauri 100/125/150% DPI 壳层实测、核心文字可读性审计和统一状态组件；详见 Phase 4 检查点文档。
+- Studio 核心中文已使用 10/12/13px 分级 token，深色知识卡按内容高度呈现，不再靠巨型空卡或极小操作文字制造视觉效果。
+- 尚未完成：`app.js` 全职责拆分、Tauri 100/125/150% DPI 壳层实测、非 Studio 页面排版审计和统一状态组件；详见 Phase 4 检查点文档。
 
 ### 阶段 5：素材管理、模式上下文与 Task Dock（P0，预计 6–10 小时）
 
@@ -612,7 +613,7 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 从 Phase 4 剩余门禁开始，不重复 Phase 0–3，也不退回历史 `vXX-fixes.css` 补丁路线。
-4. 先完成窄屏抽屉、Tauri 多 DPI 壳层与模块边界，再进入 Phase 5 素材管理/Task Dock。
+4. 960×600 抽屉已通过；下一步完成 Tauri 多 DPI 壳层与模块边界，再进入 Phase 5 素材管理/Task Dock。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 

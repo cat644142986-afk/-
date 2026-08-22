@@ -82,7 +82,7 @@ test('job dialog does not repeatedly announce or focus its backdrop', () => {
   assert.match(html, /id="job-drawer"[\s\S]*?class="drawer-backdrop"[^>]*tabindex="-1"/);
   assert.match(html, /id="job-list" aria-live="off"/);
   assert.match(html, /id="job-status-announcer" role="status" aria-live="polite"/);
-  assert.match(app, /openLayer\.id === 'img-modal' \? \$\('\.modal-card', openLayer\) : \$\('\.drawer', openLayer\)/);
+  assert.match(app, /openLayer\.id === 'img-modal' \? \$\('\.modal-card', openLayer\) : openLayer\.id === 'settings-panel' \? openLayer : \$\('\.drawer', openLayer\)/);
 });
 
 test('unsupported Folder action is absent and export handles all result roles independently', () => {
@@ -103,6 +103,27 @@ test('production shell keeps review contextual and removes the redundant bottom 
   assert.match(css, /\.traffic-light \{ width: 12px; height: 12px/);
 });
 
+test('narrow windows turn workflow controls into an accessible drawer instead of squeezing the stage', () => {
+  assert.match(html, /id="btn-workflow-drawer"[^>]*aria-controls="settings-panel"[^>]*aria-expanded="false"/);
+  assert.match(html, /id="task-dock-backdrop"[^>]*hidden/);
+  assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.studio-grid \{ grid-template-columns: minmax\(0,1fr\); \}/);
+  assert.match(css, /\.task-dock\.is-open \{ opacity: 1; pointer-events: auto; transform: translateX\(0\); \}/);
+  assert.match(app, /panel\.toggleAttribute\('inert', !open\)/);
+  assert.match(app, /panel\.setAttribute\('role', 'dialog'\)/);
+  assert.match(app, /compactWorkflowDock\.addEventListener\('change', syncWorkflowDockLayout\)/);
+  assert.match(app, /if \(\$\('#settings-panel'\)\.classList\.contains\('is-open'\)\) closeWorkflowDock\(\)/);
+});
+
+test('primary studio copy uses readable type tokens instead of shrinking every label', () => {
+  assert.match(css, /--type-caption: 10px/);
+  assert.match(css, /--type-control: 12px/);
+  assert.match(css, /--type-body: 13px/);
+  assert.match(css, /\.creative-command input \{[^}]*font-size: var\(--type-body\)/);
+  assert.match(css, /\.mode-button strong \{[^}]*font-size: var\(--type-control\)/);
+  assert.match(css, /\.dock-field select,[^}]*font-size: var\(--type-control\)/);
+  assert.match(css, /\.canvas-empty p \{[^}]*font-size: var\(--type-body\)/);
+});
+
 test('workspace restores its latest result and exposes recoverable asset removal', () => {
   assert.match(app, /await restoreWorkspaceResult\(mode, payload\)/);
   assert.match(app, /payload\.jobs\.find\(\(entry\) => entry\.id === preferredId/);
@@ -120,4 +141,11 @@ test('quick cutout does not pretend to understand a semantic brief or knowledge 
   assert.match(app, /\$\('#field-intent'\)\.hidden = quickCutout/);
   assert.match(app, /if \(mode === 'cutout-batch'\) \{[\s\S]*?renderCutoutCapability\(\);[\s\S]*?return null/);
   assert.match(app, /本地分割 · 不读取文字描述/);
+  assert.match(app, /else \{[\s\S]*?state\.knowledgeBundle = null;[\s\S]*?renderKnowledge\(null\);/);
+  assert.match(app, /if \(!bundle\) \{[\s\S]*?knowledge-summary'\)\.textContent = '等待知识编译'/);
+});
+
+test('knowledge summary stays content-sized instead of stretching into an empty dark panel', () => {
+  assert.match(css, /\.task-dock \{[^}]*grid-template-rows: auto auto auto auto auto auto minmax\(0,1fr\) auto/);
+  assert.match(css, /\.task-dock__footer \{ grid-row: -2 \/ -1/);
 });
