@@ -14,6 +14,16 @@
 
 ---
 
+## 2026-08-21 实施状态更新
+
+`codex/reliable-batch-workspace` 已实现本文阶段 A—D 的核心代码与离线验收门禁：
+schema v2 迁移、内容寻址素材、持久任务/尝试、有界公平调度、取消/暂停/重试/崩溃恢复、共享素材工作台与任务 Dock。
+当前契约见 `docs/ledger-schema-v2.md` 和 `docs/reliable-workspace-v2.md`，验证命令见 README 的“离线验收”。
+
+仍需在具备 Rust/Windows 环境的发布机上完成 Tauri 原生构建、Windows DPI、安装/覆盖升级，以及真实 BiRefNet/ONNX 资源峰值验收；本分支没有把这些未实测项目写成已通过。
+
+---
+
 ## 0. 交接结论
 
 Product Atelier 已经拥有一套可运行的 Growth Studio UI、四个工作流入口、本地创作账本、知识编译器和 Design DNA 第一版；但它还没有达到“可持续工作、可恢复、可成长”的产品标准。

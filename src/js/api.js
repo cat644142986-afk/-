@@ -6,7 +6,9 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 
 const isTauriRuntime = typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
 let API_BASE = null;
-let pollTimer = null;
+let progressPollTimer = null;
+let batchPollTimer = null;
+const DEFAULT_TIMEOUT_MS = 15000;
 
 function currentWindow() {
   if (!isTauriRuntime) return null;
@@ -24,22 +26,66 @@ async function getPort() {
   return API_BASE;
 }
 
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const fetchOptions = Object.assign({}, options || {});
+  const externalSignal = fetchOptions.signal;
+  delete fetchOptions.timeoutMs;
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = function() { controller.abort(); };
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
+  const timer = setTimeout(function() {
+    timedOut = true;
+    controller.abort();
+  }, Math.max(1, Number(timeoutMs) || DEFAULT_TIMEOUT_MS));
+  try {
+    return await fetch(url, Object.assign({}, fetchOptions, { signal: controller.signal }));
+  } catch (error) {
+    if (timedOut) {
+      const timeoutError = new Error('Request timed out');
+      timeoutError.code = 'REQUEST_TIMEOUT';
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', abortFromCaller);
+  }
+}
+
 async function fetchJSON(url, options) {
   options = options || {};
   const base = await getPort();
-  const resp = await fetch(base + url, Object.assign({}, options, {
+  const resp = await fetchWithTimeout(base + url, Object.assign({}, options, {
     headers: Object.assign({}, options.headers || {}),
-  }));
+  }), options.timeoutMs || DEFAULT_TIMEOUT_MS);
   if (!resp.ok) {
     const text = await resp.text().catch(function() { return ''; });
-    throw new Error('HTTP ' + resp.status + ': ' + text.slice(0, 200));
+    let message = text.slice(0, 300);
+    try {
+      const parsed = JSON.parse(text);
+      message = parsed?.detail?.message || parsed?.detail || parsed?.message || message;
+    } catch (_) { /* keep the response text */ }
+    const error = new Error('HTTP ' + resp.status + ': ' + message);
+    error.status = resp.status;
+    error.code = 'HTTP_ERROR';
+    throw error;
   }
   return resp.json();
 }
 
+async function absoluteApiUrl(path) {
+  return (await getPort()) + path;
+}
+
 async function postForm(url, formData) {
   const base = await getPort();
-  const resp = await fetch(base + url, { method: 'POST', body: formData });
+  const resp = await fetchWithTimeout(
+    base + url,
+    { method: 'POST', body: formData },
+    120000,
+  );
   if (!resp.ok) {
     const text = await resp.text().catch(function() { return ''; });
     throw new Error('HTTP ' + resp.status + ': ' + text.slice(0, 200));
@@ -141,6 +187,57 @@ export async function cutoutOnly(file, sessionId) {
   return postForm('/api/cutout', fd);
 }
 
+// Persistent asset workspace
+export async function getAssets(limit, options) {
+  return fetchJSON('/api/assets?limit=' + encodeURIComponent(limit || 500), options);
+}
+export async function importAssets(files) {
+  const fd = new FormData();
+  Array.from(files || []).forEach(function(file) { fd.append('files', file); });
+  return postForm('/api/assets/import-batch', fd);
+}
+export async function getAsset(assetId) {
+  return fetchJSON('/api/assets/' + encodeURIComponent(assetId));
+}
+export async function getAssetContentUrl(assetId) {
+  return absoluteApiUrl('/api/assets/' + encodeURIComponent(assetId) + '/content');
+}
+export async function getAssetThumbnailUrl(assetId, size) {
+  return absoluteApiUrl('/api/assets/' + encodeURIComponent(assetId) + '/thumbnail?size=' + encodeURIComponent(size || 320));
+}
+
+// Durable jobs
+export async function createJob(payload) {
+  return fetchJSON('/api/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+}
+export async function getJobs(limit, options) {
+  return fetchJSON('/api/jobs?limit=' + encodeURIComponent(limit || 100), options);
+}
+export async function getJob(jobId) {
+  return fetchJSON('/api/jobs/' + encodeURIComponent(jobId));
+}
+export async function cancelJob(jobId) {
+  return fetchJSON('/api/jobs/' + encodeURIComponent(jobId) + '/cancel', { method: 'POST' });
+}
+export async function pauseJob(jobId) {
+  return fetchJSON('/api/jobs/' + encodeURIComponent(jobId) + '/pause', { method: 'POST' });
+}
+export async function resumeJob(jobId) {
+  return fetchJSON('/api/jobs/' + encodeURIComponent(jobId) + '/resume', { method: 'POST' });
+}
+export async function retryJob(jobId, itemIds) {
+  const body = Array.isArray(itemIds) && itemIds.length ? { item_ids: itemIds } : {};
+  return fetchJSON('/api/jobs/' + encodeURIComponent(jobId) + '/retry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 // Knowledge + creation ledger
 export async function getKnowledgeStatus() { return fetchJSON('/api/knowledge/status'); }
 export async function compileKnowledge(context) {
@@ -187,16 +284,16 @@ export function startPolling(taskId, onUpdate, intervalMs) {
   function tick() {
     pollProgress(taskId).then(function(data) {
       onUpdate(data);
-      if (data.status === 'completed' || data.status === 'error') { pollTimer = null; return; }
-      pollTimer = setTimeout(tick, intervalMs);
+      if (data.status === 'completed' || data.status === 'error') { progressPollTimer = null; return; }
+      progressPollTimer = setTimeout(tick, intervalMs);
     }).catch(function(e) {
       onUpdate({ status: 'error', error: String(e) });
-      pollTimer = null;
+      progressPollTimer = null;
     });
   }
   tick();
 }
-export function stopPolling() { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; } }
+export function stopPolling() { if (progressPollTimer) { clearTimeout(progressPollTimer); progressPollTimer = null; } }
 
 // Thumbnail
 export async function getThumbnailUrl(path) {
@@ -209,7 +306,14 @@ export async function getHistory() { return fetchJSON('/api/history'); }
 
 // File dialogs
 export async function saveImage(suggestedName, dataB64) {
-  return invoke('save_base64_image', { suggestedName: suggestedName, dataB64: dataB64 });
+  if (isTauriRuntime) return invoke('save_base64_image', { suggestedName: suggestedName, dataB64: dataB64 });
+  const link = document.createElement('a');
+  link.href = 'data:application/octet-stream;base64,' + dataB64;
+  link.download = suggestedName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  return true;
 }
 export async function openInFolder(path) { return invoke('open_in_folder', { path: path }); }
 
@@ -257,15 +361,15 @@ export async function getBatchProgress(taskId) {
 
 export function startBatchPolling(taskId, onUpdate, intervalMs) {
   intervalMs = intervalMs || 2000;
-  stopPolling();
+  if (batchPollTimer) clearTimeout(batchPollTimer);
   function tick() {
     getBatchProgress(taskId).then(data => {
       onUpdate(data);
-      if (data.status === 'completed' || data.status === 'error') { pollTimer = null; return; }
-      pollTimer = setTimeout(tick, intervalMs);
+      if (data.status === 'completed' || data.status === 'error') { batchPollTimer = null; return; }
+      batchPollTimer = setTimeout(tick, intervalMs);
     }).catch(e => {
       onUpdate({ status: 'error', error: String(e) });
-      pollTimer = null;
+      batchPollTimer = null;
     });
   }
   tick();

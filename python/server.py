@@ -6,22 +6,38 @@ FastAPI backend wrapping the existing AI image processing logic.
 Runs as a sidecar process alongside the Tauri desktop app.
 All business logic preserved 100% from ecom_workbench.py.
 """
-import base64, json, time, io, os, sys, re, mimetypes, threading, traceback
+import base64, json, time, io, os, sys, re, mimetypes, threading, traceback, uuid, shutil, hashlib, math
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from datetime import datetime
+from typing import Any, Optional
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import requests
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
+from pydantic import BaseModel, Field
 import uvicorn
 
 try:
-    from atelier_ledger import AtelierLedger
+    from asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
+    from atelier_ledger import (
+        AtelierLedger,
+        IdempotencyConflictError,
+        InvalidStatusTransitionError,
+    )
+    from job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from knowledge_engine import KnowledgeCompiler
     from memory_engine import MemoryEngine
 except ImportError:  # Allows importing as python.server during local tests.
-    from python.atelier_ledger import AtelierLedger
+    from python.asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
+    from python.atelier_ledger import (
+        AtelierLedger,
+        IdempotencyConflictError,
+        InvalidStatusTransitionError,
+    )
+    from python.job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from python.knowledge_engine import KnowledgeCompiler
     from python.memory_engine import MemoryEngine
 
@@ -40,13 +56,19 @@ logging.getLogger("uvicorn.error").handlers = [logging.NullHandler()]
 # ======================== CONFIG ========================
 def get_app_data_dir():
     """Get platform-appropriate app data directory for config/storage"""
-    if sys.platform == "win32":
+    override = str(os.environ.get("PRODUCT_ATELIER_DATA_DIR", "")).strip()
+    if override:
+        base = Path(override).expanduser()
+        d = base
+    elif sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        d = base / "ProductAtelier"
     elif sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support"
+        d = base / "ProductAtelier"
     else:
         base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-    d = base / "ProductAtelier"
+        d = base / "ProductAtelier"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -59,6 +81,8 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 HISTORY_DIR = APP_DIR / "history"
 HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 LEDGER = AtelierLedger(APP_DIR / "atelier.sqlite3")
+ASSET_DIR = APP_DIR / "assets"
+ASSET_STORE = AssetStore(ASSET_DIR, LEDGER)
 try:
     _startup_config = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
 except Exception:
@@ -67,8 +91,14 @@ _knowledge_path = str(_startup_config.get("knowledge_base_path", "")).strip()
 KNOWLEDGE = KnowledgeCompiler(_knowledge_path) if _knowledge_path else KnowledgeCompiler()
 MEMORY = MemoryEngine(LEDGER)
 
-# Legacy config path for migration
-LEGACY_CONFIG = Path(r"C:\Users\64414\.codex\skills\lk-ai-image\config.json")
+# Legacy config path for migration. Keep the old location discoverable without
+# embedding one developer's Windows account in the application.
+LEGACY_CONFIG = Path(
+    os.environ.get(
+        "PRODUCT_ATELIER_LEGACY_CONFIG",
+        str(Path.home() / ".codex" / "skills" / "lk-ai-image" / "config.json"),
+    )
+).expanduser()
 
 BASE_URL = "https://api.lk888.ai/api"
 
@@ -78,6 +108,8 @@ MODEL_OPTIONS = {
     "Nano Banana 2 (快速批量)": "gemini-3.1-flash-image-preview",
     "千问-Image (中文优化)": "qwen-image",
 }
+MAX_GROUP_PRODUCTS = 12
+GROUP_PRODUCT_TYPES = frozenset({"food", "packaging", "dish"})
 
 NEG_BASE = "模糊,低质量,变形,暗角,暖黄偏色,杂物,水印,文字,logo,阴影过重,噪点,失真,jpeg压缩痕迹,过度曝光,欠曝"
 NEG_REMOVE_PLATE = "盘子,碟子,托盘,木板,纸板,餐垫,桌布,玻璃器皿,碗,容器,器皿,摆盘,竹垫,石板,餐布,金属台面,木桌面,大理石桌面,纸杯,塑料盒"
@@ -264,12 +296,68 @@ def ledger_fail_task(context, error):
         print(f"[ledger] failure trace failed: {exc}", file=sys.stderr, flush=True)
 
 # ======================== CONFIG PERSISTENCE ========================
+_RUNTIME_CONFIG_LOCK = threading.RLock()
+_RUNTIME_KNOWLEDGE_PATH = _knowledge_path
+
+
+@contextmanager
+def _config_write_lock():
+    """Serialize config read-modify-write across sidecar processes."""
+    lock_path = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(lock_path, "a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+def _read_config_unlocked() -> dict:
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        parsed = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def load_config() -> dict:
+    # Readers take the same short lock so Windows never has to replace a file
+    # while another sidecar still holds it open.
+    with _config_write_lock():
+        return _read_config_unlocked()
+
+
 def load_api_key():
     # Check app config first
-    if CONFIG_PATH.exists():
-        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        if cfg.get("api_key"):
-            return cfg["api_key"]
+    cfg = load_config()
+    if cfg.get("api_key"):
+        return cfg["api_key"]
     # Fallback to legacy config
     if LEGACY_CONFIG.exists():
         cfg = json.loads(LEGACY_CONFIG.read_text(encoding="utf-8"))
@@ -278,29 +366,60 @@ def load_api_key():
     return None
 
 def save_config(cfg: dict):
-    existing = {}
-    if CONFIG_PATH.exists():
-        existing = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    existing.update(cfg)
-    CONFIG_PATH.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _config_write_lock():
+        existing = _read_config_unlocked()
+        existing.update(cfg)
+        temp_path = CONFIG_PATH.with_name(
+            f".{CONFIG_PATH.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            with open(temp_path, "x", encoding="utf-8") as handle:
+                json.dump(existing, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                os.chmod(temp_path, 0o600)
+            except OSError:
+                pass
+            os.replace(temp_path, CONFIG_PATH)
+        finally:
+            temp_path.unlink(missing_ok=True)
 
 API_KEY = load_api_key()
 
 def get_api_key():
     global API_KEY
+    # The API process serving Settings may be a passive sidecar. Reloading the
+    # small atomic config here makes its update visible to the elected worker
+    # process before every remote request.
+    API_KEY = load_api_key()
     if not API_KEY:
         raise RuntimeError("API Key not configured. Please set it in Settings.")
     return API_KEY
 
 def set_api_key(key: str):
     global API_KEY
-    API_KEY = key
     save_config({"api_key": key})
+    API_KEY = key
+
+
+def refresh_runtime_config() -> dict:
+    """Refresh process-local runtime objects from the shared atomic config."""
+    global API_KEY, _RUNTIME_KNOWLEDGE_PATH
+    cfg = load_config()
+    with _RUNTIME_CONFIG_LOCK:
+        configured_key = str(cfg.get("api_key") or "").strip()
+        API_KEY = configured_key or load_api_key()
+        configured_path = str(cfg.get("knowledge_base_path") or "").strip()
+        if configured_path and configured_path != _RUNTIME_KNOWLEDGE_PATH:
+            KNOWLEDGE.set_path(configured_path)
+            _RUNTIME_KNOWLEDGE_PATH = configured_path
+    return cfg
 
 def get_settings():
-    cfg = {}
-    if CONFIG_PATH.exists():
-        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    cfg = refresh_runtime_config()
     return {
         "api_key": "***" if cfg.get("api_key") else "",
         "api_key_set": bool(cfg.get("api_key")),
@@ -366,17 +485,22 @@ def _get_http_session():
         s.verify = True
     return s
 
-_http_session = None
+_http_sessions = threading.local()
+
+
+def _current_http_session():
+    session = getattr(_http_sessions, "session", None)
+    if session is None:
+        session = _get_http_session()
+        _http_sessions.session = session
+    return session
 
 def api_request(method, path, body=None, timeout=120):
-    global _http_session
     url = BASE_URL + path
     key = get_api_key()
     headers = {"Authorization": f"Bearer {key}"}
-    if _http_session is None:
-        _http_session = _get_http_session()
     try:
-        resp = _http_session.request(method, url, json=body, headers=headers, timeout=timeout)
+        resp = _current_http_session().request(method, url, json=body, headers=headers, timeout=timeout)
         resp.raise_for_status()
         return resp.json()
     except (requests.exceptions.ProxyError, requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
@@ -426,11 +550,8 @@ def image_to_bytes(img, fmt="JPEG", quality=96):
 def download_result(url, dest_path):
     dest = Path(dest_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    global _http_session
     try:
-        if _http_session is None:
-            _http_session = _get_http_session()
-        resp = _http_session.get(url, timeout=120)
+        resp = _current_http_session().get(url, timeout=120)
         resp.raise_for_status()
         dest.write_bytes(resp.content)
     except Exception:
@@ -458,7 +579,7 @@ def log_msg(task_id, msg):
     tracker.update(task_id, log=msg)
 
 def save_temp(img, prefix="tmp"):
-    p = OUTPUT_DIR / "_tmp" / f"{prefix}_{int(time.time()*1000)}.jpg"
+    p = OUTPUT_DIR / "_tmp" / f"{safe_stem(prefix, 'tmp')}_{uuid.uuid4().hex}.jpg"
     if img.mode == "RGBA":
         img = img.convert("RGB")
     img.save(p, "JPEG", quality=95)
@@ -466,12 +587,15 @@ def save_temp(img, prefix="tmp"):
 
 # ======================== IMAGE PROCESSING ========================
 _BGSESSION = None
+_BGSESSION_LOCK = threading.Lock()
 
 def _get_bgsession():
     global _BGSESSION
     if _BGSESSION is None:
-        from rembg import new_session
-        _BGSESSION = new_session("birefnet-general")
+        with _BGSESSION_LOCK:
+            if _BGSESSION is None:
+                from rembg import new_session
+                _BGSESSION = new_session("birefnet-general")
     return _BGSESSION
 
 def post_process_enhance(img):
@@ -579,18 +703,30 @@ def poll_task(task_id, task_id_ref="?", timeout_sec=480, interval=6):
             else: raise RuntimeError(f"生成失败: {json.dumps(st, ensure_ascii=False)[:300]}")
     raise TimeoutError(f"任务超时 ({timeout_sec}s)")
 
-def ai_i2i(prompt, ref_img, model_key, negative_prompt=None, size="2048x2048", stage="?", tid_ref="?"):
+def ai_i2i(
+    prompt,
+    ref_img,
+    model_key,
+    negative_prompt=None,
+    size="2048x2048",
+    stage="?",
+    tid_ref="?",
+    on_submitted=None,
+):
     ref_url = image_to_data_url(ref_img)
     log_msg(tid_ref, f"[S{stage}] 提交生成 ({model_key})...")
     tid = submit_generate(prompt, model_key, ref_url, size=size, negative_prompt=negative_prompt)
+    if on_submitted is not None:
+        on_submitted(tid)
     log_msg(tid_ref, f"[S{stage}] 任务ID: {tid}")
     result_url = poll_task(tid, task_id_ref=tid_ref)
-    tmp = OUTPUT_DIR / "_tmp" / f"stage{stage}_{int(time.time()*1000)}.jpg"
-    download_result(result_url, tmp)
-    img = Image.open(tmp).copy()
-    try: tmp.unlink()
-    except: pass
-    return img
+    tmp = OUTPUT_DIR / "_tmp" / f"stage_{safe_stem(str(stage), 'stage')}_{uuid.uuid4().hex}.jpg"
+    try:
+        download_result(result_url, tmp)
+        with Image.open(tmp) as downloaded:
+            return downloaded.copy()
+    finally:
+        tmp.unlink(missing_ok=True)
 
 def vlm_detect_products(image_path, tid_ref="?"):
     img_url = image_to_data_url(image_path)
@@ -610,9 +746,18 @@ def vlm_detect_products(image_path, tid_ref="?"):
         if text.startswith("```"): text = text[3:]
         if text.endswith("```"): text = text[:-3]
         return json.loads(text.strip())
-    except Exception as e:
-        log_msg(tid_ref, f"VLM检测异常: {e}")
-        return {"products": [{"bbox":[0,0,1000,1000],"name":"产品","ptype":"food","has_container":False,"cutoff":False,"angle_hint":"45度俯视"}],"count":1,"scene":"single"}
+    except Exception as exc:
+        # A group-shot detection failure must never masquerade as one product
+        # covering the whole frame: doing so would trigger paid generation for
+        # a result that violates the requested workflow. Single-product jobs
+        # also fail before spending image-generation quota when recognition is
+        # unavailable and no explicit product name was supplied.
+        log_msg(tid_ref, f"VLM检测失败: {type(exc).__name__}")
+        raise JobExecutionError(
+            "PRODUCT_DETECTION_FAILED",
+            "Product detection failed before image generation",
+            metadata={"cause_type": type(exc).__name__},
+        ) from exc
 
 def fidelity_suffix(fidelity):
     if fidelity <= 25: return "极严格保留参考图中产品的原始形态、颜色、纹理、大小比例和所有细节，只允许更换纯白背景和影棚灯光，禁止改变产品本身的任何外观特征，产品必须与参考图完全一致。"
@@ -621,14 +766,109 @@ def fidelity_suffix(fidelity):
     else: return "在参考图产品基础上进行专业商业摄影级优化，可调整角度、增强细节质感、优化构图和光影，呈现最佳商业影棚效果，产品保持可识别但允许较大美化。"
 
 # ======================== FASTAPI APP ========================
-app = FastAPI(title="Product Atelier API")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+JOB_ENGINE = None
+
+
+def build_job_engine():
+    worker_limit = max(1, min(int(os.environ.get("PRODUCT_ATELIER_JOB_WORKERS", "4")), 12))
+    configured_cloud_limit = max(
+        1, min(int(os.environ.get("PRODUCT_ATELIER_CLOUD_LIMIT", "2")), 8)
+    )
+    # Keep one worker lane available for a different engine whenever the pool
+    # can run concurrently. This is what lets a local cutout start during a
+    # long cloud batch instead of sitting behind cloud tasks waiting on a gate.
+    cloud_limit = min(
+        configured_cloud_limit,
+        max(1, worker_limit - 1) if worker_limit > 1 else 1,
+    )
+    # rembg/BiRefNet session concurrency stays at one until a dedicated model
+    # memory/stability stress suite proves a higher safe value.
+    cutout_limit = 1
+    return JobEngine(
+        LEDGER,
+        processors={
+            "cloud-workflow": execute_job_workflow,
+            "group-workflow": execute_job_workflow,
+            "local-cutout": execute_job_workflow,
+        },
+        max_workers=worker_limit,
+        resource_limits={
+            "vlm": max(1, min(int(os.environ.get("PRODUCT_ATELIER_VLM_LIMIT", "1")), 4)),
+            "cloud-image": cloud_limit,
+            "local-cutout": cutout_limit,
+        },
+        processor_admission_resources={
+            "cloud-workflow": "cloud-image",
+            "group-workflow": "cloud-image",
+            "local-cutout": "local-cutout",
+        },
+    )
+
+
+@asynccontextmanager
+async def app_lifespan(_app):
+    global JOB_ENGINE
+    engine = build_job_engine()
+    JOB_ENGINE = engine
+    engine.start()
+    try:
+        yield
+    finally:
+        engine.stop()
+        if JOB_ENGINE is engine:
+            JOB_ENGINE = None
+
+
+TRUSTED_LOCAL_ORIGINS = frozenset({
+    # Tauri's packaged custom-protocol origins across supported WebView hosts.
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    # The checked-in Vite development URL and its loopback equivalent.
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+})
+
+
+app = FastAPI(title="Product Atelier API", lifespan=app_lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=sorted(TRUSTED_LOCAL_ORIGINS),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Accept", "Content-Type"],
+)
+
+
+@app.middleware("http")
+async def reject_untrusted_browser_origin(request: Request, call_next):
+    """Reject browser requests before simple cross-origin POSTs reach an API.
+
+    CORS response headers alone prevent a hostile page from reading a response,
+    but a multipart/form-data request can still be sent without a preflight.
+    Rejecting an explicit untrusted Origin therefore also protects job creation,
+    asset imports, cancellation, and settings mutations. Requests without an
+    Origin remain available to the native Rust health probe and local tooling.
+    """
+    origin = request.headers.get("origin")
+    if origin and origin not in TRUSTED_LOCAL_ORIGINS:
+        return JSONResponse(
+            {
+                "detail": {
+                    "code": "UNTRUSTED_ORIGIN",
+                    "message": "Browser origin is not allowed to access the local sidecar",
+                }
+            },
+            status_code=403,
+        )
+    return await call_next(request)
 
 @app.get("/api/health")
 async def health():
+    configured_key = load_api_key()
     return {
         "status": "ok",
-        "api_key_configured": bool(API_KEY),
+        "api_key_configured": bool(configured_key),
         "output_dir": str(OUTPUT_DIR),
         "ledger": {"schema_version": LEDGER.stats()["schema_version"]},
     }
@@ -639,8 +879,432 @@ async def ledger_status():
     return LEDGER.stats()
 
 
+def workspace_asset_response(asset: dict) -> dict:
+    return {
+        "id": asset["id"],
+        "name": asset.get("name", ""),
+        "mime": asset.get("mime", ""),
+        "size_bytes": asset.get("size_bytes", 0),
+        "width": asset.get("width"),
+        "height": asset.get("height"),
+        "sha256": asset.get("sha256", ""),
+        "created_at": asset.get("created_at"),
+        "metadata": asset.get("metadata", {}),
+        "thumbnail_url": f"/api/assets/{asset['id']}/thumbnail",
+        "content_url": f"/api/assets/{asset['id']}/content",
+    }
+
+
+def result_asset_response(asset: dict) -> dict:
+    return {
+        "id": asset["id"],
+        "name": asset.get("name", ""),
+        "mime": asset.get("mime", ""),
+        "size_bytes": 0,
+        "width": asset.get("width"),
+        "height": asset.get("height"),
+        "sha256": asset.get("sha256", ""),
+        "created_at": asset.get("created_at"),
+        "metadata": asset.get("metadata", {}),
+        "role": asset.get("role", ""),
+        "thumbnail_url": f"/api/assets/{asset['id']}/thumbnail",
+        "content_url": f"/api/assets/{asset['id']}/content",
+    }
+
+
+def _resolve_result_asset_path(asset: dict) -> Path:
+    if asset.get("role") not in {"result_main", "result_cutout"}:
+        raise AssetAccessError("Asset is not an exported generation result", code="ASSET_NOT_FOUND")
+    root = OUTPUT_DIR.resolve()
+    candidate = Path(str(asset.get("path", ""))).resolve(strict=False)
+    if not candidate.is_relative_to(root):
+        raise AssetAccessError("Generation result path is outside the allowed root")
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (FileNotFoundError, OSError) as exc:
+        raise AssetAccessError("Generation result file is unavailable", code="ASSET_FILE_MISSING") from exc
+    if not resolved.is_file() or not resolved.is_relative_to(root):
+        raise AssetAccessError("Generation result path is outside the allowed root")
+    return resolved
+
+
+def _thumbnail_for_path(path: Path, max_size: int = 512) -> bytes:
+    max_size = max(32, min(int(max_size), 1024))
+    with Image.open(path) as image:
+        image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        if image.mode in {"RGBA", "LA"}:
+            background = Image.new("RGB", image.size, "white")
+            background.paste(image.convert("RGB"), mask=image.getchannel("A"))
+            image = background
+        elif image.mode != "RGB":
+            image = image.convert("RGB")
+        buffer = io.BytesIO()
+        image.save(buffer, "JPEG", quality=86, optimize=True)
+        return buffer.getvalue()
+
+
+def raise_asset_http_error(exc: AssetStoreError) -> None:
+    if isinstance(exc, AssetAccessError):
+        status_code = 404 if exc.code in {"ASSET_NOT_FOUND", "ASSET_FILE_MISSING"} else 403
+    elif isinstance(exc, AssetValidationError):
+        if exc.code == "FILE_TOO_LARGE":
+            status_code = 413
+        elif exc.code in {"UNSUPPORTED_EXTENSION", "UNSUPPORTED_IMAGE_FORMAT", "EXTENSION_MISMATCH"}:
+            status_code = 415
+        else:
+            status_code = 400
+    else:
+        status_code = 500
+    raise HTTPException(
+        status_code=status_code,
+        detail={"code": exc.code, "message": str(exc)},
+    )
+
+
+@app.get("/api/assets")
+async def list_workspace_assets(limit: int = 500):
+    assets = LEDGER.list_workspace_assets(limit)
+    return {
+        "assets": [workspace_asset_response(asset) for asset in assets],
+        "count": len(assets),
+    }
+
+
+@app.post("/api/assets/import")
+async def import_workspace_asset(file: UploadFile = File(...)):
+    try:
+        asset = await run_in_threadpool(
+            ASSET_STORE.import_stream,
+            file.file,
+            file.filename or "upload",
+        )
+        return workspace_asset_response(asset)
+    except AssetStoreError as exc:
+        raise_asset_http_error(exc)
+    finally:
+        await file.close()
+
+
+@app.post("/api/assets/import-batch")
+async def import_workspace_assets(files: list[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail={"code": "EMPTY_BATCH", "message": "No files provided"})
+    if len(files) > 100:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "TOO_MANY_FILES", "message": "A workspace import accepts at most 100 files"},
+        )
+    imported = []
+    errors = []
+    for position, file in enumerate(files):
+        try:
+            asset = await run_in_threadpool(
+                ASSET_STORE.import_stream,
+                file.file,
+                file.filename or f"upload-{position}",
+            )
+            imported.append(workspace_asset_response(asset))
+        except AssetStoreError as exc:
+            errors.append({
+                "position": position,
+                "name": file.filename or "",
+                "code": exc.code,
+                "message": str(exc),
+            })
+        finally:
+            await file.close()
+    return {"assets": imported, "errors": errors, "count": len(imported)}
+
+
+@app.get("/api/assets/{asset_id}")
+async def get_workspace_asset(asset_id: str):
+    try:
+        asset = LEDGER.get_asset(asset_id)
+        if asset.get("role") == "workspace_source":
+            return workspace_asset_response(LEDGER.get_workspace_asset(asset_id))
+        if asset.get("role") in {"result_main", "result_cutout"}:
+            return result_asset_response(asset)
+        raise KeyError(f"asset is not externally readable: {asset_id}")
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "ASSET_NOT_FOUND", "message": str(exc)},
+        )
+
+
+@app.get("/api/assets/{asset_id}/content")
+async def get_workspace_asset_content(asset_id: str):
+    try:
+        asset = LEDGER.get_asset(asset_id)
+        if asset.get("role") == "workspace_source":
+            asset, path = await run_in_threadpool(ASSET_STORE.resolve_asset_path, asset_id)
+        else:
+            path = await run_in_threadpool(_resolve_result_asset_path, asset)
+        return FileResponse(str(path), media_type=asset["mime"], filename=asset["name"])
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "ASSET_NOT_FOUND", "message": str(exc)},
+        )
+    except AssetStoreError as exc:
+        raise_asset_http_error(exc)
+
+
+@app.get("/api/assets/{asset_id}/thumbnail")
+async def get_workspace_asset_thumbnail(asset_id: str, size: int = 512):
+    try:
+        asset = LEDGER.get_asset(asset_id)
+        if asset.get("role") == "workspace_source":
+            content = await run_in_threadpool(ASSET_STORE.thumbnail_bytes, asset_id, size)
+        else:
+            path = await run_in_threadpool(_resolve_result_asset_path, asset)
+            content = await run_in_threadpool(_thumbnail_for_path, path, size)
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=3600"},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "ASSET_NOT_FOUND", "message": str(exc)},
+        )
+    except AssetStoreError as exc:
+        raise_asset_http_error(exc)
+
+
+class JobCreateRequest(BaseModel):
+    mode: str
+    source_asset_ids: list[str]
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    client_request_id: str = ""
+    requested_concurrency: Optional[int] = None
+    max_attempts: int = 2
+
+    class Config:
+        extra = "forbid"
+
+
+class JobRetryRequest(BaseModel):
+    item_ids: Optional[list[str]] = None
+
+    class Config:
+        extra = "forbid"
+
+
+def _engine_key_for_mode(mode: str) -> str:
+    return {
+        "single": "cloud-workflow",
+        "multi-file": "cloud-workflow",
+        "group-split": "group-workflow",
+        "cutout-batch": "local-cutout",
+    }[mode]
+
+
+def _default_job_concurrency(mode: str, item_count: int) -> int:
+    if mode in {"single", "group-split"}:
+        return 1
+    return max(1, min(item_count, 4))
+
+
+def _normalize_job_parameters(mode: str, parameters: dict) -> dict:
+    normalized = dict(parameters or {})
+    default_model = {
+        "single": "gpt-image-2",
+        "multi-file": "gpt-image-2",
+        "group-split": "gemini-3.1-flash-image-preview",
+        "cutout-batch": "local-rembg/birefnet-general",
+    }.get(mode, "")
+    if mode == "cutout-batch":
+        # This workflow never invokes the model selector shown for cloud jobs.
+        # Persist the model actually used by remove_bg_hd/_get_bgsession.
+        normalized["model"] = default_model
+    elif not str(normalized.get("model") or "").strip():
+        normalized["model"] = default_model
+    return normalized
+
+
+def _validate_job_request(mode: str, source_asset_ids: list[str], parameters: dict):
+    if mode not in {"single", "multi-file", "group-split", "cutout-batch"}:
+        raise ValueError(f"unsupported job mode: {mode}")
+    if not source_asset_ids:
+        raise ValueError("at least one source asset is required")
+    if mode in {"single", "group-split"} and len(source_asset_ids) != 1:
+        raise ValueError(f"{mode} requires exactly one source asset")
+    if mode == "multi-file":
+        if len(source_asset_ids) > 12:
+            raise ValueError("multi-file accepts at most 12 source assets")
+        variations = int(parameters.get("variations", parameters.get("batch", 1)))
+        if variations < 1 or variations > 4:
+            raise ValueError("variations must be between 1 and 4")
+        if len(source_asset_ids) * variations > 24:
+            raise ValueError("one multi-file job can plan at most 24 generated variations")
+    if mode == "single":
+        batch = int(parameters.get("batch", parameters.get("variations", 1)))
+        if batch < 1 or batch > 4:
+            raise ValueError("batch must be between 1 and 4")
+    if mode == "group-split" and not isinstance(parameters.get("refine", True), bool):
+        raise ValueError("group-split refine must be a boolean")
+    if mode == "cutout-batch" and len(source_asset_ids) > 24:
+        raise ValueError("cutout-batch accepts at most 24 source assets")
+
+
+def _wake_job_engine():
+    engine = JOB_ENGINE
+    if engine is not None and engine.is_running:
+        engine.wake()
+
+
+@app.post("/api/jobs")
+async def create_durable_job(request: JobCreateRequest):
+    mode = str(request.mode).strip()
+    source_asset_ids = [str(asset_id).strip() for asset_id in request.source_asset_ids]
+    parameters = _normalize_job_parameters(mode, request.parameters or {})
+    try:
+        _validate_job_request(mode, source_asset_ids, parameters)
+        requested_concurrency = (
+            request.requested_concurrency
+            if request.requested_concurrency is not None
+            else _default_job_concurrency(mode, len(source_asset_ids))
+        )
+        job, created = LEDGER.create_job(
+            mode,
+            source_asset_ids,
+            engine_key=_engine_key_for_mode(mode),
+            parameters=parameters,
+            idempotency_key=str(request.client_request_id or "").strip(),
+            requested_concurrency=requested_concurrency,
+            max_attempts=request.max_attempts,
+            title={
+                "single": "单产品任务",
+                "multi-file": f"多文件任务 · {len(source_asset_ids)} 张",
+                "group-split": "合照拆分任务",
+                "cutout-batch": f"批量抠图 · {len(source_asset_ids)} 张",
+            }[mode],
+        )
+        _wake_job_engine()
+        return {"job": job, "created": created}
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "SOURCE_ASSET_NOT_FOUND", "message": str(exc)},
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_JOB_REQUEST", "message": str(exc)},
+        )
+
+
+@app.get("/api/jobs")
+async def list_durable_jobs(limit: int = 100):
+    jobs = LEDGER.list_jobs(limit)
+    return {"jobs": jobs, "count": len(jobs)}
+
+
+@app.get("/api/jobs/{job_id}")
+async def get_durable_job(job_id: str):
+    try:
+        return {"job": LEDGER.get_job(job_id)}
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "JOB_NOT_FOUND", "message": str(exc)},
+        )
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_durable_job(job_id: str):
+    try:
+        engine = JOB_ENGINE
+        job = (
+            engine.request_cancel(job_id)
+            if engine is not None and engine.is_running
+            else LEDGER.request_job_cancel(job_id)
+        )
+        return {"job": job}
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "JOB_NOT_FOUND", "message": str(exc)},
+        )
+
+
+@app.post("/api/jobs/{job_id}/pause")
+async def pause_durable_job(job_id: str):
+    try:
+        engine = JOB_ENGINE
+        job = (
+            engine.pause_job(job_id)
+            if engine is not None and engine.is_running
+            else LEDGER.pause_job(job_id)
+        )
+        return {"job": job}
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "JOB_NOT_FOUND", "message": str(exc)},
+        )
+    except InvalidStatusTransitionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "JOB_NOT_PAUSABLE", "message": str(exc)},
+        )
+
+
+@app.post("/api/jobs/{job_id}/resume")
+async def resume_durable_job(job_id: str):
+    try:
+        engine = JOB_ENGINE
+        job = (
+            engine.resume_job(job_id)
+            if engine is not None and engine.is_running
+            else LEDGER.resume_job(job_id)
+        )
+        return {"job": job}
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "JOB_NOT_FOUND", "message": str(exc)},
+        )
+    except InvalidStatusTransitionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "JOB_NOT_RESUMABLE", "message": str(exc)},
+        )
+
+
+@app.post("/api/jobs/{job_id}/retry")
+async def retry_durable_job(job_id: str, request: Optional[JobRetryRequest] = None):
+    try:
+        item_ids = request.item_ids if request is not None else None
+        engine = JOB_ENGINE
+        job = (
+            engine.retry_failed(job_id, item_ids)
+            if engine is not None and engine.is_running
+            else LEDGER.retry_job_items(job_id, item_ids)
+        )
+        return {"job": job}
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "JOB_OR_ITEM_NOT_FOUND", "message": str(exc)},
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "NO_RETRYABLE_ITEMS", "message": str(exc)},
+        )
+
+
 @app.get("/api/knowledge/status")
 async def knowledge_status():
+    refresh_runtime_config()
     return KNOWLEDGE.status()
 
 
@@ -650,9 +1314,10 @@ async def reload_knowledge(data: dict | None = None):
     try:
         path = str((data or {}).get("path", "")).strip()
         if path:
-            status = KNOWLEDGE.set_path(path)
-            save_config({"knowledge_base_path": str(KNOWLEDGE.vault_path)})
-            return status
+            save_config({"knowledge_base_path": path})
+            refresh_runtime_config()
+            return KNOWLEDGE.status()
+        refresh_runtime_config()
         return KNOWLEDGE.reload()
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -661,6 +1326,7 @@ async def reload_knowledge(data: dict | None = None):
 @app.post("/api/knowledge/compile")
 async def compile_knowledge(data: dict):
     try:
+        refresh_runtime_config()
         return KNOWLEDGE.compile(data if isinstance(data, dict) else {})
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -820,12 +1486,12 @@ async def get_app_settings():
 
 @app.post("/api/settings")
 async def update_settings(data: dict):
-    if "api_key" in data and data["api_key"]:
-        set_api_key(data["api_key"])
-    if "knowledge_base_path" in data and str(data["knowledge_base_path"]).strip():
-        KNOWLEDGE.set_path(str(data["knowledge_base_path"]).strip())
     save = {k: v for k, v in data.items() if k != "api_key"}
-    if save: save_config(save)
+    if "api_key" in data and data["api_key"]:
+        save["api_key"] = str(data["api_key"])
+    if save:
+        save_config(save)
+    refresh_runtime_config()
     return get_settings()
 
 @app.get("/api/balance")
@@ -839,7 +1505,42 @@ async def balance():
 
 @app.get("/api/progress/{task_id}")
 async def get_progress(task_id: str):
-    return tracker.get(task_id)
+    try:
+        job = LEDGER.get_job(task_id)
+    except KeyError:
+        return tracker.get(task_id)
+    result_assets = []
+    for item in job.get("items", []):
+        for asset_id in item.get("result_asset_ids", []):
+            try:
+                result_assets.append(LEDGER.get_asset(asset_id))
+            except KeyError:
+                continue
+    results = {
+        "main": [result_asset_response(asset) for asset in result_assets if asset.get("role") == "result_main"],
+        "cutout": [result_asset_response(asset) for asset in result_assets if asset.get("role") == "result_cutout"],
+    }
+    error_items = [item for item in job.get("items", []) if item.get("error_message")]
+    return {
+        "task_id": job["id"],
+        "session_id": job["session_id"],
+        "status": job["status"],
+        "progress": job["progress"],
+        "message": {
+            "queued": "任务已排队",
+            "running": "任务处理中",
+            "paused": "任务已暂停领取新项",
+            "canceling": "正在安全取消",
+            "completed": "任务已完成",
+            "partial": "部分项目已完成",
+            "failed": "任务失败",
+            "canceled": "任务已取消",
+            "interrupted": "任务已中断",
+        }.get(job["status"], job["status"]),
+        "results": results,
+        "error": error_items[0]["error_message"] if error_items else None,
+        "job": job,
+    }
 
 def make_prompt(base, fid):
     return base + "，" + fidelity_suffix(fid)
@@ -1250,9 +1951,552 @@ def run_cutout_batch_task(task_id, uploads, session_id):
         tracker.complete(task_id, error="批量抠图全部失败")
 
 
+# ======================== DURABLE JOB WORKFLOWS ========================
+def _job_trace_context(ctx):
+    session = LEDGER.get_session(str(ctx.job["session_id"]), include_timeline=False)
+    return {
+        "session_id": str(ctx.job["session_id"]),
+        "generation_id": str(ctx.item.get("generation_id") or ""),
+        "source_asset_id": str(ctx.item["source_asset_id"]),
+        "brief": session.get("brief", {}),
+        "intent_locks": session.get("intent_locks", {}),
+        "category": session.get("category", "general"),
+        "brand_profile": session.get("brand_profile", ""),
+    }
+
+
+def _record_job_prompt(trace, prompt, negative_prompt, stage, knowledge_refs):
+    generation_id = trace["generation_id"]
+    changes = {"status": "running"}
+    if stage == "primary":
+        changes.update({
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "knowledge_refs": knowledge_refs or [],
+        })
+    LEDGER.update_generation(generation_id, **changes)
+    LEDGER.add_event(
+        trace["session_id"],
+        "prompt.compiled",
+        {
+            "stage": stage,
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "knowledge_refs": knowledge_refs or [],
+        },
+        generation_id=generation_id,
+    )
+
+
+def _attempt_directory(ctx):
+    job_part = safe_stem(str(ctx.job_id), "job")
+    item_part = safe_stem(str(ctx.item_id), "item")
+    attempt = max(1, int(ctx.item.get("attempt_count", 1)))
+    directory = OUTPUT_DIR / "_attempts" / job_part / item_part / f"attempt-{attempt}-{uuid.uuid4().hex}"
+    directory.mkdir(parents=True, exist_ok=False)
+    return directory
+
+
+def _stage_output(image, directory, name, role):
+    path = directory / name
+    if role == "result_cutout":
+        image.save(path, "PNG")
+        mime = "image/png"
+    else:
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        image.save(path, "JPEG", quality=96)
+        mime = "image/jpeg"
+    return {
+        "temp_path": path,
+        "name": name,
+        "role": role,
+        "mime": mime,
+        "width": image.width,
+        "height": image.height,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def _staged_job_result(ctx, trace, stage_dir, outputs, metadata):
+    target_dir = (
+        OUTPUT_DIR
+        / "jobs"
+        / safe_stem(str(ctx.job_id), "job")
+        / safe_stem(str(ctx.item_id), "item")
+        / f"attempt-{max(1, int(ctx.item.get('attempt_count', 1)))}"
+    )
+    moved_paths = []
+    committed_asset_ids = []
+    durable_committed = False
+
+    def cleanup():
+        if durable_committed:
+            # Result rows and the item/attempt/job terminal state were committed
+            # together. No later read or housekeeping failure may roll back that
+            # already-published user result outside the owning transaction.
+            return
+        if committed_asset_ids:
+            LEDGER.discard_generation_results(
+                trace["generation_id"],
+                committed_asset_ids,
+                reason="job_attempt_canceled_or_failed",
+            )
+            committed_asset_ids.clear()
+        for path in list(moved_paths):
+            Path(path).unlink(missing_ok=True)
+        moved_paths.clear()
+        if stage_dir.exists():
+            shutil.rmtree(stage_dir)
+        if target_dir.exists() and not any(target_dir.iterdir()):
+            target_dir.rmdir()
+
+    def commit():
+        nonlocal durable_committed
+        target_dir.mkdir(parents=True, exist_ok=False)
+        published = []
+        try:
+            for output in outputs:
+                target = target_dir / str(output["name"])
+                os.replace(output["temp_path"], target)
+                moved_paths.append(target)
+                published.append({
+                    key: value for key, value in output.items() if key != "temp_path"
+                } | {"path": str(target)})
+            # Remove the now-empty private stage before the durable transaction.
+            # Once the transaction returns, there must be no fallible cleanup
+            # step capable of turning a completed item into a result-less one.
+            if stage_dir.exists():
+                shutil.rmtree(stage_dir)
+            asset_ids = LEDGER.commit_generation_results(
+                trace["generation_id"],
+                trace["source_asset_id"],
+                published,
+                job_item_id=str(ctx.item_id),
+                attempt_metadata={**dict(ctx.metadata), **dict(metadata)},
+            )
+            durable_committed = True
+            committed_asset_ids.extend(asset_ids)
+            return {
+                "result_asset_ids": list(committed_asset_ids),
+                "output_count": len(committed_asset_ids),
+            }
+        except Exception:
+            cleanup()
+            raise
+
+    return JobProcessorResult(
+        metadata=metadata,
+        commit=commit,
+        cleanup=cleanup,
+        durable_completion=True,
+    )
+
+
+def _cloud_job_call(ctx, prompt, reference, model, *, negative_prompt, stage):
+    remote_tasks = list(dict(ctx.metadata).get("remote_tasks", []))
+
+    def remember_remote(task_id):
+        remote_tasks.append({"stage": stage, "task_id": str(task_id)})
+        payload = {"remote_tasks": list(remote_tasks)}
+        try:
+            ctx.record_metadata(payload)
+        except Exception:
+            # The remote task id is still essential when cancellation raced the
+            # submission response. The ledger accepts metadata while canceling.
+            LEDGER.update_task_attempt_metadata(str(ctx.item_id), payload)
+            raise
+
+    with ctx.resource("cloud-image"):
+        return ai_i2i(
+            prompt,
+            reference,
+            model,
+            negative_prompt=negative_prompt,
+            stage=stage,
+            tid_ref=str(ctx.job_id),
+            on_submitted=remember_remote,
+        )
+
+
+def _job_knowledge_context(trace, **values):
+    context = {
+        "brand_profile": trace.get("brand_profile", ""),
+        "intent_locks": trace.get("intent_locks", {}),
+        **values,
+    }
+    if isinstance(trace.get("brief"), dict):
+        context = {**trace["brief"], **context}
+    return context
+
+
+def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
+    params = dict(ctx.job.get("parameters") or {})
+    mode = str(ctx.job["mode"])
+    model = str(params.get("model") or "gpt-image-2")
+    batch = int(params.get("variations" if mode == "multi-file" else "batch", 1))
+    if batch < 1 or batch > 4:
+        raise JobExecutionError("INVALID_VARIATION_COUNT", "Each source supports 1 to 4 variations")
+    platter = str(params.get("platter") or "auto")
+    fidelity = max(0, min(int(params.get("fidelity", 40)), 100))
+    angle = str(params.get("angle") or "auto")
+    product_name = str(params.get("product_name") or "").strip()
+    product_type = "food"
+    if mode == "multi-file" and not product_name:
+        product_name = safe_stem(source_asset.get("name", ""), "产品")
+    if not product_name:
+        ctx.progress(0.03, {"phase": "vlm"})
+        with ctx.resource("vlm"):
+            detection = vlm_detect_products(str(source_asset["path"]), str(ctx.job_id))
+        products = detection.get("products") or []
+        if products:
+            product = products[0]
+            product_name = str(product.get("name") or "产品")
+            product_type = str(product.get("ptype") or "food")
+            if product_type == "packaging":
+                platter = "remove"
+        else:
+            product_name = "产品"
+
+    negative = build_negative(platter)
+    outputs = []
+    per = 0.92 / batch
+    for index in range(batch):
+        ctx.progress(0.05 + per * index, {"phase": "cloud-primary", "variation": index + 1})
+        knowledge_context = _job_knowledge_context(
+            trace,
+            mode=mode,
+            category=product_type,
+            output_kind="ecommerce-main",
+            platter=platter,
+            angle=angle,
+            fidelity=fidelity,
+            product_name=product_name,
+        )
+        stage1 = KNOWLEDGE.enrich_prompt(
+            make_prompt(build_single_prompt(product_name, platter, product_type, angle), fidelity),
+            negative,
+            knowledge_context,
+        )
+        prompt_stage = "primary" if index == 0 else f"primary-variation-{index + 1}"
+        _record_job_prompt(
+            trace, stage1["prompt"], stage1["negative_prompt"], prompt_stage, stage1["sources"]
+        )
+        generated = _cloud_job_call(
+            ctx,
+            stage1["prompt"],
+            image,
+            model,
+            negative_prompt=stage1["negative_prompt"],
+            stage=f"1-{index + 1}",
+        )
+        ctx.progress(0.05 + per * index + per * 0.36, {"phase": "cloud-refine", "variation": index + 1})
+        stage2 = KNOWLEDGE.enrich_prompt(
+            make_prompt(build_stage2_prompt(product_name, platter, product_type, angle), fidelity),
+            negative,
+            knowledge_context,
+        )
+        _record_job_prompt(
+            trace,
+            stage2["prompt"],
+            stage2["negative_prompt"],
+            f"refine-{index + 1}",
+            stage2["sources"],
+        )
+        generated = _cloud_job_call(
+            ctx,
+            stage2["prompt"],
+            generated,
+            model,
+            negative_prompt=stage2["negative_prompt"],
+            stage=f"2-{index + 1}",
+        )
+        main_image = post_process_enhance(generated)
+        outputs.append(_stage_output(
+            main_image, stage_dir, f"{index + 1:02d}_main.jpg", "result_main"
+        ))
+        ctx.progress(0.05 + per * index + per * 0.76, {"phase": "local-cutout", "variation": index + 1})
+        with ctx.resource("local-cutout"):
+            cutout = tight_crop_alpha(remove_bg_hd(main_image))
+        outputs.append(_stage_output(
+            cutout, stage_dir, f"{index + 1:02d}_cutout.png", "result_cutout"
+        ))
+    return outputs, {"product_name": product_name, "variation_count": batch}
+
+
+def _validated_group_products(detection):
+    if not isinstance(detection, dict):
+        raise JobExecutionError(
+            "INVALID_PRODUCT_DETECTION",
+            "Product detection did not return an object",
+        )
+    raw_products = detection.get("products")
+    if not isinstance(raw_products, list):
+        raise JobExecutionError(
+            "INVALID_PRODUCT_DETECTION",
+            "Product detection did not return a product list",
+        )
+    if not raw_products:
+        raise JobExecutionError(
+            "NO_PRODUCTS_DETECTED",
+            "No products were detected in the group image",
+        )
+    if len(raw_products) > MAX_GROUP_PRODUCTS:
+        raise JobExecutionError(
+            "TOO_MANY_PRODUCTS_DETECTED",
+            f"A group image supports at most {MAX_GROUP_PRODUCTS} detected products",
+            metadata={"detected_products": len(raw_products), "product_limit": MAX_GROUP_PRODUCTS},
+        )
+    declared_count = detection.get("count")
+    if (
+        isinstance(declared_count, bool)
+        or not isinstance(declared_count, int)
+        or declared_count != len(raw_products)
+    ):
+        raise JobExecutionError(
+            "INVALID_PRODUCT_DETECTION",
+            "Product detection count does not match the product list",
+        )
+
+    normalized_products = []
+    for index, product in enumerate(raw_products):
+        if not isinstance(product, dict):
+            raise JobExecutionError(
+                "INVALID_PRODUCT_DETECTION",
+                f"Detected product {index + 1} is not an object",
+            )
+        product_type = str(product.get("ptype") or "").strip()
+        if product_type not in GROUP_PRODUCT_TYPES:
+            raise JobExecutionError(
+                "INVALID_PRODUCT_DETECTION",
+                f"Detected product {index + 1} has an unsupported type",
+            )
+        has_container = product.get("has_container", False)
+        cutoff = product.get("cutoff", False)
+        if not isinstance(has_container, bool) or not isinstance(cutoff, bool):
+            raise JobExecutionError(
+                "INVALID_PRODUCT_DETECTION",
+                f"Detected product {index + 1} has invalid boolean fields",
+            )
+        raw_bbox = product.get("bbox")
+        if not isinstance(raw_bbox, (list, tuple)) or len(raw_bbox) != 4:
+            raise JobExecutionError(
+                "INVALID_PRODUCT_DETECTION",
+                f"Detected product {index + 1} has an invalid bounding box",
+            )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in raw_bbox
+        ):
+            raise JobExecutionError(
+                "INVALID_PRODUCT_DETECTION",
+                f"Detected product {index + 1} has non-numeric bounding box coordinates",
+            )
+        bbox = [max(0, min(int(value), 1000)) for value in raw_bbox]
+        x1, y1, x2, y2 = bbox
+        if x2 <= x1 or y2 <= y1:
+            raise JobExecutionError(
+                "INVALID_PRODUCT_DETECTION",
+                f"Detected product {index + 1} has an empty bounding box",
+            )
+        name = str(product.get("name") or f"产品{index + 1}").strip()[:100]
+        normalized_products.append({
+            "name": name or f"产品{index + 1}",
+            "ptype": product_type,
+            "has_container": has_container,
+            "cutoff": cutoff,
+            "bbox": bbox,
+        })
+    return normalized_products
+
+
+def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
+    params = dict(ctx.job.get("parameters") or {})
+    model = str(params.get("model") or "gemini-3.1-flash-image-preview")
+    platter_default = str(params.get("platter") or "auto")
+    do_refine = bool(params.get("refine", True))
+    fidelity = max(0, min(int(params.get("fidelity", 35)), 100))
+    angle = str(params.get("angle") or "auto")
+    ctx.progress(0.03, {"phase": "vlm"})
+    with ctx.resource("vlm"):
+        detection = vlm_detect_products(str(source_asset["path"]), str(ctx.job_id))
+    # Validate the complete untrusted VLM response before the first paid image
+    # call. A late malformed product must not waste earlier successful calls.
+    products = _validated_group_products(detection)
+
+    width, height = image.size
+    outputs = []
+    per = 0.92 / len(products)
+    for index, product in enumerate(products):
+        name = str(product.get("name") or f"产品{index + 1}")
+        product_type = str(product.get("ptype") or "food")
+        has_container = bool(product.get("has_container", False))
+        cutoff = bool(product.get("cutoff", False))
+        x1, y1, x2, y2 = product["bbox"]
+        bbox = (
+            int(x1 / 1000 * width), int(y1 / 1000 * height),
+            int(x2 / 1000 * width), int(y2 / 1000 * height),
+        )
+        platter = "remove" if product_type == "packaging" else (
+            "keep" if platter_default == "keep" or (platter_default == "auto" and has_container)
+            else "remove"
+        )
+        cropped = crop_product(image, bbox, width, height, pad_pct=0.20 if cutoff else 0.12)
+        negative = build_negative(platter)
+        knowledge_context = _job_knowledge_context(
+            trace,
+            mode="group-split",
+            category=product_type,
+            output_kind="ecommerce-main",
+            platter=platter,
+            angle=angle,
+            fidelity=fidelity,
+            product_name=name,
+        )
+        ctx.progress(0.05 + index * per, {"phase": "cloud-primary", "product": index + 1})
+        stage1 = KNOWLEDGE.enrich_prompt(
+            make_prompt(
+                build_multi_stage1_prompt(
+                    name, product_type, "cutoff" if cutoff else "complete", platter, angle
+                ),
+                fidelity,
+            ),
+            negative,
+            knowledge_context,
+        )
+        _record_job_prompt(
+            trace,
+            stage1["prompt"],
+            stage1["negative_prompt"],
+            "primary" if index == 0 else f"product-{index + 1}-primary",
+            stage1["sources"],
+        )
+        generated = _cloud_job_call(
+            ctx,
+            stage1["prompt"],
+            cropped,
+            model,
+            negative_prompt=stage1["negative_prompt"],
+            stage=f"1-{index + 1}",
+        )
+        if do_refine:
+            ctx.progress(0.05 + index * per + per * 0.38, {"phase": "cloud-refine", "product": index + 1})
+            stage2 = KNOWLEDGE.enrich_prompt(
+                make_prompt(build_stage2_prompt(name, platter, product_type, angle), fidelity),
+                negative,
+                knowledge_context,
+            )
+            _record_job_prompt(
+                trace,
+                stage2["prompt"],
+                stage2["negative_prompt"],
+                f"product-{index + 1}-refine",
+                stage2["sources"],
+            )
+            generated = _cloud_job_call(
+                ctx,
+                stage2["prompt"],
+                generated,
+                model,
+                negative_prompt=stage2["negative_prompt"],
+                stage=f"2-{index + 1}",
+            )
+        main_image = post_process_enhance(generated)
+        safe_name = safe_stem(name, f"product-{index + 1}")
+        outputs.append(_stage_output(
+            main_image, stage_dir, f"{index + 1:02d}_{safe_name}_main.jpg", "result_main"
+        ))
+        ctx.progress(0.05 + index * per + per * 0.78, {"phase": "local-cutout", "product": index + 1})
+        with ctx.resource("local-cutout"):
+            cutout = tight_crop_alpha(remove_bg_hd(main_image))
+        outputs.append(_stage_output(
+            cutout, stage_dir, f"{index + 1:02d}_{safe_name}_cutout.png", "result_cutout"
+        ))
+    return outputs, {"detected_products": len(products), "refined": do_refine}
+
+
+def _execute_cutout_job(ctx, image, stage_dir):
+    ctx.progress(0.08, {"phase": "local-cutout"})
+    with ctx.resource("local-cutout"):
+        cutout = tight_crop_alpha(remove_bg_hd(image))
+    output = _stage_output(cutout, stage_dir, "01_cutout.png", "result_cutout")
+    return [output], {"operation": "background-removal"}
+
+
+def execute_job_workflow(ctx):
+    """Execute one durable item from its persisted source asset id."""
+    refresh_runtime_config()
+    ctx.checkpoint()
+    source_asset, source_path = ASSET_STORE.resolve_asset_path(str(ctx.item["source_asset_id"]))
+    source_asset = {**source_asset, "path": str(source_path)}
+    try:
+        with Image.open(source_path) as opened:
+            image = opened.copy()
+    except Exception as exc:
+        raise JobExecutionError("INVALID_SOURCE_IMAGE", "The persisted source image cannot be decoded") from exc
+    trace = _job_trace_context(ctx)
+    stage_dir = _attempt_directory(ctx)
+    try:
+        mode = str(ctx.job["mode"])
+        if mode in {"single", "multi-file"}:
+            outputs, metadata = _execute_single_job(ctx, source_asset, image, stage_dir, trace)
+        elif mode == "group-split":
+            outputs, metadata = _execute_group_job(ctx, source_asset, image, stage_dir, trace)
+        elif mode == "cutout-batch":
+            outputs, metadata = _execute_cutout_job(ctx, image, stage_dir)
+        else:
+            raise JobExecutionError("UNSUPPORTED_JOB_MODE", f"Unsupported job mode: {mode}")
+        ctx.progress(0.98, {"phase": "publishing"})
+        return _staged_job_result(ctx, trace, stage_dir, outputs, {"mode": mode, **metadata})
+    except Exception:
+        if stage_dir.exists():
+            shutil.rmtree(stage_dir)
+        raise
+
+
+async def _persist_legacy_upload(upload, fallback_name):
+    if upload is None:
+        return None
+    try:
+        return await run_in_threadpool(
+            ASSET_STORE.import_stream,
+            upload.file,
+            upload.filename or fallback_name,
+        )
+    except AssetStoreError as exc:
+        raise_asset_http_error(exc)
+    finally:
+        await upload.close()
+
+
+def _parse_source_asset_ids(value):
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return [str(asset_id).strip() for asset_id in parsed if str(asset_id).strip()]
+    except (TypeError, ValueError):
+        pass
+    return [part.strip() for part in str(value).split(",") if part.strip()]
+
+
+async def _submit_legacy_job(mode, source_asset_ids, parameters):
+    response = await create_durable_job(JobCreateRequest(
+        mode=mode,
+        source_asset_ids=source_asset_ids,
+        parameters=parameters,
+        client_request_id=f"legacy-{uuid.uuid4()}",
+    ))
+    return response["job"]
+
+
 @app.post("/api/single")
 async def process_single(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    source_asset_id: str = Form(""),
     product_name: str = Form(""),
     model: str = Form("gpt-image-2"),
     batch: int = Form(1),
@@ -1264,40 +2508,37 @@ async def process_single(
     brief: str = Form(""),
     intent_locks: str = Form(""),
 ):
-    img_bytes = await file.read()
-    task_id = f"single_{int(time.time()*1000)}"
-    context = ledger_begin_task(
-        "single",
-        task_id,
-        file.filename or "single-product",
-        img_bytes,
-        {
-            "model": model,
-            "batch": batch,
-            "platter": platter,
-            "fidelity": fidelity,
-            "angle": angle,
-            "product_name": product_name,
-            "category": category,
-            "brief": parse_form_object(brief),
-            "intent_locks": parse_form_object(
-                intent_locks,
-                {"subject_shape": True, "product_count": True, "angle": angle == "keep"},
-            ),
-        },
-        session_id=session_id,
-    )
-    threading.Thread(
-        target=run_single_task,
-        args=(task_id, img_bytes, product_name, model, batch, platter, fidelity, angle, context),
-        daemon=True,
-    ).start()
-    return {"task_id": task_id, "session_id": context.get("session_id", ""), "generation_id": context.get("generation_id", "")}
+    source_ids = [source_asset_id.strip()] if source_asset_id.strip() else []
+    imported = await _persist_legacy_upload(file, "single-product.png")
+    if imported is not None:
+        source_ids = [imported["id"]]
+    job = await _submit_legacy_job("single", source_ids, {
+        "model": model,
+        "batch": batch,
+        "platter": platter,
+        "fidelity": fidelity,
+        "angle": angle,
+        "product_name": product_name,
+        "category": category,
+        "brief": parse_form_object(brief),
+        "intent_locks": parse_form_object(
+            intent_locks,
+            {"subject_shape": True, "product_count": True, "angle": angle == "keep"},
+        ),
+        "legacy_session_id": session_id,
+    })
+    return {
+        "task_id": job["id"],
+        "job_id": job["id"],
+        "session_id": job["session_id"],
+        "generation_id": job["items"][0]["generation_id"],
+    }
 
 @app.post("/api/group-split")
 @app.post("/api/multi")
 async def process_multi(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    source_asset_id: str = Form(""),
     model: str = Form("gemini-3.1-flash-image-preview"),
     platter: str = Form("auto"),
     refine: bool = Form(True),
@@ -1308,39 +2549,36 @@ async def process_multi(
     brief: str = Form(""),
     intent_locks: str = Form(""),
 ):
-    img_bytes = await file.read()
-    task_id = f"multi_{int(time.time()*1000)}"
-    context = ledger_begin_task(
-        "group-split",
-        task_id,
-        file.filename or "group-shot",
-        img_bytes,
-        {
-            "model": model,
-            "platter": platter,
-            "refine": refine,
-            "fidelity": fidelity,
-            "angle": angle,
-            "category": category,
-            "brief": parse_form_object(brief),
-            "intent_locks": parse_form_object(
-                intent_locks,
-                {"subject_shape": True, "product_count": True},
-            ),
-        },
-        session_id=session_id,
-    )
-    threading.Thread(
-        target=run_multi_task,
-        args=(task_id, img_bytes, model, platter, refine, fidelity, angle, context),
-        daemon=True,
-    ).start()
-    return {"task_id": task_id, "session_id": context.get("session_id", ""), "generation_id": context.get("generation_id", "")}
+    source_ids = [source_asset_id.strip()] if source_asset_id.strip() else []
+    imported = await _persist_legacy_upload(file, "group-shot.png")
+    if imported is not None:
+        source_ids = [imported["id"]]
+    job = await _submit_legacy_job("group-split", source_ids, {
+        "model": model,
+        "platter": platter,
+        "refine": refine,
+        "fidelity": fidelity,
+        "angle": angle,
+        "category": category,
+        "brief": parse_form_object(brief),
+        "intent_locks": parse_form_object(
+            intent_locks,
+            {"subject_shape": True, "product_count": True},
+        ),
+        "legacy_session_id": session_id,
+    })
+    return {
+        "task_id": job["id"],
+        "job_id": job["id"],
+        "session_id": job["session_id"],
+        "generation_id": job["items"][0]["generation_id"],
+    }
 
 
 @app.post("/api/multi-file")
 async def process_multi_file(
-    files: list[UploadFile] = File(...),
+    files: Optional[list[UploadFile]] = File(None),
+    source_asset_ids: str = Form(""),
     model: str = Form("gpt-image-2"),
     variations: int = Form(1),
     platter: str = Form("auto"),
@@ -1351,129 +2589,108 @@ async def process_multi_file(
     brief: str = Form(""),
     intent_locks: str = Form(""),
 ):
-    uploads = await read_upload_batch(files, max_files=12)
+    source_ids = _parse_source_asset_ids(source_asset_ids)
+    for index, upload in enumerate(files or []):
+        imported = await _persist_legacy_upload(upload, f"multi-{index + 1}.png")
+        source_ids.append(imported["id"])
     variations = max(1, min(int(variations), 4))
-    if len(uploads) * variations > 24:
+    if len(source_ids) * variations > 24:
         raise HTTPException(status_code=400, detail="本批最多生成 24 张，请减少文件数或每图方案数")
     brief_data = parse_form_object(brief)
     locks = parse_form_object(
         intent_locks,
         {"subject_shape": True, "product_count": True, "angle": angle == "keep"},
     )
-    try:
-        if session_id:
-            LEDGER.update_session(
-                session_id,
-                mode="multi-file",
-                status="processing",
-                category=category,
-                brief=brief_data,
-                intent_locks=locks,
-            )
-        else:
-            session = LEDGER.create_session(
-                "multi-file",
-                title=f"多文件任务 · {len(uploads)} 张",
-                category=category,
-                brief=brief_data,
-                intent_locks=locks,
-            )
-            session_id = session["id"]
-            LEDGER.update_session(session_id, status="processing")
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    task_id = f"multi_file_{int(time.time()*1000)}"
-    threading.Thread(
-        target=run_multi_file_task,
-        args=(task_id, uploads, session_id, model, variations, platter, fidelity, angle),
-        daemon=True,
-    ).start()
-    return {"task_id": task_id, "session_id": session_id, "file_count": len(uploads), "planned_outputs": len(uploads) * variations}
+    job = await _submit_legacy_job("multi-file", source_ids, {
+        "model": model,
+        "variations": variations,
+        "platter": platter,
+        "fidelity": fidelity,
+        "angle": angle,
+        "category": category,
+        "brief": brief_data,
+        "intent_locks": locks,
+        "legacy_session_id": session_id,
+    })
+    return {
+        "task_id": job["id"],
+        "job_id": job["id"],
+        "session_id": job["session_id"],
+        "file_count": len(source_ids),
+        "planned_outputs": len(source_ids) * variations,
+    }
 
 
 @app.post("/api/cutout-batch")
 async def process_cutout_batch(
-    files: list[UploadFile] = File(...),
+    files: Optional[list[UploadFile]] = File(None),
+    source_asset_ids: str = Form(""),
     session_id: str = Form(""),
     brief: str = Form(""),
 ):
-    uploads = await read_upload_batch(files, max_files=MAX_BATCH_FILES)
+    source_ids = _parse_source_asset_ids(source_asset_ids)
+    for index, upload in enumerate(files or []):
+        imported = await _persist_legacy_upload(upload, f"cutout-{index + 1}.png")
+        source_ids.append(imported["id"])
     brief_data = parse_form_object(brief)
-    try:
-        if session_id:
-            LEDGER.update_session(session_id, mode="cutout-batch", status="processing", brief=brief_data)
-        else:
-            session = LEDGER.create_session(
-                "cutout-batch",
-                title=f"批量抠图 · {len(uploads)} 张",
-                brief=brief_data,
-                intent_locks={"subject_shape": True, "product_count": True},
-            )
-            session_id = session["id"]
-            LEDGER.update_session(session_id, status="processing")
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    task_id = f"cutout_batch_{int(time.time()*1000)}"
-    threading.Thread(
-        target=run_cutout_batch_task,
-        args=(task_id, uploads, session_id),
-        daemon=True,
-    ).start()
-    return {"task_id": task_id, "session_id": session_id, "file_count": len(uploads)}
+    job = await _submit_legacy_job("cutout-batch", source_ids, {
+        "model": "local-rembg",
+        "operation": "background-removal",
+        "brief": brief_data,
+        "intent_locks": {"subject_shape": True, "product_count": True},
+        "legacy_session_id": session_id,
+    })
+    return {
+        "task_id": job["id"],
+        "job_id": job["id"],
+        "session_id": job["session_id"],
+        "file_count": len(source_ids),
+    }
 
 
 @app.post("/api/cutout")
-async def cutout_only(file: UploadFile = File(...), session_id: str = Form("")):
-    """Quick cutout only - no AI generation"""
-    img_bytes = await file.read()
-    task_id = f"cutout_{int(time.time()*1000)}"
-    context = ledger_begin_task(
-        "cutout",
-        task_id,
-        file.filename or "cutout-source",
-        img_bytes,
-        {"model": "local-rembg", "operation": "background-removal"},
-        session_id=session_id,
-    )
-    try:
-        img = Image.open(io.BytesIO(img_bytes))
-        cut = remove_bg_hd(img)
-        cut = tight_crop_alpha(cut)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        cp = OUTPUT_DIR / f"cutout_{ts}.png"
-        cut.save(cp, "PNG")
-        item = {
-            "data": base64.b64encode(image_to_bytes(cut, "PNG")).decode(),
-            "name": cp.name,
-            "path": str(cp),
-        }
-        ledger_complete_task(context, {"main": [], "cutout": [item]})
-        return {
-            **item,
-            "task_id": task_id,
-            "session_id": context.get("session_id", ""),
-            "generation_id": context.get("generation_id", ""),
-        }
-    except Exception as exc:
-        ledger_fail_task(context, exc)
-        raise
+async def cutout_only(
+    file: Optional[UploadFile] = File(None),
+    source_asset_id: str = Form(""),
+    session_id: str = Form(""),
+):
+    """Compatibility entry point backed by the durable local-cutout queue."""
+    source_ids = [source_asset_id.strip()] if source_asset_id.strip() else []
+    imported = await _persist_legacy_upload(file, "cutout-source.png")
+    if imported is not None:
+        source_ids = [imported["id"]]
+    job = await _submit_legacy_job("cutout-batch", source_ids, {
+        "model": "local-rembg",
+        "operation": "background-removal",
+        "legacy_session_id": session_id,
+    })
+    return {
+        "task_id": job["id"],
+        "job_id": job["id"],
+        "session_id": job["session_id"],
+        "generation_id": job["items"][0]["generation_id"],
+        "status": job["status"],
+    }
 
 
 @app.get("/api/thumbnail")
 async def get_thumbnail(path: str):
     """Serve a local image file for display in the UI."""
     try:
-        p = Path(path)
-        # Security: only serve from OUTPUT_DIR
-        if not str(p).startswith(str(OUTPUT_DIR)):
+        allowed_roots = (OUTPUT_DIR.resolve(), ASSET_DIR.resolve())
+        candidate = Path(path).resolve(strict=False)
+        if not any(candidate.is_relative_to(root) for root in allowed_roots):
             return JSONResponse({"error": "access denied"}, status_code=403)
-        if not p.exists() or not p.is_file():
+        p = Path(path).resolve(strict=True)
+        if not p.is_file():
             return JSONResponse({"error": "file not found"}, status_code=404)
         ext = p.suffix.lower()
         media_type = "image/jpeg"
         if ext == ".png": media_type = "image/png"
         elif ext == ".webp": media_type = "image/webp"
         return FileResponse(str(p), media_type=media_type)
+    except FileNotFoundError:
+        return JSONResponse({"error": "file not found"}, status_code=404)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 @app.get("/api/history")
@@ -1685,18 +2902,17 @@ async def batch_folder(
     refine: str = Form("1"),
     output_dir: str = Form("D:/图像处理"),
 ):
-    do_refine = refine not in ("0", "false", "False", "0")
-    task_id = f"batch_{int(time.time()*1000)}"
-    threading.Thread(
-        target=run_batch_folder,
-        args=(task_id, folder_path, mode, model, platter, fidelity, angle, do_refine, output_dir),
-        daemon=True
-    ).start()
-    return {"task_id": task_id}
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "BATCH_FOLDER_RETIRED",
+            "message": "Folder batch processing has moved to the durable asset workspace and job queue",
+        },
+    )
 
 @app.get("/api/batch-progress/{task_id}")
 async def get_batch_progress(task_id: str):
-    return tracker.get(task_id)
+    return await get_progress(task_id)
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765

@@ -1,4 +1,16 @@
 import * as API from './api.js';
+import {
+  collectResultItems,
+  createSubmissionSnapshot,
+  itemCompletionProgress,
+  jobCompletionProgress,
+  jobLifecycleActions,
+  jobsRenderSignature,
+  processResultItems,
+  queueCompletionProgress,
+  selectionAfterImport,
+  submissionFingerprint,
+} from './workspace-state.js';
 
 const PAGE_CONFIG = {
   process: { eyebrow: 'CREATIVE WORKSPACE', title: '你好，伊建', subtitle: '让知识、判断与生成留在同一条创作链里' },
@@ -11,40 +23,66 @@ const PAGE_CONFIG = {
 const MODE_CONFIG = {
   single: {
     label: '单产品商业精修', badge: 'SINGLE', action: '开始生成', multiple: false, maxFiles: 1,
-    title: '从一张可信的产品图开始', eyebrow: 'START WITH ONE SOURCE', limit: '1 FILE · 20 MB',
-    description: '主体完整、包装清晰；系统会保留素材血缘并调用你的设计知识。',
+    title: '导入素材，再选一张作为输入', eyebrow: 'PERSISTENT ASSET WORKSPACE', limit: 'SELECT 1 · 20 MB / FILE',
+    description: '素材只需导入一次；模式切换、刷新和重启后仍可复用。',
     note: '一张主图，保真生成与透明底同步输出', outputKind: 'ecommerce-main',
   },
   'multi-file': {
     label: '多文件独立批量', badge: 'BATCH', action: '运行批量队列', multiple: true, maxFiles: 12,
-    title: '建立一组独立商品队列', eyebrow: 'MULTI-SOURCE QUEUE', limit: 'UP TO 12 FILES · 160 MB',
-    description: '每张图片都是独立任务；可统一风格，也会保留各自素材与失败状态。',
+    title: '从共享素材选择一组独立商品', eyebrow: 'MULTI-SOURCE SELECTION', limit: 'SELECT UP TO 12',
+    description: '每张图片是独立子项；可并发处理，也会保留逐项进度和错误。',
     note: '多张源图逐一生成，不把它们误当成同一画面', outputKind: 'ecommerce-main',
   },
   'group-split': {
     label: '组合图智能拆分', badge: 'GROUP SPLIT', action: '识别并拆分', multiple: false, maxFiles: 1,
-    title: '上传一张包含多个产品的合照', eyebrow: 'ONE GROUP SHOT', limit: '1 GROUP IMAGE · 20 MB',
-    description: '先识别画面中的产品，再逐个裁切、精修和抠图；不等同于多文件批量。',
+    title: '从共享素材选择一张产品合照', eyebrow: 'SELECT ONE GROUP SHOT', limit: 'SELECT 1 GROUP IMAGE',
+    description: '任务会识别合照中的主体并逐个交付；不会把它误当多文件。',
     note: '一张合照识别多个主体，再分别生成交付图', outputKind: 'group-split',
   },
   'cutout-batch': {
     label: '本地批量抠图', badge: 'LOCAL CUTOUT', action: '开始批量抠图', multiple: true, maxFiles: 24,
-    title: '一次导入多张待抠图素材', eyebrow: 'LOCAL MULTI-CUTOUT', limit: 'UP TO 24 FILES · 160 MB',
-    description: '逐张输出透明 PNG，记录边缘结果；不调用云端生成，不消耗生图额度。',
+    title: '从共享素材选择待抠图图片', eyebrow: 'LOCAL MULTI-CUTOUT', limit: 'SELECT UP TO 24',
+    description: '逐张输出透明 PNG 并保留独立状态；不调用云端生成。',
     note: '多文件本地抠图，逐张保留结果与失败原因', outputKind: 'cutout',
   },
 };
+
+const JOB_STATUS = {
+  queued: { label: '排队中', tone: 'queued' },
+  running: { label: '运行中', tone: 'running' },
+  paused: { label: '已暂停', tone: 'paused' },
+  completed: { label: '已完成', tone: 'completed' },
+  partial: { label: '部分完成', tone: 'partial' },
+  failed: { label: '失败', tone: 'failed' },
+  canceling: { label: '正在取消', tone: 'canceling' },
+  canceled: { label: '已取消', tone: 'canceled' },
+  interrupted: { label: '已中断', tone: 'interrupted' },
+};
+
+const MODE_STATE_KEY = 'pa-workspace-v1';
+const PENDING_SUBMISSION_KEY = 'pa-pending-job-v1';
+const MODE_IDS = Object.keys(MODE_CONFIG);
+const emptyModeMap = () => Object.fromEntries(MODE_IDS.map((mode) => [mode, []]));
+const emptySnapshotMap = () => Object.fromEntries(MODE_IDS.map((mode) => [mode, null]));
 
 const STAGE_IDS = { empty: 'canvas-empty', ready: 'canvas-image', processing: 'canvas-processing', success: 'canvas-results', error: 'canvas-error' };
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 let modalReturnFocus = null;
+let drawerReturnFocus = null;
 
 const state = {
-  currentPage: 'process', currentMode: 'single', stage: 'empty', selectedFiles: [], fileUrls: [],
+  currentPage: 'process', currentMode: 'single', stage: 'empty', selectedFiles: [],
   originalDataUrl: '', results: null, resultTab: 'main', viewerIndex: 0, compareData: null,
-  currentTaskId: '', currentSessionId: '', currentGenerationId: '', generating: false,
+  currentTaskId: '', currentSessionId: '', currentGenerationId: '',
   knowledgeStatus: null, knowledgeBundle: null, settings: null, lastFeedbackSignal: '',
+  assets: [], assetUrls: new Map(), modeSelections: emptyModeMap(), modeSnapshots: emptySnapshotMap(),
+  jobs: [], knownJobStatuses: new Map(), jobsAvailable: true, assetsAvailable: true,
+  submitting: false, importing: false, jobPollTimer: null, jobDrawerOpen: false,
+  exporting: false, restoredModes: new Set(), knowledgeRequestVersion: 0,
+  assetsRequestVersion: 0, assetsAbortController: null,
+  jobsRequestVersion: 0, jobsAbortController: null, jobsRenderSignature: '',
+  jobActionsInFlight: new Set(), jobMutationsInFlight: new Set(), pendingSubmission: null,
 };
 window.ProductAtelier = { state };
 
@@ -52,6 +90,142 @@ function escapeHtml(value) {
   const node = document.createElement('div');
   node.textContent = String(value ?? '');
   return node.innerHTML;
+}
+
+function selectedAssetIds(mode = state.currentMode) {
+  return state.modeSelections[mode] || [];
+}
+
+function selectedAssets(mode = state.currentMode) {
+  const ids = new Set(selectedAssetIds(mode));
+  return state.assets.filter((asset) => ids.has(asset.id));
+}
+
+function createClientRequestId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function restorePendingSubmission() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PENDING_SUBMISSION_KEY) || 'null');
+    if (
+      saved && typeof saved === 'object'
+      && typeof saved.fingerprint === 'string'
+      && typeof saved.requestId === 'string'
+      && saved.payload && typeof saved.payload === 'object'
+    ) state.pendingSubmission = saved;
+  } catch (_) { /* an obsolete pending request should not block startup */ }
+}
+
+function persistPendingSubmission(pending) {
+  state.pendingSubmission = pending;
+  try {
+    if (pending) localStorage.setItem(PENDING_SUBMISSION_KEY, JSON.stringify(pending));
+    else localStorage.removeItem(PENDING_SUBMISSION_KEY);
+  } catch (_) { /* in-memory retry protection remains available */ }
+}
+
+function clearPendingSubmission(requestId) {
+  if (!state.pendingSubmission || state.pendingSubmission.requestId !== requestId) return;
+  persistPendingSubmission(null);
+}
+
+function isDefinitiveJobRejection(error) {
+  const status = Number(error?.status || 0);
+  return status >= 400 && status < 500 && ![408, 429].includes(status);
+}
+
+function persistWorkspaceState() {
+  try {
+    localStorage.setItem(MODE_STATE_KEY, JSON.stringify({
+      currentMode: state.currentMode,
+      modeSelections: state.modeSelections,
+      modeSnapshots: state.modeSnapshots,
+    }));
+  } catch (_) { /* local preferences are best effort */ }
+}
+
+function restoreWorkspaceState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MODE_STATE_KEY) || '{}');
+    MODE_IDS.forEach((mode) => {
+      if (Array.isArray(saved.modeSelections?.[mode])) state.modeSelections[mode] = saved.modeSelections[mode].map(String);
+      if (saved.modeSnapshots?.[mode] && typeof saved.modeSnapshots[mode] === 'object') {
+        state.modeSnapshots[mode] = saved.modeSnapshots[mode];
+        state.restoredModes.add(mode);
+      }
+    });
+    if (MODE_CONFIG[saved.currentMode]) state.currentMode = saved.currentMode;
+  } catch (_) { /* ignore an obsolete local snapshot */ }
+}
+
+function syncLegacySelection() {
+  state.selectedFiles = selectedAssets();
+  state.originalDataUrl = state.selectedFiles[0]?.content_url || '';
+}
+
+function formatApiError(error, fallback = '本地服务暂不可用') {
+  const message = String(error?.message || error || fallback).replace(/^Error:\s*/, '');
+  if (error?.code === 'REQUEST_TIMEOUT') return `${fallback}（请求超时）`;
+  if (/HTTP 404/.test(message)) return `${fallback}（接口尚未就绪）`;
+  if (/Failed to fetch|NetworkError|Load failed/i.test(message)) return `${fallback}（无法连接后端）`;
+  return message.slice(0, 280);
+}
+
+function captureModeSnapshot(mode = state.currentMode) {
+  if (!MODE_CONFIG[mode] || !$('#brief-input')) return;
+  state.modeSnapshots[mode] = {
+    brief: $('#brief-input').value,
+    model: $('#param-model').value,
+    angle: $('#param-angle').value,
+    fidelity: Number($('#param-fidelity').value),
+    batch: Number($('#param-batch').value),
+    platter: getPlatter(),
+    refine: $('#param-refine').checked,
+    intent_locks: getIntentLocks(),
+  };
+}
+
+function restoreModeSnapshot(mode = state.currentMode) {
+  const snapshot = state.modeSnapshots[mode];
+  if (!snapshot) return;
+  $('#brief-input').value = snapshot.brief || '';
+  if (snapshot.model && $(`#param-model option[value="${CSS.escape(snapshot.model)}"]`)) $('#param-model').value = snapshot.model;
+  if (snapshot.angle && $(`#param-angle option[value="${CSS.escape(snapshot.angle)}"]`)) $('#param-angle').value = snapshot.angle;
+  if (Number.isFinite(snapshot.fidelity)) $('#param-fidelity').value = String(snapshot.fidelity);
+  if (Number.isFinite(snapshot.batch)) $('#param-batch').value = String(snapshot.batch);
+  if (snapshot.platter) {
+    const platter = $(`input[name="platter"][value="${CSS.escape(snapshot.platter)}"]`);
+    if (platter) platter.checked = true;
+  }
+  $('#param-refine').checked = snapshot.refine !== false;
+  $$('[data-lock]').forEach((input) => {
+    input.checked = Boolean(snapshot.intent_locks?.[input.dataset.lock]);
+    input.closest('.lock-chip').classList.toggle('active', input.checked);
+  });
+}
+
+function assetUrl(asset, kind = 'thumbnail') {
+  if (!asset) return '';
+  const relative = kind === 'content' ? asset.content_url : asset.thumbnail_url;
+  if (/^https?:\/\//.test(relative || '')) return relative;
+  const cached = state.assetUrls.get(`${asset.id}:${kind}`);
+  return cached || relative || '';
+}
+
+async function hydrateAssetUrls(assets) {
+  await Promise.all((assets || []).map(async (asset) => {
+    try {
+      const [content, thumbnail] = await Promise.all([
+        API.getAssetContentUrl(asset.id), API.getAssetThumbnailUrl(asset.id, 360),
+      ]);
+      state.assetUrls.set(`${asset.id}:content`, content);
+      state.assetUrls.set(`${asset.id}:thumbnail`, thumbnail);
+      asset.content_url = content;
+      asset.thumbnail_url = thumbnail;
+    } catch (_) { /* the API response may already contain absolute URLs */ }
+  }));
 }
 
 function toast(message, type = 'info', duration = 3200) {
@@ -121,16 +295,10 @@ function setupTheme() {
   });
 }
 
-function releaseFileUrls() {
-  state.fileUrls.forEach((url) => URL.revokeObjectURL(url));
-  state.fileUrls = [];
-}
-
 function clearSession(keepMode = true) {
-  if (state.generating) return;
-  API.stopPolling();
-  releaseFileUrls();
-  state.selectedFiles = [];
+  captureModeSnapshot();
+  state.modeSelections[state.currentMode] = [];
+  syncLegacySelection();
   state.originalDataUrl = '';
   state.results = null;
   state.compareData = null;
@@ -143,21 +311,20 @@ function clearSession(keepMode = true) {
   $('#file-input').value = '';
   $('#brief-input').value = '';
   $('#canvas-img-preview').removeAttribute('src');
-  $('#file-queue').innerHTML = '';
-  $('#source-preview').parentElement.classList.remove('is-queue');
-  $('#summary-result').textContent = '等待第一张素材';
-  $('#summary-result-note').textContent = '每次生成、采用与调整都会留下可解释证据';
+  $('#summary-result').textContent = '等待选择任务素材';
+  $('#summary-result-note').textContent = '共享素材和已有任务不会被清空';
   $('#knowledge-summary').textContent = '等待知识编译';
   renderKnowledge(null);
-  setStage('empty');
+  state.modeSnapshots[state.currentMode] = null;
   if (!keepMode) switchMode('single', false);
+  renderQueue();
+  persistWorkspaceState();
   updateCtaState();
 }
 
-function switchMode(mode, clearExisting = true) {
-  if (!MODE_CONFIG[mode] || state.generating) return;
-  const changed = state.currentMode !== mode;
-  if (changed && clearExisting && state.selectedFiles.length) clearSession(true);
+function switchMode(mode, preserveCurrent = true) {
+  if (!MODE_CONFIG[mode]) return;
+  if (preserveCurrent && state.currentMode !== mode) captureModeSnapshot();
   state.currentMode = mode;
   const config = MODE_CONFIG[mode];
   $$('.mode-button').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
@@ -179,63 +346,151 @@ function switchMode(mode, clearExisting = true) {
   else if (mode === 'cutout-batch') $('#model-reason').textContent = '本地 BiRefNet';
   else $('#model-reason').textContent = '质量优先';
   state.resultTab = mode === 'cutout-batch' ? 'cutout' : 'main';
+  restoreModeSnapshot(mode);
+  syncLegacySelection();
+  renderQueue();
   renderFileMeta();
+  updateQuickControls();
+  persistWorkspaceState();
   updateCtaState();
 }
 
 function renderFileMeta() {
-  const count = state.selectedFiles.length;
-  $('#btn-replace').hidden = count === 0 || state.generating;
-  $('#btn-clear').hidden = count === 0 || state.generating;
+  const selection = selectedAssets();
+  const count = selection.length;
+  $('#asset-count').textContent = `${state.assets.length} 素材`;
+  $('#btn-replace').hidden = false;
+  $('#btn-replace').disabled = state.importing;
+  $('#btn-clear').hidden = count === 0;
   if (count) {
-    $('#info-filename').textContent = count === 1 ? state.selectedFiles[0].name : `${count} 张源图已加入队列`;
+    $('#info-filename').textContent = count === 1 ? selection[0].name : `${count} 张源图已选中`;
     $('#ready-count').textContent = `${count} SOURCE${count > 1 ? 'S' : ''} READY`;
+  } else {
+    $('#info-filename').textContent = '从素材工作台选择任务输入';
+    $('#ready-count').textContent = '0 SELECTED';
   }
 }
 
 function renderQueue() {
   const ready = $('#canvas-image');
   const queue = $('#file-queue');
-  const isQueue = MODE_CONFIG[state.currentMode].multiple;
-  ready.classList.toggle('is-queue', isQueue);
-  if (!state.selectedFiles.length) return;
-  $('#canvas-img-preview').src = state.fileUrls[0];
-  queue.innerHTML = state.selectedFiles.map((file, index) => `
-    <article class="queue-item" data-index="${index}">
-      <img src="${state.fileUrls[index]}" alt="${escapeHtml(file.name)}" />
-      <div><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><span>${String(index + 1).padStart(2, '0')}</span></div>
-    </article>`).join('');
+  ready.classList.add('is-queue', 'is-workspace');
+  if (!state.assets.length) {
+    queue.innerHTML = '';
+    setStage('empty');
+    renderFileMeta();
+    return;
+  }
+  const selection = new Set(selectedAssetIds());
+  queue.innerHTML = state.assets.map((asset, index) => {
+    const selected = selection.has(asset.id);
+    const dimensions = asset.width && asset.height ? `${asset.width}×${asset.height}` : '已持久化';
+    return `<button class="queue-item asset-card ${selected ? 'selected' : ''}" type="button" data-asset-id="${escapeHtml(asset.id)}" aria-pressed="${selected}" aria-label="${selected ? '取消选择' : '选择'} ${escapeHtml(asset.name)}">
+      <span class="asset-card__visual"><img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" /><span class="asset-card__check" aria-hidden="true">${selected ? '✓' : '+'}</span></span>
+      <span class="asset-card__meta"><strong title="${escapeHtml(asset.name)}">${escapeHtml(asset.name || `素材 ${index + 1}`)}</strong><small>${escapeHtml(dimensions)}</small></span>
+    </button>`;
+  }).join('');
+  $$('.asset-card', queue).forEach((button) => button.addEventListener('click', () => toggleAssetSelection(button.dataset.assetId)));
+  setStage('ready');
+  renderFileMeta();
 }
 
 async function handleFiles(fileList) {
-  if (state.generating) return;
   const incoming = Array.from(fileList || []);
   if (!incoming.length) return;
-  const config = MODE_CONFIG[state.currentMode];
+  if (state.importing) { toast('上一批素材仍在导入，请稍候', 'error'); return; }
+  const importMode = state.currentMode;
   const valid = incoming.filter((file) => {
     if (!/^image\/(png|jpeg|webp)$/i.test(file.type)) { toast(`${file.name} 不是支持的图片格式`, 'error'); return false; }
     if (file.size > 20 * 1024 * 1024) { toast(`${file.name} 超过 20 MB`, 'error'); return false; }
     return true;
   });
   if (!valid.length) return;
-  let next = config.multiple ? [...state.selectedFiles, ...valid] : [valid[0]];
-  if (next.length > config.maxFiles) {
-    toast(`当前模式单次最多 ${config.maxFiles} 张`, 'error');
-    next = next.slice(0, config.maxFiles);
+  if (valid.length > 100) { toast('一次最多导入 100 张素材', 'error'); return; }
+  state.importing = true;
+  renderFileMeta();
+  $('#btn-browse').disabled = true;
+  toast(`正在导入 ${valid.length} 张素材…`);
+  try {
+    const result = await API.importAssets(valid);
+    const imported = Array.isArray(result?.assets) ? result.assets : [];
+    const errors = Array.isArray(result?.errors) ? result.errors : [];
+    await loadAssets(true);
+    const config = MODE_CONFIG[importMode];
+    state.modeSelections[importMode] = selectionAfterImport(
+      selectedAssetIds(importMode),
+      imported.map((asset) => asset.id),
+      config,
+    );
+    syncLegacySelection();
+    if (state.currentMode === importMode) renderQueue();
+    persistWorkspaceState();
+    $('#summary-result').textContent = `${imported.length} 张素材已写入工作台`;
+    $('#summary-result-note').textContent = '切换模式或重启后仍可继续使用';
+    if (errors.length) toast(`${imported.length} 张导入成功，${errors.length} 张失败`, 'error', 5200);
+    else toast(`已导入 ${imported.length} 张素材`, 'success');
+    updateCtaState();
+    await compileKnowledgePreview();
+  } catch (error) {
+    state.assetsAvailable = false;
+    toast(`素材导入失败：${formatApiError(error, '持久素材接口不可用')}`, 'error', 6000);
+  } finally {
+    state.importing = false;
+    $('#btn-browse').disabled = false;
+    $('#file-input').value = '';
+    renderFileMeta();
   }
-  releaseFileUrls();
-  state.selectedFiles = next;
-  state.fileUrls = next.map((file) => URL.createObjectURL(file));
-  state.originalDataUrl = state.fileUrls[0] || '';
-  state.results = null;
-  state.compareData = null;
+}
+
+function toggleAssetSelection(assetId) {
+  const config = MODE_CONFIG[state.currentMode];
+  const current = selectedAssetIds();
+  const selected = current.includes(assetId);
+  let next;
+  if (selected) next = current.filter((id) => id !== assetId);
+  else if (!config.multiple) next = [assetId];
+  else if (current.length >= config.maxFiles) {
+    toast(`当前模式最多选择 ${config.maxFiles} 张`, 'error');
+    return;
+  } else next = [...current, assetId];
+  state.modeSelections[state.currentMode] = next;
+  syncLegacySelection();
   renderQueue();
-  setStage('ready');
-  $('#summary-result').textContent = `${next.length} 张素材已就绪`;
-  $('#summary-result-note').textContent = '知识规则正在按任务语义预编译';
+  persistWorkspaceState();
   updateCtaState();
-  await compileKnowledgePreview();
-  $('#file-input').value = '';
+  scheduleKnowledgeCompile();
+}
+
+async function loadAssets(silent = false) {
+  const requestVersion = ++state.assetsRequestVersion;
+  state.assetsAbortController?.abort();
+  const controller = new AbortController();
+  state.assetsAbortController = controller;
+  try {
+    const result = await API.getAssets(500, { signal: controller.signal, timeoutMs: 12000 });
+    if (requestVersion !== state.assetsRequestVersion) return null;
+    const assets = Array.isArray(result) ? result : (result?.assets || []);
+    await hydrateAssetUrls(assets);
+    state.assets = assets;
+    state.assetsAvailable = true;
+    const validIds = new Set(assets.map((asset) => asset.id));
+    MODE_IDS.forEach((mode) => {
+      state.modeSelections[mode] = selectedAssetIds(mode).filter((id) => validIds.has(id)).slice(0, MODE_CONFIG[mode].maxFiles);
+    });
+    syncLegacySelection();
+    renderQueue();
+    persistWorkspaceState();
+    return true;
+  } catch (error) {
+    if (requestVersion !== state.assetsRequestVersion) return null;
+    state.assetsAvailable = false;
+    if (!silent) toast(`素材工作台读取失败：${formatApiError(error, '持久素材接口不可用')}`, 'error', 6000);
+    $('#upload-title').textContent = '素材工作台暂不可用';
+    $('#upload-description').textContent = '后端可能尚未完成 /api/assets 接口，连接后可重试导入。';
+    return false;
+  } finally {
+    if (requestVersion === state.assetsRequestVersion) state.assetsAbortController = null;
+  }
 }
 
 function getIntentLocks() {
@@ -249,37 +504,49 @@ function getPlatter() {
   return $('input[name="platter"]:checked')?.value || 'auto';
 }
 
-function buildBrief() {
+function buildBrief(mode = state.currentMode) {
   const request = $('#brief-input').value.trim();
   return {
     objective: request || '将产品原图转化为可交付的商业图片',
     user_request: request,
-    mode: state.currentMode,
+    mode,
     category: 'general',
     platform: 'ecommerce',
-    output_kind: MODE_CONFIG[state.currentMode].outputKind,
+    output_kind: MODE_CONFIG[mode].outputKind,
     angle: $('#param-angle').value,
     platter: getPlatter(),
     fidelity: Number($('#param-fidelity').value),
     intent_locks: getIntentLocks(),
-    output_spec: { ratio: '1:1', size: '2048x2048', format: state.currentMode === 'cutout-batch' ? 'transparent PNG' : 'JPG+transparent PNG' },
+    output_spec: { ratio: '1:1', size: '2048x2048', format: mode === 'cutout-batch' ? 'transparent PNG' : 'JPG+transparent PNG' },
   };
 }
 
 let compileTimer = null;
-async function compileKnowledgePreview() {
-  if (!state.selectedFiles.length && !$('#brief-input').value.trim()) return;
+async function compileKnowledgePreview(context = null) {
+  const mode = context?.mode || state.currentMode;
+  const brief = context?.brief || buildBrief(mode);
+  const hasInput = Boolean(selectedAssetIds(mode).length || brief.user_request || context?.force);
+  if (!hasInput) return null;
+  const requestVersion = ++state.knowledgeRequestVersion;
   try {
-    const bundle = await API.compileKnowledge(buildBrief());
-    state.knowledgeBundle = bundle;
-    renderKnowledge(bundle);
+    const bundle = await API.compileKnowledge(brief);
+    if (requestVersion === state.knowledgeRequestVersion && mode === state.currentMode) {
+      state.knowledgeBundle = bundle;
+      renderKnowledge(bundle);
+    }
+    return bundle;
   } catch (error) {
-    $('#knowledge-summary').textContent = '知识编译暂不可用，使用安全默认值';
+    if (requestVersion === state.knowledgeRequestVersion && mode === state.currentMode) {
+      $('#knowledge-summary').textContent = '知识编译暂不可用，使用安全默认值';
+    }
+    return null;
   }
 }
 
 function scheduleKnowledgeCompile() {
   window.clearTimeout(compileTimer);
+  captureModeSnapshot();
+  persistWorkspaceState();
   compileTimer = window.setTimeout(compileKnowledgePreview, 480);
 }
 
@@ -306,12 +573,14 @@ function renderKnowledge(bundle) {
 
 function updateCtaState() {
   const button = $('#btn-generate');
-  const hasFiles = state.selectedFiles.length > 0;
-  button.disabled = !hasFiles || state.generating;
-  if (state.generating) $('#generate-text').textContent = 'Atelier 正在工作';
+  const count = selectedAssetIds().length;
+  const hasFiles = count > 0;
+  button.disabled = !hasFiles || state.submitting || !state.assetsAvailable;
+  button.classList.toggle('loading', state.submitting);
+  if (state.submitting) $('#generate-text').textContent = '正在加入任务 Dock';
   else if (!hasFiles) $('#generate-text').textContent = '选择图片开始';
   else $('#generate-text').textContent = MODE_CONFIG[state.currentMode].action;
-  $('#cta-hint').textContent = !hasFiles ? '上传后会先编译 Creative Brief' : `${state.selectedFiles.length} 张素材 · ${Object.values(getIntentLocks()).filter(Boolean).length} 项锁定`;
+  $('#cta-hint').textContent = !hasFiles ? '从共享素材区选择后可入队' : `${count} 张素材 · ${Object.values(getIntentLocks()).filter(Boolean).length} 项锁定`;
 }
 
 function updateQuickControls() {
@@ -321,45 +590,19 @@ function updateQuickControls() {
   $('#quick-batch').textContent = state.currentMode === 'multi-file' ? `${$('#param-batch').value} / file` : $('#param-batch').value;
   $('#fid-val').textContent = `${$('#param-fidelity').value}%`;
   $('#batch-val').textContent = $('#param-batch').value;
+  captureModeSnapshot();
+  persistWorkspaceState();
   updateCtaState();
   scheduleKnowledgeCompile();
 }
 
-function showProgress(message = '建立本地创作会话…') {
-  state.generating = true;
-  $('#progress-title').textContent = '编译创作意图';
-  $('#progress-percent').textContent = '0%';
-  $('#progress-bar-fill').style.width = '0%';
-  $('#progress-log').textContent = message;
-  setStage('processing');
-  updateCtaState();
-}
-
-function updateProgress(data) {
-  const progress = Math.max(0, Math.min(1, Number(data.progress || 0)));
-  $('#progress-percent').textContent = `${Math.round(progress * 100)}%`;
-  $('#progress-bar-fill').style.width = `${Math.round(progress * 100)}%`;
-  $('#progress-title').textContent = data.message || (progress < .18 ? '读取知识与素材' : progress < .72 ? '生成商业版本' : '整理交付结果');
-  const logs = Array.isArray(data.logs) ? data.logs : [];
-  $('#progress-log').textContent = logs.length ? logs[logs.length - 1] : (data.message || '处理中…');
-}
-
-function showError(error) {
-  state.generating = false;
-  $('#error-message').textContent = String(error || '未知错误').replace(/^Error:\s*/, '').slice(0, 280);
-  setStage('error');
-  updateCtaState();
-  toast('任务没有完成，创作会话已保留错误证据', 'error');
-}
-
-async function handleGenerate() {
-  if (state.generating || !state.selectedFiles.length) return;
-  showProgress();
-  try {
-    await compileKnowledgePreview();
-    const params = {
-      files: state.selectedFiles,
-      file: state.selectedFiles[0],
+function captureSubmissionDraft() {
+  const mode = state.currentMode;
+  const brief = buildBrief(mode);
+  return createSubmissionSnapshot({
+    mode,
+    sourceAssetIds: selectedAssetIds(mode),
+    parameters: {
       model: $('#param-model').value,
       variations: Number($('#param-batch').value),
       batch: Number($('#param-batch').value),
@@ -367,60 +610,370 @@ async function handleGenerate() {
       fidelity: Number($('#param-fidelity').value),
       angle: $('#param-angle').value,
       refine: $('#param-refine').checked,
-      brief: buildBrief(),
+      brief,
       intent_locks: getIntentLocks(),
       category: 'general',
-    };
-    let response;
-    if (state.currentMode === 'single') response = await API.startSingle(params);
-    else if (state.currentMode === 'multi-file') response = await API.startMultiFile(params);
-    else if (state.currentMode === 'group-split') response = await API.startGroupSplit(params);
-    else response = await API.cutoutBatch(params);
-    state.currentTaskId = response.task_id || '';
-    state.currentSessionId = response.session_id || '';
-    state.currentGenerationId = response.generation_id || '';
-    API.startPolling(state.currentTaskId, handleTaskUpdate, 900);
+    },
+  });
+}
+
+async function compileSubmissionPayload(draft) {
+  const fingerprint = submissionFingerprint(draft);
+  const pending = state.pendingSubmission;
+  if (
+    pending?.fingerprint === fingerprint
+    && pending.payload?.client_request_id === pending.requestId
+  ) return pending.payload;
+
+  const bundle = await compileKnowledgePreview({
+    mode: draft.mode,
+    brief: draft.parameters.brief,
+    force: true,
+  });
+  const requestId = createClientRequestId();
+  const payload = {
+    ...createSubmissionSnapshot({
+      mode: draft.mode,
+      sourceAssetIds: draft.source_asset_ids,
+      parameters: {
+        ...draft.parameters,
+        knowledge_refs: bundle?.sources || [],
+      },
+    }),
+    client_request_id: requestId,
+  };
+  persistPendingSubmission({ fingerprint, requestId, payload });
+  return payload;
+}
+
+async function handleGenerate() {
+  if (state.submitting) return;
+  const submissionDraft = captureSubmissionDraft();
+  if (!submissionDraft.source_asset_ids.length) return;
+  state.submitting = true;
+  updateCtaState();
+  let payload = null;
+  try {
+    payload = await compileSubmissionPayload(submissionDraft);
+    const response = await API.createJob(payload);
+    clearPendingSubmission(payload.client_request_id);
+    const job = response?.job || response;
+    state.currentTaskId = job?.id || response?.job_id || '';
+    state.currentSessionId = job?.session_id || response?.session_id || '';
+    $('#summary-result').textContent = `${submissionDraft.source_asset_ids.length} 项任务已入队`;
+    $('#summary-result-note').textContent = '可继续选素材、切换模式或发起新任务';
+    toast('任务已加入 Dock，可继续组织素材', 'success');
+    await loadJobs(true);
+    openDrawer('jobs');
   } catch (error) {
-    showError(error);
+    if (payload && isDefinitiveJobRejection(error)) clearPendingSubmission(payload.client_request_id);
+    toast(`任务提交失败：${formatApiError(error, '持久任务接口不可用')}`, 'error', 6500);
+  } finally {
+    state.submitting = false;
+    updateCtaState();
   }
 }
 
-async function handleTaskUpdate(data) {
-  if (data.status === 'error') { showError(data.error || '任务失败'); return; }
-  updateProgress(data);
-  if (data.status !== 'completed') return;
-  state.generating = false;
-  state.results = data.results || { main: [], cutout: [] };
-  if (state.currentMode === 'cutout-batch') state.resultTab = 'cutout';
-  else state.resultTab = (state.results.main || []).length ? 'main' : 'cutout';
-  state.viewerIndex = 0;
-  await refreshCurrentSession();
-  renderResults();
-  setStage('success');
-  updateCtaState();
-  const count = (state.results.main || []).length + (state.results.cutout || []).length;
-  $('#summary-result').textContent = `${count} 个结果已写入创作账本`;
-  $('#summary-result-note').textContent = '请选择、反馈或回传终稿，让下一版更接近你';
-  toast('任务完成：知识来源、Prompt 和结果血缘已记录', 'success');
+function jobProgress(job) {
+  return jobCompletionProgress(job);
 }
 
-async function refreshCurrentSession() {
-  if (!state.currentSessionId) return;
+function jobCounts(job) {
+  const items = Array.isArray(job?.items) ? job.items : [];
+  const count = (status) => items.filter((item) => item.status === status).length;
+  const completed = Number(job.completed_items ?? count('completed'));
+  const failed = Number(job.failed_items ?? count('failed'));
+  const decided = completed + failed;
+  return {
+    total: Number(job.total_items ?? items.length ?? 0),
+    completed,
+    failed,
+    canceled: Number(job.canceled_items ?? count('canceled')),
+    successRate: decided ? Math.round((completed / decided) * 100) : null,
+  };
+}
+
+function resultIdsForJob(job) {
+  return [...new Set((job?.items || []).flatMap((item) => Array.isArray(item.result_asset_ids) ? item.result_asset_ids : []))];
+}
+
+function renderJobDockSummary() {
+  const jobs = state.jobs;
+  const ongoing = jobs.filter((job) => ['queued', 'running', 'paused', 'canceling', 'interrupted'].includes(job.status));
+  const progressing = ongoing.filter((job) => job.status !== 'paused');
+  const paused = ongoing.filter((job) => job.status === 'paused');
+  const progressScope = ongoing.length ? ongoing : jobs;
+  const items = progressScope.flatMap((job) => Array.isArray(job.items) ? job.items : []);
+  const overall = queueCompletionProgress(progressScope);
+  const completed = items.filter((item) => item.status === 'completed').length;
+  const failed = items.filter((item) => item.status === 'failed').length;
+  const decided = completed + failed;
+  const outcomeCopy = decided ? ` · 已结束项成功率 ${Math.round((completed / decided) * 100)}%` : '';
+  const percent = Math.round(overall * 100);
+  $('#job-dock-progress').textContent = `${percent}%`;
+  $('#job-dock-summary').textContent = state.jobsAvailable
+    ? (ongoing.length
+      ? `${ongoing.length} 个未结束${paused.length ? ` · ${paused.length} 个已暂停` : ''} · ${jobs.length} 个记录`
+      : (jobs.length ? `${jobs.length} 个任务已恢复` : '暂无任务'))
+    : '任务接口未就绪';
+  $('#job-dock-dot').className = `job-dock-dot ${progressing.length ? 'active' : ''} ${paused.length && !progressing.length ? 'paused' : ''} ${state.jobsAvailable ? '' : 'error'}`.trim();
+  $('#jobs-overall-percent').textContent = `${percent}%`;
+  $('#jobs-overall-bar').style.width = `${percent}%`;
+  $('#jobs-overall-copy').textContent = progressing.length
+    ? `${progressing.length} 个任务正在推进${paused.length ? `，${paused.length} 个已暂停` : ''}，可继续编排新素材${outcomeCopy}`
+    : (paused.length
+      ? `${paused.length} 个任务已暂停，继续后将领取剩余排队项${outcomeCopy}`
+      : (jobs.length ? `任务状态已从本地账本恢复${outcomeCopy}` : '新任务会在这里持续追踪'));
+}
+
+const MUTATING_JOB_ACTIONS = new Set(['pause', 'resume', 'cancel', 'retry-item', 'retry-failed']);
+
+function jobActionKey(action, jobId = '', itemId = '') {
+  return `${action}:${jobId}:${itemId}`;
+}
+
+function jobActionDisabled(action, jobId = '', itemId = '') {
+  return state.jobActionsInFlight.has(jobActionKey(action, jobId, itemId))
+    || (MUTATING_JOB_ACTIONS.has(action) && state.jobMutationsInFlight.has(jobId));
+}
+
+function captureJobListView(list) {
+  const active = document.activeElement;
+  const action = active instanceof HTMLElement ? active.closest('[data-job-action]') : null;
+  const card = active instanceof HTMLElement ? active.closest('.job-card') : null;
+  return {
+    scrollTop: list.scrollTop,
+    itemScroll: new Map($$('.job-card', list).map((jobCard) => [
+      jobCard.dataset.jobId,
+      $('.job-items', jobCard)?.scrollTop || 0,
+    ])),
+    focus: action ? {
+      kind: 'action',
+      action: action.dataset.jobAction || '',
+      jobId: action.dataset.jobId || '',
+      itemId: action.dataset.itemId || '',
+    } : (card ? { kind: 'card', jobId: card.dataset.jobId || '' } : null),
+  };
+}
+
+function restoreJobListView(list, view) {
+  list.scrollTop = view.scrollTop;
+  $$('.job-card', list).forEach((card) => {
+    const items = $('.job-items', card);
+    if (items) items.scrollTop = view.itemScroll.get(card.dataset.jobId) || 0;
+  });
+  if (!view.focus) return;
+  let target = null;
+  if (view.focus.kind === 'action') {
+    target = $$('[data-job-action]', list).find((button) => (
+      (button.dataset.jobAction || '') === view.focus.action
+      && (button.dataset.jobId || '') === view.focus.jobId
+      && (button.dataset.itemId || '') === view.focus.itemId
+    ));
+    if (target?.disabled) target = null;
+  }
+  if (!target && view.focus.jobId) {
+    target = $$('.job-card', list).find((card) => card.dataset.jobId === view.focus.jobId);
+  }
+  target?.focus({ preventScroll: true });
+}
+
+function renderJobs(force = false) {
+  const signature = jobsRenderSignature(
+    state.jobs,
+    state.jobsAvailable,
+    state.jobActionsInFlight,
+  );
+  if (!force && signature === state.jobsRenderSignature) return;
+  renderJobDockSummary();
+  const list = $('#job-list');
+  const view = captureJobListView(list);
+  if (!state.jobsAvailable) {
+    list.innerHTML = `<div class="job-empty job-empty--error"><strong>持久任务接口暂不可用</strong><p>请确认后端已提供 /api/jobs；素材与当前选择不会被清空。</p><button class="secondary-button" type="button" data-job-action="refresh" ${jobActionDisabled('refresh') ? 'disabled aria-busy="true"' : ''}>重试连接</button></div>`;
+  } else if (!state.jobs.length) {
+    list.innerHTML = '<div class="job-empty"><strong>还没有任务</strong><p>从素材工作台选择图片并入队后，进度会在此从后端恢复。</p></div>';
+  } else {
+    list.innerHTML = state.jobs.map((job) => {
+      const status = JOB_STATUS[job.status] || { label: job.status || '未知', tone: 'unknown' };
+      const progress = Math.round(jobProgress(job) * 100);
+      const counts = jobCounts(job);
+      const retryable = (job.items || []).filter((item) => ['failed', 'interrupted'].includes(item.status));
+      const hasResults = resultIdsForJob(job).length > 0;
+      const lifecycleActions = jobLifecycleActions(job.status);
+      const canPause = lifecycleActions.includes('pause');
+      const canResume = lifecycleActions.includes('resume');
+      const canCancel = lifecycleActions.includes('cancel');
+      const items = (job.items || []).map((item, index) => {
+        const source = state.assets.find((asset) => asset.id === item.source_asset_id);
+        const itemStatus = JOB_STATUS[item.status] || { label: item.status || '未知', tone: 'unknown' };
+        const itemProgress = Math.round(itemCompletionProgress(item) * 100);
+        const error = item.error_message || item.error || '';
+        const canRetryItem = ['failed', 'interrupted'].includes(item.status);
+        return `<li class="job-item job-item--${escapeHtml(itemStatus.tone)}">
+          <img src="${escapeHtml(assetUrl(source))}" alt="" loading="lazy" />
+          <span class="job-item__copy"><strong>${escapeHtml(source?.name || `素材 ${index + 1}`)}</strong><span>${escapeHtml(itemStatus.label)} · 完成度 ${itemProgress}%</span>${error ? `<small title="${escapeHtml(error)}">${escapeHtml(error)}</small>` : ''}</span>
+          <span class="job-item__bar"><i style="width:${itemProgress}%"></i></span>
+          ${canRetryItem ? `<button type="button" data-job-action="retry-item" data-job-id="${escapeHtml(job.id)}" data-item-id="${escapeHtml(item.id)}" ${jobActionDisabled('retry-item', job.id, item.id) ? 'disabled aria-busy="true"' : ''}>重试</button>` : ''}
+        </li>`;
+      }).join('');
+      return `<article class="job-card job-card--${escapeHtml(status.tone)}" data-job-id="${escapeHtml(job.id)}" tabindex="-1">
+        <header><span><small>${escapeHtml(MODE_CONFIG[job.mode]?.badge || String(job.mode || '').toUpperCase())}</small><strong>${escapeHtml(MODE_CONFIG[job.mode]?.label || job.title || '创作任务')}</strong></span><span class="job-status job-status--${escapeHtml(status.tone)}">${escapeHtml(status.label)}</span></header>
+        <div class="job-progress"><span><i style="width:${progress}%"></i></span><strong>${progress}%</strong></div>
+        <div class="job-counts"><span>${counts.total} 项</span><span>${counts.completed} 成功</span><span>${counts.failed} 失败</span><span>${counts.canceled} 取消</span><span>成功率 ${counts.successRate === null ? '—' : `${counts.successRate}%`}</span><time>${escapeHtml(formatTime(job.updated_at || job.created_at))}</time></div>
+        ${items ? `<ul class="job-items">${items}</ul>` : ''}
+        <footer>
+          ${hasResults ? `<button type="button" data-job-action="open-results" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-results', job.id) ? 'disabled aria-busy="true"' : ''}>打开结果</button>` : ''}
+          ${retryable.length ? `<button type="button" data-job-action="retry-failed" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('retry-failed', job.id) ? 'disabled aria-busy="true"' : ''}>重试失败项</button>` : ''}
+          ${canPause ? `<button type="button" data-job-action="pause" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('pause', job.id) ? 'disabled aria-busy="true"' : ''}>暂停任务</button>` : ''}
+          ${canResume ? `<button type="button" data-job-action="resume" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('resume', job.id) ? 'disabled aria-busy="true"' : ''}>继续任务</button>` : ''}
+          ${canCancel ? `<button class="danger" type="button" data-job-action="cancel" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('cancel', job.id) ? 'disabled aria-busy="true"' : ''}>取消任务</button>` : ''}
+        </footer>
+      </article>`;
+    }).join('');
+  }
+  $$('[data-job-action]', list).forEach((button) => button.addEventListener('click', () => handleJobAction(button)));
+  state.jobsRenderSignature = signature;
+  restoreJobListView(list, view);
+}
+
+function announceJobChanges(jobs) {
+  jobs.forEach((job) => {
+    const before = state.knownJobStatuses.get(job.id);
+    state.knownJobStatuses.set(job.id, job.status);
+    if (!before || before === job.status) return;
+    let message = '';
+    if (job.status === 'completed') { message = `${MODE_CONFIG[job.mode]?.label || '任务'}已完成`; toast(message, 'success'); }
+    else if (job.status === 'partial') { message = `${MODE_CONFIG[job.mode]?.label || '任务'}部分完成，失败项可重试`; toast(message, 'error', 5200); }
+    else if (job.status === 'failed') { message = `${MODE_CONFIG[job.mode]?.label || '任务'}失败，详情已保留`; toast(message, 'error', 5200); }
+    else if (job.status === 'canceled') { message = `${MODE_CONFIG[job.mode]?.label || '任务'}已取消`; toast(message); }
+    if (message) $('#job-status-announcer').textContent = message;
+  });
+}
+
+function invalidateJobsRead() {
+  state.jobsRequestVersion += 1;
+  state.jobsAbortController?.abort();
+  state.jobsAbortController = null;
+}
+
+async function loadJobs(silent = false) {
+  const requestVersion = ++state.jobsRequestVersion;
+  state.jobsAbortController?.abort();
+  const controller = new AbortController();
+  state.jobsAbortController = controller;
   try {
-    const session = await API.getSession(state.currentSessionId);
-    const generations = session.generations || [];
-    if (!state.currentGenerationId && generations.length) state.currentGenerationId = generations[generations.length - 1].id;
-    const generation = generations.find((item) => item.id === state.currentGenerationId) || generations[generations.length - 1];
-    if (generation?.knowledge_refs?.length) {
-      const bundle = { ...(state.knowledgeBundle || {}), sources: generation.knowledge_refs };
-      state.knowledgeBundle = bundle;
-      renderKnowledge(bundle);
-    }
-  } catch (_) { /* ledger is non-blocking */ }
+    const result = await API.getJobs(100, { signal: controller.signal, timeoutMs: 8000 });
+    if (requestVersion !== state.jobsRequestVersion) return null;
+    const jobs = Array.isArray(result) ? result : (result?.jobs || []);
+    announceJobChanges(jobs);
+    state.jobs = jobs;
+    state.jobsAvailable = true;
+    renderJobs();
+    return true;
+  } catch (error) {
+    if (requestVersion !== state.jobsRequestVersion) return null;
+    state.jobsAvailable = false;
+    renderJobs();
+    if (!silent) toast(`任务 Dock 读取失败：${formatApiError(error, '持久任务接口不可用')}`, 'error', 6000);
+    return false;
+  } finally {
+    if (requestVersion === state.jobsRequestVersion) state.jobsAbortController = null;
+  }
+}
+
+function startJobPolling() {
+  if (state.jobPollTimer) window.clearTimeout(state.jobPollTimer);
+  const tick = async () => {
+    const ok = await loadJobs(true);
+    const hasActive = state.jobs.some((job) => (
+      ['queued', 'running', 'canceling', 'interrupted'].includes(job.status)
+      || (job.status === 'paused' && (job.items || []).some((item) => item.status === 'running'))
+    ));
+    state.jobPollTimer = window.setTimeout(tick, ok !== false ? (hasActive ? 1100 : 4200) : 8500);
+  };
+  tick();
+}
+
+async function handleJobAction(button) {
+  const action = button.dataset.jobAction;
+  const jobId = button.dataset.jobId;
+  const itemId = button.dataset.itemId || '';
+  const actionKey = jobActionKey(action, jobId, itemId);
+  const isMutation = MUTATING_JOB_ACTIONS.has(action);
+  if (jobActionDisabled(action, jobId, itemId)) return;
+  state.jobActionsInFlight.add(actionKey);
+  if (isMutation) state.jobMutationsInFlight.add(jobId);
+  button.disabled = true;
+  if (isMutation) {
+    $$('[data-job-action]', button.closest('.job-card')).forEach((control) => {
+      if (MUTATING_JOB_ACTIONS.has(control.dataset.jobAction)) control.disabled = true;
+    });
+  }
+  try {
+    if (action === 'refresh') await loadJobs(false);
+    else if (action === 'pause') { invalidateJobsRead(); await API.pauseJob(jobId); toast('已暂停新任务项领取'); }
+    else if (action === 'resume') { invalidateJobsRead(); await API.resumeJob(jobId); toast('任务已继续', 'success'); }
+    else if (action === 'cancel') { invalidateJobsRead(); await API.cancelJob(jobId); toast('已发出取消请求'); }
+    else if (action === 'retry-item') { invalidateJobsRead(); await API.retryJob(jobId, [itemId]); toast('失败项已重新入队', 'success'); }
+    else if (action === 'retry-failed') {
+      invalidateJobsRead();
+      const job = state.jobs.find((entry) => entry.id === jobId);
+      const ids = (job?.items || []).filter((item) => ['failed', 'interrupted'].includes(item.status)).map((item) => item.id);
+      await API.retryJob(jobId, ids);
+      toast(`${ids.length} 个失败项已重新入队`, 'success');
+    } else if (action === 'open-results') await openJobResults(jobId);
+    await loadJobs(true);
+  } catch (error) {
+    toast(`任务操作失败：${formatApiError(error, '任务接口不可用')}`, 'error', 6000);
+  } finally {
+    state.jobActionsInFlight.delete(actionKey);
+    if (isMutation) state.jobMutationsInFlight.delete(jobId);
+    button.disabled = false;
+    renderJobs(true);
+  }
+}
+
+async function openJobResults(jobId) {
+  const response = await API.getJob(jobId);
+  const job = response?.job || response;
+  const resultIds = resultIdsForJob(job);
+  if (!resultIds.length) throw new Error('该任务还没有可打开的结果');
+  const items = await Promise.all(resultIds.map(async (assetId, index) => {
+    let asset = null;
+    try { asset = await API.getAsset(assetId); } catch (_) { /* content URL remains useful */ }
+    return {
+      asset_id: assetId,
+      name: asset?.name || `product-atelier-${index + 1}.${job.mode === 'cutout-batch' ? 'png' : 'jpg'}`,
+      url: await API.getAssetContentUrl(assetId),
+      role: asset?.role || (job.mode === 'cutout-batch' ? 'result_cutout' : 'result_main'),
+    };
+  }));
+  if (job.mode && MODE_CONFIG[job.mode]) switchMode(job.mode);
+  const source = state.assets.find((asset) => asset.id === job.items?.[0]?.source_asset_id);
+  state.originalDataUrl = assetUrl(source, 'content');
+  state.currentTaskId = job.id;
+  state.currentSessionId = job.session_id || '';
+  state.currentGenerationId = job.items?.[0]?.generation_id || '';
+  state.results = {
+    main: items.filter((item) => item.role !== 'result_cutout'),
+    cutout: items.filter((item) => item.role === 'result_cutout'),
+  };
+  state.resultTab = job.mode === 'cutout-batch' || !state.results.main.length ? 'cutout' : 'main';
+  state.viewerIndex = 0;
+  renderResults();
+  setStage('success');
+  switchPage('process');
+  closeDrawer('jobs');
+  $('#summary-result').textContent = `${items.length} 个结果已从任务账本恢复`;
+  $('#summary-result-note').textContent = '可先检查成功项，再在任务 Dock 重试失败项';
 }
 
 function getResultItems(tab = state.resultTab) {
   return state.results && Array.isArray(state.results[tab]) ? state.results[tab] : [];
+}
+
+function getAllResultItems() {
+  return collectResultItems(state.results);
 }
 
 function resultDataUrl(item, tab = state.resultTab) {
@@ -455,21 +1008,40 @@ function renderResults() {
 }
 
 async function saveCurrentResults() {
-  const items = getResultItems();
-  if (!items.length) return;
-  let saved = 0;
-  for (const item of items) {
-    if (!item.data) continue;
-    try { await API.saveImage(item.name || `product-atelier-${saved + 1}.${state.resultTab === 'cutout' ? 'png' : 'jpg'}`, item.data.replace(/^data:[^,]+,/, '')); saved += 1; }
-    catch (error) { toast(`保存失败：${error}`, 'error'); break; }
+  if (state.exporting) return;
+  const items = getAllResultItems();
+  if (!items.length) { toast('当前没有可导出的结果', 'error'); return; }
+  const button = $('#btn-save-all');
+  const previousLabel = button.textContent;
+  state.exporting = true;
+  button.disabled = true;
+  button.textContent = '正在导出…';
+  let outcome = { succeeded: [], failed: [] };
+  try {
+    outcome = await processResultItems(items, async (item, index) => {
+      let data = item.data ? item.data.replace(/^data:[^,]+,/, '') : '';
+      if (!data && (item.url || item.asset_id)) {
+        const response = await fetch(item.url || await API.getAssetContentUrl(item.asset_id));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        let binary = '';
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        data = btoa(binary);
+      }
+      if (!data) throw new Error('结果内容为空');
+      const isCutout = item.role === 'result_cutout';
+      await API.saveImage(item.name || `product-atelier-${index + 1}.${isCutout ? 'png' : 'jpg'}`, data);
+    });
+  } finally {
+    state.exporting = false;
+    button.disabled = false;
+    button.textContent = previousLabel;
   }
-  if (saved) toast(`已保存 ${saved} 个结果`, 'success');
-}
-
-async function openOutputFolder() {
-  const item = getResultItems()[state.viewerIndex];
-  if (!item?.path) { toast('当前结果没有可定位的本地路径', 'error'); return; }
-  try { await API.openInFolder(item.path); } catch (error) { toast(`无法打开目录：${error}`, 'error'); }
+  const saved = outcome.succeeded.length;
+  const failures = outcome.failed;
+  if (saved && !failures.length) toast(`已导出全部 ${saved} 个结果`, 'success');
+  else if (saved) toast(`已导出 ${saved} 个，${failures.length} 个失败`, 'error', 6000);
+  else toast(`导出失败：${String(failures[0]?.error || '未知错误')}`, 'error', 6000);
 }
 
 async function recordFeedback(signal, reason = '') {
@@ -488,14 +1060,31 @@ async function recordFeedback(signal, reason = '') {
 }
 
 function openDrawer(name) {
-  const drawer = name === 'advanced' ? $('#advanced-drawer') : $('#intelligence-drawer');
-  drawer.hidden = false;
+  const drawers = { advanced: $('#advanced-drawer'), intelligence: $('#intelligence-drawer'), jobs: $('#job-drawer') };
+  const layer = drawers[name];
+  if (!layer) return;
+  drawerReturnFocus = document.activeElement;
+  layer.hidden = false;
+  if (name === 'jobs') {
+    state.jobDrawerOpen = true;
+    $('#btn-job-dock').setAttribute('aria-expanded', 'true');
+    loadJobs(true);
+  }
+  $('.drawer-close', layer)?.focus();
 }
 
 function closeDrawer(name) {
-  const drawer = name === 'advanced' ? $('#advanced-drawer') : $('#intelligence-drawer');
-  drawer.hidden = true;
-  updateQuickControls();
+  const drawers = { advanced: $('#advanced-drawer'), intelligence: $('#intelligence-drawer'), jobs: $('#job-drawer') };
+  const layer = drawers[name];
+  if (!layer) return;
+  layer.hidden = true;
+  if (name === 'jobs') {
+    state.jobDrawerOpen = false;
+    $('#btn-job-dock').setAttribute('aria-expanded', 'false');
+  }
+  if (name === 'advanced') updateQuickControls();
+  if (drawerReturnFocus instanceof HTMLElement) drawerReturnFocus.focus();
+  drawerReturnFocus = null;
 }
 
 function openModal(src) {
@@ -605,10 +1194,11 @@ async function loadSettings() {
   try {
     const settings = await API.getSettings();
     state.settings = settings;
-    if (settings.default_model) { $('#setting-model').value = settings.default_model; $('#param-model').value = settings.default_model; }
-    if (settings.default_platter) { const radio = $(`input[name="platter"][value="${settings.default_platter}"]`); if (radio) radio.checked = true; $('#setting-platter').value = settings.default_platter; }
-    if (settings.default_angle) { $('#setting-angle').value = settings.default_angle; $('#param-angle').value = settings.default_angle; }
-    if (settings.default_fidelity) { $('#setting-fidelity').value = settings.default_fidelity; $('#param-fidelity').value = settings.default_fidelity; }
+    const hasModeSnapshot = state.restoredModes.has(state.currentMode);
+    if (settings.default_model) { $('#setting-model').value = settings.default_model; if (!hasModeSnapshot) $('#param-model').value = settings.default_model; }
+    if (settings.default_platter) { if (!hasModeSnapshot) { const radio = $(`input[name="platter"][value="${settings.default_platter}"]`); if (radio) radio.checked = true; } $('#setting-platter').value = settings.default_platter; }
+    if (settings.default_angle) { $('#setting-angle').value = settings.default_angle; if (!hasModeSnapshot) $('#param-angle').value = settings.default_angle; }
+    if (settings.default_fidelity) { $('#setting-fidelity').value = settings.default_fidelity; if (!hasModeSnapshot) $('#param-fidelity').value = settings.default_fidelity; }
     $('#setting-fid-val').textContent = `${$('#setting-fidelity').value}%`;
     $('#output-dir').textContent = settings.output_dir || '—';
     $('#setting-api-key').placeholder = settings.api_key_set ? '已配置（留空不修改）' : '输入 API Key';
@@ -661,7 +1251,7 @@ function bindEvents() {
   $('#btn-new-session').addEventListener('click', () => { clearSession(true); switchPage('process'); });
   $('#btn-generate').addEventListener('click', handleGenerate);
   $('#btn-retry').addEventListener('click', handleGenerate);
-  $('#btn-error-reset').addEventListener('click', () => { state.generating = false; setStage(state.selectedFiles.length ? 'ready' : 'empty'); updateCtaState(); });
+  $('#btn-error-reset').addEventListener('click', () => { setStage(state.selectedFiles.length ? 'ready' : 'empty'); updateCtaState(); });
   $('#brief-input').addEventListener('input', scheduleKnowledgeCompile);
   $('#param-angle').addEventListener('change', updateQuickControls);
   $('#param-fidelity').addEventListener('input', updateQuickControls);
@@ -671,6 +1261,13 @@ function bindEvents() {
   $('#btn-advanced').addEventListener('click', () => openDrawer('advanced'));
   $$('[data-open-advanced]').forEach((button) => button.addEventListener('click', () => openDrawer('advanced')));
   $('#btn-open-intelligence').addEventListener('click', () => openDrawer('intelligence'));
+  $('#btn-job-dock').addEventListener('click', () => openDrawer('jobs'));
+  $('#btn-refresh-jobs').addEventListener('click', async () => {
+    const button = $('#btn-refresh-jobs');
+    if (button.disabled) return;
+    button.disabled = true;
+    try { await loadJobs(false); } finally { button.disabled = false; }
+  });
   $('#btn-knowledge-card').addEventListener('click', () => openDrawer('intelligence'));
   $$('[data-close-drawer]').forEach((button) => button.addEventListener('click', () => closeDrawer(button.dataset.closeDrawer)));
   $$('.result-tab').forEach((button) => button.addEventListener('click', () => { state.resultTab = button.dataset.rtab; state.viewerIndex = 0; renderResults(); }));
@@ -679,7 +1276,6 @@ function bindEvents() {
   $('#btn-open-compare').addEventListener('click', () => { renderCompare(); switchPage('compare'); });
   $('#btn-compare-back').addEventListener('click', () => switchPage('process'));
   $('#btn-save-all').addEventListener('click', saveCurrentResults);
-  $('#btn-open-folder').addEventListener('click', openOutputFolder);
   $('#btn-adopt').addEventListener('click', () => { state.lastFeedbackSignal = 'adopted'; recordFeedback('adopted', $('#feedback-input').value.trim()); });
   $('#btn-reject').addEventListener('click', () => { state.lastFeedbackSignal = 'rejected'; $('#feedback-input').focus(); toast('请说出具体原因，它会成为下一版证据'); });
   $('#btn-feedback').addEventListener('click', () => { const reason = $('#feedback-input').value.trim(); if (!reason) { toast('请先写下具体判断'); return; } recordFeedback(state.lastFeedbackSignal === 'rejected' ? 'rejected' : 'note', reason); });
@@ -696,14 +1292,30 @@ function bindEvents() {
   $('#btn-max-dot').addEventListener('click', () => API.toggleMaximize().catch(() => {}));
   $('#btn-close-dot').addEventListener('click', () => API.closeApp().catch(() => window.close()));
   const canvas = $('#preview-canvas');
-  canvas.addEventListener('dragover', (event) => { event.preventDefault(); if (!state.generating) canvas.style.outline = '2px solid var(--coral)'; });
+  canvas.addEventListener('dragover', (event) => { event.preventDefault(); canvas.style.outline = '2px solid var(--coral)'; });
   canvas.addEventListener('dragleave', () => { canvas.style.outline = ''; });
   canvas.addEventListener('drop', (event) => { event.preventDefault(); canvas.style.outline = ''; handleFiles(event.dataTransfer.files); });
   document.addEventListener('keydown', (event) => {
+    const openLayer = [$('#img-modal'), $('#job-drawer'), $('#advanced-drawer'), $('#intelligence-drawer')].find((layer) => layer && !layer.hidden);
+    if (event.key === 'Tab' && openLayer) {
+      const focusRoot = openLayer.id === 'img-modal' ? $('.modal-card', openLayer) : $('.drawer', openLayer);
+      const focusable = $$('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])', focusRoot).filter((element) => element.offsetParent !== null);
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
     if (event.key !== 'Escape') return;
     if (!$('#img-modal').hidden) closeModal();
     if (!$('#advanced-drawer').hidden) closeDrawer('advanced');
     if (!$('#intelligence-drawer').hidden) closeDrawer('intelligence');
+    if (!$('#job-drawer').hidden) closeDrawer('jobs');
+  });
+  window.addEventListener('beforeunload', () => {
+    if (state.jobPollTimer) window.clearTimeout(state.jobPollTimer);
+    state.assetsRequestVersion += 1;
+    state.assetsAbortController?.abort();
+    invalidateJobsRead();
   });
 }
 
@@ -714,11 +1326,17 @@ async function connectBackend() {
     if (health.ok) {
       setBackendStatus('connected', '已连接');
       try { const status = await API.getKnowledgeStatus(); renderKnowledgeStatus(status); } catch (_) { /* keep app usable */ }
+      await Promise.all([loadAssets(false), loadJobs(true)]);
+      startJobPolling();
       return;
     }
     await new Promise((resolve) => window.setTimeout(resolve, 700));
   }
   setBackendStatus('disconnected', '未连接');
+  state.assetsAvailable = false;
+  state.jobsAvailable = false;
+  renderJobs();
+  updateCtaState();
   toast('本地服务尚未就绪，稍后可重试', 'error');
 }
 
@@ -726,8 +1344,11 @@ async function init() {
   setupTheme();
   bindEvents();
   setupCompare();
-  switchMode('single', false);
+  restoreWorkspaceState();
+  restorePendingSubmission();
+  switchMode(state.currentMode, false);
   setStage('empty');
+  renderJobs();
   updateQuickControls();
   connectBackend();
   loadSettings();

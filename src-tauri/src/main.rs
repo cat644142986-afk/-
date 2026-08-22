@@ -114,7 +114,6 @@ fn find_server_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<(Pat
     #[cfg(debug_assertions)]
     {
         candidates.push((PathBuf::from("python/server.py"), false));
-        candidates.push((PathBuf::from(r"D:\ProductAtelier-Desktop\python\server.py"), false));
         if let Some(d) = &exe_dir {
             candidates.push((d.join("../../../../python/server.py"), false));
             candidates.push((d.join("../../python/server.py"), false));
@@ -142,7 +141,6 @@ fn find_server_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<(Pat
         candidates.push((res.join("python/server.py"), false));
     }
     candidates.push((PathBuf::from("python/server.py"), false));
-    candidates.push((PathBuf::from(r"D:\ProductAtelier-Desktop\python\server.py"), false));
 
     candidates.into_iter().filter(|(p, _)| p.exists()).next()
 }

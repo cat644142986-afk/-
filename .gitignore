@@ -31,7 +31,8 @@ desktop.ini
 
 # Environment files (may contain keys)
 .env
-.env.local
+.env.*
+!.env.example
 
 # Logs
 *.log
@@ -39,8 +40,14 @@ desktop.ini
 # Local Product Atelier runtime data (may include private API settings)
 config.json
 *.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+.config.json.*.tmp
+config.json.lock
 output/
 history/
+assets/
 
 # Local backups and scratch artifacts
 backup/

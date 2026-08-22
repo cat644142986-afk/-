@@ -5,7 +5,7 @@ echo Product Atelier - Portable Build Script
 echo ========================================
 echo.
 
-set PATH=C:\mingw64\bin;C:\Users\64414\.cargo\bin;C:\Program Files\nodejs;%PATH%
+set PATH=C:\mingw64\bin;%USERPROFILE%\.cargo\bin;C:\Program Files\nodejs;%PATH%
 set CARGO_TARGET_DIR=D:\rust-target
 cd /d "%~dp0"
 

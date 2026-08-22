@@ -6,7 +6,15 @@ from pathlib import Path
 
 
 temp_dir = tempfile.TemporaryDirectory()
-os.environ["APPDATA"] = temp_dir.name
+# This override is honored on every platform. APPDATA alone only isolates
+# Windows and previously allowed the smoke test to touch real macOS/Linux data.
+os.environ["PRODUCT_ATELIER_DATA_DIR"] = temp_dir.name
+os.environ["PRODUCT_ATELIER_LEGACY_CONFIG"] = str(
+    Path(temp_dir.name) / "no-legacy-config.json"
+)
+os.environ["PRODUCT_ATELIER_KNOWLEDGE_BASE"] = str(
+    Path(temp_dir.name) / "no-knowledge-vault"
+)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient

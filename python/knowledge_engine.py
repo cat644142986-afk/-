@@ -8,6 +8,7 @@ never writes back to the user's vault.
 
 from __future__ import annotations
 
+import os
 import re
 import threading
 from datetime import datetime, timezone
@@ -15,7 +16,12 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_VAULT = Path(r"C:\Users\64414\Documents\知识库")
+DEFAULT_VAULT = Path(
+    os.environ.get(
+        "PRODUCT_ATELIER_KNOWLEDGE_BASE",
+        str(Path.home() / "Documents" / "知识库"),
+    )
+).expanduser()
 DESIGN_RELATIVE = Path("20 知识库") / "设计知识"
 
 

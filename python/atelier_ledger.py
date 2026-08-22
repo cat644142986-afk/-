@@ -12,14 +12,190 @@ import hashlib
 import json
 import sqlite3
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+WORKSPACE_SESSION_ID = "ses_workspace"
+
+JOB_STATUSES = frozenset({
+    "queued", "running", "paused", "completed", "partial", "failed",
+    "canceling", "canceled", "interrupted",
+})
+JOB_ITEM_STATUSES = frozenset({
+    "queued", "running", "completed", "failed",
+    "canceling", "canceled", "interrupted",
+})
+
+JOB_STATUS_TRANSITIONS = {
+    "queued": frozenset({"running", "paused", "canceled"}),
+    "running": frozenset({"paused", "completed", "partial", "failed", "canceling", "interrupted"}),
+    "paused": frozenset({
+        "queued", "running", "completed", "partial", "failed",
+        "canceling", "canceled", "interrupted",
+    }),
+    "canceling": frozenset({"canceled", "partial", "failed"}),
+    "interrupted": frozenset({"queued", "running", "partial", "failed", "canceled"}),
+    "partial": frozenset({"running", "completed", "failed", "canceled"}),
+    "failed": frozenset({"queued", "running"}),
+    "completed": frozenset(),
+    "canceled": frozenset(),
+}
+JOB_ITEM_STATUS_TRANSITIONS = {
+    "queued": frozenset({"running", "canceled"}),
+    "running": frozenset({"completed", "failed", "canceling", "interrupted"}),
+    "canceling": frozenset({"canceled"}),
+    "interrupted": frozenset({"queued", "failed", "canceled"}),
+    "failed": frozenset({"queued"}),
+    "completed": frozenset(),
+    "canceled": frozenset(),
+}
+
+
+class LedgerSchemaError(RuntimeError):
+    """Raised when a ledger cannot be safely opened or migrated."""
+
+
+class UnsupportedSchemaVersionError(LedgerSchemaError):
+    """Raised when the database was created by a newer application version."""
+
+
+class InvalidStatusTransitionError(ValueError):
+    """Raised when a job or item attempts an illegal state transition."""
+
+
+class IdempotencyConflictError(ValueError):
+    """Raised when a request key is reused for a different durable job."""
+
+
+V1_TABLES = frozenset({
+    "ledger_meta", "sessions", "assets", "generations", "events",
+    "feedback", "memory_suggestions",
+})
+
+V1_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS ledger_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'draft',
+        title TEXT NOT NULL DEFAULT '',
+        project_name TEXT NOT NULL DEFAULT '',
+        designer_profile TEXT NOT NULL DEFAULT 'default',
+        brand_profile TEXT NOT NULL DEFAULT '',
+        category TEXT NOT NULL DEFAULT 'general',
+        brief_json TEXT NOT NULL DEFAULT '{}',
+        intent_locks_json TEXT NOT NULL DEFAULT '{}',
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS assets (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        parent_asset_id TEXT,
+        role TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'image',
+        path TEXT NOT NULL DEFAULT '',
+        name TEXT NOT NULL DEFAULT '',
+        mime TEXT NOT NULL DEFAULT '',
+        width INTEGER,
+        height INTEGER,
+        sha256 TEXT NOT NULL DEFAULT '',
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY(parent_asset_id) REFERENCES assets(id) ON DELETE SET NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS generations (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        task_id TEXT NOT NULL DEFAULT '',
+        parent_generation_id TEXT,
+        model TEXT NOT NULL DEFAULT '',
+        prompt TEXT NOT NULL DEFAULT '',
+        negative_prompt TEXT NOT NULL DEFAULT '',
+        parameters_json TEXT NOT NULL DEFAULT '{}',
+        knowledge_refs_json TEXT NOT NULL DEFAULT '[]',
+        prompt_version TEXT NOT NULL DEFAULT 'v1',
+        status TEXT NOT NULL DEFAULT 'queued',
+        result_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+        error TEXT NOT NULL DEFAULT '',
+        latency_ms INTEGER,
+        estimated_cost REAL,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY(parent_generation_id) REFERENCES generations(id) ON DELETE SET NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        generation_id TEXT,
+        event_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY(generation_id) REFERENCES generations(id) ON DELETE SET NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS feedback (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        generation_id TEXT,
+        asset_id TEXT,
+        signal TEXT NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        structured_json TEXT NOT NULL DEFAULT '{}',
+        scope TEXT NOT NULL DEFAULT 'session',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY(generation_id) REFERENCES generations(id) ON DELETE SET NULL,
+        FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE SET NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS memory_suggestions (
+        id TEXT PRIMARY KEY,
+        scope_type TEXT NOT NULL,
+        scope_id TEXT NOT NULL DEFAULT '',
+        category TEXT NOT NULL DEFAULT 'general',
+        rule_key TEXT NOT NULL,
+        current_value_json TEXT NOT NULL DEFAULT 'null',
+        proposed_value_json TEXT NOT NULL DEFAULT 'null',
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        confidence REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        reviewed_at TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_assets_session ON assets(session_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_generations_session ON generations(session_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_generations_task ON generations(task_id)",
+    "CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_feedback_session ON feedback(session_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_pending ON memory_suggestions(status, created_at)",
+)
 
 
 def utc_now() -> str:
@@ -28,6 +204,23 @@ def utc_now() -> str:
 
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
+
+
+def validate_status_transition(current: str, target: str, *, item: bool = False) -> None:
+    """Validate the frozen v2 job state machine without mutating the database."""
+    statuses = JOB_ITEM_STATUSES if item else JOB_STATUSES
+    transitions = JOB_ITEM_STATUS_TRANSITIONS if item else JOB_STATUS_TRANSITIONS
+    entity = "job item" if item else "job"
+    if current not in statuses:
+        raise InvalidStatusTransitionError(f"unknown {entity} status: {current}")
+    if target not in statuses:
+        raise InvalidStatusTransitionError(f"unknown {entity} status: {target}")
+    if current == target:
+        return
+    if target not in transitions[current]:
+        raise InvalidStatusTransitionError(
+            f"illegal {entity} transition: {current} -> {target}"
+        )
 
 
 def encode_json(value: Any) -> str:
@@ -46,20 +239,60 @@ def decode_json(value: str | None, fallback: Any) -> Any:
 class AtelierLedger:
     """Thread-safe SQLite facade for sessions, generations and learning signals."""
 
+    _schema_locks_guard = threading.Lock()
+    _schema_locks: dict[str, threading.Lock] = {}
+
+    @classmethod
+    def _schema_lock_for(cls, db_path: Path) -> threading.Lock:
+        key = str(db_path.resolve())
+        with cls._schema_locks_guard:
+            return cls._schema_locks.setdefault(key, threading.Lock())
+
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._schema_lock = threading.Lock()
+        self._schema_lock = self._schema_lock_for(self.db_path)
+        self.last_migration_backup: Path | None = None
         self._ensure_schema()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self, *, configure_storage: bool = True) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=20, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA synchronous = NORMAL")
         connection.execute("PRAGMA busy_timeout = 20000")
+        if configure_storage:
+            connection.execute("PRAGMA synchronous = NORMAL")
         return connection
+
+    def _configure_storage(self) -> None:
+        """Persist WAL mode once schema work is complete.
+
+        SQLite's ``PRAGMA journal_mode`` does not consistently honor
+        ``busy_timeout`` while another process is opening or migrating the same
+        database. Retrying only this idempotent pragma avoids making every
+        ordinary connection race to reconfigure the database.
+        """
+        deadline = time.monotonic() + 20.0
+        delay = 0.01
+        while True:
+            connection = self._connect(configure_storage=False)
+            try:
+                row = connection.execute("PRAGMA journal_mode = WAL").fetchone()
+                journal_mode = str(row[0]).lower() if row is not None else ""
+                if journal_mode != "wal":
+                    raise LedgerSchemaError(
+                        f"SQLite refused WAL journal mode (reported {journal_mode!r})"
+                    )
+                connection.execute("PRAGMA synchronous = NORMAL")
+                return
+            except sqlite3.OperationalError as exc:
+                locked = "locked" in str(exc).lower() or "busy" in str(exc).lower()
+                if not locked or time.monotonic() >= deadline:
+                    raise LedgerSchemaError("Failed to configure SQLite WAL mode") from exc
+            finally:
+                connection.close()
+            time.sleep(delay)
+            delay = min(delay * 2, 0.25)
 
     @contextmanager
     def _connection(self):
@@ -71,126 +304,252 @@ class AtelierLedger:
         finally:
             connection.close()
 
+    @contextmanager
+    def _immediate_connection(self):
+        """Serialize read-modify-write operations across threads and processes."""
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _table_names(connection: sqlite3.Connection) -> set[str]:
+        return {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+
+    @classmethod
+    def _read_schema_version(cls, connection: sqlite3.Connection) -> int:
+        tables = cls._table_names(connection)
+        if not tables:
+            return 0
+        if "ledger_meta" not in tables:
+            raise LedgerSchemaError("Existing database has no ledger_meta table; refusing to guess its schema")
+        row = connection.execute(
+            "SELECT value FROM ledger_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if row is None:
+            if V1_TABLES.issubset(tables):
+                return 1
+            raise LedgerSchemaError("Existing database has no schema_version metadata")
+        try:
+            version = int(row[0])
+        except (TypeError, ValueError) as exc:
+            raise LedgerSchemaError(f"Invalid ledger schema version: {row[0]!r}") from exc
+        if version < 1:
+            raise LedgerSchemaError(f"Invalid ledger schema version: {version}")
+        return version
+
+    @staticmethod
+    def _write_schema_version(connection: sqlite3.Connection, version: int) -> None:
+        connection.execute(
+            "INSERT INTO ledger_meta(key, value) VALUES('schema_version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (str(version),),
+        )
+
+    @staticmethod
+    def _create_v1_schema(connection: sqlite3.Connection) -> None:
+        for statement in V1_SCHEMA_STATEMENTS:
+            connection.execute(statement)
+
+    def _migration_backup_path(self, version: int) -> Path:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        return self.db_path.with_name(
+            f"{self.db_path.name}.backup-v{version}-{stamp}-{uuid.uuid4().hex[:8]}.sqlite3"
+        )
+
+    def _backup_database(self, version: int) -> Path:
+        backup_path = self._migration_backup_path(version)
+        source_connection = sqlite3.connect(self.db_path, timeout=20)
+        backup_connection = sqlite3.connect(backup_path)
+        try:
+            source_connection.backup(backup_connection)
+            backup_connection.commit()
+        except Exception:
+            backup_connection.close()
+            source_connection.close()
+            backup_path.unlink(missing_ok=True)
+            raise
+        else:
+            backup_connection.close()
+            source_connection.close()
+        return backup_path
+
+    @staticmethod
+    def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE asset_blobs (
+                id TEXT PRIMARY KEY,
+                sha256 TEXT NOT NULL UNIQUE,
+                storage_path TEXT NOT NULL UNIQUE,
+                mime TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+                width INTEGER NOT NULL CHECK(width > 0),
+                height INTEGER NOT NULL CHECK(height > 0),
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "ALTER TABLE assets ADD COLUMN blob_id TEXT REFERENCES asset_blobs(id) ON DELETE RESTRICT"
+        )
+        connection.execute(
+            """
+            CREATE TABLE jobs (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued'
+                    CHECK(status IN ('queued','running','paused','completed','partial','failed','canceling','canceled','interrupted')),
+                priority INTEGER NOT NULL DEFAULT 0,
+                total_items INTEGER NOT NULL DEFAULT 0 CHECK(total_items >= 0),
+                completed_items INTEGER NOT NULL DEFAULT 0 CHECK(completed_items >= 0),
+                failed_items INTEGER NOT NULL DEFAULT 0 CHECK(failed_items >= 0),
+                canceled_items INTEGER NOT NULL DEFAULT 0 CHECK(canceled_items >= 0),
+                requested_concurrency INTEGER NOT NULL DEFAULT 1 CHECK(requested_concurrency >= 1),
+                idempotency_key TEXT NOT NULL DEFAULT '',
+                parameters_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                queued_at TEXT NOT NULL,
+                started_at TEXT,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE job_items (
+                id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                position INTEGER NOT NULL CHECK(position >= 0),
+                source_asset_id TEXT NOT NULL,
+                generation_id TEXT,
+                engine_key TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued'
+                    CHECK(status IN ('queued','running','completed','failed','canceling','canceled','interrupted')),
+                progress REAL NOT NULL DEFAULT 0 CHECK(progress >= 0 AND progress <= 1),
+                attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+                max_attempts INTEGER NOT NULL DEFAULT 1 CHECK(max_attempts >= 1),
+                error_code TEXT NOT NULL DEFAULT '',
+                error_message TEXT NOT NULL DEFAULT '',
+                queued_at TEXT NOT NULL,
+                started_at TEXT,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+                FOREIGN KEY(source_asset_id) REFERENCES assets(id) ON DELETE RESTRICT,
+                FOREIGN KEY(generation_id) REFERENCES generations(id) ON DELETE SET NULL,
+                UNIQUE(job_id, position)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE task_attempts (
+                id TEXT PRIMARY KEY,
+                job_item_id TEXT NOT NULL,
+                attempt_number INTEGER NOT NULL CHECK(attempt_number >= 1),
+                engine_key TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL
+                    CHECK(status IN ('running','completed','failed','canceled','interrupted')),
+                error_code TEXT NOT NULL DEFAULT '',
+                error_message TEXT NOT NULL DEFAULT '',
+                latency_ms INTEGER CHECK(latency_ms IS NULL OR latency_ms >= 0),
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY(job_item_id) REFERENCES job_items(id) ON DELETE CASCADE,
+                UNIQUE(job_item_id, attempt_number)
+            )
+            """
+        )
+        connection.execute("CREATE INDEX idx_asset_blobs_sha256 ON asset_blobs(sha256)")
+        connection.execute("CREATE INDEX idx_assets_blob ON assets(blob_id)")
+        connection.execute(
+            "CREATE UNIQUE INDEX idx_assets_workspace_blob ON assets(blob_id, role) "
+            "WHERE blob_id IS NOT NULL AND role = 'workspace_source'"
+        )
+        connection.execute("CREATE INDEX idx_jobs_status_queue ON jobs(status, priority DESC, queued_at)")
+        connection.execute(
+            "CREATE UNIQUE INDEX idx_jobs_idempotency ON jobs(idempotency_key) WHERE idempotency_key <> ''"
+        )
+        connection.execute("CREATE INDEX idx_jobs_session ON jobs(session_id, created_at)")
+        connection.execute("CREATE INDEX idx_job_items_job ON job_items(job_id, position)")
+        connection.execute("CREATE INDEX idx_job_items_status ON job_items(status, queued_at)")
+        connection.execute("CREATE INDEX idx_job_items_source ON job_items(source_asset_id)")
+        connection.execute("CREATE INDEX idx_task_attempts_item ON task_attempts(job_item_id, attempt_number)")
+
     def _ensure_schema(self) -> None:
-        with self._schema_lock, self._connection() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS ledger_meta (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
+        with self._schema_lock:
+            # Probe the version without changing journal mode. An older app must
+            # leave a future-version database byte-for-byte untouched.
+            connection = self._connect(configure_storage=False)
+            try:
+                current_version = self._read_schema_version(connection)
+                if current_version > SCHEMA_VERSION:
+                    raise UnsupportedSchemaVersionError(
+                        f"Ledger schema v{current_version} is newer than supported v{SCHEMA_VERSION}; "
+                        "upgrade Product Atelier before opening this database"
+                    )
+                if current_version != SCHEMA_VERSION:
+                    connection.execute("BEGIN IMMEDIATE")
+                    try:
+                        # Another process may have completed the migration while this
+                        # initializer waited for SQLite's write lock.
+                        current_version = self._read_schema_version(connection)
+                        if current_version > SCHEMA_VERSION:
+                            raise UnsupportedSchemaVersionError(
+                                f"Ledger schema v{current_version} is newer than supported v{SCHEMA_VERSION}; "
+                                "upgrade Product Atelier before opening this database"
+                            )
+                        if current_version != SCHEMA_VERSION:
+                            is_new_database = current_version == 0
+                            if is_new_database:
+                                self._create_v1_schema(connection)
+                                self._write_schema_version(connection, 1)
+                                current_version = 1
+                            else:
+                                # The SQLite write lock is already held. A separate read
+                                # connection can now take a consistent online backup
+                                # without another process racing the schema version.
+                                self.last_migration_backup = self._backup_database(current_version)
 
-                CREATE TABLE IF NOT EXISTS sessions (
-                    id TEXT PRIMARY KEY,
-                    mode TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'draft',
-                    title TEXT NOT NULL DEFAULT '',
-                    project_name TEXT NOT NULL DEFAULT '',
-                    designer_profile TEXT NOT NULL DEFAULT 'default',
-                    brand_profile TEXT NOT NULL DEFAULT '',
-                    category TEXT NOT NULL DEFAULT 'general',
-                    brief_json TEXT NOT NULL DEFAULT '{}',
-                    intent_locks_json TEXT NOT NULL DEFAULT '{}',
-                    started_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    completed_at TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS assets (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    parent_asset_id TEXT,
-                    role TEXT NOT NULL,
-                    kind TEXT NOT NULL DEFAULT 'image',
-                    path TEXT NOT NULL DEFAULT '',
-                    name TEXT NOT NULL DEFAULT '',
-                    mime TEXT NOT NULL DEFAULT '',
-                    width INTEGER,
-                    height INTEGER,
-                    sha256 TEXT NOT NULL DEFAULT '',
-                    metadata_json TEXT NOT NULL DEFAULT '{}',
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-                    FOREIGN KEY(parent_asset_id) REFERENCES assets(id) ON DELETE SET NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS generations (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    task_id TEXT NOT NULL DEFAULT '',
-                    parent_generation_id TEXT,
-                    model TEXT NOT NULL DEFAULT '',
-                    prompt TEXT NOT NULL DEFAULT '',
-                    negative_prompt TEXT NOT NULL DEFAULT '',
-                    parameters_json TEXT NOT NULL DEFAULT '{}',
-                    knowledge_refs_json TEXT NOT NULL DEFAULT '[]',
-                    prompt_version TEXT NOT NULL DEFAULT 'v1',
-                    status TEXT NOT NULL DEFAULT 'queued',
-                    result_asset_ids_json TEXT NOT NULL DEFAULT '[]',
-                    error TEXT NOT NULL DEFAULT '',
-                    latency_ms INTEGER,
-                    estimated_cost REAL,
-                    created_at TEXT NOT NULL,
-                    completed_at TEXT,
-                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-                    FOREIGN KEY(parent_generation_id) REFERENCES generations(id) ON DELETE SET NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT NOT NULL,
-                    generation_id TEXT,
-                    event_type TEXT NOT NULL,
-                    payload_json TEXT NOT NULL DEFAULT '{}',
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-                    FOREIGN KEY(generation_id) REFERENCES generations(id) ON DELETE SET NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS feedback (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    generation_id TEXT,
-                    asset_id TEXT,
-                    signal TEXT NOT NULL,
-                    reason TEXT NOT NULL DEFAULT '',
-                    structured_json TEXT NOT NULL DEFAULT '{}',
-                    scope TEXT NOT NULL DEFAULT 'session',
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-                    FOREIGN KEY(generation_id) REFERENCES generations(id) ON DELETE SET NULL,
-                    FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE SET NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS memory_suggestions (
-                    id TEXT PRIMARY KEY,
-                    scope_type TEXT NOT NULL,
-                    scope_id TEXT NOT NULL DEFAULT '',
-                    category TEXT NOT NULL DEFAULT 'general',
-                    rule_key TEXT NOT NULL,
-                    current_value_json TEXT NOT NULL DEFAULT 'null',
-                    proposed_value_json TEXT NOT NULL DEFAULT 'null',
-                    evidence_json TEXT NOT NULL DEFAULT '[]',
-                    confidence REAL NOT NULL DEFAULT 0,
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    created_at TEXT NOT NULL,
-                    reviewed_at TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_assets_session ON assets(session_id, created_at);
-                CREATE INDEX IF NOT EXISTS idx_generations_session ON generations(session_id, created_at);
-                CREATE INDEX IF NOT EXISTS idx_generations_task ON generations(task_id);
-                CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, created_at);
-                CREATE INDEX IF NOT EXISTS idx_feedback_session ON feedback(session_id, created_at);
-                CREATE INDEX IF NOT EXISTS idx_memory_pending ON memory_suggestions(status, created_at);
-                """
-            )
-            connection.execute(
-                "INSERT INTO ledger_meta(key, value) VALUES('schema_version', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (str(SCHEMA_VERSION),),
-            )
+                            while current_version < SCHEMA_VERSION:
+                                if current_version == 1:
+                                    self._migrate_v1_to_v2(connection)
+                                    current_version = 2
+                                else:
+                                    raise LedgerSchemaError(
+                                        f"No migration path from schema v{current_version}"
+                                    )
+                                self._write_schema_version(connection, current_version)
+                        connection.commit()
+                    except Exception as exc:
+                        connection.rollback()
+                        if isinstance(exc, UnsupportedSchemaVersionError):
+                            raise
+                        raise LedgerSchemaError(
+                            f"Failed to migrate ledger to schema v{SCHEMA_VERSION}"
+                        ) from exc
+            finally:
+                connection.close()
+            # Configure storage after schema work. If multiple processes raced
+            # above, none holds the migration transaction while setting WAL.
+            self._configure_storage()
 
     def create_session(
         self,
@@ -286,6 +645,1403 @@ class AtelierLedger:
             )
         self.add_event(session_id, "asset.added", {"asset_id": asset_id, "role": role, "name": name})
         return self.get_asset(asset_id)
+
+    def register_workspace_asset(
+        self,
+        *,
+        sha256: str,
+        storage_path: str,
+        mime: str,
+        size_bytes: int,
+        width: int,
+        height: int,
+        name: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Register one content-addressed source and return its stable logical asset."""
+        blob_id = new_id("blob")
+        asset_id = new_id("ast")
+        now = utc_now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO sessions(
+                    id, mode, status, title, project_name, designer_profile,
+                    brand_profile, category, brief_json, intent_locks_json,
+                    started_at, updated_at
+                ) VALUES(?, 'workspace', 'active', '素材工作区', '', 'default', '',
+                         'general', '{}', '{}', ?, ?)
+                """,
+                (WORKSPACE_SESSION_ID, now, now),
+            )
+            connection.execute(
+                """
+                INSERT INTO asset_blobs(
+                    id, sha256, storage_path, mime, size_bytes, width, height, created_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(sha256) DO NOTHING
+                """,
+                (blob_id, sha256, storage_path, mime, size_bytes, width, height, now),
+            )
+            blob = connection.execute(
+                "SELECT * FROM asset_blobs WHERE sha256 = ?", (sha256,)
+            ).fetchone()
+            if blob is None:
+                raise LedgerSchemaError(f"failed to register asset blob: {sha256}")
+            if (
+                str(blob["storage_path"]) != storage_path
+                or str(blob["mime"]) != mime
+                or int(blob["size_bytes"]) != int(size_bytes)
+                or int(blob["width"]) != int(width)
+                or int(blob["height"]) != int(height)
+            ):
+                raise LedgerSchemaError(
+                    f"content hash metadata conflict for asset blob: {sha256}"
+                )
+            existing = connection.execute(
+                "SELECT id FROM assets WHERE blob_id = ? AND role = 'workspace_source'",
+                (blob["id"],),
+            ).fetchone()
+            if existing is None:
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO assets(
+                            id, session_id, parent_asset_id, role, kind, path, name,
+                            mime, width, height, sha256, metadata_json, created_at, blob_id
+                        ) VALUES(?, ?, NULL, 'workspace_source', 'image', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            asset_id, WORKSPACE_SESSION_ID, storage_path, name, mime,
+                            width, height, sha256, encode_json(metadata), now, blob["id"],
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    existing = connection.execute(
+                        "SELECT id FROM assets WHERE blob_id = ? AND role = 'workspace_source'",
+                        (blob["id"],),
+                    ).fetchone()
+                    if existing is None:
+                        raise
+            if existing is not None:
+                asset_id = str(existing["id"])
+        return self.get_workspace_asset(asset_id)
+
+    def get_workspace_asset(self, asset_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT a.*,
+                       b.id AS blob_record_id,
+                       b.sha256 AS blob_sha256,
+                       b.storage_path AS blob_storage_path,
+                       b.mime AS blob_mime,
+                       b.size_bytes AS blob_size_bytes,
+                       b.width AS blob_width,
+                       b.height AS blob_height,
+                       b.created_at AS blob_created_at
+                FROM assets a
+                JOIN asset_blobs b ON b.id = a.blob_id
+                WHERE a.id = ? AND a.role = 'workspace_source'
+                """,
+                (asset_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown workspace asset: {asset_id}")
+        return self._workspace_asset_row(row)
+
+    def find_workspace_asset_by_sha256(self, sha256: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT a.*,
+                       b.id AS blob_record_id,
+                       b.sha256 AS blob_sha256,
+                       b.storage_path AS blob_storage_path,
+                       b.mime AS blob_mime,
+                       b.size_bytes AS blob_size_bytes,
+                       b.width AS blob_width,
+                       b.height AS blob_height,
+                       b.created_at AS blob_created_at
+                FROM assets a
+                JOIN asset_blobs b ON b.id = a.blob_id
+                WHERE b.sha256 = ? AND a.role = 'workspace_source'
+                LIMIT 1
+                """,
+                (sha256,),
+            ).fetchone()
+        return self._workspace_asset_row(row) if row is not None else None
+
+    def list_workspace_assets(self, limit: int = 500) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 2000))
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT a.*,
+                       b.id AS blob_record_id,
+                       b.sha256 AS blob_sha256,
+                       b.storage_path AS blob_storage_path,
+                       b.mime AS blob_mime,
+                       b.size_bytes AS blob_size_bytes,
+                       b.width AS blob_width,
+                       b.height AS blob_height,
+                       b.created_at AS blob_created_at
+                FROM assets a
+                JOIN asset_blobs b ON b.id = a.blob_id
+                WHERE a.role = 'workspace_source'
+                ORDER BY a.created_at ASC, a.id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._workspace_asset_row(row) for row in rows]
+
+    def has_asset_blob(self, sha256: str) -> bool:
+        with self._connection() as connection:
+            return connection.execute(
+                "SELECT 1 FROM asset_blobs WHERE sha256 = ?", (sha256,)
+            ).fetchone() is not None
+
+    def create_job(
+        self,
+        mode: str,
+        source_asset_ids: Iterable[str],
+        *,
+        engine_key: str,
+        parameters: dict[str, Any] | None = None,
+        idempotency_key: str = "",
+        requested_concurrency: int = 1,
+        max_attempts: int = 2,
+        title: str = "",
+    ) -> tuple[dict[str, Any], bool]:
+        source_asset_ids = [str(asset_id) for asset_id in source_asset_ids]
+        if mode not in {"single", "multi-file", "group-split", "cutout-batch"}:
+            raise ValueError(f"unsupported job mode: {mode}")
+        if not source_asset_ids:
+            raise ValueError("at least one source asset is required")
+        if len(source_asset_ids) != len(set(source_asset_ids)):
+            raise ValueError("source asset IDs must be unique within a job")
+        engine_key = str(engine_key).strip()
+        if not engine_key:
+            raise ValueError("engine_key is required")
+        idempotency_key = str(idempotency_key).strip()
+        if len(idempotency_key) > 200:
+            raise ValueError("idempotency key is too long")
+        requested_concurrency = max(1, min(int(requested_concurrency), 24))
+        max_attempts = max(1, min(int(max_attempts), 10))
+        parameters = dict(parameters or {})
+        job_id = new_id("job")
+        session_id = new_id("ses")
+        now = utc_now()
+        created = False
+
+        with self._immediate_connection() as connection:
+            if idempotency_key:
+                existing = connection.execute(
+                    "SELECT * FROM jobs WHERE idempotency_key = ?", (idempotency_key,)
+                ).fetchone()
+                if existing is not None:
+                    job_id = str(existing["id"])
+                    existing_items = connection.execute(
+                        "SELECT source_asset_id, engine_key, max_attempts FROM job_items "
+                        "WHERE job_id = ? ORDER BY position",
+                        (job_id,),
+                    ).fetchall()
+                    same_request = (
+                        str(existing["mode"]) == mode
+                        and decode_json(existing["parameters_json"], {}) == parameters
+                        and int(existing["requested_concurrency"]) == requested_concurrency
+                        and [str(row["source_asset_id"]) for row in existing_items]
+                        == source_asset_ids
+                        and all(str(row["engine_key"]) == engine_key for row in existing_items)
+                        and all(int(row["max_attempts"]) == max_attempts for row in existing_items)
+                    )
+                    if not same_request:
+                        raise IdempotencyConflictError(
+                            "idempotency key already belongs to a different job request"
+                        )
+                else:
+                    created = True
+            else:
+                created = True
+
+            if created:
+                placeholders = ",".join("?" for _ in source_asset_ids)
+                rows = connection.execute(
+                    f"""
+                    SELECT a.id FROM assets a
+                    JOIN asset_blobs b ON b.id = a.blob_id
+                    WHERE a.role = 'workspace_source' AND a.id IN ({placeholders})
+                    """,
+                    source_asset_ids,
+                ).fetchall()
+                found = {str(row["id"]) for row in rows}
+                missing = [asset_id for asset_id in source_asset_ids if asset_id not in found]
+                if missing:
+                    raise KeyError(f"unknown workspace assets: {', '.join(missing)}")
+
+                brief = parameters.get("brief") if isinstance(parameters.get("brief"), dict) else {}
+                intent_locks = (
+                    parameters.get("intent_locks")
+                    if isinstance(parameters.get("intent_locks"), dict)
+                    else {}
+                )
+                connection.execute(
+                    """
+                    INSERT INTO sessions(
+                        id, mode, status, title, project_name, designer_profile,
+                        brand_profile, category, brief_json, intent_locks_json,
+                        started_at, updated_at
+                    ) VALUES(?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session_id, mode, title or mode,
+                        str(parameters.get("project_name", "")),
+                        str(parameters.get("designer_profile", "default")),
+                        str(parameters.get("brand_profile", "")),
+                        str(parameters.get("category", "general")),
+                        encode_json(brief), encode_json(intent_locks), now, now,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO jobs(
+                        id, session_id, mode, status, priority, total_items,
+                        requested_concurrency, idempotency_key, parameters_json,
+                        created_at, queued_at, updated_at
+                    ) VALUES(?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        job_id, session_id, mode, int(parameters.get("priority", 0)),
+                        len(source_asset_ids), requested_concurrency, idempotency_key,
+                        encode_json(parameters), now, now, now,
+                    ),
+                )
+                for position, source_asset_id in enumerate(source_asset_ids):
+                    item_id = new_id("item")
+                    generation_id = new_id("gen")
+                    connection.execute(
+                        """
+                        INSERT INTO generations(
+                            id, session_id, task_id, model, parameters_json,
+                            knowledge_refs_json, status, created_at
+                        ) VALUES(?, ?, ?, ?, ?, ?, 'queued', ?)
+                        """,
+                        (
+                            generation_id, session_id, item_id,
+                            str(parameters.get("model", "")), encode_json(parameters),
+                            encode_json(parameters.get("knowledge_refs") or []), now,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO job_items(
+                            id, job_id, position, source_asset_id, generation_id,
+                            engine_key, status, progress, attempt_count, max_attempts,
+                            queued_at, updated_at
+                        ) VALUES(?, ?, ?, ?, ?, ?, 'queued', 0, 0, ?, ?, ?)
+                        """,
+                        (
+                            item_id, job_id, position, source_asset_id, generation_id,
+                            engine_key, max_attempts, now, now,
+                        ),
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO events(session_id, event_type, payload_json, created_at)
+                    VALUES(?, 'job.created', ?, ?)
+                    """,
+                    (
+                        session_id,
+                        encode_json({
+                            "job_id": job_id,
+                            "mode": mode,
+                            "total_items": len(source_asset_ids),
+                            "idempotency_key": idempotency_key,
+                        }),
+                        now,
+                    ),
+                )
+        return self.get_job(job_id), created
+
+    def get_job(self, job_id: str, *, include_attempts: bool = True) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"unknown job: {job_id}")
+            job = self._job_row(row)
+            item_rows = connection.execute(
+                """
+                SELECT ji.*, g.result_asset_ids_json, g.model AS generation_model
+                FROM job_items ji
+                LEFT JOIN generations g ON g.id = ji.generation_id
+                WHERE ji.job_id = ? ORDER BY ji.position
+                """,
+                (job_id,),
+            ).fetchall()
+            items = [self._job_item_row(item_row) for item_row in item_rows]
+            if include_attempts and items:
+                attempt_rows = connection.execute(
+                    """
+                    SELECT ta.* FROM task_attempts ta
+                    JOIN job_items ji ON ji.id = ta.job_item_id
+                    WHERE ji.job_id = ?
+                    ORDER BY ji.position, ta.attempt_number
+                    """,
+                    (job_id,),
+                ).fetchall()
+                attempts_by_item: dict[str, list[dict[str, Any]]] = {}
+                for attempt_row in attempt_rows:
+                    attempt = self._task_attempt_row(attempt_row)
+                    attempts_by_item.setdefault(attempt["job_item_id"], []).append(attempt)
+                for item in items:
+                    item["attempts"] = attempts_by_item.get(item["id"], [])
+            job["items"] = items
+            job["progress"] = (
+                sum(float(item["progress"]) for item in items) / len(items)
+                if items else 0.0
+            )
+            return job
+
+    def get_job_item(self, item_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT ji.*, g.result_asset_ids_json, g.model AS generation_model
+                FROM job_items ji
+                LEFT JOIN generations g ON g.id = ji.generation_id
+                WHERE ji.id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown job item: {item_id}")
+        return self._job_item_row(row)
+
+    def list_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT id FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [self.get_job(str(row["id"]), include_attempts=False) for row in rows]
+
+    def list_runnable_job_heads(self) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT ji.*, j.priority AS job_priority, j.queued_at AS job_queued_at,
+                       j.requested_concurrency, j.status AS job_status
+                FROM job_items ji
+                JOIN jobs j ON j.id = ji.job_id
+                WHERE ji.status = 'queued'
+                  AND j.status IN ('queued', 'running')
+                  AND ji.position = (
+                      SELECT MIN(head.position) FROM job_items head
+                      WHERE head.job_id = ji.job_id AND head.status = 'queued'
+                  )
+                ORDER BY j.priority DESC, j.queued_at ASC, j.id ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def claim_job_item(self, item_id: str) -> dict[str, Any] | None:
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT ji.*, j.session_id, j.status AS job_status,
+                       j.parameters_json AS job_parameters_json
+                FROM job_items ji JOIN jobs j ON j.id = ji.job_id
+                WHERE ji.id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+            if row is None or row["status"] != "queued" or row["job_status"] not in {"queued", "running"}:
+                return None
+            active_count = connection.execute(
+                "SELECT COUNT(*) FROM job_items WHERE job_id = ? "
+                "AND status IN ('running', 'canceling')",
+                (row["job_id"],),
+            ).fetchone()[0]
+            requested_concurrency = connection.execute(
+                "SELECT requested_concurrency FROM jobs WHERE id = ?",
+                (row["job_id"],),
+            ).fetchone()[0]
+            if int(active_count) >= int(requested_concurrency):
+                return None
+            if int(row["attempt_count"]) >= int(row["max_attempts"]):
+                return None
+            validate_status_transition("queued", "running", item=True)
+            attempt_number = int(row["attempt_count"]) + 1
+            connection.execute(
+                """
+                UPDATE job_items
+                SET status = 'running', progress = 0, attempt_count = ?,
+                    started_at = ?, updated_at = ?, completed_at = NULL,
+                    error_code = '', error_message = ''
+                WHERE id = ?
+                """,
+                (attempt_number, now, now, item_id),
+            )
+            attempt_id = new_id("attempt")
+            job_parameters = decode_json(row["job_parameters_json"], {})
+            attempt_model = str(job_parameters.get("model", ""))
+            connection.execute(
+                """
+                INSERT INTO task_attempts(
+                    id, job_item_id, attempt_number, engine_key, model, status,
+                    started_at
+                ) VALUES(?, ?, ?, ?, ?, 'running', ?)
+                """,
+                (
+                    attempt_id, item_id, attempt_number, str(row["engine_key"]),
+                    attempt_model, now,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE jobs SET status = 'running', started_at = COALESCE(started_at, ?),
+                                updated_at = ? WHERE id = ?
+                """,
+                (now, now, row["job_id"]),
+            )
+            connection.execute(
+                "UPDATE sessions SET status = 'processing', updated_at = ? WHERE id = ?",
+                (now, row["session_id"]),
+            )
+            if row["generation_id"]:
+                connection.execute(
+                    "UPDATE generations SET status = 'running', error = '' WHERE id = ?",
+                    (row["generation_id"],),
+                )
+            connection.execute(
+                """
+                INSERT INTO events(session_id, generation_id, event_type, payload_json, created_at)
+                VALUES(?, ?, 'job.item.started', ?, ?)
+                """,
+                (
+                    row["session_id"], row["generation_id"],
+                    encode_json({"job_id": row["job_id"], "item_id": item_id, "attempt": attempt_number}),
+                    now,
+                ),
+            )
+        return {
+            "job": self.get_job(str(row["job_id"]), include_attempts=False),
+            "item": self.get_job_item(item_id),
+            "attempt_id": attempt_id,
+        }
+
+    def update_job_item_progress(self, item_id: str, progress: float) -> dict[str, Any]:
+        progress = max(0.0, min(float(progress), 0.999))
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE job_items SET progress = ?, updated_at = ?
+                WHERE id = ? AND status IN ('running', 'canceling')
+                """,
+                (progress, utc_now(), item_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"job item is not active: {item_id}")
+        return self.get_job_item(item_id)
+
+    def update_task_attempt_metadata(
+        self,
+        item_id: str,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist recoverable attempt metadata while an item is active."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT attempt_count, status FROM job_items WHERE id = ?", (item_id,)
+            ).fetchone()
+            if row is None or row["status"] not in {"running", "canceling"}:
+                raise KeyError(f"job item is not active: {item_id}")
+            cursor = connection.execute(
+                "UPDATE task_attempts SET metadata_json = ? "
+                "WHERE job_item_id = ? AND attempt_number = ? AND status = 'running'",
+                (encode_json(metadata), item_id, row["attempt_count"]),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"active attempt is unavailable: {item_id}")
+        return self.get_job_item(item_id)
+
+    def commit_generation_results(
+        self,
+        generation_id: str,
+        source_asset_id: str,
+        outputs: Iterable[dict[str, Any]],
+        *,
+        job_item_id: str = "",
+        attempt_metadata: Mapping[str, Any] | None = None,
+    ) -> list[str]:
+        """Atomically register outputs and, when supplied, finish their job item.
+
+        Files are published before this transaction.  Keeping result rows,
+        generation state, attempt history, item completion, and parent counters
+        in one commit removes the restart window where durable results existed
+        but the item could be requeued and charged a second time.
+        """
+        normalized = [dict(output) for output in outputs]
+        if not normalized:
+            raise ValueError("at least one generation output is required")
+        now = utc_now()
+        asset_ids = [new_id("ast") for _ in normalized]
+        with self._immediate_connection() as connection:
+            generation = connection.execute(
+                "SELECT session_id, result_asset_ids_json FROM generations WHERE id = ?",
+                (generation_id,),
+            ).fetchone()
+            if generation is None:
+                raise KeyError(f"unknown generation: {generation_id}")
+            source = connection.execute(
+                "SELECT id FROM assets WHERE id = ?", (source_asset_id,)
+            ).fetchone()
+            if source is None:
+                raise KeyError(f"unknown source asset: {source_asset_id}")
+            job_item = None
+            if job_item_id:
+                job_item = connection.execute(
+                    """
+                    SELECT ji.*, j.session_id FROM job_items ji
+                    JOIN jobs j ON j.id = ji.job_id
+                    WHERE ji.id = ?
+                    """,
+                    (job_item_id,),
+                ).fetchone()
+                if job_item is None:
+                    raise KeyError(f"unknown job item: {job_item_id}")
+                if str(job_item["generation_id"] or "") != generation_id:
+                    raise LedgerSchemaError("job item does not own the target generation")
+                if str(job_item["source_asset_id"]) != source_asset_id:
+                    raise LedgerSchemaError("job item source does not match result lineage")
+                validate_status_transition(str(job_item["status"]), "completed", item=True)
+            previous = decode_json(generation["result_asset_ids_json"], [])
+            if previous:
+                raise LedgerSchemaError(
+                    f"generation already has committed results: {generation_id}"
+                )
+            for asset_id, output in zip(asset_ids, normalized):
+                role = str(output.get("role", "result_main"))
+                if role not in {"result_main", "result_cutout"}:
+                    raise ValueError(f"unsupported generation result role: {role}")
+                path = str(output.get("path", ""))
+                if not path:
+                    raise ValueError("generation output path is required")
+                connection.execute(
+                    """
+                    INSERT INTO assets(
+                        id, session_id, parent_asset_id, role, kind, path, name,
+                        mime, width, height, sha256, metadata_json, created_at
+                    ) VALUES(?, ?, ?, ?, 'image', ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        asset_id,
+                        generation["session_id"],
+                        source_asset_id,
+                        role,
+                        path,
+                        str(output.get("name", Path(path).name)),
+                        str(output.get("mime", "image/png" if role == "result_cutout" else "image/jpeg")),
+                        output.get("width"),
+                        output.get("height"),
+                        str(output.get("sha256", "")),
+                        encode_json({
+                            **(output.get("metadata") if isinstance(output.get("metadata"), dict) else {}),
+                            "generation_id": generation_id,
+                            "job_item_id": job_item_id,
+                        }),
+                        now,
+                    ),
+                )
+            connection.execute(
+                "UPDATE generations SET result_asset_ids_json = ? WHERE id = ?",
+                (encode_json(asset_ids), generation_id),
+            )
+            if job_item is not None:
+                started = connection.execute(
+                    """
+                    SELECT started_at FROM task_attempts
+                    WHERE job_item_id = ? AND attempt_number = ?
+                    """,
+                    (job_item_id, job_item["attempt_count"]),
+                ).fetchone()
+                latency_ms = None
+                if started is not None:
+                    try:
+                        start_dt = datetime.fromisoformat(str(started["started_at"]))
+                        latency_ms = max(
+                            0,
+                            int(
+                                (datetime.now(timezone.utc) - start_dt).total_seconds()
+                                * 1000
+                            ),
+                        )
+                    except (TypeError, ValueError):
+                        latency_ms = None
+                final_metadata = {
+                    **dict(attempt_metadata or {}),
+                    "result_asset_ids": list(asset_ids),
+                    "output_count": len(asset_ids),
+                }
+                connection.execute(
+                    """
+                    UPDATE task_attempts
+                    SET status = 'completed', error_code = '', error_message = '',
+                        latency_ms = ?, metadata_json = ?, completed_at = ?
+                    WHERE job_item_id = ? AND attempt_number = ? AND status = 'running'
+                    """,
+                    (
+                        latency_ms,
+                        encode_json(final_metadata),
+                        now,
+                        job_item_id,
+                        job_item["attempt_count"],
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE job_items
+                    SET status = 'completed', progress = 1, error_code = '',
+                        error_message = '', updated_at = ?, completed_at = ?
+                    WHERE id = ? AND status = 'running'
+                    """,
+                    (now, now, job_item_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE generations
+                    SET status = 'completed', error = '', completed_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, generation_id),
+                )
+                parent_status = self._refresh_job_aggregate(
+                    connection, str(job_item["job_id"])
+                )
+                connection.execute(
+                    """
+                    INSERT INTO events(
+                        session_id, generation_id, event_type, payload_json, created_at
+                    ) VALUES(?, ?, 'job.item.finished', ?, ?)
+                    """,
+                    (
+                        job_item["session_id"],
+                        generation_id,
+                        encode_json({
+                            "job_id": job_item["job_id"],
+                            "item_id": job_item_id,
+                            "status": "completed",
+                            "parent_status": parent_status,
+                            "error_code": "",
+                        }),
+                        now,
+                    ),
+                )
+            connection.execute(
+                """
+                INSERT INTO events(session_id, generation_id, event_type, payload_json, created_at)
+                VALUES(?, ?, 'generation.results.committed', ?, ?)
+                """,
+                (
+                    generation["session_id"], generation_id,
+                    encode_json({"asset_ids": asset_ids, "job_item_id": job_item_id}), now,
+                ),
+            )
+        return asset_ids
+
+    def discard_generation_results(
+        self,
+        generation_id: str,
+        asset_ids: Iterable[str],
+        *,
+        reason: str = "attempt_discarded",
+    ) -> int:
+        """Remove only the named attempt outputs after cancel/commit rollback."""
+        requested = [str(asset_id) for asset_id in asset_ids]
+        if not requested:
+            return 0
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            generation = connection.execute(
+                "SELECT session_id, result_asset_ids_json FROM generations WHERE id = ?",
+                (generation_id,),
+            ).fetchone()
+            if generation is None:
+                return 0
+            current = decode_json(generation["result_asset_ids_json"], [])
+            removable = [asset_id for asset_id in requested if asset_id in current]
+            if not removable:
+                return 0
+            placeholders = ",".join("?" for _ in removable)
+            cursor = connection.execute(
+                f"DELETE FROM assets WHERE session_id = ? AND id IN ({placeholders})",
+                (generation["session_id"], *removable),
+            )
+            remaining = [asset_id for asset_id in current if asset_id not in set(removable)]
+            connection.execute(
+                "UPDATE generations SET result_asset_ids_json = ? WHERE id = ?",
+                (encode_json(remaining), generation_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO events(session_id, generation_id, event_type, payload_json, created_at)
+                VALUES(?, ?, 'generation.results.discarded', ?, ?)
+                """,
+                (
+                    generation["session_id"], generation_id,
+                    encode_json({"asset_ids": removable, "reason": reason}), now,
+                ),
+            )
+            return int(cursor.rowcount)
+
+    @staticmethod
+    def _refresh_job_aggregate(connection: sqlite3.Connection, job_id: str) -> str:
+        job = connection.execute(
+            "SELECT session_id, status FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        if job is None:
+            raise KeyError(f"unknown job: {job_id}")
+        rows = connection.execute(
+            "SELECT status, COUNT(*) AS count FROM job_items WHERE job_id = ? GROUP BY status",
+            (job_id,),
+        ).fetchall()
+        counts = {str(row["status"]): int(row["count"]) for row in rows}
+        total = sum(counts.values())
+        completed = counts.get("completed", 0)
+        failed = counts.get("failed", 0)
+        canceled = counts.get("canceled", 0)
+        queued = counts.get("queued", 0)
+        running = counts.get("running", 0)
+        canceling = counts.get("canceling", 0)
+        interrupted = counts.get("interrupted", 0)
+
+        if canceling:
+            status = "canceling"
+        elif str(job["status"]) == "paused" and (running or queued or interrupted):
+            # Pausing stops new claims; an already-running item may still reach
+            # a safe terminal point. Preserve the pause while work remains.
+            status = "paused"
+        elif running:
+            status = "running"
+        elif queued:
+            status = "running" if completed or failed or canceled else "queued"
+        elif interrupted:
+            status = "interrupted"
+        elif total and completed == total:
+            status = "completed"
+        elif total and canceled == total:
+            status = "canceled"
+        elif total and failed == total:
+            status = "failed"
+        elif total:
+            status = "partial"
+        else:
+            status = "failed"
+
+        now = utc_now()
+        validate_status_transition(str(job["status"]), status)
+        terminal = status in {"completed", "partial", "failed", "canceled"}
+        connection.execute(
+            """
+            UPDATE jobs
+            SET status = ?, total_items = ?, completed_items = ?, failed_items = ?,
+                canceled_items = ?, updated_at = ?,
+                completed_at = CASE WHEN ? THEN ? ELSE NULL END
+            WHERE id = ?
+            """,
+            (
+                status, total, completed, failed, canceled, now,
+                1 if terminal else 0, now, job_id,
+            ),
+        )
+        session_status = {
+            "queued": "queued",
+            "running": "processing",
+            "paused": "paused",
+            "canceling": "processing",
+            "interrupted": "interrupted",
+            "completed": "completed",
+            "partial": "partial",
+            "failed": "error",
+            "canceled": "canceled",
+        }[status]
+        connection.execute(
+            """
+            UPDATE sessions SET status = ?, updated_at = ?,
+                completed_at = CASE WHEN ? THEN ? ELSE NULL END
+            WHERE id = ?
+            """,
+            (session_status, now, 1 if terminal else 0, now, job["session_id"]),
+        )
+        return status
+
+    def finish_job_item(
+        self,
+        item_id: str,
+        status: str,
+        *,
+        error_code: str = "",
+        error_message: str = "",
+        attempt_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if status not in {"completed", "failed", "canceled", "interrupted"}:
+            raise ValueError(f"unsupported terminal item status: {status}")
+        now = utc_now()
+        row = None
+        try:
+            with self._immediate_connection() as connection:
+                row = connection.execute(
+                    """
+                    SELECT ji.*, j.session_id FROM job_items ji
+                    JOIN jobs j ON j.id = ji.job_id WHERE ji.id = ?
+                    """,
+                    (item_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"unknown job item: {item_id}")
+                validate_status_transition(str(row["status"]), status, item=True)
+                # progress is queue completion, not success quality: every
+                # terminal item has finished consuming its slot and is 100%
+                # settled even when its outcome is failed/canceled.
+                progress = (
+                    1.0
+                    if status in {"completed", "failed", "canceled"}
+                    else float(row["progress"])
+                )
+                connection.execute(
+                    """
+                    UPDATE job_items
+                    SET status = ?, progress = ?, error_code = ?, error_message = ?,
+                        updated_at = ?, completed_at = ?
+                    WHERE id = ?
+                    """,
+                    (status, progress, error_code, error_message, now, now, item_id),
+                )
+                started = connection.execute(
+                    """
+                    SELECT started_at FROM task_attempts
+                    WHERE job_item_id = ? AND attempt_number = ?
+                    """,
+                    (item_id, row["attempt_count"]),
+                ).fetchone()
+                latency_ms = None
+                if started is not None:
+                    try:
+                        start_dt = datetime.fromisoformat(str(started["started_at"]))
+                        latency_ms = max(0, int((datetime.now(timezone.utc) - start_dt).total_seconds() * 1000))
+                    except (TypeError, ValueError):
+                        latency_ms = None
+                connection.execute(
+                    """
+                    UPDATE task_attempts
+                    SET status = ?, error_code = ?, error_message = ?, latency_ms = ?,
+                        metadata_json = ?, completed_at = ?
+                    WHERE job_item_id = ? AND attempt_number = ?
+                    """,
+                    (
+                        status, error_code, error_message, latency_ms,
+                        encode_json(attempt_metadata), now, item_id, row["attempt_count"],
+                    ),
+                )
+                if row["generation_id"]:
+                    generation_status = "error" if status == "failed" else status
+                    connection.execute(
+                        """
+                        UPDATE generations SET status = ?, error = ?, completed_at = ?
+                        WHERE id = ?
+                        """,
+                        (generation_status, error_message, now, row["generation_id"]),
+                    )
+                parent_status = self._refresh_job_aggregate(connection, str(row["job_id"]))
+                connection.execute(
+                    """
+                    INSERT INTO events(session_id, generation_id, event_type, payload_json, created_at)
+                    VALUES(?, ?, 'job.item.finished', ?, ?)
+                    """,
+                    (
+                        row["session_id"], row["generation_id"],
+                        encode_json({
+                            "job_id": row["job_id"], "item_id": item_id,
+                            "status": status, "parent_status": parent_status,
+                            "error_code": error_code,
+                        }),
+                        now,
+                    ),
+                )
+        except InvalidStatusTransitionError:
+            if row is not None:
+                self.add_event(
+                    str(row["session_id"]),
+                    "job.transition_rejected",
+                    {
+                        "entity": "job_item",
+                        "job_id": str(row["job_id"]),
+                        "item_id": item_id,
+                        "from": str(row["status"]),
+                        "to": status,
+                    },
+                    generation_id=row["generation_id"],
+                )
+            raise
+        return self.get_job(str(row["job_id"]))
+
+    def pause_job(self, job_id: str) -> dict[str, Any]:
+        """Stop future claims while allowing already-running items to settle."""
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            job = connection.execute(
+                "SELECT * FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise KeyError(f"unknown job: {job_id}")
+            current = str(job["status"])
+            if current in {"completed", "partial", "failed", "canceled", "paused"}:
+                pass
+            elif current not in {"queued", "running"}:
+                raise InvalidStatusTransitionError(
+                    f"job cannot be paused while {current}"
+                )
+            else:
+                validate_status_transition(current, "paused")
+                connection.execute(
+                    "UPDATE jobs SET status = 'paused', updated_at = ? WHERE id = ?",
+                    (now, job_id),
+                )
+                connection.execute(
+                    "UPDATE sessions SET status = 'paused', updated_at = ? WHERE id = ?",
+                    (now, job["session_id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO events(session_id, event_type, payload_json, created_at)
+                    VALUES(?, 'job.paused', ?, ?)
+                    """,
+                    (job["session_id"], encode_json({"job_id": job_id}), now),
+                )
+        return self.get_job(job_id)
+
+    def resume_job(self, job_id: str) -> dict[str, Any]:
+        """Resume claims for a paused job without changing any item attempt."""
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            job = connection.execute(
+                "SELECT * FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise KeyError(f"unknown job: {job_id}")
+            current = str(job["status"])
+            if current != "paused":
+                if current in {"completed", "partial", "failed", "canceled"}:
+                    pass
+                else:
+                    raise InvalidStatusTransitionError(
+                        f"job cannot be resumed while {current}"
+                    )
+            else:
+                rows = connection.execute(
+                    "SELECT status, COUNT(*) AS count FROM job_items "
+                    "WHERE job_id = ? GROUP BY status",
+                    (job_id,),
+                ).fetchall()
+                counts = {str(row["status"]): int(row["count"]) for row in rows}
+                settled = sum(
+                    counts.get(status, 0)
+                    for status in ("completed", "failed", "canceled")
+                )
+                if counts.get("running", 0):
+                    target = "running"
+                elif counts.get("queued", 0):
+                    target = "running" if settled else "queued"
+                elif counts.get("interrupted", 0):
+                    target = "interrupted"
+                else:
+                    self._refresh_job_aggregate(connection, job_id)
+                    target = None
+                if target is not None:
+                    validate_status_transition("paused", target)
+                    connection.execute(
+                        "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?",
+                        (target, now, job_id),
+                    )
+                    connection.execute(
+                        "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
+                        (
+                            "processing" if target == "running" else target,
+                            now,
+                            job["session_id"],
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO events(session_id, event_type, payload_json, created_at)
+                        VALUES(?, 'job.resumed', ?, ?)
+                        """,
+                        (
+                            job["session_id"],
+                            encode_json({"job_id": job_id, "status": target}),
+                            now,
+                        ),
+                    )
+        return self.get_job(job_id)
+
+    def request_job_cancel(self, job_id: str) -> dict[str, Any]:
+        now = utc_now()
+        canceling_item_ids: list[str] = []
+        already_terminal = False
+        with self._immediate_connection() as connection:
+            job = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if job is None:
+                raise KeyError(f"unknown job: {job_id}")
+            if job["status"] in {"completed", "partial", "failed", "canceled"}:
+                already_terminal = True
+            else:
+                items = connection.execute(
+                    "SELECT id, status, generation_id FROM job_items WHERE job_id = ?",
+                    (job_id,),
+                ).fetchall()
+                for item in items:
+                    current = str(item["status"])
+                    if current == "queued":
+                        validate_status_transition(current, "canceled", item=True)
+                        connection.execute(
+                            """
+                            UPDATE job_items SET status = 'canceled', progress = 1,
+                                                 updated_at = ?, completed_at = ? WHERE id = ?
+                            """,
+                            (now, now, item["id"]),
+                        )
+                        if item["generation_id"]:
+                            connection.execute(
+                                "UPDATE generations SET status = 'canceled', completed_at = ? WHERE id = ?",
+                                (now, item["generation_id"]),
+                            )
+                    elif current == "running":
+                        validate_status_transition(current, "canceling", item=True)
+                        connection.execute(
+                            "UPDATE job_items SET status = 'canceling', updated_at = ? WHERE id = ?",
+                            (now, item["id"]),
+                        )
+                        if item["generation_id"]:
+                            connection.execute(
+                                "UPDATE generations SET status = 'canceling' WHERE id = ?",
+                                (item["generation_id"],),
+                            )
+                        canceling_item_ids.append(str(item["id"]))
+                    elif current == "canceling":
+                        canceling_item_ids.append(str(item["id"]))
+                    elif current == "interrupted":
+                        validate_status_transition(current, "canceled", item=True)
+                        connection.execute(
+                            """
+                            UPDATE job_items SET status = 'canceled', progress = 1,
+                                                 updated_at = ?, completed_at = ? WHERE id = ?
+                            """,
+                            (now, now, item["id"]),
+                        )
+                        if item["generation_id"]:
+                            connection.execute(
+                                "UPDATE generations SET status = 'canceled', completed_at = ? WHERE id = ?",
+                                (now, item["generation_id"]),
+                            )
+                self._refresh_job_aggregate(connection, job_id)
+                connection.execute(
+                    """
+                    INSERT INTO events(session_id, event_type, payload_json, created_at)
+                    VALUES(?, 'job.cancel.requested', ?, ?)
+                    """,
+                    (job["session_id"], encode_json({"job_id": job_id}), now),
+                )
+        result = self.get_job(job_id)
+        if not already_terminal:
+            result["canceling_item_ids"] = canceling_item_ids
+        return result
+
+    def retry_job_items(self, job_id: str, item_ids: Iterable[str] | None = None) -> dict[str, Any]:
+        requested = {str(item_id) for item_id in (item_ids or [])}
+        now = utc_now()
+        retried: list[str] = []
+        with self._immediate_connection() as connection:
+            job = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if job is None:
+                raise KeyError(f"unknown job: {job_id}")
+            rows = connection.execute(
+                "SELECT * FROM job_items WHERE job_id = ? ORDER BY position", (job_id,)
+            ).fetchall()
+            known = {str(row["id"]) for row in rows}
+            if requested - known:
+                raise KeyError(f"unknown job items: {', '.join(sorted(requested - known))}")
+            for row in rows:
+                item_id = str(row["id"])
+                if requested and item_id not in requested:
+                    continue
+                current = str(row["status"])
+                if current not in {"failed", "interrupted"}:
+                    continue
+                validate_status_transition(current, "queued", item=True)
+                connection.execute(
+                    """
+                    UPDATE job_items
+                    SET status = 'queued', progress = 0, error_code = '', error_message = '',
+                        max_attempts = MAX(max_attempts, attempt_count + 1), queued_at = ?,
+                        started_at = NULL, updated_at = ?, completed_at = NULL
+                    WHERE id = ?
+                    """,
+                    (now, now, item_id),
+                )
+                if row["generation_id"]:
+                    connection.execute(
+                        """
+                        UPDATE generations SET status = 'queued', error = '', completed_at = NULL
+                        WHERE id = ?
+                        """,
+                        (row["generation_id"],),
+                    )
+                retried.append(item_id)
+            if not retried:
+                raise ValueError("no failed or interrupted items are eligible for retry")
+            self._refresh_job_aggregate(connection, job_id)
+            connection.execute(
+                """
+                INSERT INTO events(session_id, event_type, payload_json, created_at)
+                VALUES(?, 'job.retry.requested', ?, ?)
+                """,
+                (job["session_id"], encode_json({"job_id": job_id, "item_ids": retried}), now),
+            )
+        result = self.get_job(job_id)
+        result["retried_item_ids"] = retried
+        return result
+
+    def recover_orphaned_job_item(
+        self,
+        item_id: str,
+        *,
+        error_code: str = "WORKER_INFRASTRUCTURE_FAILURE",
+        error_message: str = "Worker stopped before persisting a terminal state",
+    ) -> dict[str, Any]:
+        """Reconcile one finished worker without disturbing other live owners.
+
+        This is the in-process counterpart to startup recovery.  It is targeted
+        deliberately: calling ``recover_interrupted_jobs`` while sibling workers
+        are still alive would steal their durable ``running`` claims.
+        """
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT ji.*, j.session_id, j.status AS job_status FROM job_items ji
+                JOIN jobs j ON j.id = ji.job_id
+                WHERE ji.id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown job item: {item_id}")
+            current = str(row["status"])
+            if current not in {"running", "canceling"}:
+                return {
+                    "item_id": item_id,
+                    "status": current,
+                    "recovered": False,
+                }
+
+            was_canceling = current == "canceling"
+            can_retry = (
+                not was_canceling
+                and int(row["attempt_count"]) < int(row["max_attempts"])
+            )
+            next_status = "canceled" if was_canceling else ("queued" if can_retry else "failed")
+            final_code = "USER_CANCELED" if was_canceling else str(error_code)
+            final_message = "Canceled by user" if was_canceling else str(error_message)
+
+            if was_canceling:
+                validate_status_transition("canceling", "canceled", item=True)
+            else:
+                validate_status_transition("running", "interrupted", item=True)
+                validate_status_transition("interrupted", next_status, item=True)
+                if str(row["job_status"]) == "running":
+                    validate_status_transition("running", "interrupted")
+                    connection.execute(
+                        "UPDATE jobs SET status = 'interrupted', updated_at = ? WHERE id = ?",
+                        (now, row["job_id"]),
+                    )
+
+            connection.execute(
+                """
+                UPDATE task_attempts
+                SET status = 'interrupted', error_code = ?, error_message = ?, completed_at = ?
+                WHERE job_item_id = ? AND attempt_number = ? AND status = 'running'
+                """,
+                (final_code, final_message, now, item_id, row["attempt_count"]),
+            )
+            if not was_canceling:
+                connection.execute(
+                    """
+                    UPDATE job_items
+                    SET status = 'interrupted', error_code = ?, error_message = ?,
+                        started_at = NULL, updated_at = ?, completed_at = NULL
+                    WHERE id = ? AND status = 'running'
+                    """,
+                    (final_code, final_message, now, item_id),
+                )
+                if row["generation_id"]:
+                    connection.execute(
+                        "UPDATE generations SET status = 'interrupted', error = ? WHERE id = ?",
+                        (final_message, row["generation_id"]),
+                    )
+            connection.execute(
+                """
+                UPDATE job_items
+                SET status = ?, progress = CASE
+                        WHEN ? = 'queued' THEN 0
+                        WHEN ? IN ('failed','canceled') THEN 1
+                        ELSE progress
+                    END,
+                    error_code = ?, error_message = ?,
+                    queued_at = CASE WHEN ? = 'queued' THEN ? ELSE queued_at END,
+                    started_at = NULL, updated_at = ?,
+                    completed_at = CASE WHEN ? IN ('failed','canceled') THEN ? ELSE NULL END
+                WHERE id = ? AND status IN ('interrupted','canceling')
+                """,
+                (
+                    next_status, next_status, next_status, final_code, final_message,
+                    next_status, now, now, next_status, now, item_id,
+                ),
+            )
+            if row["generation_id"]:
+                generation_status = "error" if next_status == "failed" else next_status
+                connection.execute(
+                    "UPDATE generations SET status = ?, error = ? WHERE id = ?",
+                    (generation_status, final_message, row["generation_id"]),
+                )
+            parent_status = self._refresh_job_aggregate(connection, str(row["job_id"]))
+            connection.execute(
+                """
+                INSERT INTO events(session_id, generation_id, event_type, payload_json, created_at)
+                VALUES(?, ?, 'job.item.interrupted', ?, ?)
+                """,
+                (
+                    row["session_id"], row["generation_id"],
+                    encode_json({
+                        "job_id": row["job_id"],
+                        "item_id": item_id,
+                        "next_status": next_status,
+                        "error_code": final_code,
+                        "live_reconciliation": True,
+                    }),
+                    now,
+                ),
+            )
+        return {
+            "item_id": item_id,
+            "status": next_status,
+            "parent_status": parent_status,
+            "recovered": True,
+        }
+
+    def recover_interrupted_jobs(self) -> dict[str, int]:
+        now = utc_now()
+        interrupted_count = 0
+        requeued_count = 0
+        failed_count = 0
+        affected_jobs: set[str] = set()
+        with self._immediate_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT ji.*, j.session_id, j.status AS job_status FROM job_items ji
+                JOIN jobs j ON j.id = ji.job_id
+                WHERE ji.status IN ('running', 'canceling')
+                """
+            ).fetchall()
+            for row in rows:
+                interrupted_count += 1
+                affected_jobs.add(str(row["job_id"]))
+                current_item_status = str(row["status"])
+                if current_item_status == "running":
+                    validate_status_transition("running", "interrupted", item=True)
+                else:
+                    validate_status_transition("canceling", "canceled", item=True)
+                if str(row["job_status"]) == "running":
+                    validate_status_transition("running", "interrupted")
+                    connection.execute(
+                        "UPDATE jobs SET status = 'interrupted', updated_at = ? WHERE id = ?",
+                        (now, row["job_id"]),
+                    )
+                connection.execute(
+                    """
+                    UPDATE task_attempts
+                    SET status = 'interrupted', error_code = 'PROCESS_RESTARTED',
+                        error_message = 'Worker process stopped before completion', completed_at = ?
+                    WHERE job_item_id = ? AND attempt_number = ? AND status = 'running'
+                    """,
+                    (now, row["id"], row["attempt_count"]),
+                )
+                was_canceling = str(row["status"]) == "canceling"
+                can_retry = (
+                    not was_canceling
+                    and int(row["attempt_count"]) < int(row["max_attempts"])
+                )
+                next_status = "canceled" if was_canceling else ("queued" if can_retry else "failed")
+                if not was_canceling:
+                    validate_status_transition("interrupted", next_status, item=True)
+                if next_status == "queued":
+                    requeued_count += 1
+                elif next_status == "canceled":
+                    pass
+                else:
+                    failed_count += 1
+                connection.execute(
+                    """
+                    UPDATE job_items
+                    SET status = ?, progress = CASE
+                            WHEN ? = 'queued' THEN 0
+                            WHEN ? IN ('failed','canceled') THEN 1
+                            ELSE progress
+                        END,
+                        error_code = 'PROCESS_RESTARTED',
+                        error_message = 'Previous attempt was interrupted by a process restart',
+                        queued_at = CASE WHEN ? = 'queued' THEN ? ELSE queued_at END,
+                        started_at = NULL, updated_at = ?,
+                        completed_at = CASE WHEN ? IN ('failed','canceled') THEN ? ELSE NULL END
+                    WHERE id = ?
+                    """,
+                    (
+                        next_status,
+                        next_status,
+                        next_status,
+                        next_status,
+                        now,
+                        now,
+                        next_status,
+                        now,
+                        row["id"],
+                    ),
+                )
+                if row["generation_id"]:
+                    generation_status = "error" if next_status == "failed" else next_status
+                    connection.execute(
+                        "UPDATE generations SET status = ?, error = ? WHERE id = ?",
+                        (generation_status, "Previous attempt was interrupted by a process restart", row["generation_id"]),
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO events(session_id, generation_id, event_type, payload_json, created_at)
+                    VALUES(?, ?, 'job.item.interrupted', ?, ?)
+                    """,
+                    (
+                        row["session_id"], row["generation_id"],
+                        encode_json({"job_id": row["job_id"], "item_id": row["id"], "next_status": next_status}),
+                        now,
+                    ),
+                )
+            for job_id in affected_jobs:
+                self._refresh_job_aggregate(connection, job_id)
+        return {
+            "interrupted": interrupted_count,
+            "requeued": requeued_count,
+            "failed": failed_count,
+        }
 
     def add_generation(
         self,
@@ -593,7 +2349,9 @@ class AtelierLedger:
                     (SELECT COUNT(*) FROM assets a WHERE a.session_id = s.id) AS asset_count,
                     (SELECT COUNT(*) FROM generations g WHERE g.session_id = s.id) AS generation_count,
                     (SELECT COUNT(*) FROM feedback f WHERE f.session_id = s.id) AS feedback_count
-                FROM sessions s ORDER BY updated_at DESC LIMIT ?
+                FROM sessions s
+                WHERE s.mode <> 'workspace'
+                ORDER BY updated_at DESC LIMIT ?
                 """,
                 (limit,),
             ).fetchall()
@@ -642,15 +2400,25 @@ class AtelierLedger:
 
     def stats(self) -> dict[str, Any]:
         with self._connection() as connection:
+            schema_version = self._read_schema_version(connection)
             counts = {
                 table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                for table in ("sessions", "assets", "generations", "events", "feedback", "memory_suggestions")
+                for table in (
+                    "sessions", "assets", "asset_blobs", "generations", "events",
+                    "feedback", "memory_suggestions", "jobs", "job_items", "task_attempts",
+                )
             }
+            counts["sessions"] = connection.execute(
+                "SELECT COUNT(*) FROM sessions WHERE mode <> 'workspace'"
+            ).fetchone()[0]
+            counts["workspace_assets"] = connection.execute(
+                "SELECT COUNT(*) FROM assets WHERE role = 'workspace_source'"
+            ).fetchone()[0]
             pending = connection.execute(
                 "SELECT COUNT(*) FROM memory_suggestions WHERE status = 'pending'"
             ).fetchone()[0]
         return {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": schema_version,
             "database": str(self.db_path),
             "counts": counts,
             "pending_memory": pending,
@@ -665,6 +2433,44 @@ class AtelierLedger:
 
     @staticmethod
     def _asset_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["metadata"] = decode_json(item.pop("metadata_json", "{}"), {})
+        return item
+
+    @classmethod
+    def _workspace_asset_row(cls, row: sqlite3.Row) -> dict[str, Any]:
+        item = cls._asset_row(row)
+        item["blob"] = {
+            "id": item.pop("blob_record_id"),
+            "sha256": item.pop("blob_sha256"),
+            "storage_path": item.pop("blob_storage_path"),
+            "mime": item.pop("blob_mime"),
+            "size_bytes": item.pop("blob_size_bytes"),
+            "width": item.pop("blob_width"),
+            "height": item.pop("blob_height"),
+            "created_at": item.pop("blob_created_at"),
+        }
+        item["size_bytes"] = item["blob"]["size_bytes"]
+        return item
+
+    @staticmethod
+    def _job_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["parameters"] = decode_json(item.pop("parameters_json", "{}"), {})
+        return item
+
+    @staticmethod
+    def _job_item_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["result_asset_ids"] = decode_json(
+            item.pop("result_asset_ids_json", "[]"), []
+        )
+        if "generation_model" in item:
+            item["model"] = item.pop("generation_model") or ""
+        return item
+
+    @staticmethod
+    def _task_attempt_row(row: sqlite3.Row) -> dict[str, Any]:
         item = dict(row)
         item["metadata"] = decode_json(item.pop("metadata_json", "{}"), {})
         return item

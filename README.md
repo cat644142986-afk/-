@@ -8,10 +8,13 @@
 - **自动抠图**: BiRefNet-HD本地模型，输出透明背景PNG
 - **多产品批量**: 自动检测多产品布局，逐一切割→AI优化→抠图
 - **快速抠图**: 纯本地BiRefNet抠图，无需API
+- **持久素材工作台**: 图片按 SHA-256 去重保存，切模式、刷新和重启后仍可继续使用
+- **可靠批量任务**: SQLite 持久队列、有界并发、公平调度、取消、失败项重试与崩溃恢复
+- **任务 Dock**: 恢复数据库中的总体/逐项完成度、独立成功率、错误和部分结果，支持暂停/继续、取消与失败项重试
 - **原图/效果图对比**: 拖动滑块对比前后差异
 - **参数调节**: 模型选择、器皿保留/去除、拍摄角度、美化度、生成数量
 - **配置持久化**: API密钥和偏好设置本地存储，重启自动保留
-- **原生交互**: 拖拽上传、Ctrl+V粘贴、系统保存对话框、打开输出文件夹
+- **原生交互**: 拖拽上传、Ctrl+V粘贴、系统保存对话框
 
 ## UI设计
 
@@ -28,6 +31,8 @@
 | 桌面外壳 | Tauri v2 (Rust) |
 | 前端 | 原生 HTML/CSS/JS + Vite |
 | 后端 | Python FastAPI |
+| 本地数据 | SQLite schema v2 + 内容寻址素材目录 |
+| 任务执行 | 持久 JobEngine + 有界线程池 + 分资源并发闸门 |
 | AI生成 | LK AI API (GPT-Image-2, Gemini Nano Banana, 千问等) |
 | 本地抠图 | BiRefNet-General (ONNX Runtime) |
 | 打包 | NSIS安装包 + PyInstaller onefile后端 |
@@ -36,16 +41,16 @@
 
 ### 构建环境
 - **Node.js** v20+ (`C:\Program Files\nodejs`)
-- **Rust** 1.97+ with **x86_64-pc-windows-gnu** toolchain (`C:\Users\64414\.cargo`)
+- **Rust** 1.97+ with **x86_64-pc-windows-gnu** toolchain (`%USERPROFILE%\.cargo`)
 - **MinGW-w64** 14.2+ (`C:\mingw64`)
 - **Python** 3.12 with packages:
   ```
-  pip install fastapi uvicorn rembg[cpu] onnxruntime pillow python-multipart
+  pip install -r python/requirements.txt
   ```
 
 ### 环境变量 (构建前必须设置)
 ```powershell
-$env:PATH = "C:\mingw64\bin;C:\Users\64414\.cargo\bin;C:\Program Files\nodejs;$env:PATH"
+$env:PATH = "C:\mingw64\bin;$env:USERPROFILE\.cargo\bin;C:\Program Files\nodejs;$env:PATH"
 $env:CARGO_TARGET_DIR = "D:\rust-target"
 ```
 
@@ -53,7 +58,7 @@ $env:CARGO_TARGET_DIR = "D:\rust-target"
 
 ### 方式一：一键构建安装包
 ```powershell
-cd D:\ProductAtelier-Desktop
+cd C:\ProductAtelier-Desktop
 # 设置环境变量后运行:
 .\build-installer.bat
 ```
@@ -62,8 +67,8 @@ cd D:\ProductAtelier-Desktop
 ### 方式二：分步构建
 
 ```powershell
-cd D:\ProductAtelier-Desktop
-$env:PATH = "C:\mingw64\bin;C:\Users\64414\.cargo\bin;C:\Program Files\nodejs;$env:PATH"
+cd C:\ProductAtelier-Desktop
+$env:PATH = "C:\mingw64\bin;$env:USERPROFILE\.cargo\bin;C:\Program Files\nodejs;$env:PATH"
 $env:CARGO_TARGET_DIR = "D:\rust-target"
 
 # 1. 构建Python后端 (PyInstaller onedir)
@@ -97,7 +102,11 @@ ProductAtelier-Desktop/
 │       ├── api.js          # HTTP + Tauri invoke 封装
 │       └── app.js          # 应用逻辑
 ├── python/
-│   └── server.py           # FastAPI后端 (AI生成/抠图/VLM)
+│   ├── server.py           # FastAPI、四工作流与持久任务 API
+│   ├── atelier_ledger.py   # SQLite schema、迁移、素材血缘与任务状态
+│   ├── asset_store.py      # 内容寻址素材存储与安全读取
+│   └── job_engine.py       # 有界并发、公平调度、取消、重试与恢复
+├── tests/                  # 全离线迁移、素材、任务与崩溃恢复测试
 ├── src-tauri/
 │   ├── src/main.rs         # Rust外壳 (窗口管理/Python sidecar/原生对话框)
 │   ├── Cargo.toml
@@ -126,13 +135,15 @@ ProductAtelier-Desktop/
 | 数据 | 位置 |
 |------|------|
 | 配置文件 | `%APPDATA%\ProductAtelier\config.json` |
+| 创作账本 | `%APPDATA%\ProductAtelier\atelier.sqlite3` |
+| 持久源素材 | `%APPDATA%\ProductAtelier\assets\` |
 | 生成的图片 | `%APPDATA%\ProductAtelier\output\` |
 | 抠图模型 | `%USERPROFILE%\.u2net\birefnet-general.onnx` (首次运行自动下载，~928MB) |
 | 运行日志 | `%APPDATA%\ProductAtelier\output\workbench.log` |
 
 ## API配置
 
-应用使用LK AI平台API（已内置API Key）。如需更换，在设置页面输入自定义API Key即可。
+应用使用 LK AI 平台 API。API Key 仅保存在本机配置中，可在设置页面录入或更换，不进入 Git。
 支持的模型:
 - GPT-Image-2 (最高质量)
 - Nano Banana Pro / Nano Banana 2 (Gemini系列)
@@ -144,3 +155,13 @@ ProductAtelier-Desktop/
 - 项目路径含中文字符时无法链接编译（GNU linker限制），构建目录使用 `D:\ProductAtelier-Desktop\`
 - NSIS安装包默认安装到 `%LOCALAPPDATA%\Programs\product-atelier\`
 - 便携版解压后直接运行 `Product Atelier.exe`，无需安装
+
+## 离线验收
+
+```bash
+python -m unittest discover -s tests -v
+npm run test:frontend
+npm run build
+```
+
+测试使用临时数据库、mock 引擎和被强制终止的测试子进程；不会调用真实云端生成或消耗额度。详细契约见 `docs/ledger-schema-v2.md` 与 `docs/reliable-workspace-v2.md`。
