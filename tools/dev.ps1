@@ -64,9 +64,7 @@ if (-not $Quick) {
     Write-Host "[4/7] Building Rust binary (Tauri)..." -ForegroundColor Yellow
     Push-Location $ProjectRoot
     try {
-        npx tauri build --no-bundle 2>&1 | ForEach-Object {
-            if ($_ -match "error\[|error:") { Write-Host "  $_" -ForegroundColor Red }
-        }
+        & npx.cmd tauri build --no-bundle
         if ($LASTEXITCODE -ne 0) { throw "Rust build failed" }
     } finally {
         Pop-Location
