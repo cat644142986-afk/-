@@ -1,0 +1,115 @@
+# Product Atelier full portable application smoke test.
+param(
+    [string]$PortableDir = "",
+    [int]$TimeoutSeconds = 45
+)
+
+$ErrorActionPreference = "Stop"
+$ProjectRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+if (-not $PortableDir) {
+    $PortableDir = Join-Path $ProjectRoot "release\ProductAtelier-Portable"
+}
+$PortableDir = [System.IO.Path]::GetFullPath($PortableDir)
+$AppExe = [System.IO.Path]::GetFullPath((Join-Path $PortableDir "Product Atelier.exe"))
+$SidecarExe = [System.IO.Path]::GetFullPath((Join-Path $PortableDir "python-server\python-server.exe"))
+$ManifestPath = Join-Path $PortableDir "python-server\sidecar-manifest.json"
+
+if (-not (Test-Path -LiteralPath $AppExe -PathType Leaf)) { throw "Portable app is missing: $AppExe" }
+if (-not (Test-Path -LiteralPath $SidecarExe -PathType Leaf)) { throw "Portable sidecar is missing: $SidecarExe" }
+if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) { throw "Portable manifest is missing: $ManifestPath" }
+
+$manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+$tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+$testData = [System.IO.Path]::GetFullPath((Join-Path $tempRoot ("ProductAtelier-app-test-" + [guid]::NewGuid().ToString("N"))))
+if (-not $testData.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Invalid temporary runtime test path"
+}
+New-Item -ItemType Directory -Path $testData | Out-Null
+
+$beforeSidecars = @(
+    Get-CimInstance Win32_Process -Filter "Name='python-server.exe'" |
+        ForEach-Object { [int]$_.ProcessId }
+)
+$previousDataDir = $env:PRODUCT_ATELIER_DATA_DIR
+$app = $null
+$newSidecars = @()
+
+try {
+    $env:PRODUCT_ATELIER_DATA_DIR = $testData
+    $app = Start-Process -FilePath $AppExe -WorkingDirectory $PortableDir -WindowStyle Hidden -PassThru
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $health = $null
+    while ((Get-Date) -lt $deadline) {
+        $app.Refresh()
+        if ($app.HasExited) {
+            throw "Portable app exited early with code $($app.ExitCode)"
+        }
+        $newSidecars = @(
+            Get-CimInstance Win32_Process -Filter "Name='python-server.exe'" |
+                Where-Object { $beforeSidecars -notcontains [int]$_.ProcessId }
+        )
+        if ($newSidecars.Count -eq 1) {
+            $portMatch = [regex]::Match([string]$newSidecars[0].CommandLine, '(\d+)\s*$')
+            if ($portMatch.Success) {
+                $sidecarPort = [int]$portMatch.Groups[1].Value
+                try {
+                    $health = Invoke-RestMethod -Uri "http://127.0.0.1:$sidecarPort/api/health" -TimeoutSec 3
+                    break
+                } catch {
+                    # The sidecar can exist briefly before FastAPI is accepting requests.
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+
+    if ($newSidecars.Count -ne 1) { throw "Expected one new sidecar, found $($newSidecars.Count)" }
+    if (-not $health) { throw "Portable app sidecar did not become healthy within $TimeoutSeconds seconds" }
+    if ($health.status -ne "ok") { throw "Portable app sidecar health status is not ok" }
+    if ($health.service.contract_version -ne $manifest.contract_version) {
+        throw "Running portable app contract does not match its manifest"
+    }
+    if ([int]$health.ledger.schema_version -ne [int]$manifest.ledger_schema_version) {
+        throw "Running portable app ledger schema does not match its manifest"
+    }
+
+    $ledgerPath = Join-Path $testData "atelier.sqlite3"
+    if (-not (Test-Path -LiteralPath $ledgerPath -PathType Leaf)) {
+        throw "Portable app did not create its isolated ledger"
+    }
+
+    Write-Host "Portable application smoke test passed." -ForegroundColor Green
+    Write-Host "Application PID: $($app.Id)"
+    Write-Host "Sidecar PID: $($newSidecars[0].ProcessId)"
+    Write-Host "Dynamic sidecar port: $sidecarPort"
+    Write-Host "Contract: $($health.service.contract_version)"
+    Write-Host "Ledger schema: v$($health.ledger.schema_version)"
+    Write-Host "Isolated ledger bytes: $((Get-Item -LiteralPath $ledgerPath).Length)"
+} finally {
+    $env:PRODUCT_ATELIER_DATA_DIR = $previousDataDir
+    if ($app -and -not $app.HasExited) {
+        [void]$app.CloseMainWindow()
+        try {
+            Wait-Process -Id $app.Id -Timeout 5 -ErrorAction Stop
+        } catch {
+            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $remainingNewSidecars = @(
+        Get-CimInstance Win32_Process -Filter "Name='python-server.exe'" |
+            Where-Object { $beforeSidecars -notcontains [int]$_.ProcessId }
+    )
+    foreach ($sidecar in $remainingNewSidecars) {
+        Stop-Process -Id $sidecar.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+
+    if (Test-Path -LiteralPath $testData) {
+        $resolvedTestData = [System.IO.Path]::GetFullPath($testData)
+        if (-not $resolvedTestData.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to remove smoke-test data outside the temporary directory"
+        }
+        Remove-Item -LiteralPath $resolvedTestData -Recurse -Force
+    }
+}

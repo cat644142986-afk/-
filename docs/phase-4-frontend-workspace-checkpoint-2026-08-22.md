@@ -61,6 +61,7 @@ GET / POST / PUT / PATCH / DELETE / OPTIONS
 - 1280×720：文档 `scrollWidth/scrollHeight` 与视口一致；Task Dock `clientHeight === scrollHeight`。
 - 960×600：中央舞台独占主网格；任务控制抽屉 353×513，`clientHeight === scrollHeight`，主 CTA 可见，关闭/打开时 `inert` 与 `aria-expanded` 状态正确。
 - 隔离临时账本实测：四个工作流分别保存不同描述，连续切换 20 次后内容与 revision 正确；无变化切换不会继续制造无意义 revision。
+- 便携版整包：正式 Tauri 外壳成功拉起动态端口 sidecar，contract `2026-08-22.4`、schema v3 与隔离账本创建均通过；测试结束只清理本轮应用、子进程和临时数据。
 
 所有自动化任务使用 mock 或本地临时数据，不调用真实云端模型、不消耗生图额度。
 

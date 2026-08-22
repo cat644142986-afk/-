@@ -84,10 +84,15 @@ powershell -ExecutionPolicy Bypass -File tools\Test-Portable.ps1
 
 # 3. 构建完整Tauri应用 (前端Vite + Rust + NSIS)
 npm run tauri build
+
+# 4. 部署便携外壳后，按正式启动链执行整包冒烟测试
+powershell -ExecutionPolicy Bypass -File tools\Test-Portable-App.ps1
 ```
 
 不要直接把旧 `python-server` 目录复制进发布包。正式 sidecar 必须带
 `sidecar-manifest.json`，且 `/api/health` 返回的 contract、源码指纹与清单一致。
+`Test-Portable-App.ps1` 会从桌面壳实际拉起动态端口 sidecar，使用隔离数据目录验证
+应用进程、服务契约和 SQLite 账本，并只清理本轮创建的测试进程与临时数据。
 
 ### 方式三：便携版
 ```powershell
