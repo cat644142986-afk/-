@@ -56,6 +56,9 @@ try {
     $contractMatch = Select-String -LiteralPath "python\server.py" -Pattern '^SIDECAR_CONTRACT_VERSION = "([^"]+)"$'
     if (-not $contractMatch) { throw "SIDECAR_CONTRACT_VERSION is missing from python/server.py" }
     $contractVersion = $contractMatch.Matches[0].Groups[1].Value
+    $schemaMatch = Select-String -LiteralPath "python\atelier_ledger.py" -Pattern '^SCHEMA_VERSION = ([0-9]+)$'
+    if (-not $schemaMatch) { throw "SCHEMA_VERSION is missing from python/atelier_ledger.py" }
+    $ledgerSchemaVersion = [int]$schemaMatch.Matches[0].Groups[1].Value
 
     $sourceFiles = @(
         "python/server.py",
@@ -84,6 +87,7 @@ try {
     $manifest = [ordered]@{
         product = "Product Atelier"
         contract_version = $contractVersion
+        ledger_schema_version = $ledgerSchemaVersion
         git_commit = $gitCommit
         source_fingerprint = $sourceFingerprint
         built_at = (Get-Date).ToUniversalTime().ToString("o")

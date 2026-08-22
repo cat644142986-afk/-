@@ -22,6 +22,32 @@ git -C D:\ProductAtelier-Desktop switch -c restore/before-master-roadmap baselin
 这份标签早于阶段0的迁移修复与 sidecar 指纹工具；恢复后如需构建旧版，应保留当时
 的发布包，不要把新版数据库交给不支持其 schema 的旧程序写入。
 
+## 2026-08-22 schema v3 实施前基线
+
+- Git 标签：`baseline-2026-08-22-before-schema-v3`
+- 标签提交：`01b533619b3539faa9e2a423c3a448c5a76c96d3`
+- 标签包含：Phase 0 恢复/发布链加固与 Phase 1 可交互原型。
+- 用户正式账本尚未由开发中的 schema v3 sidecar 打开；当前可恢复副本仍是上方
+  `phase0-2026-08-22` 中通过校验的 schema v2 数据库。
+
+恢复 schema v3 之前的源码：
+
+```powershell
+git -C D:\ProductAtelier-Desktop switch -c restore/before-schema-v3 baseline-2026-08-22-before-schema-v3
+```
+
+schema v3 第一次打开旧账本时会在原数据库旁创建
+`atelier.sqlite3.backup-v2-<UTC>-<随机值>.sqlite3`。若升级后需要恢复旧程序，必须先
+退出桌面应用和 sidecar，再保留当前 v3 文件的副本，并恢复该自动生成的 v2 备份；
+不要让只支持 schema v2 的旧程序写入 v3 数据库。
+
+已使用实施前用户备份的独立副本完成真实迁移演练：
+
+- 演练目录：`D:\ProductAtelier-Backups\phase2-v3-rehearsal-2026-08-22`
+- 升级副本：`atelier-v2-copy.sqlite3`，升级后 schema v3、`integrity_check=ok`、0 个外键异常、3 个素材域、4 个工作流草稿。
+- 自动生成的 v2 回滚文件：`atelier-v2-copy.sqlite3.backup-v2-20260822T091154958219Z-c85ea672.sqlite3`
+- 自动回滚文件 SHA-256：`853BA03FB446A0DBF511DDDCD74C7734E70221F5B340D6A9F59D0E0B10396738`，与实施前原备份完全一致。
+
 ## 当前可靠基线
 
 - Git 标签：`baseline-2026-08-21-pre-workspace-refactor`

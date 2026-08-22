@@ -20,8 +20,26 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 WORKSPACE_SESSION_ID = "ses_workspace"
+
+COLLECTION_IDS = {
+    "product": "col_product",
+    "group": "col_group",
+    "cutout": "col_cutout",
+}
+WORKFLOW_COLLECTIONS = {
+    "single": "product",
+    "multi-file": "product",
+    "group-split": "group",
+    "cutout-batch": "cutout",
+}
+WORKFLOW_DRAFT_IDS = {
+    "single": "draft_single",
+    "multi-file": "draft_multi_file",
+    "group-split": "draft_group_split",
+    "cutout-batch": "draft_cutout_batch",
+}
 
 JOB_STATUSES = frozenset({
     "queued", "running", "paused", "completed", "partial", "failed",
@@ -77,6 +95,10 @@ class IdempotencyConflictError(ValueError):
     """Raised when a request key is reused for a different durable job."""
 
 
+class DraftRevisionConflictError(ValueError):
+    """Raised when a stale client attempts to overwrite a newer draft."""
+
+
 V1_TABLES = frozenset({
     "ledger_meta", "sessions", "assets", "generations", "events",
     "feedback", "memory_suggestions",
@@ -111,6 +133,55 @@ V2_REQUIRED_INDEXES = frozenset({
     "idx_jobs_status_queue", "idx_jobs_idempotency", "idx_jobs_session",
     "idx_job_items_job", "idx_job_items_status", "idx_job_items_source",
     "idx_task_attempts_item",
+})
+
+V3_TABLE_COLUMNS = {
+    "asset_collections": frozenset({
+        "id", "key", "name", "created_at", "updated_at",
+    }),
+    "asset_collection_members": frozenset({
+        "id", "collection_id", "asset_id", "position", "status",
+        "added_at", "updated_at", "removed_at",
+    }),
+    "workflow_drafts": frozenset({
+        "id", "mode", "collection_id", "revision", "brief_json",
+        "intent_json", "parameters_json", "active_job_id",
+        "current_generation_id", "current_result_asset_id",
+        "compare_state_json", "ui_state_json", "mask_state_json",
+        "created_at", "updated_at",
+    }),
+    "draft_asset_selections": frozenset({
+        "draft_id", "asset_id", "position", "selected_at",
+    }),
+    "job_snapshots": frozenset({
+        "job_id", "draft_id", "draft_revision", "mode",
+        "source_asset_ids_json", "brief_json", "intent_json",
+        "parameters_json", "knowledge_refs_json", "ui_context_json",
+        "created_at",
+    }),
+    "result_reviews": frozenset({
+        "id", "job_id", "generation_id", "result_asset_id", "decision",
+        "reason_codes_json", "note", "learning_action", "status",
+        "created_at", "updated_at",
+    }),
+    "execution_traces": frozenset({
+        "id", "job_id", "job_item_id", "generation_id", "stage", "status",
+        "user_input_json", "compiled_prompt", "applied_knowledge_json",
+        "ignored_fields_json", "model", "parameters_json", "output_json",
+        "error_code", "error_message", "created_at",
+    }),
+}
+
+V3_REQUIRED_INDEXES = frozenset({
+    "idx_collection_members_collection",
+    "idx_collection_members_asset",
+    "idx_draft_selections_draft",
+    "idx_drafts_active_job",
+    "idx_job_snapshots_draft",
+    "idx_reviews_job",
+    "idx_reviews_result",
+    "idx_traces_job",
+    "idx_traces_item",
 })
 
 V1_SCHEMA_STATEMENTS = (
@@ -462,6 +533,68 @@ class AtelierLedger:
             issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
         return issues
 
+    @classmethod
+    def _v3_objects_present(cls, connection: sqlite3.Connection) -> bool:
+        """Return whether any scoped-workspace v3 object already exists."""
+        return bool(cls._table_names(connection).intersection(V3_TABLE_COLUMNS))
+
+    @classmethod
+    def _v3_contract_issues(cls, connection: sqlite3.Connection) -> list[str]:
+        """Describe an incomplete v3 workspace contract without mutating it."""
+        issues: list[str] = []
+        tables = cls._table_names(connection)
+        for table, required_columns in V3_TABLE_COLUMNS.items():
+            if table not in tables:
+                issues.append(f"missing table {table}")
+                continue
+            actual_columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing_columns = sorted(required_columns - actual_columns)
+            if missing_columns:
+                issues.append(f"{table} missing columns: {', '.join(missing_columns)}")
+
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        missing_indexes = sorted(V3_REQUIRED_INDEXES - indexes)
+        if missing_indexes:
+            issues.append(f"missing indexes: {', '.join(missing_indexes)}")
+
+        if "asset_collections" in tables:
+            collection_rows = connection.execute(
+                "SELECT id, key FROM asset_collections"
+            ).fetchall()
+            actual_collections = {str(row["key"]): str(row["id"]) for row in collection_rows}
+            if actual_collections != COLLECTION_IDS:
+                issues.append("default asset collections are missing or inconsistent")
+
+        if "workflow_drafts" in tables:
+            draft_rows = connection.execute(
+                "SELECT id, mode, collection_id FROM workflow_drafts"
+            ).fetchall()
+            actual_drafts = {
+                str(row["mode"]): (str(row["id"]), str(row["collection_id"]))
+                for row in draft_rows
+            }
+            expected_drafts = {
+                mode: (draft_id, COLLECTION_IDS[WORKFLOW_COLLECTIONS[mode]])
+                for mode, draft_id in WORKFLOW_DRAFT_IDS.items()
+            }
+            if actual_drafts != expected_drafts:
+                issues.append("default workflow drafts are missing or inconsistent")
+
+        integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
+        if integrity_rows != ["ok"]:
+            issues.append(f"integrity_check failed: {'; '.join(integrity_rows[:3])}")
+        foreign_key_rows = list(connection.execute("PRAGMA foreign_key_check"))
+        if foreign_key_rows:
+            issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
+        return issues
+
     def _migration_backup_path(self, version: int) -> Path:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         return self.db_path.with_name(
@@ -593,6 +726,215 @@ class AtelierLedger:
         connection.execute("CREATE INDEX idx_job_items_source ON job_items(source_asset_id)")
         connection.execute("CREATE INDEX idx_task_attempts_item ON task_attempts(job_item_id, attempt_number)")
 
+    @staticmethod
+    def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
+        """Create scoped workspaces, durable drafts and immutable task evidence."""
+        connection.execute(
+            """
+            CREATE TABLE asset_collections (
+                id TEXT PRIMARY KEY,
+                key TEXT NOT NULL UNIQUE
+                    CHECK(key IN ('product','group','cutout')),
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE asset_collection_members (
+                id TEXT PRIMARY KEY,
+                collection_id TEXT NOT NULL,
+                asset_id TEXT NOT NULL,
+                position INTEGER NOT NULL CHECK(position >= 0),
+                status TEXT NOT NULL DEFAULT 'active'
+                    CHECK(status IN ('active','trashed')),
+                added_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                removed_at TEXT,
+                FOREIGN KEY(collection_id) REFERENCES asset_collections(id) ON DELETE CASCADE,
+                FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE RESTRICT,
+                UNIQUE(collection_id, asset_id),
+                UNIQUE(collection_id, position)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE workflow_drafts (
+                id TEXT PRIMARY KEY,
+                mode TEXT NOT NULL UNIQUE
+                    CHECK(mode IN ('single','multi-file','group-split','cutout-batch')),
+                collection_id TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+                brief_json TEXT NOT NULL DEFAULT '{}',
+                intent_json TEXT NOT NULL DEFAULT '{}',
+                parameters_json TEXT NOT NULL DEFAULT '{}',
+                active_job_id TEXT,
+                current_generation_id TEXT,
+                current_result_asset_id TEXT,
+                compare_state_json TEXT NOT NULL DEFAULT '{}',
+                ui_state_json TEXT NOT NULL DEFAULT '{}',
+                mask_state_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(collection_id) REFERENCES asset_collections(id) ON DELETE RESTRICT,
+                FOREIGN KEY(active_job_id) REFERENCES jobs(id) ON DELETE SET NULL,
+                FOREIGN KEY(current_generation_id) REFERENCES generations(id) ON DELETE SET NULL,
+                FOREIGN KEY(current_result_asset_id) REFERENCES assets(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE draft_asset_selections (
+                draft_id TEXT NOT NULL,
+                asset_id TEXT NOT NULL,
+                position INTEGER NOT NULL CHECK(position >= 0),
+                selected_at TEXT NOT NULL,
+                PRIMARY KEY(draft_id, asset_id),
+                UNIQUE(draft_id, position),
+                FOREIGN KEY(draft_id) REFERENCES workflow_drafts(id) ON DELETE CASCADE,
+                FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE job_snapshots (
+                job_id TEXT PRIMARY KEY,
+                draft_id TEXT,
+                draft_revision INTEGER NOT NULL DEFAULT 0 CHECK(draft_revision >= 0),
+                mode TEXT NOT NULL
+                    CHECK(mode IN ('single','multi-file','group-split','cutout-batch')),
+                source_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+                brief_json TEXT NOT NULL DEFAULT '{}',
+                intent_json TEXT NOT NULL DEFAULT '{}',
+                parameters_json TEXT NOT NULL DEFAULT '{}',
+                knowledge_refs_json TEXT NOT NULL DEFAULT '[]',
+                ui_context_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+                FOREIGN KEY(draft_id) REFERENCES workflow_drafts(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE result_reviews (
+                id TEXT PRIMARY KEY,
+                job_id TEXT,
+                generation_id TEXT,
+                result_asset_id TEXT NOT NULL,
+                decision TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(decision IN ('pending','adopt','adjust','reject')),
+                reason_codes_json TEXT NOT NULL DEFAULT '[]',
+                note TEXT NOT NULL DEFAULT '',
+                learning_action TEXT NOT NULL DEFAULT 'none'
+                    CHECK(learning_action IN ('none','record','regenerate','suggest')),
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending','submitted','retracted')),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE SET NULL,
+                FOREIGN KEY(generation_id) REFERENCES generations(id) ON DELETE SET NULL,
+                FOREIGN KEY(result_asset_id) REFERENCES assets(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE execution_traces (
+                id TEXT PRIMARY KEY,
+                job_id TEXT,
+                job_item_id TEXT,
+                generation_id TEXT,
+                stage TEXT NOT NULL,
+                status TEXT NOT NULL
+                    CHECK(status IN ('started','completed','failed','skipped')),
+                user_input_json TEXT NOT NULL DEFAULT '{}',
+                compiled_prompt TEXT NOT NULL DEFAULT '',
+                applied_knowledge_json TEXT NOT NULL DEFAULT '[]',
+                ignored_fields_json TEXT NOT NULL DEFAULT '[]',
+                model TEXT NOT NULL DEFAULT '',
+                parameters_json TEXT NOT NULL DEFAULT '{}',
+                output_json TEXT NOT NULL DEFAULT '{}',
+                error_code TEXT NOT NULL DEFAULT '',
+                error_message TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE SET NULL,
+                FOREIGN KEY(job_item_id) REFERENCES job_items(id) ON DELETE SET NULL,
+                FOREIGN KEY(generation_id) REFERENCES generations(id) ON DELETE SET NULL
+            )
+            """
+        )
+
+        connection.execute(
+            "CREATE INDEX idx_collection_members_collection "
+            "ON asset_collection_members(collection_id, status, position)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_collection_members_asset ON asset_collection_members(asset_id)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_draft_selections_draft ON draft_asset_selections(draft_id, position)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_drafts_active_job ON workflow_drafts(active_job_id)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_job_snapshots_draft ON job_snapshots(draft_id, created_at)"
+        )
+        connection.execute("CREATE INDEX idx_reviews_job ON result_reviews(job_id, created_at)")
+        connection.execute(
+            "CREATE INDEX idx_reviews_result ON result_reviews(result_asset_id, created_at)"
+        )
+        connection.execute("CREATE INDEX idx_traces_job ON execution_traces(job_id, created_at)")
+        connection.execute(
+            "CREATE INDEX idx_traces_item ON execution_traces(job_item_id, created_at)"
+        )
+
+        now = utc_now()
+        collection_names = {
+            "product": "产品素材",
+            "group": "合照素材",
+            "cutout": "抠图素材",
+        }
+        for key, collection_id in COLLECTION_IDS.items():
+            connection.execute(
+                "INSERT INTO asset_collections(id, key, name, created_at, updated_at) "
+                "VALUES(?, ?, ?, ?, ?)",
+                (collection_id, key, collection_names[key], now, now),
+            )
+        for mode, draft_id in WORKFLOW_DRAFT_IDS.items():
+            connection.execute(
+                """
+                INSERT INTO workflow_drafts(
+                    id, mode, collection_id, revision, created_at, updated_at
+                ) VALUES(?, ?, ?, 1, ?, ?)
+                """,
+                (draft_id, mode, COLLECTION_IDS[WORKFLOW_COLLECTIONS[mode]], now, now),
+            )
+
+        legacy_assets = connection.execute(
+            "SELECT id, created_at FROM assets WHERE role = 'workspace_source' "
+            "ORDER BY created_at ASC, id ASC"
+        ).fetchall()
+        for position, asset in enumerate(legacy_assets):
+            connection.execute(
+                """
+                INSERT INTO asset_collection_members(
+                    id, collection_id, asset_id, position, status,
+                    added_at, updated_at
+                ) VALUES(?, ?, ?, ?, 'active', ?, ?)
+                """,
+                (
+                    new_id("member"), COLLECTION_IDS["product"], str(asset["id"]),
+                    position, str(asset["created_at"]), now,
+                ),
+            )
+
     def _ensure_schema(self) -> None:
         with self._schema_lock:
             # Probe the version without changing journal mode. An older app must
@@ -638,12 +980,31 @@ class AtelierLedger:
                                                 "the database was not changed. Restore the automatic backup or "
                                                 f"repair these objects first: {' | '.join(issues)}"
                                             )
+                                        repair = "recovered complete v2 schema with stale v1 metadata"
                                         self.last_schema_repair = (
-                                            "recovered complete v2 schema with stale v1 metadata"
+                                            f"{self.last_schema_repair}; {repair}"
+                                            if self.last_schema_repair else repair
                                         )
                                     else:
                                         self._migrate_v1_to_v2(connection)
                                     current_version = 2
+                                elif current_version == 2:
+                                    if self._v3_objects_present(connection):
+                                        issues = self._v3_contract_issues(connection)
+                                        if issues:
+                                            raise PartialSchemaError(
+                                                "Detected an incomplete v3 ledger while schema metadata says v2; "
+                                                "the database was not changed. Restore the automatic backup or "
+                                                f"repair these objects first: {' | '.join(issues)}"
+                                            )
+                                        repair = "recovered complete v3 schema with stale v2 metadata"
+                                        self.last_schema_repair = (
+                                            f"{self.last_schema_repair}; {repair}"
+                                            if self.last_schema_repair else repair
+                                        )
+                                    else:
+                                        self._migrate_v2_to_v3(connection)
+                                    current_version = 3
                                 else:
                                     raise LedgerSchemaError(
                                         f"No migration path from schema v{current_version}"
@@ -769,12 +1130,15 @@ class AtelierLedger:
         height: int,
         name: str,
         metadata: dict[str, Any] | None = None,
+        collection_key: str = "product",
     ) -> dict[str, Any]:
         """Register one content-addressed source and return its stable logical asset."""
+        if collection_key not in COLLECTION_IDS:
+            raise ValueError(f"unsupported asset collection: {collection_key}")
         blob_id = new_id("blob")
         asset_id = new_id("ast")
         now = utc_now()
-        with self._connection() as connection:
+        with self._immediate_connection() as connection:
             connection.execute(
                 """
                 INSERT OR IGNORE INTO sessions(
@@ -837,6 +1201,35 @@ class AtelierLedger:
                         raise
             if existing is not None:
                 asset_id = str(existing["id"])
+            membership = connection.execute(
+                "SELECT id, status FROM asset_collection_members "
+                "WHERE collection_id = ? AND asset_id = ?",
+                (COLLECTION_IDS[collection_key], asset_id),
+            ).fetchone()
+            if membership is None:
+                next_position = int(connection.execute(
+                    "SELECT COALESCE(MAX(position), -1) + 1 FROM asset_collection_members "
+                    "WHERE collection_id = ?",
+                    (COLLECTION_IDS[collection_key],),
+                ).fetchone()[0])
+                connection.execute(
+                    """
+                    INSERT INTO asset_collection_members(
+                        id, collection_id, asset_id, position, status,
+                        added_at, updated_at
+                    ) VALUES(?, ?, ?, ?, 'active', ?, ?)
+                    """,
+                    (
+                        new_id("member"), COLLECTION_IDS[collection_key], asset_id,
+                        next_position, now, now,
+                    ),
+                )
+            elif str(membership["status"]) == "trashed":
+                connection.execute(
+                    "UPDATE asset_collection_members SET status = 'active', "
+                    "removed_at = NULL, updated_at = ? WHERE id = ?",
+                    (now, membership["id"]),
+                )
         return self.get_workspace_asset(asset_id)
 
     def get_workspace_asset(self, asset_id: str) -> dict[str, Any]:
@@ -907,6 +1300,250 @@ class AtelierLedger:
                 (limit,),
             ).fetchall()
         return [self._workspace_asset_row(row) for row in rows]
+
+    def list_collection_assets(
+        self,
+        collection_key: str,
+        *,
+        include_trashed: bool = False,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """List one logical asset domain without duplicating physical files."""
+        if collection_key not in COLLECTION_IDS:
+            raise ValueError(f"unsupported asset collection: {collection_key}")
+        limit = max(1, min(int(limit), 2000))
+        statuses = ("active", "trashed") if include_trashed else ("active",)
+        placeholders = ",".join("?" for _ in statuses)
+        with self._connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT a.*,
+                       b.id AS blob_record_id,
+                       b.sha256 AS blob_sha256,
+                       b.storage_path AS blob_storage_path,
+                       b.mime AS blob_mime,
+                       b.size_bytes AS blob_size_bytes,
+                       b.width AS blob_width,
+                       b.height AS blob_height,
+                       b.created_at AS blob_created_at,
+                       m.id AS membership_id,
+                       m.position AS membership_position,
+                       m.status AS membership_status,
+                       m.added_at AS membership_added_at,
+                       m.updated_at AS membership_updated_at,
+                       m.removed_at AS membership_removed_at
+                FROM asset_collection_members m
+                JOIN assets a ON a.id = m.asset_id
+                JOIN asset_blobs b ON b.id = a.blob_id
+                WHERE m.collection_id = ? AND m.status IN ({placeholders})
+                ORDER BY m.position ASC, m.added_at ASC, m.id ASC
+                LIMIT ?
+                """,
+                (COLLECTION_IDS[collection_key], *statuses, limit),
+            ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            item = self._workspace_asset_row(row)
+            item["membership"] = {
+                "id": item.pop("membership_id"),
+                "collection": collection_key,
+                "position": item.pop("membership_position"),
+                "status": item.pop("membership_status"),
+                "added_at": item.pop("membership_added_at"),
+                "updated_at": item.pop("membership_updated_at"),
+                "removed_at": item.pop("membership_removed_at"),
+            }
+            items.append(item)
+        return items
+
+    def add_asset_to_collection(self, asset_id: str, collection_key: str) -> dict[str, Any]:
+        """Add or restore an existing physical asset in one logical domain."""
+        if collection_key not in COLLECTION_IDS:
+            raise ValueError(f"unsupported asset collection: {collection_key}")
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            asset = connection.execute(
+                "SELECT id FROM assets WHERE id = ? AND role = 'workspace_source'",
+                (asset_id,),
+            ).fetchone()
+            if asset is None:
+                raise KeyError(f"unknown workspace asset: {asset_id}")
+            member = connection.execute(
+                "SELECT * FROM asset_collection_members WHERE collection_id = ? AND asset_id = ?",
+                (COLLECTION_IDS[collection_key], asset_id),
+            ).fetchone()
+            if member is None:
+                position = int(connection.execute(
+                    "SELECT COALESCE(MAX(position), -1) + 1 FROM asset_collection_members "
+                    "WHERE collection_id = ?",
+                    (COLLECTION_IDS[collection_key],),
+                ).fetchone()[0])
+                connection.execute(
+                    """
+                    INSERT INTO asset_collection_members(
+                        id, collection_id, asset_id, position, status,
+                        added_at, updated_at
+                    ) VALUES(?, ?, ?, ?, 'active', ?, ?)
+                    """,
+                    (
+                        new_id("member"), COLLECTION_IDS[collection_key], asset_id,
+                        position, now, now,
+                    ),
+                )
+            elif str(member["status"]) != "active":
+                connection.execute(
+                    "UPDATE asset_collection_members SET status = 'active', "
+                    "removed_at = NULL, updated_at = ? WHERE id = ?",
+                    (now, member["id"]),
+                )
+        return next(
+            item for item in self.list_collection_assets(collection_key)
+            if item["id"] == asset_id
+        )
+
+    def remove_asset_from_collection(self, asset_id: str, collection_key: str) -> dict[str, Any]:
+        """Soft-remove an asset from a logical domain while preserving lineage."""
+        if collection_key not in COLLECTION_IDS:
+            raise ValueError(f"unsupported asset collection: {collection_key}")
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE asset_collection_members
+                SET status = 'trashed', removed_at = ?, updated_at = ?
+                WHERE collection_id = ? AND asset_id = ? AND status = 'active'
+                """,
+                (now, now, COLLECTION_IDS[collection_key], asset_id),
+            )
+            if cursor.rowcount == 0:
+                row = connection.execute(
+                    "SELECT status FROM asset_collection_members "
+                    "WHERE collection_id = ? AND asset_id = ?",
+                    (COLLECTION_IDS[collection_key], asset_id),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"asset is not in {collection_key}: {asset_id}")
+        return next(
+            item for item in self.list_collection_assets(
+                collection_key, include_trashed=True
+            ) if item["id"] == asset_id
+        )
+
+    def get_workflow_draft(self, mode: str) -> dict[str, Any]:
+        if mode not in WORKFLOW_DRAFT_IDS:
+            raise ValueError(f"unsupported workflow mode: {mode}")
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT d.*, c.key AS collection_key
+                FROM workflow_drafts d
+                JOIN asset_collections c ON c.id = d.collection_id
+                WHERE d.mode = ?
+                """,
+                (mode,),
+            ).fetchone()
+            if row is None:
+                raise LedgerSchemaError(f"missing workflow draft: {mode}")
+            selected = connection.execute(
+                "SELECT asset_id FROM draft_asset_selections "
+                "WHERE draft_id = ? ORDER BY position",
+                (row["id"],),
+            ).fetchall()
+        item = dict(row)
+        item["brief"] = decode_json(item.pop("brief_json"), {})
+        item["intent"] = decode_json(item.pop("intent_json"), {})
+        item["parameters"] = decode_json(item.pop("parameters_json"), {})
+        item["compare_state"] = decode_json(item.pop("compare_state_json"), {})
+        item["ui_state"] = decode_json(item.pop("ui_state_json"), {})
+        item["mask_state"] = decode_json(item.pop("mask_state_json"), {})
+        item["selected_asset_ids"] = [str(selected_row["asset_id"]) for selected_row in selected]
+        return item
+
+    def save_workflow_draft(
+        self,
+        mode: str,
+        *,
+        expected_revision: int,
+        selected_asset_ids: Iterable[str],
+        brief: Mapping[str, Any] | None = None,
+        intent: Mapping[str, Any] | None = None,
+        parameters: Mapping[str, Any] | None = None,
+        active_job_id: str | None = None,
+        current_generation_id: str | None = None,
+        current_result_asset_id: str | None = None,
+        compare_state: Mapping[str, Any] | None = None,
+        ui_state: Mapping[str, Any] | None = None,
+        mask_state: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Atomically replace one workflow draft using optimistic concurrency."""
+        if mode not in WORKFLOW_DRAFT_IDS:
+            raise ValueError(f"unsupported workflow mode: {mode}")
+        selected_asset_ids = [str(asset_id) for asset_id in selected_asset_ids]
+        if len(selected_asset_ids) != len(set(selected_asset_ids)):
+            raise ValueError("draft asset selections must be unique")
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            draft = connection.execute(
+                "SELECT * FROM workflow_drafts WHERE mode = ?", (mode,)
+            ).fetchone()
+            if draft is None:
+                raise LedgerSchemaError(f"missing workflow draft: {mode}")
+            if int(draft["revision"]) != int(expected_revision):
+                raise DraftRevisionConflictError(
+                    f"draft {mode} is revision {draft['revision']}, not {expected_revision}"
+                )
+            if selected_asset_ids:
+                placeholders = ",".join("?" for _ in selected_asset_ids)
+                found_rows = connection.execute(
+                    f"""
+                    SELECT asset_id FROM asset_collection_members
+                    WHERE collection_id = ? AND status = 'active'
+                      AND asset_id IN ({placeholders})
+                    """,
+                    (draft["collection_id"], *selected_asset_ids),
+                ).fetchall()
+                found = {str(row["asset_id"]) for row in found_rows}
+                missing = [asset_id for asset_id in selected_asset_ids if asset_id not in found]
+                if missing:
+                    raise ValueError(
+                        "draft selections are outside its active collection: "
+                        + ", ".join(missing)
+                    )
+            if active_job_id:
+                job = connection.execute(
+                    "SELECT mode FROM jobs WHERE id = ?", (active_job_id,)
+                ).fetchone()
+                if job is None or str(job["mode"]) != mode:
+                    raise ValueError("active job does not belong to this workflow")
+            next_revision = int(draft["revision"]) + 1
+            connection.execute(
+                """
+                UPDATE workflow_drafts
+                SET revision = ?, brief_json = ?, intent_json = ?, parameters_json = ?,
+                    active_job_id = ?, current_generation_id = ?,
+                    current_result_asset_id = ?, compare_state_json = ?,
+                    ui_state_json = ?, mask_state_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    next_revision, encode_json(dict(brief or {})),
+                    encode_json(dict(intent or {})), encode_json(dict(parameters or {})),
+                    active_job_id, current_generation_id, current_result_asset_id,
+                    encode_json(dict(compare_state or {})),
+                    encode_json(dict(ui_state or {})), encode_json(dict(mask_state or {})),
+                    now, draft["id"],
+                ),
+            )
+            connection.execute(
+                "DELETE FROM draft_asset_selections WHERE draft_id = ?", (draft["id"],)
+            )
+            for position, asset_id in enumerate(selected_asset_ids):
+                connection.execute(
+                    "INSERT INTO draft_asset_selections(draft_id, asset_id, position, selected_at) "
+                    "VALUES(?, ?, ?, ?)",
+                    (draft["id"], asset_id, position, now),
+                )
+        return self.get_workflow_draft(mode)
 
     def has_asset_blob(self, sha256: str) -> bool:
         with self._connection() as connection:
@@ -1029,6 +1666,38 @@ class AtelierLedger:
                         encode_json(parameters), now, now, now,
                     ),
                 )
+                draft = connection.execute(
+                    "SELECT id, revision, ui_state_json FROM workflow_drafts WHERE mode = ?",
+                    (mode,),
+                ).fetchone()
+                connection.execute(
+                    """
+                    INSERT INTO job_snapshots(
+                        job_id, draft_id, draft_revision, mode,
+                        source_asset_ids_json, brief_json, intent_json,
+                        parameters_json, knowledge_refs_json, ui_context_json,
+                        created_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        job_id,
+                        draft["id"] if draft is not None else None,
+                        int(draft["revision"]) if draft is not None else 0,
+                        mode,
+                        encode_json(source_asset_ids),
+                        encode_json(brief),
+                        encode_json(intent_locks),
+                        encode_json(parameters),
+                        encode_json(parameters.get("knowledge_refs") or []),
+                        encode_json(
+                            parameters.get("ui_context")
+                            if isinstance(parameters.get("ui_context"), dict)
+                            else decode_json(draft["ui_state_json"], {})
+                            if draft is not None else {}
+                        ),
+                        now,
+                    ),
+                )
                 for position, source_asset_id in enumerate(source_asset_ids):
                     item_id = new_id("item")
                     generation_id = new_id("gen")
@@ -1109,6 +1778,10 @@ class AtelierLedger:
                 for item in items:
                     item["attempts"] = attempts_by_item.get(item["id"], [])
             job["items"] = items
+            snapshot_row = connection.execute(
+                "SELECT * FROM job_snapshots WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            job["snapshot"] = self._job_snapshot_row(snapshot_row) if snapshot_row else None
             job["progress"] = (
                 sum(float(item["progress"]) for item in items) / len(items)
                 if items else 0.0
@@ -2518,6 +3191,9 @@ class AtelierLedger:
                 for table in (
                     "sessions", "assets", "asset_blobs", "generations", "events",
                     "feedback", "memory_suggestions", "jobs", "job_items", "task_attempts",
+                    "asset_collections", "asset_collection_members", "workflow_drafts",
+                    "draft_asset_selections", "job_snapshots", "result_reviews",
+                    "execution_traces",
                 )
             }
             counts["sessions"] = connection.execute(
@@ -2569,6 +3245,21 @@ class AtelierLedger:
     def _job_row(row: sqlite3.Row) -> dict[str, Any]:
         item = dict(row)
         item["parameters"] = decode_json(item.pop("parameters_json", "{}"), {})
+        return item
+
+    @staticmethod
+    def _job_snapshot_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["source_asset_ids"] = decode_json(
+            item.pop("source_asset_ids_json", "[]"), []
+        )
+        item["brief"] = decode_json(item.pop("brief_json", "{}"), {})
+        item["intent"] = decode_json(item.pop("intent_json", "{}"), {})
+        item["parameters"] = decode_json(item.pop("parameters_json", "{}"), {})
+        item["knowledge_refs"] = decode_json(
+            item.pop("knowledge_refs_json", "[]"), []
+        )
+        item["ui_context"] = decode_json(item.pop("ui_context_json", "{}"), {})
         return item
 
     @staticmethod

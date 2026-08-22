@@ -24,7 +24,7 @@ os.environ["PRODUCT_ATELIER_KNOWLEDGE_BASE"] = str(
 
 from python import server  # noqa: E402
 from python.asset_store import AssetStore  # noqa: E402
-from python.atelier_ledger import AtelierLedger  # noqa: E402
+from python.atelier_ledger import AtelierLedger, SCHEMA_VERSION  # noqa: E402
 
 
 def png_bytes(color: tuple[int, int, int] = (220, 100, 40)) -> bytes:
@@ -75,7 +75,7 @@ class AssetApiTests(unittest.TestCase):
             server.SIDECAR_CONTRACT_VERSION,
         )
         self.assertFalse(payload["service"]["packaged"])
-        self.assertEqual(payload["ledger"]["schema_version"], 2)
+        self.assertEqual(payload["ledger"]["schema_version"], SCHEMA_VERSION)
         self.assertIsNone(payload["ledger"]["startup_repair"])
 
     def test_cors_rejects_untrusted_web_origin_for_reads_and_mutations(self) -> None:

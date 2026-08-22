@@ -18,6 +18,9 @@ if (-not (Test-Path -LiteralPath $SidecarExe)) { throw "Portable sidecar is miss
 if (-not (Test-Path -LiteralPath $ManifestPath)) { throw "Sidecar manifest is missing: $ManifestPath" }
 
 $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+if ([int]$manifest.ledger_schema_version -lt 1) {
+    throw "Sidecar manifest has no valid ledger schema version"
+}
 $actualExeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $SidecarExe).Hash
 if ($actualExeHash -ne $manifest.executable_sha256) {
     throw "Portable sidecar hash does not match its build manifest"
@@ -68,8 +71,8 @@ if (-not $StaticOnly) {
         if ($health.service.manifest_status -ne "ok") {
             throw "Running sidecar did not accept its build manifest"
         }
-        if ([int]$health.ledger.schema_version -ne 2) {
-            throw "Packaged sidecar did not initialize ledger schema v2"
+        if ([int]$health.ledger.schema_version -ne [int]$manifest.ledger_schema_version) {
+            throw "Packaged sidecar ledger schema does not match its manifest"
         }
     } finally {
         if ($process -and -not $process.HasExited) {
@@ -85,4 +88,5 @@ if (-not $StaticOnly) {
 
 Write-Host "Portable sidecar verification passed." -ForegroundColor Green
 Write-Host "Contract: $($manifest.contract_version)"
+Write-Host "Ledger schema: v$($manifest.ledger_schema_version)"
 Write-Host "Source fingerprint: $($manifest.source_fingerprint)"

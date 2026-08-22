@@ -10,6 +10,7 @@ from pathlib import Path
 
 from python.atelier_ledger import (
     AtelierLedger,
+    DraftRevisionConflictError,
     InvalidStatusTransitionError,
     LedgerSchemaError,
     PartialSchemaError,
@@ -124,6 +125,53 @@ def create_v1_fixture(path: Path) -> None:
         connection.close()
 
 
+def create_v2_workspace_fixture(path: Path) -> None:
+    """Create a real v2 database without opening it through the v3 initializer."""
+    create_v1_fixture(path)
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        AtelierLedger._migrate_v1_to_v2(connection)
+        now = "2026-08-21T01:00:00+00:00"
+        connection.execute(
+            """
+            INSERT INTO sessions(
+                id, mode, status, title, project_name, designer_profile,
+                brand_profile, category, brief_json, intent_locks_json,
+                started_at, updated_at
+            ) VALUES('ses_workspace', 'workspace', 'active', '素材工作区', '',
+                     'default', '', 'general', '{}', '{}', ?, ?)
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO asset_blobs(
+                id, sha256, storage_path, mime, size_bytes, width, height, created_at
+            ) VALUES('blob_workspace', ?, 'D:/assets/legacy.png', 'image/png', 64, 8, 8, ?)
+            """,
+            ("b" * 64, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO assets(
+                id, session_id, parent_asset_id, role, kind, path, name, mime,
+                width, height, sha256, metadata_json, created_at, blob_id
+            ) VALUES('ast_workspace', 'ses_workspace', NULL, 'workspace_source',
+                     'image', 'D:/assets/legacy.png', 'legacy.png', 'image/png',
+                     8, 8, ?, '{}', ?, 'blob_workspace')
+            """,
+            ("b" * 64, now),
+        )
+        connection.execute(
+            "UPDATE ledger_meta SET value = '2' WHERE key = 'schema_version'"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def snapshot_v1_data(path: Path) -> dict[str, list[dict[str, object]]]:
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
@@ -179,7 +227,7 @@ class LedgerMigrationTests(unittest.TestCase):
 
         ledger = AtelierLedger(self.db_path)
 
-        self.assertEqual(read_schema_version(self.db_path), 2)
+        self.assertEqual(read_schema_version(self.db_path), SCHEMA_VERSION)
         self.assertEqual(snapshot_v1_data(self.db_path), before)
         self.assertIsNotNone(ledger.last_migration_backup)
         backup_path = ledger.last_migration_backup
@@ -195,7 +243,12 @@ class LedgerMigrationTests(unittest.TestCase):
                     "SELECT name FROM sqlite_master WHERE type = 'table'"
                 )
             }
-            self.assertTrue({"asset_blobs", "jobs", "job_items", "task_attempts"}.issubset(tables))
+            self.assertTrue({
+                "asset_blobs", "jobs", "job_items", "task_attempts",
+                "asset_collections", "asset_collection_members", "workflow_drafts",
+                "draft_asset_selections", "job_snapshots", "result_reviews",
+                "execution_traces",
+            }.issubset(tables))
             asset_columns = {
                 row[1] for row in connection.execute("PRAGMA table_info(assets)")
             }
@@ -227,10 +280,11 @@ class LedgerMigrationTests(unittest.TestCase):
 
         repaired = AtelierLedger(self.db_path)
 
-        self.assertEqual(read_schema_version(self.db_path), 2)
+        self.assertEqual(read_schema_version(self.db_path), SCHEMA_VERSION)
         self.assertEqual(
             repaired.last_schema_repair,
-            "recovered complete v2 schema with stale v1 metadata",
+            "recovered complete v2 schema with stale v1 metadata; "
+            "recovered complete v3 schema with stale v2 metadata",
         )
         self.assertIsNotNone(repaired.last_migration_backup)
         backup_path = repaired.last_migration_backup
@@ -269,6 +323,195 @@ class LedgerMigrationTests(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertEqual(read_schema_version(backups[0]), 1)
 
+    def test_v2_upgrade_creates_scoped_defaults_and_preserves_workspace_assets(self) -> None:
+        create_v2_workspace_fixture(self.db_path)
+
+        ledger = AtelierLedger(self.db_path)
+
+        self.assertEqual(read_schema_version(self.db_path), SCHEMA_VERSION)
+        self.assertIsNotNone(ledger.last_migration_backup)
+        backup_path = ledger.last_migration_backup
+        assert backup_path is not None
+        self.assertEqual(read_schema_version(backup_path), 2)
+        self.assertEqual(
+            [item["id"] for item in ledger.list_collection_assets("product")],
+            ["ast_workspace"],
+        )
+        self.assertEqual(ledger.list_collection_assets("group"), [])
+        self.assertEqual(ledger.list_collection_assets("cutout"), [])
+        drafts = {mode: ledger.get_workflow_draft(mode) for mode in (
+            "single", "multi-file", "group-split", "cutout-batch"
+        )}
+        self.assertEqual(drafts["single"]["collection_id"], drafts["multi-file"]["collection_id"])
+        self.assertNotEqual(drafts["single"]["collection_id"], drafts["group-split"]["collection_id"])
+        self.assertNotEqual(drafts["group-split"]["collection_id"], drafts["cutout-batch"]["collection_id"])
+
+    def test_complete_v3_schema_with_stale_v2_marker_is_repaired_safely(self) -> None:
+        AtelierLedger(self.db_path)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                "UPDATE ledger_meta SET value = '2' WHERE key = 'schema_version'"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        repaired = AtelierLedger(self.db_path)
+
+        self.assertEqual(read_schema_version(self.db_path), SCHEMA_VERSION)
+        self.assertEqual(
+            repaired.last_schema_repair,
+            "recovered complete v3 schema with stale v2 metadata",
+        )
+        self.assertIsNotNone(repaired.last_migration_backup)
+        backup_path = repaired.last_migration_backup
+        assert backup_path is not None
+        self.assertEqual(read_schema_version(backup_path), 2)
+
+    def test_incomplete_v3_schema_with_v2_marker_is_refused_without_mutation(self) -> None:
+        AtelierLedger(self.db_path)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("DROP INDEX idx_traces_item")
+            connection.execute(
+                "UPDATE ledger_meta SET value = '2' WHERE key = 'schema_version'"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaisesRegex(PartialSchemaError, "idx_traces_item"):
+            AtelierLedger(self.db_path)
+
+        self.assertEqual(read_schema_version(self.db_path), 2)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            self.assertIsNone(connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' "
+                "AND name = 'idx_traces_item'"
+            ).fetchone())
+        finally:
+            connection.close()
+        backups = list(Path(self.temp_dir.name).glob("*.backup-v2-*.sqlite3"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(read_schema_version(backups[0]), 2)
+
+    def test_scoped_drafts_soft_removal_and_job_snapshots_are_isolated(self) -> None:
+        ledger = AtelierLedger(self.db_path)
+        product = ledger.register_workspace_asset(
+            sha256="1" * 64,
+            storage_path="D:/assets/product.png",
+            mime="image/png",
+            size_bytes=64,
+            width=8,
+            height=8,
+            name="product.png",
+        )
+        group = ledger.register_workspace_asset(
+            sha256="2" * 64,
+            storage_path="D:/assets/group.png",
+            mime="image/png",
+            size_bytes=64,
+            width=8,
+            height=8,
+            name="group.png",
+            collection_key="group",
+        )
+        cutout = ledger.register_workspace_asset(
+            sha256="3" * 64,
+            storage_path="D:/assets/cutout.png",
+            mime="image/png",
+            size_bytes=64,
+            width=8,
+            height=8,
+            name="cutout.png",
+            collection_key="cutout",
+        )
+
+        self.assertEqual(
+            [item["id"] for item in ledger.list_collection_assets("product")],
+            [product["id"]],
+        )
+        self.assertEqual(
+            [item["id"] for item in ledger.list_collection_assets("group")],
+            [group["id"]],
+        )
+        self.assertEqual(
+            [item["id"] for item in ledger.list_collection_assets("cutout")],
+            [cutout["id"]],
+        )
+
+        single = ledger.save_workflow_draft(
+            "single",
+            expected_revision=1,
+            selected_asset_ids=[product["id"]],
+            brief={"goal": "single"},
+            parameters={"batch": 1},
+            ui_state={"zoom": 1.25},
+        )
+        multi = ledger.save_workflow_draft(
+            "multi-file",
+            expected_revision=1,
+            selected_asset_ids=[product["id"]],
+            brief={"goal": "submitted"},
+            parameters={"batch": 2},
+            ui_state={"scroll_top": 180},
+        )
+        self.assertEqual(single["selected_asset_ids"], multi["selected_asset_ids"])
+        self.assertNotEqual(single["brief"], multi["brief"])
+        with self.assertRaises(DraftRevisionConflictError):
+            ledger.save_workflow_draft(
+                "single",
+                expected_revision=1,
+                selected_asset_ids=[product["id"]],
+            )
+        with self.assertRaisesRegex(ValueError, "outside its active collection"):
+            ledger.save_workflow_draft(
+                "single",
+                expected_revision=single["revision"],
+                selected_asset_ids=[group["id"]],
+            )
+
+        job, created = ledger.create_job(
+            "multi-file",
+            [product["id"]],
+            engine_key="mock-cloud",
+            parameters={
+                "brief": {"goal": "submitted"},
+                "intent_locks": {"packaging_text": True},
+                "batch": 2,
+                "knowledge_refs": ["K-1"],
+            },
+            idempotency_key="snapshot-contract",
+        )
+        self.assertTrue(created)
+        self.assertEqual(job["snapshot"]["draft_revision"], multi["revision"])
+        self.assertEqual(job["snapshot"]["source_asset_ids"], [product["id"]])
+        self.assertEqual(job["snapshot"]["brief"], {"goal": "submitted"})
+        ledger.save_workflow_draft(
+            "multi-file",
+            expected_revision=multi["revision"],
+            selected_asset_ids=[product["id"]],
+            brief={"goal": "changed-after-submit"},
+            parameters={"batch": 4},
+        )
+        self.assertEqual(
+            ledger.get_job(job["id"])["snapshot"]["brief"],
+            {"goal": "submitted"},
+        )
+
+        ledger.add_asset_to_collection(product["id"], "group")
+        removed = ledger.remove_asset_from_collection(product["id"], "product")
+        self.assertEqual(removed["membership"]["status"], "trashed")
+        self.assertEqual(ledger.list_collection_assets("product"), [])
+        self.assertIn(
+            product["id"],
+            [item["id"] for item in ledger.list_collection_assets("group")],
+        )
+        restored = ledger.add_asset_to_collection(product["id"], "product")
+        self.assertEqual(restored["membership"]["status"], "active")
+
     def test_migration_failure_rolls_back_schema_version_ddl_and_data(self) -> None:
         create_v1_fixture(self.db_path)
         before = snapshot_v1_data(self.db_path)
@@ -299,13 +542,52 @@ class LedgerMigrationTests(unittest.TestCase):
         self.assertEqual(read_schema_version(backups[0]), 1)
         self.assertEqual(snapshot_v1_data(backups[0]), before)
 
+    def test_v3_migration_failure_rolls_back_all_workspace_objects(self) -> None:
+        create_v2_workspace_fixture(self.db_path)
+
+        class FailingV3Ledger(AtelierLedger):
+            @staticmethod
+            def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
+                connection.execute(
+                    "CREATE TABLE should_rollback_v3(id TEXT PRIMARY KEY)"
+                )
+                raise RuntimeError("injected v3 migration failure")
+
+        with self.assertRaises(LedgerSchemaError):
+            FailingV3Ledger(self.db_path)
+
+        self.assertEqual(read_schema_version(self.db_path), 2)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            tables = {
+                row[0] for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            self.assertNotIn("should_rollback_v3", tables)
+            self.assertNotIn("asset_collections", tables)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT name FROM assets WHERE id = 'ast_workspace'"
+                ).fetchone()[0],
+                "legacy.png",
+            )
+        finally:
+            connection.close()
+
+        backups = list(Path(self.temp_dir.name).glob("*.backup-v2-*.sqlite3"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(read_schema_version(backups[0]), 2)
+
     def test_concurrent_initializers_do_not_repeat_the_same_migration(self) -> None:
         create_v1_fixture(self.db_path)
 
         with ThreadPoolExecutor(max_workers=4) as pool:
             ledgers = list(pool.map(lambda _: AtelierLedger(self.db_path), range(8)))
 
-        self.assertTrue(all(ledger.stats()["schema_version"] == 2 for ledger in ledgers))
+        self.assertTrue(all(
+            ledger.stats()["schema_version"] == SCHEMA_VERSION for ledger in ledgers
+        ))
         self.assertEqual(
             len(list(Path(self.temp_dir.name).glob("*.backup-v1-*.sqlite3"))),
             1,
@@ -319,11 +601,11 @@ class LedgerMigrationTests(unittest.TestCase):
         with ProcessPoolExecutor(max_workers=4, mp_context=context) as pool:
             versions = list(pool.map(initialize_ledger_process, [str(self.db_path)] * 8))
 
-        self.assertEqual(versions, [2] * 8)
+        self.assertEqual(versions, [SCHEMA_VERSION] * 8)
         backups = list(Path(self.temp_dir.name).glob("*.backup-v1-*.sqlite3"))
         self.assertEqual(len(backups), 1)
         self.assertEqual(read_schema_version(backups[0]), 1)
-        self.assertEqual(read_schema_version(self.db_path), 2)
+        self.assertEqual(read_schema_version(self.db_path), SCHEMA_VERSION)
 
     def test_v2_schema_contract_enforces_keys_ranges_and_partial_idempotency(self) -> None:
         ledger = AtelierLedger(self.db_path)
