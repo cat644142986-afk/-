@@ -78,6 +78,17 @@ try {
     if (-not (Test-Path -LiteralPath $ledgerPath -PathType Leaf)) {
         throw "Portable app did not create its isolated ledger"
     }
+    $appLogPath = Join-Path $testData "app.log"
+    if (-not (Test-Path -LiteralPath $appLogPath -PathType Leaf)) {
+        throw "Portable app did not keep its shell log inside the isolated data directory"
+    }
+    $appLog = Get-Content -LiteralPath $appLogPath -Raw
+    if ($appLog -notmatch 'Window metrics: scale=') {
+        throw "Portable app did not report DPI-aware window metrics"
+    }
+    if ($appLog -match 'Could not apply Windows chrome') {
+        throw "Portable app could not apply the Windows rounded-corner policy"
+    }
 
     Write-Host "Portable application smoke test passed." -ForegroundColor Green
     Write-Host "Application PID: $($app.Id)"
@@ -86,6 +97,7 @@ try {
     Write-Host "Contract: $($health.service.contract_version)"
     Write-Host "Ledger schema: v$($health.ledger.schema_version)"
     Write-Host "Isolated ledger bytes: $((Get-Item -LiteralPath $ledgerPath).Length)"
+    Write-Host "Isolated shell log: verified"
 } finally {
     $env:PRODUCT_ATELIER_DATA_DIR = $previousDataDir
     if ($app -and -not $app.HasExited) {

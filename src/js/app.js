@@ -12,6 +12,7 @@ import {
   submissionFingerprint,
 } from './workspace-state.js';
 import { JOB_STATUS, MODE_CONFIG, MODE_IDS, PAGE_CONFIG, STAGE_IDS } from './studio-config.js';
+import { createWorkflowDockController } from './studio-shell.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 
 const MODE_STATE_KEY = 'pa-workspace-ui-v2';
@@ -20,10 +21,9 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 let modalReturnFocus = null;
 let drawerReturnFocus = null;
-let workflowDockReturnFocus = null;
-const compactWorkflowDock = window.matchMedia('(max-width: 980px)');
 
 const state = createStudioState(MODE_IDS);
+const workflowDock = createWorkflowDockController();
 window.ProductAtelier = { state };
 
 function escapeHtml(value) {
@@ -388,7 +388,7 @@ function switchPage(page) {
   $('#page-eyebrow').textContent = config.eyebrow;
   $('#page-title').textContent = config.title;
   $('#page-subtitle').textContent = config.subtitle;
-  if (page !== 'process') closeWorkflowDock(false);
+  if (page !== 'process') workflowDock.close(false);
   if (page === 'history') loadSessions();
   if (page === 'memory') loadMemory();
   if (page === 'settings') loadSettings();
@@ -490,50 +490,6 @@ function switchMode(mode, preserveCurrent = true, loadDurable = true) {
     state.knowledgeBundle = null;
     renderKnowledge(null);
   }
-}
-
-function syncWorkflowDockLayout() {
-  const panel = $('#settings-panel');
-  const trigger = $('#btn-workflow-drawer');
-  const backdrop = $('#task-dock-backdrop');
-  if (!panel || !trigger || !backdrop) return;
-  if (!compactWorkflowDock.matches) {
-    panel.classList.remove('is-open');
-    panel.removeAttribute('inert');
-    panel.removeAttribute('role');
-    panel.removeAttribute('aria-modal');
-    backdrop.hidden = true;
-    trigger.setAttribute('aria-expanded', 'false');
-    workflowDockReturnFocus = null;
-    return;
-  }
-  const open = panel.classList.contains('is-open');
-  panel.toggleAttribute('inert', !open);
-  panel.setAttribute('role', 'dialog');
-  panel.setAttribute('aria-modal', 'true');
-  backdrop.hidden = !open;
-  trigger.setAttribute('aria-expanded', String(open));
-}
-
-function openWorkflowDock() {
-  if (!compactWorkflowDock.matches) return;
-  workflowDockReturnFocus = document.activeElement;
-  const panel = $('#settings-panel');
-  panel.classList.add('is-open');
-  syncWorkflowDockLayout();
-  window.requestAnimationFrame(() => $('#btn-advanced').focus());
-}
-
-function closeWorkflowDock(restoreFocus = true) {
-  const panel = $('#settings-panel');
-  if (!panel?.classList.contains('is-open')) {
-    syncWorkflowDockLayout();
-    return;
-  }
-  panel.classList.remove('is-open');
-  syncWorkflowDockLayout();
-  if (restoreFocus && workflowDockReturnFocus instanceof HTMLElement) workflowDockReturnFocus.focus();
-  workflowDockReturnFocus = null;
 }
 
 function renderFileMeta() {
@@ -879,7 +835,7 @@ async function handleGenerate() {
     }
     toast('任务已加入 Dock，可继续组织素材', 'success');
     await loadJobs(true);
-    closeWorkflowDock(false);
+    workflowDock.close(false);
     openDrawer('jobs');
   } catch (error) {
     if (payload && isDefinitiveJobRejection(error)) clearPendingSubmission(payload.client_request_id);
@@ -1488,8 +1444,8 @@ function bindEvents() {
   $('#param-refine').addEventListener('change', updateQuickControls);
   $$('[data-lock]').forEach((input) => input.addEventListener('change', () => { input.closest('.lock-chip').classList.toggle('active', input.checked); updateCtaState(); scheduleKnowledgeCompile(); }));
   $('#btn-advanced').addEventListener('click', () => openDrawer('advanced'));
-  $('#btn-workflow-drawer').addEventListener('click', openWorkflowDock);
-  $('#task-dock-backdrop').addEventListener('click', () => closeWorkflowDock());
+  $('#btn-workflow-drawer').addEventListener('click', workflowDock.open);
+  $('#task-dock-backdrop').addEventListener('click', () => workflowDock.close());
   $$('[data-open-advanced]').forEach((button) => button.addEventListener('click', () => openDrawer('advanced')));
   $('#btn-open-intelligence').addEventListener('click', () => openDrawer('intelligence'));
   $('#btn-job-dock').addEventListener('click', () => openDrawer('jobs'));
@@ -1542,10 +1498,11 @@ function bindEvents() {
     if (!$('#advanced-drawer').hidden) closeDrawer('advanced');
     if (!$('#intelligence-drawer').hidden) closeDrawer('intelligence');
     if (!$('#job-drawer').hidden) closeDrawer('jobs');
-    if ($('#settings-panel').classList.contains('is-open')) closeWorkflowDock();
+    if ($('#settings-panel').classList.contains('is-open')) workflowDock.close();
   });
-  compactWorkflowDock.addEventListener('change', syncWorkflowDockLayout);
+  workflowDock.bind();
   window.addEventListener('beforeunload', () => {
+    workflowDock.destroy();
     if (state.jobPollTimer) window.clearTimeout(state.jobPollTimer);
     state.draftSaveTimers.forEach((timer) => window.clearTimeout(timer));
     state.draftSaveTimers.clear();
@@ -1582,7 +1539,7 @@ async function connectBackend() {
 async function init() {
   setupTheme();
   bindEvents();
-  syncWorkflowDockLayout();
+  workflowDock.sync();
   setupCompare();
   restoreWorkspaceState();
   restorePendingSubmission();

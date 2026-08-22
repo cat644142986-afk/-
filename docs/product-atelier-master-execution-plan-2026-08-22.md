@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 日期：2026-08-22<br>
-> 状态：Phase 0–3 已完成；Phase 4 正式前端、960×600 抽屉与 Studio 排版检查点已通过，打包壳/DPI 与模块拆分继续收尾<br>
+> 状态：Phase 0–3 已完成；Phase 4 正式前端、960×600 抽屉、全页基础排版与 Windows DPI 坐标契约已通过，真实多 DPI/多显示器与业务模块拆分继续收尾<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -15,7 +15,7 @@
 | Phase 1 UI/交互契约原型 | 已完成 | `docs/phase-1-ui-interaction-contract-2026-08-22.md`、`prototypes/studio-phase1/` |
 | Phase 2 schema v3 | 已完成 | `docs/ledger-schema-v3.md`、真实 v2 副本迁移演练 |
 | Phase 3 工作区与 trace API | 已完成 | `docs/phase-3-workspace-api-contract-2026-08-22.md`、87 项 Python 与 16 项前端测试 |
-| Phase 4 正式 UI 骨架 | 检查点通过，继续收尾 | `docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、87 项 Python 与 23 项前端测试 |
+| Phase 4 正式 UI 骨架 | 检查点通过，继续收尾 | `docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、87 项 Python 与 29 项前端测试 |
 
 ## 0. 这次要把什么做成
 
@@ -47,8 +47,8 @@ Product Atelier 不是一个“上传图片—选择模型—下载结果”的�
 - “对比”已从一级导航移除并保留为结果上下文动作；Phase 6 仍需完成对象选择、首次引导和评审恢复。
 - 快速抠图已明确只做全部前景分离并隐藏无效输入；语义选物、数量约束、蒙版确认与模型评测仍属于 Phase 7。
 - 反馈与 trace 已写入账本，用户尚未在完整 Result Review 中看到作用对象、影响范围和知识建议状态。
-- 主界面已完成第一轮信息减法、融合左栏与单舞台布局；约 960×600 的控制抽屉和 100/125/150% DPI 壳层验收尚未收口。
-- `app.js` 已抽出配置和纯状态模块，但 workspace/assets/jobs/review/knowledge/settings 职责仍需继续拆分。
+- 主界面已完成第一轮信息减法、融合左栏、单舞台与 960×600 控制抽屉；Windows 物理/逻辑坐标契约和 DWM 圆角策略已修复，100/125/150% 真实屏幕与多显示器验收尚未收口。
+- `app.js` 已抽出配置、纯状态和响应式 shell 控制器，但 workspace/assets/jobs/review/knowledge/settings 职责仍需继续拆分。
 - 发布链已具备 sidecar 清单和真实健康检查；任何 API 契约变更后仍必须重建便携包，不能只复制旧可执行文件。
 
 ## 2. 不可妥协的产品与工程原则
@@ -405,7 +405,7 @@ DIY 外观要求：
 - 已修复 CORS 漏掉 `PUT/DELETE` 导致“读取可用但草稿无法保存”的真实故障，sidecar contract 升级为 `2026-08-22.4`。
 - 已明确快速去背景不读取文字、数量、Intent Locks 或知识规则，不再伪装为语义选物。
 - Studio 核心中文已使用 10/12/13px 分级 token，深色知识卡按内容高度呈现，不再靠巨型空卡或极小操作文字制造视觉效果。
-- 尚未完成：`app.js` 全职责拆分、Tauri 100/125/150% DPI 壳层实测、非 Studio 页面排版审计和统一状态组件；详见 Phase 4 检查点文档。
+- 尚未完成：`app.js` 全业务职责拆分、Tauri 100/125/150% 与多显示器实机壳层验收、真实结果/大任务数据态排版和统一状态组件；空态/基础态全页排版已通过三档尺寸检查。详见 Phase 4 检查点文档。
 
 ### 阶段 5：素材管理、模式上下文与 Task Dock（P0，预计 6–10 小时）
 

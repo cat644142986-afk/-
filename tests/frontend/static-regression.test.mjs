@@ -5,10 +5,11 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, config, studioState, html, css] = await Promise.all([
+const [app, api, config, shell, studioState, html, css] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-config.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-shell.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-state.js'), 'utf8'),
   readFile(path.join(root, 'src/index.html'), 'utf8'),
   readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8'),
@@ -108,10 +109,11 @@ test('narrow windows turn workflow controls into an accessible drawer instead of
   assert.match(html, /id="task-dock-backdrop"[^>]*hidden/);
   assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.studio-grid \{ grid-template-columns: minmax\(0,1fr\); \}/);
   assert.match(css, /\.task-dock\.is-open \{ opacity: 1; pointer-events: auto; transform: translateX\(0\); \}/);
-  assert.match(app, /panel\.toggleAttribute\('inert', !open\)/);
-  assert.match(app, /panel\.setAttribute\('role', 'dialog'\)/);
-  assert.match(app, /compactWorkflowDock\.addEventListener\('change', syncWorkflowDockLayout\)/);
-  assert.match(app, /if \(\$\('#settings-panel'\)\.classList\.contains\('is-open'\)\) closeWorkflowDock\(\)/);
+  assert.match(shell, /panel\.toggleAttribute\('inert', presentation\.inert\)/);
+  assert.match(shell, /panel\.setAttribute\('role', presentation\.role\)/);
+  assert.match(shell, /media\.addEventListener\('change', sync\)/);
+  assert.match(app, /if \(\$\('#settings-panel'\)\.classList\.contains\('is-open'\)\) workflowDock\.close\(\)/);
+  assert.doesNotMatch(app, /closeWorkflowDock|openWorkflowDock|syncWorkflowDockLayout|compactWorkflowDock/);
 });
 
 test('primary studio copy uses readable type tokens instead of shrinking every label', () => {
@@ -122,6 +124,15 @@ test('primary studio copy uses readable type tokens instead of shrinking every l
   assert.match(css, /\.mode-button strong \{[^}]*font-size: var\(--type-control\)/);
   assert.match(css, /\.dock-field select,[^}]*font-size: var\(--type-control\)/);
   assert.match(css, /\.canvas-empty p \{[^}]*font-size: var\(--type-body\)/);
+});
+
+test('result, settings, memory, and job controls keep readable core copy', () => {
+  assert.match(css, /\.result-tab \{[^}]*font-size: var\(--type-caption\)/);
+  assert.match(css, /\.feedback-choice, \.feedback-send \{[^}]*font-size: var\(--type-caption\)/);
+  assert.match(css, /\.settings-card > label,[^}]*font-size: var\(--type-caption\)/);
+  assert.match(css, /\.memory-item p \{[^}]*font-size: var\(--type-caption\)/);
+  assert.match(css, /\.job-card > footer button \{[^}]*font-size: var\(--type-caption\)/);
+  assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.settings-layout \{[^}]*overflow-y: auto/);
 });
 
 test('workspace restores its latest result and exposes recoverable asset removal', () => {

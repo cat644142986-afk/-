@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::net::TcpStream;
 use std::io::{Read, Write};
-use tauri::{Manager, State, LogicalPosition, LogicalSize, Position, Size};
+use tauri::{Manager, PhysicalPosition, PhysicalSize, Position, Size, State};
 
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +43,14 @@ impl Default for AppConfig {
 }
 
 fn app_data_dir() -> PathBuf {
+    if let Ok(override_dir) = std::env::var("PRODUCT_ATELIER_DATA_DIR") {
+        let override_dir = override_dir.trim();
+        if !override_dir.is_empty() {
+            let path = PathBuf::from(override_dir);
+            std::fs::create_dir_all(&path).ok();
+            return path;
+        }
+    }
     let appdata = std::env::var("APPDATA")
         .or_else(|_| std::env::var("HOME").map(|h| h + "/.config"))
         .unwrap_or_else(|_| ".".to_string());
@@ -199,17 +207,13 @@ fn log_msg(msg: &str) {
     }
     #[cfg(not(debug_assertions))]
     {
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            let log_dir = PathBuf::from(appdata).join("ProductAtelier");
-            let _ = std::fs::create_dir_all(&log_dir);
-            let log_path = log_dir.join("app.log");
-            let line = format!("{} {}\n", chrono_local(), msg);
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-                .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
-        }
+        let log_path = app_data_dir().join("app.log");
+        let line = format!("{} {}\n", chrono_local(), msg);
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
     }
 }
 
@@ -368,7 +372,9 @@ fn get_monitor_info(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
     let sz = monitor.size();
     let pos = monitor.position();
     let ws = monitor.work_area();
+    let scale = monitor.scale_factor();
     Ok(serde_json::json!({
+        "coordinate_space": "physical",
         "width": sz.width,
         "height": sz.height,
         "x": pos.x,
@@ -377,7 +383,40 @@ fn get_monitor_info(app: tauri::AppHandle) -> Result<serde_json::Value, String> 
         "work_y": ws.position.y,
         "work_width": ws.size.width,
         "work_height": ws.size.height,
-        "scale_factor": monitor.scale_factor(),
+        "scale_factor": scale,
+        "logical": {
+            "width": sz.width as f64 / scale,
+            "height": sz.height as f64 / scale,
+            "x": pos.x as f64 / scale,
+            "y": pos.y as f64 / scale,
+            "work_x": ws.position.x as f64 / scale,
+            "work_y": ws.position.y as f64 / scale,
+            "work_width": ws.size.width as f64 / scale,
+            "work_height": ws.size.height as f64 / scale,
+        },
+    }))
+}
+
+#[tauri::command]
+fn get_window_metrics(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let win = app.get_webview_window("main").ok_or("Window not found")?;
+    let scale = win.scale_factor().map_err(|e| e.to_string())?;
+    let size = win.outer_size().map_err(|e| e.to_string())?;
+    let position = win.outer_position().map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "scale_factor": scale,
+        "physical": {
+            "x": position.x,
+            "y": position.y,
+            "width": size.width,
+            "height": size.height,
+        },
+        "logical": {
+            "x": position.x as f64 / scale,
+            "y": position.y as f64 / scale,
+            "width": size.width as f64 / scale,
+            "height": size.height as f64 / scale,
+        },
     }))
 }
 
@@ -391,9 +430,60 @@ fn set_window_always_on_top(app: tauri::AppHandle, always_on_top: bool) -> Resul
 #[tauri::command]
 fn set_window_pos_size(app: tauri::AppHandle, x: i32, y: i32, w: u32, h: u32) -> Result<(), String> {
     let win = app.get_webview_window("main").ok_or("Window not found")?;
-    win.set_size(Size::Logical(LogicalSize { width: w as f64, height: h as f64 })).map_err(|e| e.to_string())?;
-    win.set_position(Position::Logical(LogicalPosition { x: x as f64, y: y as f64 })).map_err(|e| e.to_string())?;
+    // get_monitor_info/get_window_position/get_window_size all report physical
+    // pixels. Keep this paired setter in the same coordinate space so docking
+    // remains correct on 125%/150% and mixed-DPI monitors.
+    win.set_size(Size::Physical(PhysicalSize { width: w, height: h })).map_err(|e| e.to_string())?;
+    win.set_position(Position::Physical(PhysicalPosition { x, y })).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(windows)]
+fn apply_windows_window_chrome<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(), String> {
+    use std::ffi::c_void;
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE,
+        DWMWCP_ROUND,
+    };
+
+    let hwnd = window.hwnd().map_err(|error| error.to_string())?;
+    let corner_preference = DWMWCP_ROUND;
+    // DWMWA_COLOR_NONE: retain the system shadow and rounded window shape but
+    // do not add another one-pixel DWM border around the CSS shell.
+    let border_color = 0xFFFF_FFFEu32;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            std::ptr::from_ref(&corner_preference).cast::<c_void>(),
+            std::mem::size_of_val(&corner_preference) as u32,
+        )
+        .map_err(|error| error.to_string())?;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            std::ptr::from_ref(&border_color).cast::<c_void>(),
+            std::mem::size_of_val(&border_color) as u32,
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn apply_windows_window_chrome<R: tauri::Runtime>(_window: &tauri::WebviewWindow<R>) -> Result<(), String> {
+    Ok(())
+}
+
+fn log_window_metrics<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    let Ok(scale) = window.scale_factor() else { return; };
+    let Ok(size) = window.outer_size() else { return; };
+    let logical_width = size.width as f64 / scale;
+    let logical_height = size.height as f64 / scale;
+    log_msg(&format!(
+        "[ProductAtelier] Window metrics: scale={scale:.2}, physical={}x{}, logical={logical_width:.1}x{logical_height:.1}",
+        size.width, size.height
+    ));
 }
 
 fn main() {
@@ -401,6 +491,12 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = apply_windows_window_chrome(&window) {
+                    log_msg(&format!("[ProductAtelier] WARNING: Could not apply Windows chrome: {error}"));
+                }
+                log_window_metrics(&window);
+            }
             let cfg = load_config();
             let port = find_free_port();
             let handle = app.handle();
@@ -431,7 +527,7 @@ fn main() {
             select_folder_dialog, verify_folder_exists,
             close_app,
             get_window_position, get_window_size, get_monitor_info,
-            set_window_always_on_top, set_window_pos_size
+            get_window_metrics, set_window_always_on_top, set_window_pos_size
         ])
         .on_window_event(|window, event| {
             match event {
