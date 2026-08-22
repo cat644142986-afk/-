@@ -11,79 +11,17 @@ import {
   selectionAfterImport,
   submissionFingerprint,
 } from './workspace-state.js';
+import { JOB_STATUS, MODE_CONFIG, MODE_IDS, PAGE_CONFIG, STAGE_IDS } from './studio-config.js';
+import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 
-const PAGE_CONFIG = {
-  process: { eyebrow: 'CREATIVE WORKSPACE', title: '你好，伊建', subtitle: '让知识、判断与生成留在同一条创作链里' },
-  compare: { eyebrow: 'QUALITY REVIEW', title: '版本对比', subtitle: '检查轮廓、材质、颜色与构图偏差' },
-  history: { eyebrow: 'CREATION LEDGER', title: '创作会话', subtitle: '每次生成都有来源、理由和版本' },
-  memory: { eyebrow: 'DESIGN DNA', title: '成长中心', subtitle: '把反复出现的判断沉淀为可审核的偏好' },
-  settings: { eyebrow: 'SYSTEM & KNOWLEDGE', title: '应用设置', subtitle: '管理模型、知识库与本地存储' },
-};
-
-const MODE_CONFIG = {
-  single: {
-    label: '单产品商业精修', badge: 'SINGLE', action: '开始生成', multiple: false, maxFiles: 1,
-    title: '导入素材，再选一张作为输入', eyebrow: 'PERSISTENT ASSET WORKSPACE', limit: 'SELECT 1 · 20 MB / FILE',
-    description: '素材只需导入一次；模式切换、刷新和重启后仍可复用。',
-    note: '一张主图，保真生成与透明底同步输出', outputKind: 'ecommerce-main',
-  },
-  'multi-file': {
-    label: '多文件独立批量', badge: 'BATCH', action: '运行批量队列', multiple: true, maxFiles: 12,
-    title: '从共享素材选择一组独立商品', eyebrow: 'MULTI-SOURCE SELECTION', limit: 'SELECT UP TO 12',
-    description: '每张图片是独立子项；可并发处理，也会保留逐项进度和错误。',
-    note: '多张源图逐一生成，不把它们误当成同一画面', outputKind: 'ecommerce-main',
-  },
-  'group-split': {
-    label: '组合图智能拆分', badge: 'GROUP SPLIT', action: '识别并拆分', multiple: false, maxFiles: 1,
-    title: '从共享素材选择一张产品合照', eyebrow: 'SELECT ONE GROUP SHOT', limit: 'SELECT 1 GROUP IMAGE',
-    description: '任务会识别合照中的主体并逐个交付；不会把它误当多文件。',
-    note: '一张合照识别多个主体，再分别生成交付图', outputKind: 'group-split',
-  },
-  'cutout-batch': {
-    label: '本地批量抠图', badge: 'LOCAL CUTOUT', action: '开始批量抠图', multiple: true, maxFiles: 24,
-    title: '从共享素材选择待抠图图片', eyebrow: 'LOCAL MULTI-CUTOUT', limit: 'SELECT UP TO 24',
-    description: '逐张输出透明 PNG 并保留独立状态；不调用云端生成。',
-    note: '多文件本地抠图，逐张保留结果与失败原因', outputKind: 'cutout',
-  },
-};
-
-const JOB_STATUS = {
-  queued: { label: '排队中', tone: 'queued' },
-  running: { label: '运行中', tone: 'running' },
-  paused: { label: '已暂停', tone: 'paused' },
-  completed: { label: '已完成', tone: 'completed' },
-  partial: { label: '部分完成', tone: 'partial' },
-  failed: { label: '失败', tone: 'failed' },
-  canceling: { label: '正在取消', tone: 'canceling' },
-  canceled: { label: '已取消', tone: 'canceled' },
-  interrupted: { label: '已中断', tone: 'interrupted' },
-};
-
-const MODE_STATE_KEY = 'pa-workspace-v1';
+const MODE_STATE_KEY = 'pa-workspace-ui-v2';
 const PENDING_SUBMISSION_KEY = 'pa-pending-job-v1';
-const MODE_IDS = Object.keys(MODE_CONFIG);
-const emptyModeMap = () => Object.fromEntries(MODE_IDS.map((mode) => [mode, []]));
-const emptySnapshotMap = () => Object.fromEntries(MODE_IDS.map((mode) => [mode, null]));
-
-const STAGE_IDS = { empty: 'canvas-empty', ready: 'canvas-image', processing: 'canvas-processing', success: 'canvas-results', error: 'canvas-error' };
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 let modalReturnFocus = null;
 let drawerReturnFocus = null;
 
-const state = {
-  currentPage: 'process', currentMode: 'single', stage: 'empty', selectedFiles: [],
-  originalDataUrl: '', results: null, resultTab: 'main', viewerIndex: 0, compareData: null,
-  currentTaskId: '', currentSessionId: '', currentGenerationId: '',
-  knowledgeStatus: null, knowledgeBundle: null, settings: null, lastFeedbackSignal: '',
-  assets: [], assetUrls: new Map(), modeSelections: emptyModeMap(), modeSnapshots: emptySnapshotMap(),
-  jobs: [], knownJobStatuses: new Map(), jobsAvailable: true, assetsAvailable: true,
-  submitting: false, importing: false, jobPollTimer: null, jobDrawerOpen: false,
-  exporting: false, restoredModes: new Set(), knowledgeRequestVersion: 0,
-  assetsRequestVersion: 0, assetsAbortController: null,
-  jobsRequestVersion: 0, jobsAbortController: null, jobsRenderSignature: '',
-  jobActionsInFlight: new Set(), jobMutationsInFlight: new Set(), pendingSubmission: null,
-};
+const state = createStudioState(MODE_IDS);
 window.ProductAtelier = { state };
 
 function escapeHtml(value) {
@@ -140,8 +78,6 @@ function persistWorkspaceState() {
   try {
     localStorage.setItem(MODE_STATE_KEY, JSON.stringify({
       currentMode: state.currentMode,
-      modeSelections: state.modeSelections,
-      modeSnapshots: state.modeSnapshots,
     }));
   } catch (_) { /* local preferences are best effort */ }
 }
@@ -149,13 +85,6 @@ function persistWorkspaceState() {
 function restoreWorkspaceState() {
   try {
     const saved = JSON.parse(localStorage.getItem(MODE_STATE_KEY) || '{}');
-    MODE_IDS.forEach((mode) => {
-      if (Array.isArray(saved.modeSelections?.[mode])) state.modeSelections[mode] = saved.modeSelections[mode].map(String);
-      if (saved.modeSnapshots?.[mode] && typeof saved.modeSnapshots[mode] === 'object') {
-        state.modeSnapshots[mode] = saved.modeSnapshots[mode];
-        state.restoredModes.add(mode);
-      }
-    });
     if (MODE_CONFIG[saved.currentMode]) state.currentMode = saved.currentMode;
   } catch (_) { /* ignore an obsolete local snapshot */ }
 }
@@ -175,7 +104,8 @@ function formatApiError(error, fallback = '本地服务暂不可用') {
 
 function captureModeSnapshot(mode = state.currentMode) {
   if (!MODE_CONFIG[mode] || !$('#brief-input')) return;
-  state.modeSnapshots[mode] = {
+  const previous = state.modeSnapshots[mode] || {};
+  const next = {
     brief: $('#brief-input').value,
     model: $('#param-model').value,
     angle: $('#param-angle').value,
@@ -184,7 +114,189 @@ function captureModeSnapshot(mode = state.currentMode) {
     platter: getPlatter(),
     refine: $('#param-refine').checked,
     intent_locks: getIntentLocks(),
+    active_job_id: previous.active_job_id || state.workspaceDrafts[mode]?.active_job_id || null,
+    current_generation_id: previous.current_generation_id || state.workspaceDrafts[mode]?.current_generation_id || null,
+    current_result_asset_id: previous.current_result_asset_id || state.workspaceDrafts[mode]?.current_result_asset_id || null,
+    compare_state: previous.compare_state || state.workspaceDrafts[mode]?.compare_state || {},
+    ui_state: previous.ui_state || state.workspaceDrafts[mode]?.ui_state || {},
+    mask_state: previous.mask_state || state.workspaceDrafts[mode]?.mask_state || {},
   };
+  state.modeSnapshots[mode] = next;
+  if (JSON.stringify(previous) !== JSON.stringify(next)) scheduleWorkspaceDraftSave(mode);
+}
+
+function modeBrief(mode) {
+  if (mode === state.currentMode && $('#brief-input')) return buildBrief(mode);
+  const snapshot = state.modeSnapshots[mode] || {};
+  return {
+    objective: snapshot.brief || '将产品原图转化为可交付的商业图片',
+    user_request: snapshot.brief || '',
+    mode,
+    category: 'general',
+    platform: 'ecommerce',
+    output_kind: MODE_CONFIG[mode].outputKind,
+    angle: snapshot.angle || 'auto',
+    platter: snapshot.platter || 'auto',
+    fidelity: Number(snapshot.fidelity ?? 40),
+    intent_locks: snapshot.intent_locks || {},
+  };
+}
+
+function draftSavePayload(mode) {
+  return draftPayloadFromSnapshot({
+    revision: state.workspaceRevisions[mode],
+    selectedAssetIds: selectedAssetIds(mode),
+    snapshot: state.modeSnapshots[mode],
+    brief: modeBrief(mode),
+  });
+}
+
+function scheduleWorkspaceDraftSave(mode = state.currentMode, delay = 320) {
+  if (state.hydratingWorkspace || !state.backendReady || !MODE_CONFIG[mode]) return;
+  state.draftSaveVersions[mode] += 1;
+  const previous = state.draftSaveTimers.get(mode);
+  if (previous) window.clearTimeout(previous);
+  state.draftSaveTimers.set(mode, window.setTimeout(() => {
+    state.draftSaveTimers.delete(mode);
+    flushWorkspaceDraft(mode, true);
+  }, delay));
+}
+
+async function flushWorkspaceDraft(mode = state.currentMode, silent = false) {
+  if (!state.backendReady || !MODE_CONFIG[mode]) return null;
+  const timer = state.draftSaveTimers.get(mode);
+  if (timer) window.clearTimeout(timer);
+  state.draftSaveTimers.delete(mode);
+  if (state.draftSavesInFlight.has(mode)) {
+    state.draftSaveQueued.add(mode);
+    return null;
+  }
+  state.draftSavesInFlight.add(mode);
+  const saveVersion = state.draftSaveVersions[mode];
+  try {
+    const response = await API.saveWorkspaceDraft(mode, draftSavePayload(mode));
+    const draft = response?.draft || response;
+    state.workspaceDrafts[mode] = draft;
+    state.workspaceRevisions[mode] = Number(draft?.revision || state.workspaceRevisions[mode]);
+    return draft;
+  } catch (error) {
+    if (Number(error?.status) === 409 && error?.detail?.current) {
+      const current = error.detail.current;
+      state.workspaceDrafts[mode] = current;
+      state.workspaceRevisions[mode] = Number(current.revision || 1);
+      state.draftSaveQueued.add(mode);
+    } else if (!silent) {
+      toast(`草稿保存失败：${formatApiError(error, '工作区暂不可写')}`, 'error');
+    }
+    return null;
+  } finally {
+    state.draftSavesInFlight.delete(mode);
+    if (state.draftSaveQueued.delete(mode) || saveVersion !== state.draftSaveVersions[mode]) {
+      scheduleWorkspaceDraftSave(mode, 0);
+    }
+  }
+}
+
+function hydrateWorkspace(mode, payload) {
+  const draft = payload?.draft || {};
+  const collection = payload?.collection || MODE_CONFIG[mode].collection;
+  const assets = Array.isArray(payload?.assets) ? payload.assets : [];
+  const activeAssetIds = new Set(assets.map((asset) => String(asset.id)));
+  state.hydratingWorkspace = true;
+  try {
+    state.workspaceDrafts[mode] = draft;
+    state.workspaceRevisions[mode] = Number(draft.revision || 1);
+    state.modeSelections[mode] = Array.from(draft.selected_asset_ids || [], String)
+      .filter((assetId) => activeAssetIds.has(assetId))
+      .slice(0, MODE_CONFIG[mode].maxFiles);
+    state.modeSnapshots[mode] = snapshotFromDraft(draft, state.modeSnapshots[mode] || {});
+    state.assetsByCollection[collection] = assets;
+    if (MODE_CONFIG[state.currentMode]?.collection === collection) state.assets = assets;
+    state.workspaceLoaded.add(mode);
+    state.restoredModes.add(mode);
+  } finally {
+    state.hydratingWorkspace = false;
+  }
+}
+
+async function loadWorkspace(mode = state.currentMode, silent = false) {
+  if (!MODE_CONFIG[mode]) return false;
+  const requestVersion = ++state.workspaceRequestVersions[mode];
+  try {
+    const payload = await API.getWorkspace(mode, { timeoutMs: 12000 });
+    if (requestVersion !== state.workspaceRequestVersions[mode]) return null;
+    hydrateWorkspace(mode, payload);
+    await hydrateAssetUrls(payload.assets || []);
+    const currentCollectionMatches = MODE_CONFIG[state.currentMode]?.collection === (payload.collection || MODE_CONFIG[mode].collection);
+    if (mode === state.currentMode || currentCollectionMatches) {
+      state.assets = state.assetsByCollection[MODE_CONFIG[state.currentMode].collection] || [];
+      state.assetsAvailable = true;
+      state.hydratingWorkspace = true;
+      try {
+        if (mode === state.currentMode) restoreModeSnapshot(mode);
+        syncLegacySelection();
+        renderQueue();
+        updateQuickControls();
+      } finally {
+        state.hydratingWorkspace = false;
+      }
+      if (mode === state.currentMode) {
+        const activeJob = payload.active_jobs?.[0] || null;
+        state.currentTaskId = draftActiveJobId(mode) || activeJob?.id || state.currentTaskId;
+        await restoreWorkspaceResult(mode, payload);
+      }
+    }
+    return true;
+  } catch (error) {
+    if (requestVersion !== state.workspaceRequestVersions[mode]) return null;
+    if (mode === state.currentMode) state.assetsAvailable = false;
+    if (!silent) toast(`工作区读取失败：${formatApiError(error, '持久工作区接口不可用')}`, 'error', 6000);
+    return false;
+  }
+}
+
+function draftActiveJobId(mode = state.currentMode) {
+  return state.workspaceDrafts[mode]?.active_job_id || state.modeSnapshots[mode]?.active_job_id || '';
+}
+
+async function restoreWorkspaceResult(mode, payload) {
+  if (mode !== state.currentMode || !Array.isArray(payload?.jobs)) return false;
+  const preferredId = payload?.draft?.active_job_id || '';
+  const preferredResultId = payload?.draft?.current_result_asset_id || '';
+  const job = payload.jobs.find((entry) => entry.id === preferredId && resultIdsForJob(entry).length)
+    || payload.jobs.find((entry) => preferredResultId && resultIdsForJob(entry).includes(preferredResultId))
+    || payload.jobs.find((entry) => resultIdsForJob(entry).length);
+  if (!job) return false;
+  const resultIds = resultIdsForJob(job);
+  const recentById = new Map((payload.recent_results || []).map((asset) => [asset.id, asset]));
+  const assets = resultIds.map((assetId, index) => {
+    const asset = recentById.get(assetId) || {};
+    return {
+      asset_id: assetId,
+      name: asset.name || `product-atelier-${index + 1}.${mode === 'cutout-batch' ? 'png' : 'jpg'}`,
+      url: asset.content_url || '',
+      content_url: asset.content_url || '',
+      thumbnail_url: asset.thumbnail_url || '',
+      role: asset.role || (mode === 'cutout-batch' ? 'result_cutout' : 'result_main'),
+      id: assetId,
+    };
+  });
+  await hydrateAssetUrls(assets);
+  const source = state.assets.find((asset) => asset.id === job.items?.[0]?.source_asset_id)
+    || selectedAssets(mode)[0];
+  state.originalDataUrl = assetUrl(source, 'content');
+  state.currentTaskId = job.id;
+  state.currentSessionId = job.session_id || '';
+  state.currentGenerationId = job.items?.[0]?.generation_id || '';
+  state.results = {
+    main: assets.filter((item) => item.role !== 'result_cutout'),
+    cutout: assets.filter((item) => item.role === 'result_cutout'),
+  };
+  state.resultTab = mode === 'cutout-batch' || !state.results.main.length ? 'cutout' : 'main';
+  state.viewerIndex = Math.max(0, resultIds.indexOf(preferredResultId));
+  renderResults();
+  setStage('success');
+  return true;
 }
 
 function restoreModeSnapshot(mode = state.currentMode) {
@@ -242,6 +354,7 @@ function toast(message, type = 'info', duration = 3200) {
 }
 
 function setBackendStatus(status, text) {
+  state.backendReady = status === 'connected';
   const dot = $('#conn-dot');
   dot.className = `conn-dot ${status}`;
   $('#conn-text').textContent = text;
@@ -319,13 +432,15 @@ function clearSession(keepMode = true) {
   if (!keepMode) switchMode('single', false);
   renderQueue();
   persistWorkspaceState();
+  scheduleWorkspaceDraftSave(state.currentMode, 0);
   updateCtaState();
 }
 
-function switchMode(mode, preserveCurrent = true) {
+function switchMode(mode, preserveCurrent = true, loadDurable = true) {
   if (!MODE_CONFIG[mode]) return;
   if (preserveCurrent && state.currentMode !== mode) captureModeSnapshot();
   state.currentMode = mode;
+  state.assets = state.assetsByCollection[MODE_CONFIG[mode].collection] || [];
   const config = MODE_CONFIG[mode];
   $$('.mode-button').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
   const input = $('#file-input');
@@ -338,21 +453,36 @@ function switchMode(mode, preserveCurrent = true) {
   $('#info-mode-badge').textContent = config.badge;
   $('#summary-mode').textContent = config.label;
   $('#summary-note').textContent = config.note;
-  $('#field-model').hidden = mode === 'cutout-batch';
-  $('#field-composition').hidden = mode === 'cutout-batch';
+  const quickCutout = mode === 'cutout-batch';
+  $('#creative-command').hidden = quickCutout;
+  $('#cutout-capability').hidden = !quickCutout;
+  $('#field-model').hidden = quickCutout;
+  $('#field-composition').hidden = quickCutout;
+  $('#field-intent').hidden = quickCutout;
+  $('#btn-knowledge-card').disabled = quickCutout;
+  $('#btn-knowledge-card').title = quickCutout
+    ? '快速去背景当前不读取知识库或文字描述'
+    : '查看本次知识介入';
   $('#field-refine').hidden = mode !== 'group-split';
   $('#batch-field-label').firstChild.textContent = mode === 'multi-file' ? '每图方案数 ' : '生成方案数 ';
   if (mode === 'multi-file' && $('#param-model').value === 'gpt-image-2') $('#model-reason').textContent = '每张独立处理';
   else if (mode === 'cutout-batch') $('#model-reason').textContent = '本地 BiRefNet';
   else $('#model-reason').textContent = '质量优先';
   state.resultTab = mode === 'cutout-batch' ? 'cutout' : 'main';
-  restoreModeSnapshot(mode);
-  syncLegacySelection();
-  renderQueue();
-  renderFileMeta();
-  updateQuickControls();
+  state.hydratingWorkspace = true;
+  try {
+    restoreModeSnapshot(mode);
+    syncLegacySelection();
+    renderQueue();
+    renderFileMeta();
+    updateQuickControls();
+  } finally {
+    state.hydratingWorkspace = false;
+  }
   persistWorkspaceState();
   updateCtaState();
+  if (state.backendReady && loadDurable) loadWorkspace(mode, true);
+  if (quickCutout) renderCutoutCapability();
 }
 
 function renderFileMeta() {
@@ -385,12 +515,16 @@ function renderQueue() {
   queue.innerHTML = state.assets.map((asset, index) => {
     const selected = selection.has(asset.id);
     const dimensions = asset.width && asset.height ? `${asset.width}×${asset.height}` : '已持久化';
-    return `<button class="queue-item asset-card ${selected ? 'selected' : ''}" type="button" data-asset-id="${escapeHtml(asset.id)}" aria-pressed="${selected}" aria-label="${selected ? '取消选择' : '选择'} ${escapeHtml(asset.name)}">
-      <span class="asset-card__visual"><img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" /><span class="asset-card__check" aria-hidden="true">${selected ? '✓' : '+'}</span></span>
-      <span class="asset-card__meta"><strong title="${escapeHtml(asset.name)}">${escapeHtml(asset.name || `素材 ${index + 1}`)}</strong><small>${escapeHtml(dimensions)}</small></span>
-    </button>`;
+    return `<article class="queue-item asset-card ${selected ? 'selected' : ''}">
+      <button class="asset-card__select" type="button" data-asset-id="${escapeHtml(asset.id)}" aria-pressed="${selected}" aria-label="${selected ? '取消选择' : '选择'} ${escapeHtml(asset.name)}">
+        <span class="asset-card__visual"><img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" /><span class="asset-card__check" aria-hidden="true">${selected ? '✓' : '+'}</span></span>
+        <span class="asset-card__meta"><strong title="${escapeHtml(asset.name)}">${escapeHtml(asset.name || `素材 ${index + 1}`)}</strong><small>${escapeHtml(dimensions)}</small></span>
+      </button>
+      <button class="asset-card__remove" type="button" data-remove-asset-id="${escapeHtml(asset.id)}" aria-label="将 ${escapeHtml(asset.name)} 移入回收站" title="移入回收站"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/></svg></button>
+    </article>`;
   }).join('');
-  $$('.asset-card', queue).forEach((button) => button.addEventListener('click', () => toggleAssetSelection(button.dataset.assetId)));
+  $$('[data-asset-id]', queue).forEach((button) => button.addEventListener('click', () => toggleAssetSelection(button.dataset.assetId)));
+  $$('[data-remove-asset-id]', queue).forEach((button) => button.addEventListener('click', () => removeWorkspaceAsset(button.dataset.removeAssetId)));
   setStage('ready');
   renderFileMeta();
 }
@@ -412,16 +546,18 @@ async function handleFiles(fileList) {
   $('#btn-browse').disabled = true;
   toast(`正在导入 ${valid.length} 张素材…`);
   try {
-    const result = await API.importAssets(valid);
+    const result = await API.importAssets(valid, MODE_CONFIG[importMode].collection);
     const imported = Array.isArray(result?.assets) ? result.assets : [];
     const errors = Array.isArray(result?.errors) ? result.errors : [];
-    await loadAssets(true);
+    await loadWorkspace(importMode, true);
     const config = MODE_CONFIG[importMode];
     state.modeSelections[importMode] = selectionAfterImport(
       selectedAssetIds(importMode),
       imported.map((asset) => asset.id),
       config,
     );
+    scheduleWorkspaceDraftSave(importMode, 0);
+    await flushWorkspaceDraft(importMode, true);
     syncLegacySelection();
     if (state.currentMode === importMode) renderQueue();
     persistWorkspaceState();
@@ -457,39 +593,28 @@ function toggleAssetSelection(assetId) {
   syncLegacySelection();
   renderQueue();
   persistWorkspaceState();
+  scheduleWorkspaceDraftSave(state.currentMode);
   updateCtaState();
   scheduleKnowledgeCompile();
 }
 
 async function loadAssets(silent = false) {
-  const requestVersion = ++state.assetsRequestVersion;
-  state.assetsAbortController?.abort();
-  const controller = new AbortController();
-  state.assetsAbortController = controller;
+  return loadWorkspace(state.currentMode, silent);
+}
+
+async function removeWorkspaceAsset(assetId) {
+  if (!assetId || !state.backendReady) return;
+  const mode = state.currentMode;
+  const collection = MODE_CONFIG[mode].collection;
   try {
-    const result = await API.getAssets(500, { signal: controller.signal, timeoutMs: 12000 });
-    if (requestVersion !== state.assetsRequestVersion) return null;
-    const assets = Array.isArray(result) ? result : (result?.assets || []);
-    await hydrateAssetUrls(assets);
-    state.assets = assets;
-    state.assetsAvailable = true;
-    const validIds = new Set(assets.map((asset) => asset.id));
-    MODE_IDS.forEach((mode) => {
-      state.modeSelections[mode] = selectedAssetIds(mode).filter((id) => validIds.has(id)).slice(0, MODE_CONFIG[mode].maxFiles);
-    });
-    syncLegacySelection();
-    renderQueue();
-    persistWorkspaceState();
-    return true;
+    await API.removeAssetFromCollection(collection, assetId);
+    state.modeSelections[mode] = selectedAssetIds(mode).filter((id) => id !== assetId);
+    await loadWorkspace(mode, true);
+    scheduleWorkspaceDraftSave(mode, 0);
+    await flushWorkspaceDraft(mode, true);
+    toast('素材已移入回收站，可在素材管理中恢复', 'success');
   } catch (error) {
-    if (requestVersion !== state.assetsRequestVersion) return null;
-    state.assetsAvailable = false;
-    if (!silent) toast(`素材工作台读取失败：${formatApiError(error, '持久素材接口不可用')}`, 'error', 6000);
-    $('#upload-title').textContent = '素材工作台暂不可用';
-    $('#upload-description').textContent = '后端可能尚未完成 /api/assets 接口，连接后可重试导入。';
-    return false;
-  } finally {
-    if (requestVersion === state.assetsRequestVersion) state.assetsAbortController = null;
+    toast(`移除失败：${formatApiError(error, '素材接口不可用')}`, 'error');
   }
 }
 
@@ -524,6 +649,10 @@ function buildBrief(mode = state.currentMode) {
 let compileTimer = null;
 async function compileKnowledgePreview(context = null) {
   const mode = context?.mode || state.currentMode;
+  if (mode === 'cutout-batch') {
+    if (mode === state.currentMode) renderCutoutCapability();
+    return null;
+  }
   const brief = context?.brief || buildBrief(mode);
   const hasInput = Boolean(selectedAssetIds(mode).length || brief.user_request || context?.force);
   if (!hasInput) return null;
@@ -551,6 +680,10 @@ function scheduleKnowledgeCompile() {
 }
 
 function renderKnowledge(bundle) {
+  if (state.currentMode === 'cutout-batch') {
+    renderCutoutCapability();
+    return;
+  }
   if (!bundle) {
     $('#knowledge-source-count').textContent = '0 条来源';
     $('#knowledge-source-list').innerHTML = '<div class="page-empty">尚未编译知识。</div>';
@@ -571,6 +704,15 @@ function renderKnowledge(bundle) {
   $('#knowledge-conflicts').innerHTML = conflicts.length ? conflicts.map((item) => `<div class="conflict-item"><span>!</span><p>${escapeHtml(item.message)}</p></div>`).join('') : '<div class="conflict-item ok"><span>✓</span><p>当前没有检测到规则冲突</p></div>';
 }
 
+function renderCutoutCapability() {
+  $('#knowledge-summary').textContent = '本地分割 · 不读取文字描述';
+  $('#knowledge-source-count').textContent = '0 条执行知识';
+  $('#knowledge-source-list').innerHTML = '<div class="page-empty">快速去背景只执行本地前景分割。</div>';
+  $('#knowledge-conflicts').innerHTML = '<div class="conflict-item ok"><span>i</span><p>需要按名称或数量选物时，请等待“智能选物”工作流。</p></div>';
+  $('#intelligence-brief').textContent = '当前能力：分离全部前景';
+  $('#intelligence-context').textContent = '文字描述、物体数量和知识规则不会进入本次执行链。';
+}
+
 function updateCtaState() {
   const button = $('#btn-generate');
   const count = selectedAssetIds().length;
@@ -580,7 +722,11 @@ function updateCtaState() {
   if (state.submitting) $('#generate-text').textContent = '正在加入任务 Dock';
   else if (!hasFiles) $('#generate-text').textContent = '选择图片开始';
   else $('#generate-text').textContent = MODE_CONFIG[state.currentMode].action;
-  $('#cta-hint').textContent = !hasFiles ? '从共享素材区选择后可入队' : `${count} 张素材 · ${Object.values(getIntentLocks()).filter(Boolean).length} 项锁定`;
+  if (!hasFiles) $('#cta-hint').textContent = state.currentMode === 'cutout-batch'
+    ? '从抠图素材中选择后可入队'
+    : '从当前素材区选择后可入队';
+  else if (state.currentMode === 'cutout-batch') $('#cta-hint').textContent = `${count} 张素材 · 本地分离全部前景`;
+  else $('#cta-hint').textContent = `${count} 张素材 · ${Object.values(getIntentLocks()).filter(Boolean).length} 项锁定`;
 }
 
 function updateQuickControls() {
@@ -654,14 +800,31 @@ async function handleGenerate() {
   updateCtaState();
   let payload = null;
   try {
+    captureModeSnapshot(submissionDraft.mode);
+    let savedDraft = await flushWorkspaceDraft(submissionDraft.mode, false);
+    if (!savedDraft) savedDraft = await flushWorkspaceDraft(submissionDraft.mode, false);
+    if (!savedDraft) throw new Error('当前工作草稿未能安全保存，请重试');
     payload = await compileSubmissionPayload(submissionDraft);
     const response = await API.createJob(payload);
     clearPendingSubmission(payload.client_request_id);
     const job = response?.job || response;
-    state.currentTaskId = job?.id || response?.job_id || '';
-    state.currentSessionId = job?.session_id || response?.session_id || '';
-    $('#summary-result').textContent = `${submissionDraft.source_asset_ids.length} 项任务已入队`;
-    $('#summary-result-note').textContent = '可继续选素材、切换模式或发起新任务';
+    const jobId = job?.id || response?.job_id || '';
+    const sessionId = job?.session_id || response?.session_id || '';
+    const modeSnapshot = state.modeSnapshots[submissionDraft.mode] || {};
+    state.modeSnapshots[submissionDraft.mode] = { ...modeSnapshot, active_job_id: jobId };
+    if (state.workspaceDrafts[submissionDraft.mode]) {
+      state.workspaceDrafts[submissionDraft.mode] = {
+        ...state.workspaceDrafts[submissionDraft.mode],
+        active_job_id: jobId,
+      };
+    }
+    scheduleWorkspaceDraftSave(submissionDraft.mode, 0);
+    if (state.currentMode === submissionDraft.mode) {
+      state.currentTaskId = jobId;
+      state.currentSessionId = sessionId;
+      $('#summary-result').textContent = `${submissionDraft.source_asset_ids.length} 项任务已入队`;
+      $('#summary-result-note').textContent = '可继续选素材、切换模式或发起新任务';
+    }
     toast('任务已加入 Dock，可继续组织素材', 'success');
     await loadJobs(true);
     openDrawer('jobs');
@@ -948,7 +1111,10 @@ async function openJobResults(jobId) {
       role: asset?.role || (job.mode === 'cutout-batch' ? 'result_cutout' : 'result_main'),
     };
   }));
-  if (job.mode && MODE_CONFIG[job.mode]) switchMode(job.mode);
+  if (job.mode && MODE_CONFIG[job.mode] && state.currentMode !== job.mode) {
+    switchMode(job.mode, true, false);
+    await loadWorkspace(job.mode, true);
+  }
   const source = state.assets.find((asset) => asset.id === job.items?.[0]?.source_asset_id);
   state.originalDataUrl = assetUrl(source, 'content');
   state.currentTaskId = job.id;
@@ -960,6 +1126,14 @@ async function openJobResults(jobId) {
   };
   state.resultTab = job.mode === 'cutout-batch' || !state.results.main.length ? 'cutout' : 'main';
   state.viewerIndex = 0;
+  const modeSnapshot = state.modeSnapshots[job.mode] || {};
+  state.modeSnapshots[job.mode] = {
+    ...modeSnapshot,
+    active_job_id: job.id,
+    current_generation_id: state.currentGenerationId || null,
+    current_result_asset_id: items[0]?.asset_id || null,
+  };
+  scheduleWorkspaceDraftSave(job.mode, 0);
   renderResults();
   setStage('success');
   switchPage('process');
@@ -1253,10 +1427,12 @@ function bindEvents() {
   $('#btn-retry').addEventListener('click', handleGenerate);
   $('#btn-error-reset').addEventListener('click', () => { setStage(state.selectedFiles.length ? 'ready' : 'empty'); updateCtaState(); });
   $('#brief-input').addEventListener('input', scheduleKnowledgeCompile);
+  $('#param-model').addEventListener('change', updateQuickControls);
   $('#param-angle').addEventListener('change', updateQuickControls);
   $('#param-fidelity').addEventListener('input', updateQuickControls);
   $('#param-batch').addEventListener('input', updateQuickControls);
   $$('input[name="platter"]').forEach((radio) => radio.addEventListener('change', updateQuickControls));
+  $('#param-refine').addEventListener('change', updateQuickControls);
   $$('[data-lock]').forEach((input) => input.addEventListener('change', () => { input.closest('.lock-chip').classList.toggle('active', input.checked); updateCtaState(); scheduleKnowledgeCompile(); }));
   $('#btn-advanced').addEventListener('click', () => openDrawer('advanced'));
   $$('[data-open-advanced]').forEach((button) => button.addEventListener('click', () => openDrawer('advanced')));
@@ -1313,9 +1489,14 @@ function bindEvents() {
   });
   window.addEventListener('beforeunload', () => {
     if (state.jobPollTimer) window.clearTimeout(state.jobPollTimer);
+    state.draftSaveTimers.forEach((timer) => window.clearTimeout(timer));
+    state.draftSaveTimers.clear();
     state.assetsRequestVersion += 1;
     state.assetsAbortController?.abort();
     invalidateJobsRead();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && state.backendReady) flushWorkspaceDraft(state.currentMode, true);
   });
 }
 

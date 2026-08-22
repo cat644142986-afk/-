@@ -115,7 +115,7 @@ MODEL_OPTIONS = {
 MAX_GROUP_PRODUCTS = 12
 GROUP_PRODUCT_TYPES = frozenset({"food", "packaging", "dish"})
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-22.3"
+SIDECAR_CONTRACT_VERSION = "2026-08-22.4"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -883,7 +883,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=sorted(TRUSTED_LOCAL_ORIGINS),
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Accept", "Content-Type"],
 )
 

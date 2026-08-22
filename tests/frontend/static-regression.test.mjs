@@ -5,9 +5,11 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, html, css] = await Promise.all([
+const [app, api, config, studioState, html, css] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-config.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-state.js'), 'utf8'),
   readFile(path.join(root, 'src/index.html'), 'utf8'),
   readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8'),
 ]);
@@ -19,13 +21,31 @@ test('job submission captures an immutable draft before any knowledge await', ()
   assert.ok(draft >= 0 && compile > draft && post > compile);
   assert.match(app, /persistPendingSubmission\(\{ fingerprint, requestId, payload \}\)/);
   assert.match(app, /clearPendingSubmission\(payload\.client_request_id\)/);
+  assert.match(app, /if \(!savedDraft\) savedDraft = await flushWorkspaceDraft\(submissionDraft\.mode, false\)/);
+  assert.match(app, /当前工作草稿未能安全保存/);
 });
 
 test('asset import writes selection back to the mode that initiated the async import', () => {
   const capture = app.indexOf('const importMode = state.currentMode');
-  const request = app.indexOf('await API.importAssets(valid)');
+  const request = app.indexOf('await API.importAssets(valid, MODE_CONFIG[importMode].collection)');
   const assignment = app.indexOf('state.modeSelections[importMode] = selectionAfterImport');
   assert.ok(capture >= 0 && request > capture && assignment > request);
+  assert.match(app, /await loadWorkspace\(importMode, true\)/);
+  assert.match(app, /MODE_CONFIG\[state\.currentMode\]\?\.collection === collection/);
+});
+
+test('workspace drafts are restored and saved through durable scoped APIs', () => {
+  assert.match(api, /export async function getWorkspace\(mode/);
+  assert.match(api, /export async function saveWorkspaceDraft\(mode, payload/);
+  assert.match(app, /await API\.getWorkspace\(mode/);
+  assert.match(app, /await API\.saveWorkspaceDraft\(mode, draftSavePayload\(mode\)\)/);
+  assert.match(app, /state\.modeSnapshots\[submissionDraft\.mode\] = \{ \.\.\.modeSnapshot, active_job_id: jobId \}/);
+  assert.match(studioState, /assetsByCollection: \{ product: \[\], group: \[\], cutout: \[\] \}/);
+  assert.doesNotMatch(app, /selectedAssetIds:\s*state\.modeSelections/);
+  assert.match(app, /document\.visibilityState === 'hidden'/);
+  assert.match(app, /\$\('#param-model'\)\.addEventListener\('change', updateQuickControls\)/);
+  assert.match(app, /state\.hydratingWorkspace = true;[\s\S]*?restoreModeSnapshot\(mode\);[\s\S]*?updateQuickControls\(\);[\s\S]*?state\.hydratingWorkspace = false;/);
+  assert.match(app, /if \(JSON\.stringify\(previous\) !== JSON\.stringify\(next\)\) scheduleWorkspaceDraftSave\(mode\)/);
 });
 
 test('durable job polling has timeout, cancellation, stale-response guard, and stable rendering', () => {
@@ -46,7 +66,7 @@ test('durable job polling has timeout, cancellation, stale-response guard, and s
 test('durable jobs expose pause and resume controls with per-job mutation locking', () => {
   assert.match(api, /export async function pauseJob\(jobId\)/);
   assert.match(api, /export async function resumeJob\(jobId\)/);
-  assert.match(app, /paused: \{ label: '已暂停', tone: 'paused' \}/);
+  assert.match(config, /paused: \{ label: '已暂停', tone: 'paused' \}/);
   assert.match(app, /jobLifecycleActions\(job\.status\)/);
   assert.match(app, /data-job-action="pause"/);
   assert.match(app, /data-job-action="resume"/);
@@ -72,4 +92,32 @@ test('unsupported Folder action is absent and export handles all result roles in
   assert.match(app, /processResultItems\(items/);
   assert.match(html, /id="btn-save-all"[^>]*>导出全部</);
   assert.match(css, /\.result-actions \{[^}]*repeat\(2,1fr\)/);
+});
+
+test('production shell keeps review contextual and removes the redundant bottom dashboard', () => {
+  assert.doesNotMatch(html, /class="rail-button"[^>]*data-page="compare"/);
+  assert.match(html, /id="btn-open-compare"/);
+  assert.doesNotMatch(html, /class="studio-meta-grid"/);
+  assert.match(html, /class="workspace-announcer"/);
+  assert.match(css, /\.studio-grid \{[^}]*grid-template-rows: minmax\(0, 1fr\)/);
+  assert.match(css, /\.traffic-light \{ width: 12px; height: 12px/);
+});
+
+test('workspace restores its latest result and exposes recoverable asset removal', () => {
+  assert.match(app, /await restoreWorkspaceResult\(mode, payload\)/);
+  assert.match(app, /payload\.jobs\.find\(\(entry\) => entry\.id === preferredId/);
+  assert.match(app, /current_result_asset_id: items\[0\]\?\.asset_id \|\| null/);
+  assert.match(api, /export async function removeAssetFromCollection\(collection, assetId\)/);
+  assert.match(app, /data-remove-asset-id=/);
+  assert.match(app, /await API\.removeAssetFromCollection\(collection, assetId\)/);
+  assert.match(app, /素材已移入回收站/);
+});
+
+test('quick cutout does not pretend to understand a semantic brief or knowledge rules', () => {
+  assert.match(html, /id="cutout-capability"[^>]*hidden/);
+  assert.match(html, /当前不理解物体名称、数量/);
+  assert.match(app, /\$\('#creative-command'\)\.hidden = quickCutout/);
+  assert.match(app, /\$\('#field-intent'\)\.hidden = quickCutout/);
+  assert.match(app, /if \(mode === 'cutout-batch'\) \{[\s\S]*?renderCutoutCapability\(\);[\s\S]*?return null/);
+  assert.match(app, /本地分割 · 不读取文字描述/);
 });

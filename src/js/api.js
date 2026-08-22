@@ -63,13 +63,16 @@ async function fetchJSON(url, options) {
   if (!resp.ok) {
     const text = await resp.text().catch(function() { return ''; });
     let message = text.slice(0, 300);
+    let detail = null;
     try {
       const parsed = JSON.parse(text);
+      detail = parsed?.detail || parsed;
       message = parsed?.detail?.message || parsed?.detail || parsed?.message || message;
     } catch (_) { /* keep the response text */ }
     const error = new Error('HTTP ' + resp.status + ': ' + message);
     error.status = resp.status;
     error.code = 'HTTP_ERROR';
+    error.detail = detail;
     throw error;
   }
   return resp.json();
@@ -191,10 +194,10 @@ export async function cutoutOnly(file, sessionId) {
 export async function getAssets(limit, options) {
   return fetchJSON('/api/assets?limit=' + encodeURIComponent(limit || 500), options);
 }
-export async function importAssets(files) {
+export async function importAssets(files, collection = 'product') {
   const fd = new FormData();
   Array.from(files || []).forEach(function(file) { fd.append('files', file); });
-  return postForm('/api/assets/import-batch', fd);
+  return postForm('/api/assets/import-batch?collection=' + encodeURIComponent(collection), fd);
 }
 export async function getAsset(assetId) {
   return fetchJSON('/api/assets/' + encodeURIComponent(assetId));
@@ -204,6 +207,71 @@ export async function getAssetContentUrl(assetId) {
 }
 export async function getAssetThumbnailUrl(assetId, size) {
   return absoluteApiUrl('/api/assets/' + encodeURIComponent(assetId) + '/thumbnail?size=' + encodeURIComponent(size || 320));
+}
+
+export async function getCollectionAssets(collection, options = {}) {
+  const limit = Number(options.limit || 200);
+  const offset = Number(options.offset || 0);
+  const includeTrashed = Boolean(options.includeTrashed);
+  return fetchJSON(
+    '/api/collections/' + encodeURIComponent(collection)
+      + '/assets?limit=' + encodeURIComponent(limit)
+      + '&offset=' + encodeURIComponent(offset)
+      + '&include_trashed=' + encodeURIComponent(includeTrashed),
+    options,
+  );
+}
+
+export async function getWorkspace(mode, options = {}) {
+  return fetchJSON('/api/workspaces/' + encodeURIComponent(mode), options);
+}
+
+export async function saveWorkspaceDraft(mode, payload, options = {}) {
+  return fetchJSON('/api/workspaces/' + encodeURIComponent(mode) + '/draft', {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function removeAssetFromCollection(collection, assetId) {
+  return fetchJSON(
+    '/api/collections/' + encodeURIComponent(collection) + '/assets/' + encodeURIComponent(assetId),
+    { method: 'DELETE' },
+  );
+}
+
+export async function restoreAssetToCollection(collection, assetId) {
+  return fetchJSON(
+    '/api/collections/' + encodeURIComponent(collection) + '/assets/' + encodeURIComponent(assetId) + '/restore',
+    { method: 'POST' },
+  );
+}
+
+export async function reorderCollectionAssets(collection, assetIds) {
+  return fetchJSON('/api/collections/' + encodeURIComponent(collection) + '/order', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_ids: Array.from(assetIds || [], String) }),
+  });
+}
+
+export async function getAssetReferences(assetId) {
+  return fetchJSON('/api/assets/' + encodeURIComponent(assetId) + '/references');
+}
+
+export async function getTrash(collection = '') {
+  const query = collection ? '?collection=' + encodeURIComponent(collection) : '';
+  return fetchJSON('/api/trash' + query);
+}
+
+export async function purgeAsset(assetId) {
+  return fetchJSON(
+    '/api/trash/assets/' + encodeURIComponent(assetId)
+      + '?confirm_asset_id=' + encodeURIComponent(assetId),
+    { method: 'DELETE' },
+  );
 }
 
 // Durable jobs
@@ -235,6 +303,22 @@ export async function retryJob(jobId, itemIds) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+  });
+}
+
+export async function getJobTraces(jobId) {
+  return fetchJSON('/api/jobs/' + encodeURIComponent(jobId) + '/traces');
+}
+
+export async function getJobReviews(jobId) {
+  return fetchJSON('/api/jobs/' + encodeURIComponent(jobId) + '/reviews');
+}
+
+export async function submitResultReview(jobId, payload) {
+  return fetchJSON('/api/jobs/' + encodeURIComponent(jobId) + '/reviews', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
   });
 }
 

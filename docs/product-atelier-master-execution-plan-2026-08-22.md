@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 日期：2026-08-22<br>
-> 状态：Phase 0–3 已实施并通过回归；下一步 Phase 4 生产前端<br>
+> 状态：Phase 0–3 已完成；Phase 4 正式前端工作区检查点已通过，打包壳/DPI/窄屏与模块拆分继续收尾<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -15,7 +15,7 @@
 | Phase 1 UI/交互契约原型 | 已完成 | `docs/phase-1-ui-interaction-contract-2026-08-22.md`、`prototypes/studio-phase1/` |
 | Phase 2 schema v3 | 已完成 | `docs/ledger-schema-v3.md`、真实 v2 副本迁移演练 |
 | Phase 3 工作区与 trace API | 已完成 | `docs/phase-3-workspace-api-contract-2026-08-22.md`、87 项 Python 与 16 项前端测试 |
-| Phase 4 正式 UI 骨架 | 下一步 | 以 Phase 1 原型和 Phase 3 API 为冻结输入开始接入 |
+| Phase 4 正式 UI 骨架 | 检查点通过，继续收尾 | `docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、87 项 Python 与 23 项前端测试 |
 
 ## 0. 这次要把什么做成
 
@@ -43,15 +43,13 @@ Product Atelier 不是一个“上传图片—选择模型—下载结果”的�
 
 ### 1.2 当前必须解决的问题
 
-- 素材仍是一个全局池；不同工作流查找成本高，现场恢复不完整。
-- 素材不能安全删除、恢复或判断是否仍被任务引用。
-- “对比”是常驻入口，但没有清楚的使用上下文和对象选择。
-- 抠图执行链只做前景/背景分离，不读取“只保留两个汉堡”一类语义描述。
-- 反馈虽然写入账本，但用户看不到作用对象、影响范围和是否形成了知识建议。
-- 主界面文字和卡片过多，左侧栏、顶部、底部摘要与右侧控制区同时争夺注意力。
-- 现有主要实现集中在 `src/js/app.js` 与 `src/css/stable-ui.css`；仓库中还留有大量历史 CSS。继续增加 `vXX-fixes.css` 会让视觉和状态冲突再次失控。
-- 实机出现过“schema v2 表已建立但版本标记仍为 1”的部分迁移状态，必须把恢复逻辑变为正式迁移能力，不能依靠人工改数据库。
-- 发布包曾出现 sidecar 与源码不同步的问题；构建、复制和启动验证必须纳入正式发布门禁。
+- 三个素材域、四个持久草稿和素材软移除已接入正式前端，但完整回收站、撤销、引用解释与批量管理界面仍未完成。
+- “对比”已从一级导航移除并保留为结果上下文动作；Phase 6 仍需完成对象选择、首次引导和评审恢复。
+- 快速抠图已明确只做全部前景分离并隐藏无效输入；语义选物、数量约束、蒙版确认与模型评测仍属于 Phase 7。
+- 反馈与 trace 已写入账本，用户尚未在完整 Result Review 中看到作用对象、影响范围和知识建议状态。
+- 主界面已完成第一轮信息减法、融合左栏与单舞台布局；约 960×600 的控制抽屉和 100/125/150% DPI 壳层验收尚未收口。
+- `app.js` 已抽出配置和纯状态模块，但 workspace/assets/jobs/review/knowledge/settings 职责仍需继续拆分。
+- 发布链已具备 sidecar 清单和真实健康检查；任何 API 契约变更后仍必须重建便携包，不能只复制旧可执行文件。
 
 ## 2. 不可妥协的产品与工程原则
 
@@ -399,6 +397,15 @@ DIY 外观要求：
 - 页面在 100/125/150% DPI 下不溢出、不遮挡主 CTA。
 - 新增状态不需要再写 `!important` 版本覆盖文件。
 
+**2026-08-22 检查点进度**
+
+- 已接入后端持久工作区：三个素材域、四个独立草稿、revision 冲突恢复、不可变提交快照和最近结果恢复。
+- 已落地融合左栏、精简顶部、中央单舞台、单一控制区、24px 根圆角、44px Logo 和 12px 红绿灯；移除常驻底部大卡与一级对比入口。
+- 已在隔离账本完成四工作流 20 次切换恢复实测；1280×720 Task Dock 无内部滚动，浏览器无 error/warning。
+- 已修复 CORS 漏掉 `PUT/DELETE` 导致“读取可用但草稿无法保存”的真实故障，sidecar contract 升级为 `2026-08-22.4`。
+- 已明确快速去背景不读取文字、数量、Intent Locks 或知识规则，不再伪装为语义选物。
+- 尚未完成：`app.js` 全职责拆分、约 960×600 控制抽屉、Tauri 100/125/150% DPI 壳层实测、核心文字可读性审计和统一状态组件；详见 Phase 4 检查点文档。
+
 ### 阶段 5：素材管理、模式上下文与 Task Dock（P0，预计 6–10 小时）
 
 **目标**
@@ -602,11 +609,11 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 
 开始任何代码修改前按顺序执行：
 
-1. 阅读本文、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/reliable-workspace-v2.md`、`docs/ledger-schema-v2.md`、`ROLLBACK.md`。
+1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
-3. 只创建阶段 0/1 的实施分支与任务清单，不直接开始 UI patch。
-4. 先交付交互状态矩阵与主界面原型供用户确认。
-5. 每完成一个阶段：运行该阶段测试、保存截图/测试证据、更新本文状态、独立提交并推送。
+3. 从 Phase 4 剩余门禁开始，不重复 Phase 0–3，也不退回历史 `vXX-fixes.css` 补丁路线。
+4. 先完成窄屏抽屉、Tauri 多 DPI 壳层与模块边界，再进入 Phase 5 素材管理/Task Dock。
+5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 
 ## 12. Definition of Done

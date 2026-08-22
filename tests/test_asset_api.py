@@ -126,19 +126,29 @@ class AssetApiTests(unittest.TestCase):
                     origin,
                 )
 
-        preflight = self.client.options(
-            "/api/jobs",
-            headers={
-                "Origin": "http://localhost:1420",
-                "Access-Control-Request-Method": "POST",
-                "Access-Control-Request-Headers": "content-type",
-            },
-        )
-        self.assertEqual(preflight.status_code, 200, preflight.text)
-        self.assertEqual(
-            preflight.headers.get("access-control-allow-origin"),
-            "http://localhost:1420",
-        )
+        for path, method in (
+            ("/api/jobs", "POST"),
+            ("/api/workspaces/single/draft", "PUT"),
+            ("/api/collections/product/assets/ast_example", "DELETE"),
+        ):
+            with self.subTest(method=method):
+                preflight = self.client.options(
+                    path,
+                    headers={
+                        "Origin": "http://localhost:1420",
+                        "Access-Control-Request-Method": method,
+                        "Access-Control-Request-Headers": "content-type",
+                    },
+                )
+                self.assertEqual(preflight.status_code, 200, preflight.text)
+                self.assertEqual(
+                    preflight.headers.get("access-control-allow-origin"),
+                    "http://localhost:1420",
+                )
+                self.assertIn(
+                    method,
+                    preflight.headers.get("access-control-allow-methods", ""),
+                )
 
         # The native Rust sidecar probe does not send an Origin header.
         health = self.client.get("/api/health")
