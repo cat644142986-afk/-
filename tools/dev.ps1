@@ -33,9 +33,8 @@ Write-Host ""
 
 # Step 1: Kill running instances
 Write-Host "[1/7] Killing running instances..." -ForegroundColor Yellow
-taskkill /F /IM "Product Atelier.exe" 2>$null | Out-Null
-taskkill /F /IM "product-atelier.exe" 2>$null | Out-Null
-taskkill /F /IM "python-server.exe" 2>$null | Out-Null
+Get-Process -Name "Product Atelier", "product-atelier", "python-server" -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
 # Step 2: Build Python sidecar from current source
