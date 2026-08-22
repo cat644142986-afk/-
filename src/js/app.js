@@ -12,6 +12,7 @@ import {
   submissionFingerprint,
 } from './workspace-state.js';
 import { JOB_STATUS, MODE_CONFIG, MODE_IDS, PAGE_CONFIG, STAGE_IDS } from './studio-config.js';
+import { createSettingsController } from './studio-settings.js';
 import { createWorkflowDockController } from './studio-shell.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 
@@ -24,6 +25,14 @@ let drawerReturnFocus = null;
 
 const state = createStudioState(MODE_IDS);
 const workflowDock = createWorkflowDockController();
+const settingsController = createSettingsController({
+  api: API,
+  state,
+  query: $,
+  toast,
+  updateQuickControls,
+  compileKnowledgePreview,
+});
 window.ProductAtelier = { state };
 
 function escapeHtml(value) {
@@ -391,7 +400,7 @@ function switchPage(page) {
   if (page !== 'process') workflowDock.close(false);
   if (page === 'history') loadSessions();
   if (page === 'memory') loadMemory();
-  if (page === 'settings') loadSettings();
+  if (page === 'settings') settingsController.load();
 }
 
 function setupTheme() {
@@ -1373,56 +1382,6 @@ async function loadMemory() {
   } catch (error) { $('#memory-list').innerHTML = `<div class="page-empty">读取失败：${escapeHtml(error)}</div>`; }
 }
 
-async function loadSettings() {
-  try {
-    const settings = await API.getSettings();
-    state.settings = settings;
-    const hasModeSnapshot = state.restoredModes.has(state.currentMode);
-    if (settings.default_model) { $('#setting-model').value = settings.default_model; if (!hasModeSnapshot) $('#param-model').value = settings.default_model; }
-    if (settings.default_platter) { if (!hasModeSnapshot) { const radio = $(`input[name="platter"][value="${settings.default_platter}"]`); if (radio) radio.checked = true; } $('#setting-platter').value = settings.default_platter; }
-    if (settings.default_angle) { $('#setting-angle').value = settings.default_angle; if (!hasModeSnapshot) $('#param-angle').value = settings.default_angle; }
-    if (settings.default_fidelity) { $('#setting-fidelity').value = settings.default_fidelity; if (!hasModeSnapshot) $('#param-fidelity').value = settings.default_fidelity; }
-    $('#setting-fid-val').textContent = `${$('#setting-fidelity').value}%`;
-    $('#output-dir').textContent = settings.output_dir || '—';
-    $('#setting-api-key').placeholder = settings.api_key_set ? '已配置（留空不修改）' : '输入 API Key';
-    $('#setting-knowledge-path').value = settings.knowledge_base_path || '';
-    renderKnowledgeStatus(settings.knowledge);
-    updateQuickControls();
-  } catch (error) { toast(`读取设置失败：${error}`, 'error'); }
-}
-
-function renderKnowledgeStatus(status) {
-  if (!status) return;
-  state.knowledgeStatus = status;
-  $('#knowledge-pill-text').textContent = status.available ? `${status.document_count} docs · ${status.rule_count} rules` : '知识库未连接';
-  $('#setting-knowledge-status').textContent = status.available ? '只读连接正常' : '未找到知识库';
-  $('#setting-knowledge-detail').textContent = status.available ? `${status.document_count} 份文档 · ${status.rule_count} 条规则` : status.design_path || '—';
-}
-
-async function saveSettings(includeKey = false) {
-  const payload = {
-    default_model: $('#setting-model').value,
-    default_platter: $('#setting-platter').value,
-    default_angle: $('#setting-angle').value,
-    default_fidelity: Number($('#setting-fidelity').value),
-    knowledge_base_path: $('#setting-knowledge-path').value.trim(),
-  };
-  if (includeKey && $('#setting-api-key').value.trim()) payload.api_key = $('#setting-api-key').value.trim();
-  try { const result = await API.saveSettings(payload); state.settings = result; $('#setting-api-key').value = ''; renderKnowledgeStatus(result.knowledge); toast('设置已保存', 'success'); }
-  catch (error) { toast(`保存失败：${error}`, 'error'); }
-}
-
-async function reloadKnowledge() {
-  try { const status = await API.reloadKnowledge($('#setting-knowledge-path').value.trim()); renderKnowledgeStatus(status); toast('知识库已重新编译', 'success'); await compileKnowledgePreview(); }
-  catch (error) { toast(`知识编译失败：${error}`, 'error'); }
-}
-
-async function checkBalance() {
-  $('#balance-display').textContent = '正在查询…';
-  try { const result = await API.checkBalance(); $('#balance-display').textContent = result.error ? result.error : `当前余额：${result.balance}`; }
-  catch (error) { $('#balance-display').textContent = `查询失败：${error}`; }
-}
-
 function bindEvents() {
   $$('.rail-button[data-page]').forEach((button) => button.addEventListener('click', () => switchPage(button.dataset.page)));
   $$('.mode-button').forEach((button) => button.addEventListener('click', () => switchMode(button.dataset.mode)));
@@ -1468,11 +1427,7 @@ function bindEvents() {
   $('#btn-feedback').addEventListener('click', () => { const reason = $('#feedback-input').value.trim(); if (!reason) { toast('请先写下具体判断'); return; } recordFeedback(state.lastFeedbackSignal === 'rejected' ? 'rejected' : 'note', reason); });
   $('#btn-refresh-history').addEventListener('click', loadSessions);
   $('#btn-refresh-memory').addEventListener('click', loadMemory);
-  $('#btn-save-key').addEventListener('click', () => saveSettings(true));
-  $('#btn-save-settings').addEventListener('click', () => saveSettings(false));
-  $('#btn-reload-knowledge').addEventListener('click', reloadKnowledge);
-  $('#btn-check-balance').addEventListener('click', checkBalance);
-  $('#setting-fidelity').addEventListener('input', () => { $('#setting-fid-val').textContent = `${$('#setting-fidelity').value}%`; });
+  settingsController.bind();
   $('#modal-backdrop').addEventListener('click', closeModal);
   $('#modal-close').addEventListener('click', closeModal);
   $('#btn-min-dot').addEventListener('click', () => API.minimizeWindow().catch(() => {}));
@@ -1521,7 +1476,7 @@ async function connectBackend() {
     const health = await API.checkHealth();
     if (health.ok) {
       setBackendStatus('connected', '已连接');
-      try { const status = await API.getKnowledgeStatus(); renderKnowledgeStatus(status); } catch (_) { /* keep app usable */ }
+      try { const status = await API.getKnowledgeStatus(); settingsController.renderKnowledgeStatus(status); } catch (_) { /* keep app usable */ }
       await Promise.all([loadAssets(false), loadJobs(true)]);
       startJobPolling();
       return;
@@ -1548,7 +1503,7 @@ async function init() {
   renderJobs();
   updateQuickControls();
   connectBackend();
-  loadSettings();
+  settingsController.load();
 }
 
 document.addEventListener('DOMContentLoaded', init);

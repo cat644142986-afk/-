@@ -15,7 +15,7 @@
 | Phase 1 UI/交互契约原型 | 已完成 | `docs/phase-1-ui-interaction-contract-2026-08-22.md`、`prototypes/studio-phase1/` |
 | Phase 2 schema v3 | 已完成 | `docs/ledger-schema-v3.md`、真实 v2 副本迁移演练 |
 | Phase 3 工作区与 trace API | 已完成 | `docs/phase-3-workspace-api-contract-2026-08-22.md`、87 项 Python 与 16 项前端测试 |
-| Phase 4 正式 UI 骨架 | 检查点通过，继续收尾 | `docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、87 项 Python 与 29 项前端测试 |
+| Phase 4 正式 UI 骨架 | 检查点通过，继续收尾 | `docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、87 项 Python 与 32 项前端测试 |
 
 ## 0. 这次要把什么做成
 
@@ -48,7 +48,7 @@ Product Atelier 不是一个“上传图片—选择模型—下载结果”的�
 - 快速抠图已明确只做全部前景分离并隐藏无效输入；语义选物、数量约束、蒙版确认与模型评测仍属于 Phase 7。
 - 反馈与 trace 已写入账本，用户尚未在完整 Result Review 中看到作用对象、影响范围和知识建议状态。
 - 主界面已完成第一轮信息减法、融合左栏、单舞台与 960×600 控制抽屉；Windows 物理/逻辑坐标契约和 DWM 圆角策略已修复，100/125/150% 真实屏幕与多显示器验收尚未收口。
-- `app.js` 已抽出配置、纯状态和响应式 shell 控制器，但 workspace/assets/jobs/review/knowledge/settings 职责仍需继续拆分。
+- `app.js` 已抽出配置、纯状态、响应式 shell 和 settings/knowledge connection 控制器，但 workspace/assets/jobs/review/knowledge 业务职责仍需继续拆分。
 - 发布链已具备 sidecar 清单和真实健康检查；任何 API 契约变更后仍必须重建便携包，不能只复制旧可执行文件。
 
 ## 2. 不可妥协的产品与工程原则

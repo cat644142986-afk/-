@@ -5,15 +5,26 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, config, shell, studioState, html, css] = await Promise.all([
+const [app, api, config, settings, shell, studioState, html, css] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-config.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-settings.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-shell.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-state.js'), 'utf8'),
   readFile(path.join(root, 'src/index.html'), 'utf8'),
   readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8'),
 ]);
+
+test('settings and knowledge connection behavior lives outside the page orchestrator', () => {
+  assert.match(app, /createSettingsController/);
+  assert.match(app, /settingsController\.bind\(\)/);
+  assert.match(app, /settingsController\.renderKnowledgeStatus\(status\)/);
+  assert.doesNotMatch(app, /function (loadSettings|renderKnowledgeStatus|saveSettings|reloadKnowledge|checkBalance)/);
+  assert.match(settings, /normalizeSettingsPayload/);
+  assert.match(settings, /knowledgeStatusCopy/);
+  assert.match(settings, /if \(bound\) return/);
+});
 
 test('job submission captures an immutable draft before any knowledge await', () => {
   const draft = app.indexOf('const submissionDraft = captureSubmissionDraft()');

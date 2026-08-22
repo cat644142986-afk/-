@@ -16,7 +16,7 @@
 
 ### 1.2 草稿、提交与异步安全
 
-- 前端新增 `studio-config.js`、`studio-state.js` 和 `studio-shell.js`，集中维护模式契约、集合映射、状态机、纯快照函数与窄屏任务控制器。
+- 前端新增 `studio-config.js`、`studio-state.js`、`studio-shell.js` 和 `studio-settings.js`，集中维护模式契约、集合映射、状态机、纯快照函数、窄屏任务控制器与设置/知识连接控制器。
 - 草稿通过 `GET /api/workspaces/{mode}` 和 `PUT /api/workspaces/{mode}/draft` 持久化，使用 revision 乐观并发控制。
 - 输入和核心参数防抖自动保存；页面隐藏时主动落盘；异步返回只写回发起操作的工作流。
 - 提交任务前先创建不可变前端快照并确认草稿已持久化，防止等待知识编译期间切换模式导致任务串台。
@@ -62,7 +62,7 @@ GET / POST / PUT / PATCH / DELETE / OPTIONS
 ## 3. 实际验证证据
 
 - Python：87/87 通过。
-- 前端 Node：29/29 通过。
+- 前端 Node：32/32 通过。
 - Vite：生产构建通过。
 - Rust：`cargo check` 通过。
 - 浏览器实测：四个工作流逐一切换后，前三个显示创作描述，快速抠图只显示真实能力边界；模块拆分后的 Studio、会话、成长、设置与任务抽屉控制台 0 error / 0 warning。
@@ -78,7 +78,7 @@ GET / POST / PUT / PATCH / DELETE / OPTIONS
 
 Phase 4 后续仍需：
 
-1. 将 `app.js` 继续按 workspace/assets/jobs/review/knowledge/settings 拆分；当前已抽出 config/state/shell，业务控制器仍在主文件。
+1. 将 `app.js` 继续按 workspace/assets/jobs/review/knowledge 拆分；当前已抽出 config/state/shell/settings，主要业务控制器仍在主文件。
 2. 在 Tauri 便携壳完成 Windows 100%/125%/150% DPI、最大化、最小尺寸和真实多显示器拖动验证；代码坐标契约已修复，但不能把单显示器当前倍率冒充三档实测。
 3. 验证窗口 24px CSS 几何与 Windows 11 实际外框在所有 DPI 下无底层漏出。
 4. 继续完成真实有数据状态下的结果评审和 10+20 任务详情排版；空态/基础态的非 Studio 字体与滚动层级已经收口。
