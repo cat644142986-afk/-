@@ -32,6 +32,13 @@ test('task dock filters all workflows and returns to immutable task context', ()
   assert.match(css, /\.job-filters/);
 });
 
+test('multi-file restores twenty sources and blocks plans above twenty-four outputs', () => {
+  assert.match(config, /'multi-file':[\s\S]*?maxFiles: 20/);
+  assert.match(app, /multiFileOutputPlan\(count, batch\)/);
+  assert.match(app, /单批最多 \$\{plan\.maxOutputs\}/);
+  assert.match(app, /aria-invalid/);
+});
+
 test('asset management exposes discoverable safe removal, undo, recycle, restore, and references', () => {
   assert.match(html, /id="btn-asset-manager"/);
   assert.match(html, /id="asset-drawer"/);

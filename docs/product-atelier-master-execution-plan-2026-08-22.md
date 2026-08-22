@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 日期：2026-08-22<br>
-> 状态：Phase 0–3 已完成；Phase 4 正式前端骨架已通过；Phase 5 素材安全管理与 Task Dock 跨工作流定位检查点已通过，继续完成批量管理与 10+20 真实并发门禁<br>
+> 状态：Phase 0–3 已完成；Phase 4 正式前端骨架已通过；Phase 5 素材安全管理、Task Dock 跨工作流定位与 10+20+1 离线并发门禁已通过，继续完成批量管理、部分失败与进程中断门禁<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -16,7 +16,7 @@
 | Phase 2 schema v3 | 已完成 | `docs/ledger-schema-v3.md`、真实 v2 副本迁移演练 |
 | Phase 3 工作区与 trace API | 已完成 | `docs/phase-3-workspace-api-contract-2026-08-22.md`、87 项 Python 与 16 项前端测试 |
 | Phase 4 正式 UI 骨架 | 检查点通过，继续收尾 | `docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、87 项 Python 与 32 项前端测试 |
-| Phase 5 素材管理与 Task Dock | 素材管理、全局筛选与任务现场恢复检查点通过，继续实施 | `docs/phase-5-asset-manager-checkpoint-2026-08-22.md`、`docs/phase-5-task-dock-checkpoint-2026-08-22.md`、前端 40 项测试与真实浏览器尺寸门禁 |
+| Phase 5 素材管理与 Task Dock | 素材管理、全局筛选、任务现场恢复与 10+20+1 离线压力检查点通过，继续实施 | `docs/phase-5-asset-manager-checkpoint-2026-08-22.md`、`docs/phase-5-task-dock-checkpoint-2026-08-22.md`、前端 42 项测试、后端 89 项测试与真实 Tauri 数据态门禁 |
 
 ## 0. 这次要把什么做成
 
@@ -407,6 +407,7 @@ DIY 外观要求：
 - 已明确快速去背景不读取文字、数量、Intent Locks 或知识规则，不再伪装为语义选物。
 - Studio 核心中文已使用 10/12/13px 分级 token，深色知识卡按内容高度呈现，不再靠巨型空卡或极小操作文字制造视觉效果。
 - Task Dock 已提供五类全局筛选、跨素材域缩略图读取与“回到现场”；恢复依据任务提交时的不可变快照，不会被后来编辑的草稿污染。
+- 10 张抠图、20 张多文件和 1 张单产品已通过离线并发与重开账本门禁；实机发现并修复旧 12 张截断，多文件现支持 20 张源图，同时保持单批最多 24 个生成输出的前后端一致保护。
 - 尚未完成：`app.js` 全业务职责拆分、Tauri 100/125/150% 与多显示器实机壳层验收、真实结果/大任务数据态排版和统一状态组件；空态/基础态全页排版已通过三档尺寸检查。详见 Phase 4 检查点文档。
 
 ### 阶段 5：素材管理、模式上下文与 Task Dock（P0，预计 6–10 小时）
@@ -615,7 +616,7 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 从 Phase 4 剩余门禁开始，不重复 Phase 0–3，也不退回历史 `vXX-fixes.css` 补丁路线。
-4. 960×600 控制抽屉、素材管理抽屉与 Task Dock 已通过；下一步完成 Phase 5 的 10+20 真实并发门禁与批量素材管理，同时继续补 Tauri 100/125% 与多显示器门禁。
+4. 960×600 控制抽屉、素材管理抽屉与 Task Dock 已通过，10+20+1 离线并发和 1283×803 真实 Tauri 数据态已通过；下一步完成部分失败/进程中断门禁与批量素材管理，同时继续补 Tauri 100/125% 与多显示器门禁。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 

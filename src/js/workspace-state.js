@@ -41,6 +41,22 @@ export function selectionAfterImport(currentIds, importedIds, config) {
   return [...new Set([...current, ...imported])].slice(0, maxFiles);
 }
 
+export function multiFileOutputPlan(sourceCount, variations, maxOutputs = 24) {
+  const sources = Math.max(0, Number(sourceCount) || 0);
+  const perSource = Math.max(1, Number(variations) || 1);
+  const outputLimit = Math.max(1, Number(maxOutputs) || 24);
+  const maxVariations = sources ? Math.max(1, Math.min(4, Math.floor(outputLimit / sources))) : 4;
+  const total = sources * perSource;
+  return {
+    sources,
+    variations: perSource,
+    total,
+    maxOutputs: outputLimit,
+    maxVariations,
+    valid: total <= outputLimit,
+  };
+}
+
 export function itemCompletionProgress(item) {
   return clampProgress(item?.progress);
 }

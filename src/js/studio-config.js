@@ -14,8 +14,8 @@ export const MODE_CONFIG = {
     note: '一张主图，保真生成与透明底同步输出', outputKind: 'ecommerce-main', collection: 'product',
   },
   'multi-file': {
-    label: '多文件独立批量', badge: 'BATCH', action: '运行批量队列', multiple: true, maxFiles: 12,
-    title: '从产品素材选择一组独立商品', eyebrow: 'PRODUCT ASSETS', limit: 'SELECT UP TO 12',
+    label: '多文件独立批量', badge: 'BATCH', action: '运行批量队列', multiple: true, maxFiles: 20,
+    title: '从产品素材选择一组独立商品', eyebrow: 'PRODUCT ASSETS', limit: 'SELECT UP TO 20',
     description: '与单产品共享素材；每张图片独立并发并保留逐项进度。',
     note: '多张源图逐一生成，不把它们误当成同一画面', outputKind: 'ecommerce-main', collection: 'product',
   },

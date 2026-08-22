@@ -1493,8 +1493,8 @@ def _validate_job_request(mode: str, source_asset_ids: list[str], parameters: di
     if mode in {"single", "group-split"} and len(source_asset_ids) != 1:
         raise ValueError(f"{mode} requires exactly one source asset")
     if mode == "multi-file":
-        if len(source_asset_ids) > 12:
-            raise ValueError("multi-file accepts at most 12 source assets")
+        if len(source_asset_ids) > 20:
+            raise ValueError("multi-file accepts at most 20 source assets")
         variations = int(parameters.get("variations", parameters.get("batch", 1)))
         if variations < 1 or variations > 4:
             raise ValueError("variations must be between 1 and 4")

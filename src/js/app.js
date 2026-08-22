@@ -6,6 +6,7 @@ import {
   jobCompletionProgress,
   jobLifecycleActions,
   jobsRenderSignature,
+  multiFileOutputPlan,
   processResultItems,
   queueCompletionProgress,
   selectionAfterImport,
@@ -789,7 +790,11 @@ function updateCtaState() {
   const button = $('#btn-generate');
   const count = selectedAssetIds().length;
   const hasFiles = count > 0;
-  button.disabled = !hasFiles || state.submitting || !state.assetsAvailable;
+  const batch = Number($('#param-batch').value);
+  const plan = multiFileOutputPlan(count, batch);
+  const capacityOkay = state.currentMode !== 'multi-file' || plan.valid;
+  button.disabled = !hasFiles || state.submitting || !state.assetsAvailable || !capacityOkay;
+  $('#param-batch').setAttribute('aria-invalid', String(!capacityOkay));
   button.classList.toggle('loading', state.submitting);
   if (state.submitting) $('#generate-text').textContent = '正在加入任务 Dock';
   else if (!hasFiles) $('#generate-text').textContent = '选择图片开始';
@@ -797,6 +802,7 @@ function updateCtaState() {
   if (!hasFiles) $('#cta-hint').textContent = state.currentMode === 'cutout-batch'
     ? '从抠图素材中选择后可入队'
     : '从当前素材区选择后可入队';
+  else if (!capacityOkay) $('#cta-hint').textContent = `${count} 张 × ${batch} 方案 = ${plan.total} 个输出；单批最多 ${plan.maxOutputs}，请改为每图 ${plan.maxVariations} 个`;
   else if (state.currentMode === 'cutout-batch') $('#cta-hint').textContent = `${count} 张素材 · 本地分离全部前景`;
   else $('#cta-hint').textContent = `${count} 张素材 · ${Object.values(getIntentLocks()).filter(Boolean).length} 项锁定`;
 }

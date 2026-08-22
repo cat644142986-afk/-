@@ -489,6 +489,14 @@ class DurableJobApiTests(unittest.TestCase):
         self.assertTrue(all(not path.exists() for path in destinations))
         self.network_request.assert_not_called()
 
+    def test_multi_file_accepts_twenty_sources_but_keeps_output_budget(self) -> None:
+        twenty = [f"asset-{index}" for index in range(20)]
+        server._validate_job_request("multi-file", twenty, {"variations": 1})
+        with self.assertRaisesRegex(ValueError, "at most 20 source assets"):
+            server._validate_job_request("multi-file", twenty + ["asset-20"], {"variations": 1})
+        with self.assertRaisesRegex(ValueError, "at most 24 generated variations"):
+            server._validate_job_request("multi-file", twenty, {"variations": 2})
+
     def test_cutout_batch_has_one_item_and_one_output_per_source(self) -> None:
         with self.live_client() as client:
             sources = [

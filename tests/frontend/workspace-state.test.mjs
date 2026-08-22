@@ -8,14 +8,15 @@ import {
   jobCompletionProgress,
   jobLifecycleActions,
   jobsRenderSignature,
+  multiFileOutputPlan,
   processResultItems,
   queueCompletionProgress,
   selectionAfterImport,
   submissionFingerprint,
 } from '../../src/js/workspace-state.js';
 
-test('submission snapshot freezes mode, twelve source IDs, order, and nested parameters', () => {
-  const sourceAssetIds = Array.from({ length: 12 }, (_, index) => `asset-${index + 1}`);
+test('submission snapshot freezes mode, twenty source IDs, order, and nested parameters', () => {
+  const sourceAssetIds = Array.from({ length: 20 }, (_, index) => `asset-${index + 1}`);
   const parameters = {
     model: 'gpt-image-2',
     brief: { mode: 'multi-file', intent_locks: { packaging_text: true } },
@@ -29,7 +30,7 @@ test('submission snapshot freezes mode, twelve source IDs, order, and nested par
   assert.equal(snapshot.mode, 'multi-file');
   assert.deepEqual(
     snapshot.source_asset_ids,
-    Array.from({ length: 12 }, (_, index) => `asset-${index + 1}`),
+    Array.from({ length: 20 }, (_, index) => `asset-${index + 1}`),
   );
   assert.equal(snapshot.parameters.model, 'gpt-image-2');
   assert.equal(snapshot.parameters.brief.intent_locks.packaging_text, true);
@@ -39,13 +40,22 @@ test('import selection is applied to the initiating mode and preserves determini
   const current = ['asset-2', 'asset-1'];
   const imported = ['asset-3', 'asset-2', ...Array.from({ length: 20 }, (_, index) => `new-${index}`)];
   assert.deepEqual(
-    selectionAfterImport(current, imported, { multiple: true, maxFiles: 12 }),
-    ['asset-2', 'asset-1', 'asset-3', 'new-0', 'new-1', 'new-2', 'new-3', 'new-4', 'new-5', 'new-6', 'new-7', 'new-8'],
+    selectionAfterImport(current, imported, { multiple: true, maxFiles: 20 }),
+    ['asset-2', 'asset-1', 'asset-3', ...Array.from({ length: 17 }, (_, index) => `new-${index}`)],
   );
   assert.deepEqual(
     selectionAfterImport(['old-selection'], ['new-source', 'extra'], { multiple: false, maxFiles: 1 }),
     ['new-source'],
   );
+});
+
+test('twenty-file batches stay usable while the 24-output safety limit remains explicit', () => {
+  assert.deepEqual(multiFileOutputPlan(20, 1), {
+    sources: 20, variations: 1, total: 20, maxOutputs: 24, maxVariations: 1, valid: true,
+  });
+  assert.equal(multiFileOutputPlan(20, 2).valid, false);
+  assert.equal(multiFileOutputPlan(12, 2).valid, true);
+  assert.equal(multiFileOutputPlan(8, 4).valid, false);
 });
 
 test('completion rendering follows durable DB progress for every item status', () => {
