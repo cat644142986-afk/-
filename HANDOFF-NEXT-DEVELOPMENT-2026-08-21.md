@@ -1,14 +1,14 @@
 # Product Atelier 下一阶段开发总交接（执行版）
 
-> 更新日期：2026-08-21
+> 更新日期：2026-08-22
 >
 > 正式源码：`D:\ProductAtelier-Desktop`
 >
 > GitHub：`https://github.com/cat644142986-afk/-.git`
 >
-> 当前可信基线提交：`9b51da4e95339896726f1895c21ca0b816a5f68e`
+> 当前可信底座提交：`0de214df2bea4fabf1da50299ea9f4569e89b71d`（`codex/reliable-batch-workspace`）
 >
-> 回滚标签：`baseline-2026-08-21-pre-workspace-refactor`
+> 前置回滚标签：`baseline-2026-08-21-pre-workspace-refactor`
 >
 > 本文用途：供下一位 Codex 直接接管开发；它补充并修正 `HANDOFF-2026-08-21.md` 的“下一阶段”部分。
 
@@ -21,6 +21,19 @@ schema v2 迁移、内容寻址素材、持久任务/尝试、有界公平调度
 当前契约见 `docs/ledger-schema-v2.md` 和 `docs/reliable-workspace-v2.md`，验证命令见 README 的“离线验收”。
 
 仍需在具备 Rust/Windows 环境的发布机上完成 Tauri 原生构建、Windows DPI、安装/覆盖升级，以及真实 BiRefNet/ONNX 资源峰值验收；本分支没有把这些未实测项目写成已通过。
+
+### 2026-08-22 实机反馈补充
+
+可靠底座通过离线测试后，实机暴露出下一层产品问题：全局素材池在多任务时查找成本过高、工作流返回现场不完整、素材无法整理删除、对比入口缺少明确场景，以及抠图描述虽然被保存但本地 BiRefNet 执行链没有读取。
+
+下一阶段必须先完成“分域素材 + 工作流上下文 + 可解释学习”，详细目标、实现方法和验收标准以 `docs/next-iteration-workspace-learning-plan-2026-08-22.md` 为准。关键冻结决策：
+
+1. 单产品/多文件共享产品素材域，合照与抠图各自独立；四个工作流草稿、任务和预览分别恢复。
+2. Task Dock 保持全局队列，当前工作区只显示本模式上下文；切换模式不影响后台并发。
+3. 素材删除采用软删除、回收站与引用保护，不能破坏运行任务和历史血缘。
+4. 对比改为 Result Review 的情境操作，不再依赖用户研究一个常驻空页面。
+5. 快速去背景与智能选物抠图必须分开；不允许静默忽略描述。
+6. 每个会改变输出的工作流建立独立知识域、执行 trace、反馈作用域和中文学习回执。
 
 ---
 
