@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Product Atelier · Phase 1 Prototype</title>
+  <link rel="stylesheet" href="./prototype.css" />
+</head>
+<body>
+  <svg class="symbol-library" aria-hidden="true">
+    <symbol id="i-logo" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4L12 3Z"/><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></symbol>
+    <symbol id="i-session" viewBox="0 0 24 24"><path d="M4 5h16v12H8l-4 3V5Z"/><path d="M8 9h8M8 13h5"/></symbol>
+    <symbol id="i-growth" viewBox="0 0 24 24"><path d="M5 19V9M12 19V5M19 19v-7"/><path d="m4 6 5-3 4 3 7-4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15.4A8 8 0 1 1 8.6 4a6.5 6.5 0 0 0 11.4 11.4Z"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9.5 4.5A3 3 0 0 0 5 7a3 3 0 0 0-1 5.7A3 3 0 0 0 6.5 18H10V6.5a2 2 0 0 0-.5-2Z"/><path d="M14.5 4.5A3 3 0 0 1 19 7a3 3 0 0 1 1 5.7 3 3 0 0 1-2.5 5.3H14V6.5a2 2 0 0 1 .5-2Z"/><path d="M7 10h3M14 10h3M8 14h2M14 14h2"/></symbol>
+    <symbol id="i-tasks" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0L8 8m4-4 4 4"/><path d="M5 14v5h14v-5"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  </svg>
+
+  <div class="desktop-stage">
+    <div class="app-window" id="app-window">
+      <aside class="rail" aria-label="主导航">
+        <div class="brand-mark" aria-label="Product Atelier 品牌标识">
+          <svg><use href="#i-logo" /></svg>
+        </div>
+
+        <nav class="primary-nav">
+          <button class="rail-action is-active" type="button" aria-current="page" data-page="studio">
+            <svg aria-hidden="true"><use href="#i-spark" /></svg><span>创作</span>
+          </button>
+          <button class="rail-action" type="button" data-page="sessions">
+            <svg aria-hidden="true"><use href="#i-session" /></svg><span>会话</span>
+          </button>
+          <button class="rail-action" type="button" data-page="growth">
+            <svg aria-hidden="true"><use href="#i-growth" /></svg><span>成长</span>
+          </button>
+        </nav>
+
+        <div class="rail-utilities">
+          <button class="rail-action utility-action" id="theme-toggle" type="button" aria-label="切换深色模式">
+            <svg aria-hidden="true"><use href="#i-moon" /></svg><span>主题</span>
+          </button>
+          <button class="rail-action utility-action" type="button" data-page="settings">
+            <svg aria-hidden="true"><use href="#i-settings" /></svg><span>设置</span>
+          </button>
+          <span class="connection-dot" role="status" aria-label="本地服务已连接"></span>
+        </div>
+      </aside>
+
+      <header class="topbar" data-tauri-drag-region>
+        <div class="page-context">
+          <p class="eyebrow">CREATIVE WORKSPACE</p>
+          <div class="title-row">
+            <h1>创作工作台</h1>
+            <span id="header-status">多文件任务进行中，其他草稿已保留</span>
+          </div>
+        </div>
+
+        <div class="topbar-actions">
+          <button class="status-pill" type="button" id="knowledge-pill" aria-label="查看本次知识影响">
+            <span class="status-icon knowledge"><svg aria-hidden="true"><use href="#i-brain" /></svg></span>
+            <span><strong>知识已就绪</strong><small>本次将采用 3 条规则</small></span>
+          </button>
+          <button class="status-pill" type="button" id="task-dock-toggle" aria-expanded="false" aria-controls="task-dock">
+            <span class="status-icon tasks"><svg aria-hidden="true"><use href="#i-tasks" /></svg></span>
+            <span><strong>3 项进行中</strong><small>抠图 8/10 · 批量 2/4</small></span>
+          </button>
+          <button class="control-toggle" id="control-toggle" type="button" aria-expanded="false" aria-controls="control-panel">
+            <svg aria-hidden="true"><use href="#i-sliders" /></svg><span>控制</span>
+          </button>
+          <div class="traffic-lights" aria-label="窗口控制">
+            <button class="traffic red" type="button" aria-label="关闭"></button>
+            <button class="traffic yellow" type="button" aria-label="最小化"></button>
+            <button class="traffic green" type="button" aria-label="最大化"></button>
+          </div>
+        </div>
+      </header>
+
+      <main class="studio-layout">
+        <section class="workspace-panel" aria-labelledby="workspace-title">
+          <div class="workspace-heading">
+            <div>
+              <p class="eyebrow">ASSET WORKSPACE</p>
+              <div class="heading-line">
+                <h2 id="workspace-title">产品素材</h2>
+                <span class="mode-badge" id="mode-badge">多文件</span>
+                <span class="asset-count" id="asset-count">4 张 · 已选 4 张</span>
+              </div>
+            </div>
+            <div class="workspace-actions">
+              <button class="text-action" type="button" id="manage-assets">管理素材</button>
+              <button class="icon-action" type="button" aria-label="添加素材">
+                <svg aria-hidden="true"><use href="#i-plus" /></svg>
+              </button>
+            </div>
+          </div>
+
+          <label class="brief-field" id="brief-field">
+            <span class="brief-index">01</span>
+            <input id="brief-input" value="保持包装文字与产品形态，统一为克制的暖白影棚质感" aria-label="创作描述" />
+            <span class="brief-label">创作描述</span>
+          </label>
+
+          <div class="asset-stage" id="asset-stage">
+            <div class="stage-toolbar">
+              <div class="view-segment" role="group" aria-label="素材视图">
+                <button class="is-active" type="button">素材</button>
+                <button type="button">任务结果</button>
+              </div>
+              <span class="selection-help">提交后仍可切换到其他工作流</span>
+            </div>
+
+            <div class="asset-grid" id="asset-grid">
+              <article class="asset-card is-selected is-complete">
+                <div class="product-art art-orange"><span class="pack pack-one"></span></div>
+                <div class="asset-meta"><strong>汉堡包装_A.png</strong><span>已完成</span></div>
+                <span class="asset-state"><svg aria-hidden="true"><use href="#i-check" /></svg></span>
+              </article>
+              <article class="asset-card is-selected is-running">
+                <div class="product-art art-cream"><span class="pack pack-two"></span></div>
+                <div class="asset-meta"><strong>汉堡包装_B.png</strong><span>处理中 · 72%</span></div>
+                <div class="mini-progress"><i style="width:72%"></i></div>
+              </article>
+              <article class="asset-card is-selected">
+                <div class="product-art art-yellow"><span class="pack pack-three"></span></div>
+                <div class="asset-meta"><strong>新品包装_C.png</strong><span>等待中</span></div>
+              </article>
+              <article class="asset-card is-selected">
+                <div class="product-art art-dark"><span class="pack pack-four"></span></div>
+                <div class="asset-meta"><strong>新品包装_D.png</strong><span>等待中</span></div>
+              </article>
+            </div>
+
+            <button class="empty-add" type="button" aria-label="继续添加产品素材">
+              <svg aria-hidden="true"><use href="#i-upload" /></svg><span>继续添加</span>
+            </button>
+          </div>
+
+          <div class="workspace-context">
+            <div class="context-signal"><i></i><span><strong>抠图任务仍在后台运行</strong><small>8 / 10 已完成，返回时会恢复原预览位置</small></span></div>
+            <button class="context-action" type="button" id="open-review">打开最近结果 <svg aria-hidden="true"><use href="#i-arrow" /></svg></button>
+          </div>
+        </section>
+
+        <aside class="control-panel" id="control-panel" aria-label="任务控制">
+          <div class="control-header">
+            <div><p class="eyebrow">WORKFLOW</p><h2>任务控制</h2></div>
+            <button class="icon-action panel-close" id="control-close" type="button" aria-label="关闭任务控制">
+              <svg aria-hidden="true"><use href="#i-close" /></svg>
+            </button>
+          </div>
+
+          <div class="workflow-grid" role="group" aria-label="工作流选择">
+            <button type="button" data-mode="single"><span>01</span><strong>单产品</strong><small>单图精修</small></button>
+            <button class="is-active" type="button" data-mode="batch"><span>02</span><strong>多文件</strong><small>独立并发</small></button>
+            <button type="button" data-mode="group"><span>03</span><strong>合照拆分</strong><small>对象识别</small></button>
+            <button type="button" data-mode="cutout"><span>04</span><strong>批量抠图</strong><small>去背景 / 选物</small></button>
+          </div>
+
+          <section class="control-section model-summary">
+            <div class="section-label"><span>MODEL STRATEGY</span><small>系统建议</small></div>
+            <button class="select-row" type="button"><span><strong>质量优先</strong><small>GPT Image 2 · 高保真</small></span><b>⌄</b></button>
+          </section>
+
+          <section class="control-section core-controls">
+            <div class="section-label"><span>CORE CONTROLS</span><small>仅显示会影响结果的选项</small></div>
+            <div class="control-cards">
+              <button type="button"><small>拍摄角度</small><strong>自动判断</strong></button>
+              <button type="button"><small>产品保真</small><strong>40%</strong></button>
+              <button type="button"><small>输出</small><strong>1 / 文件</strong></button>
+            </div>
+          </section>
+
+          <section class="intent-section">
+            <div class="section-label"><span>INTENT LOCKS</span><small>生成不可破坏项</small></div>
+            <div class="intent-chips"><span>主体结构</span><span>产品数量</span><span>包装文字</span></div>
+          </section>
+
+          <section class="knowledge-card">
+            <div class="knowledge-mark"><svg aria-hidden="true"><use href="#i-brain" /></svg></div>
+            <div><p>DESIGN INTELLIGENCE</p><strong>本次采用 3 条已批准规则</strong><small>食品暖调 · 包装文字保护 · 克制阴影</small></div>
+            <button type="button" aria-label="查看知识影响">↗</button>
+          </section>
+
+          <button class="advanced-action" id="advanced-open" type="button">
+            <span><svg aria-hidden="true"><use href="#i-sliders" /></svg><strong>高级设置</strong></span><small>模型、画面与批量例外</small>
+          </button>
+
+          <div class="primary-action-wrap">
+            <button class="primary-action" type="button" id="primary-action"><svg aria-hidden="true"><use href="#i-play" /></svg><span>开始处理 4 张</span></button>
+            <small>提交后任务将在后台并发运行</small>
+          </div>
+        </aside>
+      </main>
+
+      <aside class="task-dock" id="task-dock" aria-label="全局任务 Dock" aria-hidden="true">
+        <div class="dock-head"><div><p class="eyebrow">TASK DOCK</p><h2>所有任务</h2></div><button class="icon-action" id="task-dock-close" type="button" aria-label="关闭任务 Dock"><svg aria-hidden="true"><use href="#i-close" /></svg></button></div>
+        <div class="dock-filters"><button class="is-active" type="button">全部 3</button><button type="button">多文件 1</button><button type="button">抠图 1</button><button type="button">单产品 1</button></div>
+        <div class="job-list">
+          <article class="job-card"><div class="job-thumb art-orange"><span class="pack pack-one"></span></div><div class="job-main"><div><strong>批量商业精修</strong><span>2 / 4</span></div><p>正在生成第 3 张 · 约 36 秒</p><div class="job-progress"><i style="width:50%"></i></div><footer><span>多文件</span><button type="button">定位工作区</button></footer></div></article>
+          <article class="job-card"><div class="job-thumb checker"><span class="pack pack-two"></span></div><div class="job-main"><div><strong>快速去背景</strong><span>8 / 10</span></div><p>2 项正在后处理</p><div class="job-progress"><i style="width:80%"></i></div><footer><span>批量抠图</span><button type="button">定位工作区</button></footer></div></article>
+          <article class="job-card is-warning"><div class="job-thumb art-yellow"><span class="pack pack-three"></span></div><div class="job-main"><div><strong>单产品精修</strong><span>需要处理</span></div><p>模型响应超时 · 可单独重试</p><footer><span>单产品</span><button type="button">重试失败项</button></footer></div></article>
+        </div>
+      </aside>
+
+      <dialog class="review-dialog" id="review-dialog">
+        <form method="dialog" class="review-shell">
+          <header class="review-head"><div><p class="eyebrow">RESULT REVIEW</p><h2>这版是否接近你的最终作品？</h2><span>汉堡包装_A · 版本 03</span></div><button class="icon-action" value="close" aria-label="关闭结果评审"><svg aria-hidden="true"><use href="#i-close" /></svg></button></header>
+          <div class="review-layout">
+            <section class="compare-stage" id="compare-stage">
+              <div class="compare-layer before"><span class="pack pack-one"></span><b>原图</b></div>
+              <div class="compare-layer after" id="compare-after"><span class="pack pack-one polished"></span><b>结果</b></div>
+              <div class="compare-line" id="compare-line"><i></i></div>
+              <input type="range" id="compare-range" min="10" max="90" value="52" aria-label="拖动对比原图与结果" />
+            </section>
+            <aside class="review-decision">
+              <p class="eyebrow">YOUR DECISION</p>
+              <h3>先判断方向，再决定是否学习</h3>
+              <div class="decision-list" role="group" aria-label="结果判断">
+                <button type="button" data-decision="adopt"><span><svg aria-hidden="true"><use href="#i-check" /></svg></span><strong>可直接使用</strong><small>保存为采用结果</small></button>
+                <button type="button" data-decision="adjust"><span>±</span><strong>需要小幅调整</strong><small>立即修改本张</small></button>
+                <button type="button" data-decision="reject"><span>↺</span><strong>整体方向不对</strong><small>重做并记录原因</small></button>
+              </div>
+              <div class="reason-chips" aria-label="原因"><button type="button">构图</button><button type="button">主体</button><button type="button">文字</button><button type="button">质感</button><button type="button">数量</button></div>
+              <div class="learning-receipt" id="learning-receipt"><svg aria-hidden="true"><use href="#i-brain" /></svg><span><strong>反馈尚未影响知识</strong><small>选择后可决定“只改本张”或“形成待审核建议”</small></span></div>
+              <button class="review-primary" type="button" id="review-primary">确认本次判断</button>
+            </aside>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog class="advanced-dialog" id="advanced-dialog">
+        <form method="dialog"><header><div><p class="eyebrow">ADVANCED SETTINGS</p><h2>高级设置</h2></div><button class="icon-action" value="close" aria-label="关闭高级设置"><svg aria-hidden="true"><use href="#i-close" /></svg></button></header><p>模型细节、画面控制和单文件例外集中在这里；默认界面不持续占用空间。</p><div class="advanced-grid"><label>生成模型<select><option>GPT Image 2 · 高保真</option></select></label><label>批量并发<select><option>智能并发 · 3</option></select></label><label>画面比例<select><option>1:1 商品主图</option></select></label><label>失败策略<select><option>失败项自动重试 1 次</option></select></label></div><footer><button value="close">取消</button><button class="save-advanced" value="close">保存设置</button></footer></form>
+      </dialog>
+
+      <div class="prototype-toast" id="prototype-toast" role="status" aria-live="polite"></div>
+    </div>
+  </div>
+  <script type="module" src="./prototype.js"></script>
+</body>
+</html>
