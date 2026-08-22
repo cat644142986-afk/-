@@ -448,7 +448,7 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .job-dock-dot.error { background: var(--red); box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 14%, transparent); animation: none; }
 @keyframes jobPulse { 50% { transform: scale(.78); opacity: .72; } }
 
-.drawer--jobs { width: min(590px,calc(100vw - 26px)); grid-template-rows: auto auto minmax(0,1fr); }
+.drawer--jobs { width: min(590px,calc(100vw - 26px)); grid-template-rows: auto auto auto minmax(0,1fr); }
 .drawer--assets { width: min(520px,calc(100vw - 26px)); }
 .drawer--assets .drawer-head { align-items: flex-start; }
 .drawer--assets .drawer-head p:last-child { max-width: 330px; margin: 5px 0 0; color: var(--ink-3); font-size: var(--type-caption); line-height: 1.5; }
@@ -487,6 +487,13 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .jobs-overall p { margin: 0; color: var(--ink-2); font-size: var(--type-caption); }
 .jobs-overall__track { display: block; height: 5px; overflow: hidden; border-radius: 99px; background: var(--shell-deep); }
 .jobs-overall__track i { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg,var(--coral),var(--yellow)); transition: width .25s ease; }
+.job-filters { display: flex; gap: 6px; padding: 9px 15px; overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+.job-filters::-webkit-scrollbar { display: none; }
+.job-filters button { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 30px; padding: 0 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); color: var(--ink-2); font-size: var(--type-caption); font-weight: 750; }
+.job-filters button:hover { border-color: var(--line-2); color: var(--ink); }
+.job-filters button.active { border-color: var(--dark); background: var(--dark); color: #fff; }
+.job-filters span { min-width: 17px; padding: 1px 5px; border-radius: 999px; background: var(--shell-deep); color: var(--ink-3); font-size: var(--type-micro); text-align: center; }
+.job-filters button.active span { background: rgba(255,255,255,.14); color: #fff; }
 .job-list { min-height: 0; overflow: auto; padding: 12px 15px 20px; scrollbar-width: thin; }
 .job-empty { display: grid; place-content: center; justify-items: center; min-height: 220px; padding: 24px; text-align: center; }
 .job-empty strong { font-size: 14px; }

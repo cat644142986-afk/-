@@ -36,6 +36,8 @@ export function createStudioState(modeIds) {
     hydratingWorkspace: false,
     backendReady: false,
     jobs: [],
+    jobFilter: 'all',
+    jobSourceAssets: new Map(),
     knownJobStatuses: new Map(),
     jobsAvailable: true,
     assetsAvailable: true,

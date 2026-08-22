@@ -13,6 +13,12 @@ import {
 } from './workspace-state.js';
 import { createAssetManagerController } from './studio-assets.js';
 import { JOB_STATUS, MODE_CONFIG, MODE_IDS, PAGE_CONFIG, STAGE_IDS } from './studio-config.js';
+import {
+  jobFilterCounts,
+  jobsForFilter,
+  jobSourceIds,
+  jobWorkspaceSnapshot,
+} from './studio-jobs.js';
 import { createSettingsController } from './studio-settings.js';
 import { createWorkflowDockController } from './studio-shell.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
@@ -533,6 +539,35 @@ function switchMode(mode, preserveCurrent = true, loadDurable = true) {
   assetManager.sync();
 }
 
+function findJobSourceAsset(assetId) {
+  const id = String(assetId || '');
+  for (const assets of Object.values(state.assetsByCollection)) {
+    const asset = assets.find((entry) => entry.id === id);
+    if (asset) return asset;
+  }
+  return state.jobSourceAssets.get(id) || null;
+}
+
+async function hydrateJobSourceAssets(jobs) {
+  const missing = jobSourceIds(jobs).filter((assetId) => (
+    !findJobSourceAsset(assetId) && !state.jobSourceAssets.has(assetId)
+  ));
+  for (let offset = 0; offset < missing.length; offset += 6) {
+    const chunk = missing.slice(offset, offset + 6);
+    const resolved = await Promise.all(chunk.map(async (assetId) => {
+      try {
+        const response = await API.getAsset(assetId);
+        const asset = response?.asset || response;
+        if (asset?.id) await hydrateAssetUrls([asset]);
+        return [assetId, asset?.id ? asset : null];
+      } catch (_) {
+        return [assetId, null];
+      }
+    }));
+    resolved.forEach(([assetId, asset]) => state.jobSourceAssets.set(assetId, asset));
+  }
+}
+
 function renderFileMeta() {
   const selection = selectedAssets();
   const count = selection.length;
@@ -979,6 +1014,18 @@ function restoreJobListView(list, view) {
   target?.focus({ preventScroll: true });
 }
 
+function renderJobFilters() {
+  const counts = jobFilterCounts(state.jobs);
+  $$('[data-job-filter]').forEach((button) => {
+    const filter = button.dataset.jobFilter || 'all';
+    const active = filter === state.jobFilter;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+    const count = $('[data-job-filter-count]', button);
+    if (count) count.textContent = String(counts[filter] || 0);
+  });
+}
+
 function renderJobs(force = false) {
   const signature = jobsRenderSignature(
     state.jobs,
@@ -987,14 +1034,18 @@ function renderJobs(force = false) {
   );
   if (!force && signature === state.jobsRenderSignature) return;
   renderJobDockSummary();
+  renderJobFilters();
   const list = $('#job-list');
   const view = captureJobListView(list);
+  const visibleJobs = jobsForFilter(state.jobs, state.jobFilter);
   if (!state.jobsAvailable) {
     list.innerHTML = `<div class="job-empty job-empty--error"><strong>持久任务接口暂不可用</strong><p>请确认后端已提供 /api/jobs；素材与当前选择不会被清空。</p><button class="secondary-button" type="button" data-job-action="refresh" ${jobActionDisabled('refresh') ? 'disabled aria-busy="true"' : ''}>重试连接</button></div>`;
   } else if (!state.jobs.length) {
     list.innerHTML = '<div class="job-empty"><strong>还没有任务</strong><p>从素材工作台选择图片并入队后，进度会在此从后端恢复。</p></div>';
+  } else if (!visibleJobs.length) {
+    list.innerHTML = '<div class="job-empty"><strong>这个工作流还没有任务</strong><p>切换上方筛选，或回到工作台发起新任务。</p></div>';
   } else {
-    list.innerHTML = state.jobs.map((job) => {
+    list.innerHTML = visibleJobs.map((job) => {
       const status = JOB_STATUS[job.status] || { label: job.status || '未知', tone: 'unknown' };
       const progress = Math.round(jobProgress(job) * 100);
       const counts = jobCounts(job);
@@ -1005,7 +1056,7 @@ function renderJobs(force = false) {
       const canResume = lifecycleActions.includes('resume');
       const canCancel = lifecycleActions.includes('cancel');
       const items = (job.items || []).map((item, index) => {
-        const source = state.assets.find((asset) => asset.id === item.source_asset_id);
+        const source = findJobSourceAsset(item.source_asset_id);
         const itemStatus = JOB_STATUS[item.status] || { label: item.status || '未知', tone: 'unknown' };
         const itemProgress = Math.round(itemCompletionProgress(item) * 100);
         const error = item.error_message || item.error || '';
@@ -1024,6 +1075,7 @@ function renderJobs(force = false) {
         ${items ? `<ul class="job-items">${items}</ul>` : ''}
         <footer>
           ${hasResults ? `<button type="button" data-job-action="open-results" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-results', job.id) ? 'disabled aria-busy="true"' : ''}>打开结果</button>` : ''}
+          ${!hasResults ? `<button type="button" data-job-action="open-workspace" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-workspace', job.id) ? 'disabled aria-busy="true"' : ''}>回到现场</button>` : ''}
           ${retryable.length ? `<button type="button" data-job-action="retry-failed" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('retry-failed', job.id) ? 'disabled aria-busy="true"' : ''}>重试失败项</button>` : ''}
           ${canPause ? `<button type="button" data-job-action="pause" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('pause', job.id) ? 'disabled aria-busy="true"' : ''}>暂停任务</button>` : ''}
           ${canResume ? `<button type="button" data-job-action="resume" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('resume', job.id) ? 'disabled aria-busy="true"' : ''}>继续任务</button>` : ''}
@@ -1066,6 +1118,8 @@ async function loadJobs(silent = false) {
     const result = await API.getJobs(100, { signal: controller.signal, timeoutMs: 8000 });
     if (requestVersion !== state.jobsRequestVersion) return null;
     const jobs = Array.isArray(result) ? result : (result?.jobs || []);
+    await hydrateJobSourceAssets(jobs);
+    if (requestVersion !== state.jobsRequestVersion) return null;
     announceJobChanges(jobs);
     state.jobs = jobs;
     state.jobsAvailable = true;
@@ -1123,6 +1177,10 @@ async function handleJobAction(button) {
       await API.retryJob(jobId, ids);
       toast(`${ids.length} 个失败项已重新入队`, 'success');
     } else if (action === 'open-results') await openJobResults(jobId);
+    else if (action === 'open-workspace') {
+      const response = await API.getJob(jobId);
+      await openJobWorkspace(response?.job || response);
+    }
     await loadJobs(true);
   } catch (error) {
     toast(`任务操作失败：${formatApiError(error, '任务接口不可用')}`, 'error', 6000);
@@ -1132,6 +1190,50 @@ async function handleJobAction(button) {
     button.disabled = false;
     renderJobs(true);
   }
+}
+
+async function openJobWorkspace(job, announce = true) {
+  if (!job?.id || !MODE_CONFIG[job.mode]) throw new Error('任务工作流信息不完整');
+  if (state.currentMode !== job.mode) switchMode(job.mode, true, false);
+  await loadWorkspace(job.mode, true);
+
+  const sourceIds = Array.isArray(job.snapshot?.source_asset_ids)
+    ? job.snapshot.source_asset_ids.map(String)
+    : (job.items || []).map((item) => String(item.source_asset_id || '')).filter(Boolean);
+  const activeIds = new Set(state.assets.map((asset) => String(asset.id)));
+  const restoredIds = sourceIds
+    .filter((assetId) => activeIds.has(assetId))
+    .slice(0, MODE_CONFIG[job.mode].maxFiles);
+  const fallback = state.modeSnapshots[job.mode] || {};
+
+  state.hydratingWorkspace = true;
+  try {
+    state.modeSelections[job.mode] = restoredIds;
+    state.modeSnapshots[job.mode] = jobWorkspaceSnapshot(job, fallback);
+    state.currentTaskId = job.id;
+    state.currentSessionId = job.session_id || '';
+    state.currentGenerationId = job.items?.[0]?.generation_id || '';
+    state.results = null;
+    state.viewerIndex = 0;
+    restoreModeSnapshot(job.mode);
+    syncLegacySelection();
+    renderQueue();
+    renderFileMeta();
+    updateQuickControls();
+  } finally {
+    state.hydratingWorkspace = false;
+  }
+  assetManager.sync();
+  scheduleWorkspaceDraftSave(job.mode, 0);
+  switchPage('process');
+  closeDrawer('jobs');
+  const missing = Math.max(0, sourceIds.length - restoredIds.length);
+  $('#summary-result').textContent = `${MODE_CONFIG[job.mode].label} · 已回到任务现场`;
+  $('#summary-result-note').textContent = missing
+    ? `${restoredIds.length} 张源图已恢复，${missing} 张已移入回收站；任务快照仍保留`
+    : `${restoredIds.length} 张源图与提交参数已从任务快照恢复`;
+  if (announce) toast('已回到该任务的素材与参数现场', 'success');
+  return { restored: restoredIds.length, missing };
 }
 
 async function openJobResults(jobId) {
@@ -1149,11 +1251,8 @@ async function openJobResults(jobId) {
       role: asset?.role || (job.mode === 'cutout-batch' ? 'result_cutout' : 'result_main'),
     };
   }));
-  if (job.mode && MODE_CONFIG[job.mode] && state.currentMode !== job.mode) {
-    switchMode(job.mode, true, false);
-    await loadWorkspace(job.mode, true);
-  }
-  const source = state.assets.find((asset) => asset.id === job.items?.[0]?.source_asset_id);
+  await openJobWorkspace(job, false);
+  const source = findJobSourceAsset(job.items?.[0]?.source_asset_id);
   state.originalDataUrl = assetUrl(source, 'content');
   state.currentTaskId = job.id;
   state.currentSessionId = job.session_id || '';
@@ -1434,6 +1533,10 @@ function bindEvents() {
     button.disabled = true;
     try { await loadJobs(false); } finally { button.disabled = false; }
   });
+  $$('[data-job-filter]').forEach((button) => button.addEventListener('click', () => {
+    state.jobFilter = button.dataset.jobFilter || 'all';
+    renderJobs(true);
+  }));
   $('#btn-knowledge-card').addEventListener('click', () => openDrawer('intelligence'));
   $$('[data-close-drawer]').forEach((button) => button.addEventListener('click', () => closeDrawer(button.dataset.closeDrawer)));
   $$('.result-tab').forEach((button) => button.addEventListener('click', () => { state.resultTab = button.dataset.rtab; state.viewerIndex = 0; renderResults(); }));

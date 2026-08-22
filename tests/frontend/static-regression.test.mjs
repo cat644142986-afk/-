@@ -5,17 +5,32 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, assets, config, settings, shell, studioState, html, css] = await Promise.all([
+const [app, api, assets, config, jobs, settings, shell, studioState, html, css] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-config.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-jobs.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-settings.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-shell.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-state.js'), 'utf8'),
   readFile(path.join(root, 'src/index.html'), 'utf8'),
   readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8'),
 ]);
+
+test('task dock filters all workflows and returns to immutable task context', () => {
+  assert.match(html, /data-job-filter="all"/);
+  assert.match(html, /data-job-filter="multi-file"/);
+  assert.match(html, /data-job-filter="group-split"/);
+  assert.match(html, /data-job-filter="cutout-batch"/);
+  assert.match(jobs, /jobWorkspaceSnapshot/);
+  assert.match(jobs, /jobSourceIds/);
+  assert.match(app, /hydrateJobSourceAssets/);
+  assert.match(app, /data-job-action="open-workspace"/);
+  assert.match(app, /async function openJobWorkspace/);
+  assert.match(app, /await openJobWorkspace\(job, false\)/);
+  assert.match(css, /\.job-filters/);
+});
 
 test('asset management exposes discoverable safe removal, undo, recycle, restore, and references', () => {
   assert.match(html, /id="btn-asset-manager"/);
