@@ -12,6 +12,7 @@ from python.atelier_ledger import (
     AtelierLedger,
     InvalidStatusTransitionError,
     LedgerSchemaError,
+    PartialSchemaError,
     SCHEMA_VERSION,
     UnsupportedSchemaVersionError,
     validate_status_transition,
@@ -212,6 +213,61 @@ class LedgerMigrationTests(unittest.TestCase):
             len(list(Path(self.temp_dir.name).glob("*.backup-v1-*.sqlite3"))),
             backup_count,
         )
+
+    def test_complete_v2_schema_with_stale_v1_marker_is_repaired_safely(self) -> None:
+        AtelierLedger(self.db_path)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                "UPDATE ledger_meta SET value = '1' WHERE key = 'schema_version'"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        repaired = AtelierLedger(self.db_path)
+
+        self.assertEqual(read_schema_version(self.db_path), 2)
+        self.assertEqual(
+            repaired.last_schema_repair,
+            "recovered complete v2 schema with stale v1 metadata",
+        )
+        self.assertIsNotNone(repaired.last_migration_backup)
+        backup_path = repaired.last_migration_backup
+        assert backup_path is not None
+        self.assertEqual(read_schema_version(backup_path), 1)
+
+        reopened = AtelierLedger(self.db_path)
+        self.assertIsNone(reopened.last_schema_repair)
+        self.assertIsNone(reopened.last_migration_backup)
+
+    def test_incomplete_v2_schema_with_v1_marker_is_refused_without_mutation(self) -> None:
+        AtelierLedger(self.db_path)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("DROP INDEX idx_task_attempts_item")
+            connection.execute(
+                "UPDATE ledger_meta SET value = '1' WHERE key = 'schema_version'"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaisesRegex(PartialSchemaError, "missing indexes"):
+            AtelierLedger(self.db_path)
+
+        self.assertEqual(read_schema_version(self.db_path), 1)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            self.assertIsNone(connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' "
+                "AND name = 'idx_task_attempts_item'"
+            ).fetchone())
+        finally:
+            connection.close()
+        backups = list(Path(self.temp_dir.name).glob("*.backup-v1-*.sqlite3"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(read_schema_version(backups[0]), 1)
 
     def test_migration_failure_rolls_back_schema_version_ddl_and_data(self) -> None:
         create_v1_fixture(self.db_path)

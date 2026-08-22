@@ -64,19 +64,25 @@ cd C:\ProductAtelier-Desktop
 ```
 输出: `D:\rust-target\release\bundle\nsis\Product Atelier_1.0.0_x64-setup.exe` (~113MB)
 
-### 方式二：分步构建
+### 方式二：分步构建（推荐）
 
 ```powershell
-cd C:\ProductAtelier-Desktop
+cd D:\ProductAtelier-Desktop
 $env:PATH = "C:\mingw64\bin;$env:USERPROFILE\.cargo\bin;C:\Program Files\nodejs;$env:PATH"
 $env:CARGO_TARGET_DIR = "D:\rust-target"
 
-# 1. 构建Python后端 (PyInstaller onedir)
-pyinstaller python-server.spec --distpath src-tauri/bin --workpath build/pyinstaller --noconfirm
+# 1. 从当前源码重建Python后端、生成源码指纹并同步便携版
+powershell -ExecutionPolicy Bypass -File tools\Build-Sidecar.ps1 -DeployPortable
 
-# 2. 构建完整Tauri应用 (前端Vite + Rust + NSIS)
+# 2. 静态哈希 + 独立运行时健康检查
+powershell -ExecutionPolicy Bypass -File tools\Test-Portable.ps1
+
+# 3. 构建完整Tauri应用 (前端Vite + Rust + NSIS)
 npm run tauri build
 ```
+
+不要直接把旧 `python-server` 目录复制进发布包。正式 sidecar 必须带
+`sidecar-manifest.json`，且 `/api/health` 返回的 contract、源码指纹与清单一致。
 
 ### 方式三：便携版
 ```powershell
@@ -86,9 +92,11 @@ npm run tauri build
 
 ### 开发调试
 ```powershell
-.\dev.bat
-# 或:
-npm run tauri dev
+# 默认重建 sidecar、前端和 Rust，验证后再启动
+powershell -ExecutionPolicy Bypass -File tools\dev.ps1
+
+# 只跳过 Rust；sidecar 仍会重建
+powershell -ExecutionPolicy Bypass -File tools\dev.ps1 -Quick
 ```
 
 ## 目录结构

@@ -64,6 +64,20 @@ class AssetApiTests(unittest.TestCase):
         ) = self.original_globals
         self.temp_dir.cleanup()
 
+    def test_health_exposes_sidecar_contract_and_ledger_schema(self) -> None:
+        response = self.client.get("/api/health")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(
+            payload["service"]["contract_version"],
+            server.SIDECAR_CONTRACT_VERSION,
+        )
+        self.assertFalse(payload["service"]["packaged"])
+        self.assertEqual(payload["ledger"]["schema_version"], 2)
+        self.assertIsNone(payload["ledger"]["startup_repair"])
+
     def test_cors_rejects_untrusted_web_origin_for_reads_and_mutations(self) -> None:
         attacker_headers = {"Origin": "https://attacker.example"}
 

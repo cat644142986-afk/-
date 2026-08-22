@@ -1,13 +1,15 @@
-# ============================================================
+﻿# ============================================================
 # Product Atelier - One-Click Build, Deploy & Test
-# Usage: powershell -File tools\dev.ps1 [-Quick] [-NoScreenshot]
-#   -Quick: Skip Rust rebuild (frontend/CSS/JS only)
+# Usage: powershell -File tools\dev.ps1 [-Quick] [-SkipSidecar] [-NoScreenshot]
+#   -Quick: Skip Rust rebuild. The Python sidecar still rebuilds unless explicitly skipped.
+#   -SkipSidecar: Use only when the current packaged sidecar manifest already matches source.
 #   -NoScreenshot: Skip screenshot after launch
 # ============================================================
 param(
     [switch]$Quick,
+    [switch]$SkipSidecar,
     [switch]$NoScreenshot,
-    [int]$WaitSeconds = 6
+    [int]$WaitSeconds = 15
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,17 +28,27 @@ $PythonServer = "$PortableDir\python-server\python-server.exe"
 Write-Host "=== Product Atelier Dev Build ===" -ForegroundColor Cyan
 Write-Host "Project: $ProjectRoot"
 Write-Host "Quick mode: $Quick"
+Write-Host "Skip sidecar: $SkipSidecar"
 Write-Host ""
 
 # Step 1: Kill running instances
-Write-Host "[1/5] Killing running instances..." -ForegroundColor Yellow
+Write-Host "[1/7] Killing running instances..." -ForegroundColor Yellow
 taskkill /F /IM "Product Atelier.exe" 2>$null | Out-Null
 taskkill /F /IM "product-atelier.exe" 2>$null | Out-Null
 taskkill /F /IM "python-server.exe" 2>$null | Out-Null
 Start-Sleep -Seconds 2
 
-# Step 2: Build frontend
-Write-Host "[2/5] Building frontend (Vite)..." -ForegroundColor Yellow
+# Step 2: Build Python sidecar from current source
+Write-Host "[2/7] Building Python sidecar..." -ForegroundColor Yellow
+if (-not $SkipSidecar) {
+    & "$PSScriptRoot\Build-Sidecar.ps1" -DeployPortable
+    if ($LASTEXITCODE -ne 0) { throw "Sidecar build failed" }
+} else {
+    Write-Host "  Sidecar rebuild explicitly skipped" -ForegroundColor DarkGray
+}
+
+# Step 3: Build frontend
+Write-Host "[3/7] Building frontend (Vite)..." -ForegroundColor Yellow
 Push-Location $ProjectRoot
 try {
     npm run build 2>&1 | ForEach-Object {
@@ -48,9 +60,9 @@ try {
 }
 Write-Host "  Frontend built OK" -ForegroundColor Green
 
-# Step 3: Build Rust (skip in quick mode)
+# Step 4: Build Rust (skip in quick mode)
 if (-not $Quick) {
-    Write-Host "[3/5] Building Rust binary (Tauri)..." -ForegroundColor Yellow
+    Write-Host "[4/7] Building Rust binary (Tauri)..." -ForegroundColor Yellow
     Push-Location $ProjectRoot
     try {
         npx tauri build --no-bundle 2>&1 | ForEach-Object {
@@ -62,11 +74,11 @@ if (-not $Quick) {
     }
     Write-Host "  Rust build OK" -ForegroundColor Green
 } else {
-    Write-Host "[3/5] Skipping Rust build (-Quick mode)" -ForegroundColor DarkGray
+    Write-Host "[4/7] Skipping Rust build (-Quick mode)" -ForegroundColor DarkGray
 }
 
-# Step 4: Deploy to portable dir
-Write-Host "[4/5] Deploying to portable directory..." -ForegroundColor Yellow
+# Step 5: Deploy to portable dir
+Write-Host "[5/7] Deploying to portable directory..." -ForegroundColor Yellow
 if (-not (Test-Path $SourceExe) -and -not $Quick) {
     throw "Built exe not found at $SourceExe"
 }
@@ -79,8 +91,7 @@ if (Test-Path $SourceExe) {
 
 # Verify Python server exists
 if (-not (Test-Path $PythonServer)) {
-    Write-Host "  Warning: Python server not found at $PythonServer" -ForegroundColor Yellow
-    Write-Host "  Run 'python -m PyInstaller python-server.spec' if needed" -ForegroundColor Yellow
+    throw "Python server not found at $PythonServer"
 }
 
 # Update desktop shortcut
@@ -94,8 +105,13 @@ if (Test-Path $desktopShortcut) {
     Write-Host "  Desktop shortcut updated" -ForegroundColor Green
 }
 
-# Step 5: Launch & Screenshot
-Write-Host "[5/5] Launching application..." -ForegroundColor Yellow
+# Step 6: Verify the exact packaged sidecar before launch
+Write-Host "[6/7] Verifying portable sidecar..." -ForegroundColor Yellow
+& "$PSScriptRoot\Test-Portable.ps1" -PortableDir $PortableDir
+if ($LASTEXITCODE -ne 0) { throw "Portable verification failed" }
+
+# Step 7: Launch & Screenshot
+Write-Host "[7/7] Launching application..." -ForegroundColor Yellow
 Start-Process $TargetExe -WorkingDirectory $PortableDir
 Write-Host "  Waiting $WaitSeconds seconds for app to start..." -ForegroundColor DarkGray
 Start-Sleep -Seconds $WaitSeconds

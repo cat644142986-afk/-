@@ -110,6 +110,44 @@ MODEL_OPTIONS = {
 }
 MAX_GROUP_PRODUCTS = 12
 GROUP_PRODUCT_TYPES = frozenset({"food", "packaging", "dish"})
+PRODUCT_ATELIER_VERSION = "1.0.0"
+SIDECAR_CONTRACT_VERSION = "2026-08-22.1"
+SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
+
+
+def sidecar_runtime_info() -> dict[str, Any]:
+    """Return non-sensitive build identity for stale-sidecar detection."""
+    packaged = bool(getattr(sys, "frozen", False))
+    info: dict[str, Any] = {
+        "product_version": PRODUCT_ATELIER_VERSION,
+        "contract_version": SIDECAR_CONTRACT_VERSION,
+        "packaged": packaged,
+        "git_commit": "source",
+        "source_fingerprint": "source",
+        "built_at": None,
+    }
+    if not packaged:
+        return info
+
+    manifest_path = Path(sys.executable).resolve().parent / SIDECAR_MANIFEST_FILENAME
+    try:
+        # Windows PowerShell 5 writes UTF-8 JSON with a BOM by default.  Accept
+        # both BOM and BOM-less manifests so the same package verifies on every
+        # supported PowerShell version.
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError):
+        info["manifest_status"] = "missing_or_invalid"
+        return info
+
+    for key in ("git_commit", "source_fingerprint", "built_at"):
+        value = manifest.get(key)
+        if isinstance(value, str) and value:
+            info[key] = value
+    manifest_contract = manifest.get("contract_version")
+    info["manifest_status"] = (
+        "ok" if manifest_contract == SIDECAR_CONTRACT_VERSION else "contract_mismatch"
+    )
+    return info
 
 NEG_BASE = "模糊,低质量,变形,暗角,暖黄偏色,杂物,水印,文字,logo,阴影过重,噪点,失真,jpeg压缩痕迹,过度曝光,欠曝"
 NEG_REMOVE_PLATE = "盘子,碟子,托盘,木板,纸板,餐垫,桌布,玻璃器皿,碗,容器,器皿,摆盘,竹垫,石板,餐布,金属台面,木桌面,大理石桌面,纸杯,塑料盒"
@@ -868,9 +906,13 @@ async def health():
     configured_key = load_api_key()
     return {
         "status": "ok",
+        "service": sidecar_runtime_info(),
         "api_key_configured": bool(configured_key),
         "output_dir": str(OUTPUT_DIR),
-        "ledger": {"schema_version": LEDGER.stats()["schema_version"]},
+        "ledger": {
+            "schema_version": LEDGER.stats()["schema_version"],
+            "startup_repair": LEDGER.last_schema_repair,
+        },
     }
 
 

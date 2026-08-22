@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for Product Atelier Python backend (onedir mode)
 import os, sys
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 block_cipher = None
 
@@ -18,6 +18,8 @@ hidden = [
     'uvicorn.lifespan',
     'uvicorn.lifespan.on',
     'onnxruntime',
+    'onnxruntime.capi._pybind_state',
+    'onnxruntime.capi.onnxruntime_inference_collection',
     'rembg',
     'rembg.sessions.birefnet_general',
     'rembg.sessions.base',
@@ -54,12 +56,6 @@ hidden = [
     'numba.core',
     'llvmlite',
 ]
-hidden += collect_submodules('onnxruntime')
-hidden += collect_submodules('pymatting')
-hidden += collect_submodules('numba')
-hidden += collect_submodules('llvmlite')
-hidden += collect_submodules('scipy.ndimage')
-hidden += collect_submodules('skimage.morphology')
 
 datas = []
 for entry in collect_data_files('rembg'):
@@ -94,6 +90,11 @@ excludes = [
     'pytest',
     'pydub',
     'cv2', 'opencv_python', 'opencv_python_headless',
+    # Runtime does not use the developer/tooling surfaces that recursive
+    # collect_submodules previously pulled into the portable sidecar.
+    'pandas', 'sklearn', 'sqlalchemy', 'dask', 'cupy', 'tensorflow',
+    'onnxruntime.tools', 'onnxruntime.quantization', 'onnxruntime.transformers',
+    'numba.tests', 'numba.cuda', 'llvmlite.tests',
 ]
 
 a = Analysis(

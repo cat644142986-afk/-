@@ -65,6 +65,10 @@ class UnsupportedSchemaVersionError(LedgerSchemaError):
     """Raised when the database was created by a newer application version."""
 
 
+class PartialSchemaError(LedgerSchemaError):
+    """Raised when migration objects exist but do not form a valid schema."""
+
+
 class InvalidStatusTransitionError(ValueError):
     """Raised when a job or item attempts an illegal state transition."""
 
@@ -76,6 +80,37 @@ class IdempotencyConflictError(ValueError):
 V1_TABLES = frozenset({
     "ledger_meta", "sessions", "assets", "generations", "events",
     "feedback", "memory_suggestions",
+})
+
+V2_TABLE_COLUMNS = {
+    "asset_blobs": frozenset({
+        "id", "sha256", "storage_path", "mime", "size_bytes",
+        "width", "height", "created_at",
+    }),
+    "jobs": frozenset({
+        "id", "session_id", "mode", "status", "priority", "total_items",
+        "completed_items", "failed_items", "canceled_items",
+        "requested_concurrency", "idempotency_key", "parameters_json",
+        "created_at", "queued_at", "started_at", "updated_at", "completed_at",
+    }),
+    "job_items": frozenset({
+        "id", "job_id", "position", "source_asset_id", "generation_id",
+        "engine_key", "status", "progress", "attempt_count", "max_attempts",
+        "error_code", "error_message", "queued_at", "started_at",
+        "updated_at", "completed_at",
+    }),
+    "task_attempts": frozenset({
+        "id", "job_item_id", "attempt_number", "engine_key", "model",
+        "status", "error_code", "error_message", "latency_ms",
+        "metadata_json", "started_at", "completed_at",
+    }),
+}
+
+V2_REQUIRED_INDEXES = frozenset({
+    "idx_asset_blobs_sha256", "idx_assets_blob", "idx_assets_workspace_blob",
+    "idx_jobs_status_queue", "idx_jobs_idempotency", "idx_jobs_session",
+    "idx_job_items_job", "idx_job_items_status", "idx_job_items_source",
+    "idx_task_attempts_item",
 })
 
 V1_SCHEMA_STATEMENTS = (
@@ -253,6 +288,7 @@ class AtelierLedger:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._schema_lock = self._schema_lock_for(self.db_path)
         self.last_migration_backup: Path | None = None
+        self.last_schema_repair: str | None = None
         self._ensure_schema()
 
     def _connect(self, *, configure_storage: bool = True) -> sqlite3.Connection:
@@ -361,6 +397,70 @@ class AtelierLedger:
     def _create_v1_schema(connection: sqlite3.Connection) -> None:
         for statement in V1_SCHEMA_STATEMENTS:
             connection.execute(statement)
+
+    @classmethod
+    def _v2_objects_present(cls, connection: sqlite3.Connection) -> bool:
+        """Return whether any durable-workspace v2 object already exists."""
+        tables = cls._table_names(connection)
+        if tables.intersection(V2_TABLE_COLUMNS):
+            return True
+        if "assets" in tables:
+            asset_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(assets)")
+            }
+            if "blob_id" in asset_columns:
+                return True
+        return False
+
+    @classmethod
+    def _v2_contract_issues(cls, connection: sqlite3.Connection) -> list[str]:
+        """Describe why an existing v2-shaped database is unsafe to mark v2.
+
+        Older builds could commit all v2 objects but fail to advance the schema
+        marker.  That state is recoverable only when the complete frozen v2
+        contract is present and SQLite reports both structural and referential
+        integrity.  Anything else is left untouched for explicit recovery.
+        """
+        issues: list[str] = []
+        tables = cls._table_names(connection)
+        for table, required_columns in V2_TABLE_COLUMNS.items():
+            if table not in tables:
+                issues.append(f"missing table {table}")
+                continue
+            actual_columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing_columns = sorted(required_columns - actual_columns)
+            if missing_columns:
+                issues.append(f"{table} missing columns: {', '.join(missing_columns)}")
+
+        if "assets" not in tables:
+            issues.append("missing table assets")
+        else:
+            asset_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(assets)")
+            }
+            if "blob_id" not in asset_columns:
+                issues.append("assets missing column blob_id")
+
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        missing_indexes = sorted(V2_REQUIRED_INDEXES - indexes)
+        if missing_indexes:
+            issues.append(f"missing indexes: {', '.join(missing_indexes)}")
+
+        integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
+        if integrity_rows != ["ok"]:
+            issues.append(f"integrity_check failed: {'; '.join(integrity_rows[:3])}")
+
+        foreign_key_rows = list(connection.execute("PRAGMA foreign_key_check"))
+        if foreign_key_rows:
+            issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
+        return issues
 
     def _migration_backup_path(self, version: int) -> Path:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -530,7 +630,19 @@ class AtelierLedger:
 
                             while current_version < SCHEMA_VERSION:
                                 if current_version == 1:
-                                    self._migrate_v1_to_v2(connection)
+                                    if self._v2_objects_present(connection):
+                                        issues = self._v2_contract_issues(connection)
+                                        if issues:
+                                            raise PartialSchemaError(
+                                                "Detected an incomplete v2 ledger while schema metadata says v1; "
+                                                "the database was not changed. Restore the automatic backup or "
+                                                f"repair these objects first: {' | '.join(issues)}"
+                                            )
+                                        self.last_schema_repair = (
+                                            "recovered complete v2 schema with stale v1 metadata"
+                                        )
+                                    else:
+                                        self._migrate_v1_to_v2(connection)
                                     current_version = 2
                                 else:
                                     raise LedgerSchemaError(
@@ -540,7 +652,7 @@ class AtelierLedger:
                         connection.commit()
                     except Exception as exc:
                         connection.rollback()
-                        if isinstance(exc, UnsupportedSchemaVersionError):
+                        if isinstance(exc, (UnsupportedSchemaVersionError, PartialSchemaError)):
                             raise
                         raise LedgerSchemaError(
                             f"Failed to migrate ledger to schema v{SCHEMA_VERSION}"
