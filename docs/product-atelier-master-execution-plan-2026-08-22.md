@@ -1,11 +1,21 @@
 # Product Atelier 完整产品与开发执行总计划
 
-> 日期：2026-08-22  
-> 状态：计划冻结，尚未按本计划实施  
-> 适用分支：`codex/reliable-batch-workspace`  
-> 当前可靠底座：`0de214df2bea4fabf1da50299ea9f4569e89b71d`  
-> 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`  
+> 日期：2026-08-22<br>
+> 状态：Phase 0–3 已实施并通过回归；下一步 Phase 4 生产前端<br>
+> 适用分支：`codex/master-roadmap-phase-0-1`<br>
+> 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
+> 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
 > 本文定位：Product Atelier 后续开发的唯一主路线图；专项文档补充细节，但不得与本文冲突。
+
+## 实施进度
+
+| 阶段 | 状态 | 固化证据 |
+|---|---|---|
+| Phase 0 恢复与发布链 | 已完成 | `docs/phase-0-recovery-and-release-hardening-2026-08-22.md` |
+| Phase 1 UI/交互契约原型 | 已完成 | `docs/phase-1-ui-interaction-contract-2026-08-22.md`、`prototypes/studio-phase1/` |
+| Phase 2 schema v3 | 已完成 | `docs/ledger-schema-v3.md`、真实 v2 副本迁移演练 |
+| Phase 3 工作区与 trace API | 已完成 | `docs/phase-3-workspace-api-contract-2026-08-22.md`、87 项 Python 与 16 项前端测试 |
+| Phase 4 正式 UI 骨架 | 下一步 | 以 Phase 1 原型和 Phase 3 API 为冻结输入开始接入 |
 
 ## 0. 这次要把什么做成
 
@@ -24,11 +34,12 @@ Product Atelier 不是一个“上传图片—选择模型—下载结果”的�
 
 ### 1.1 已具备的可靠能力
 
-- schema v2 创作账本、内容寻址素材、持久任务与尝试记录。
+- schema v3 创作账本、三个逻辑素材域、四个独立草稿、不可变任务快照与内容寻址素材。
 - 有界公平调度、后台并发、暂停、取消、重试、崩溃恢复和 Task Dock。
 - 四个工作流入口：单产品、多文件、合照拆分、批量抠图。
 - 本地知识编译与 Design DNA 雏形。
 - Windows 无边框圆角桌面壳、便携版构建与桌面快捷方式。
+- 工作区聚合、素材回收站/引用保护、执行 trace 和结果评审 API。
 
 ### 1.2 当前必须解决的问题
 

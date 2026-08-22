@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -97,6 +97,14 @@ class IdempotencyConflictError(ValueError):
 
 class DraftRevisionConflictError(ValueError):
     """Raised when a stale client attempts to overwrite a newer draft."""
+
+
+class AssetPurgeBlockedError(ValueError):
+    """Raised when a workspace asset still has protected references."""
+
+    def __init__(self, message: str, summary: Mapping[str, Any]):
+        super().__init__(message)
+        self.summary = dict(summary)
 
 
 V1_TABLES = frozenset({
@@ -312,6 +320,16 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
 
 
+def idempotent_id(prefix: str, request_id: str) -> str:
+    request_id = str(request_id).strip()
+    if not request_id:
+        raise ValueError("client_request_id is required")
+    if len(request_id) > 200:
+        raise ValueError("client_request_id is too long")
+    digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:32]
+    return f"{prefix}_{digest}"
+
+
 def validate_status_transition(current: str, target: str, *, item: bool = False) -> None:
     """Validate the frozen v2 job state machine without mutating the database."""
     statuses = JOB_ITEM_STATUSES if item else JOB_STATUSES
@@ -340,6 +358,17 @@ def decode_json(value: str | None, fallback: Any) -> Any:
         return json.loads(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def json_contains_value(value: Any, target: str) -> bool:
+    """Return whether a decoded JSON value contains one exact string value."""
+    if isinstance(value, str):
+        return value == target
+    if isinstance(value, Mapping):
+        return any(json_contains_value(item, target) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(json_contains_value(item, target) for item in value)
+    return False
 
 
 class AtelierLedger:
@@ -1307,11 +1336,13 @@ class AtelierLedger:
         *,
         include_trashed: bool = False,
         limit: int = 500,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """List one logical asset domain without duplicating physical files."""
         if collection_key not in COLLECTION_IDS:
             raise ValueError(f"unsupported asset collection: {collection_key}")
         limit = max(1, min(int(limit), 2000))
+        offset = max(0, int(offset))
         statuses = ("active", "trashed") if include_trashed else ("active",)
         placeholders = ",".join("?" for _ in statuses)
         with self._connection() as connection:
@@ -1337,9 +1368,9 @@ class AtelierLedger:
                 JOIN asset_blobs b ON b.id = a.blob_id
                 WHERE m.collection_id = ? AND m.status IN ({placeholders})
                 ORDER BY m.position ASC, m.added_at ASC, m.id ASC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (COLLECTION_IDS[collection_key], *statuses, limit),
+                (COLLECTION_IDS[collection_key], *statuses, limit, offset),
             ).fetchall()
         items: list[dict[str, Any]] = []
         for row in rows:
@@ -1355,6 +1386,18 @@ class AtelierLedger:
             }
             items.append(item)
         return items
+
+    def count_collection_assets(self, collection_key: str, *, include_trashed: bool = False) -> int:
+        if collection_key not in COLLECTION_IDS:
+            raise ValueError(f"unsupported asset collection: {collection_key}")
+        statuses = ("active", "trashed") if include_trashed else ("active",)
+        placeholders = ",".join("?" for _ in statuses)
+        with self._connection() as connection:
+            return int(connection.execute(
+                f"SELECT COUNT(*) FROM asset_collection_members "
+                f"WHERE collection_id = ? AND status IN ({placeholders})",
+                (COLLECTION_IDS[collection_key], *statuses),
+            ).fetchone()[0])
 
     def add_asset_to_collection(self, asset_id: str, collection_key: str) -> dict[str, Any]:
         """Add or restore an existing physical asset in one logical domain."""
@@ -1428,6 +1471,227 @@ class AtelierLedger:
                 collection_key, include_trashed=True
             ) if item["id"] == asset_id
         )
+
+    def reorder_collection_assets(
+        self, collection_key: str, ordered_asset_ids: Iterable[str]
+    ) -> list[dict[str, Any]]:
+        """Replace the complete active order while retaining trashed members."""
+        if collection_key not in COLLECTION_IDS:
+            raise ValueError(f"unsupported asset collection: {collection_key}")
+        requested = [str(asset_id) for asset_id in ordered_asset_ids]
+        if len(requested) != len(set(requested)):
+            raise ValueError("collection order contains duplicate asset IDs")
+        collection_id = COLLECTION_IDS[collection_key]
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            rows = connection.execute(
+                "SELECT asset_id, status FROM asset_collection_members "
+                "WHERE collection_id = ? ORDER BY position",
+                (collection_id,),
+            ).fetchall()
+            active = [str(row["asset_id"]) for row in rows if row["status"] == "active"]
+            if set(requested) != set(active) or len(requested) != len(active):
+                raise ValueError("collection order must contain every active asset exactly once")
+            trashed = [str(row["asset_id"]) for row in rows if row["status"] == "trashed"]
+            connection.execute(
+                "UPDATE asset_collection_members SET position = position + 1000000 "
+                "WHERE collection_id = ?",
+                (collection_id,),
+            )
+            for position, member_asset_id in enumerate([*requested, *trashed]):
+                connection.execute(
+                    "UPDATE asset_collection_members SET position = ?, updated_at = ? "
+                    "WHERE collection_id = ? AND asset_id = ?",
+                    (position, now, collection_id, member_asset_id),
+                )
+        return self.list_collection_assets(collection_key)
+
+    @staticmethod
+    def _asset_reference_summary(
+        connection: sqlite3.Connection,
+        asset_id: str,
+        *,
+        retention_days: int,
+    ) -> dict[str, Any]:
+        asset = connection.execute(
+            """
+            SELECT a.id, a.role, a.created_at, a.blob_id,
+                   b.storage_path, b.sha256
+            FROM assets a
+            LEFT JOIN asset_blobs b ON b.id = a.blob_id
+            WHERE a.id = ?
+            """,
+            (asset_id,),
+        ).fetchone()
+        if asset is None or str(asset["role"]) != "workspace_source":
+            raise KeyError(f"unknown workspace asset: {asset_id}")
+
+        memberships = [
+            {
+                "collection": str(row["collection_key"]),
+                "status": str(row["status"]),
+                "removed_at": row["removed_at"],
+            }
+            for row in connection.execute(
+                """
+                SELECT c.key AS collection_key, m.status, m.removed_at
+                FROM asset_collection_members m
+                JOIN asset_collections c ON c.id = m.collection_id
+                WHERE m.asset_id = ? ORDER BY c.key
+                """,
+                (asset_id,),
+            )
+        ]
+
+        references: dict[str, list[str]] = {
+            "drafts": [
+                str(row["draft_id"])
+                for row in connection.execute(
+                    "SELECT draft_id FROM draft_asset_selections WHERE asset_id = ?",
+                    (asset_id,),
+                )
+            ],
+            "jobs": [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT DISTINCT job_id AS id FROM job_items WHERE source_asset_id = ?",
+                    (asset_id,),
+                )
+            ],
+            "child_assets": [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM assets WHERE parent_asset_id = ?",
+                    (asset_id,),
+                )
+            ],
+            "feedback": [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM feedback WHERE asset_id = ?",
+                    (asset_id,),
+                )
+            ],
+            "reviews": [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM result_reviews WHERE result_asset_id = ?",
+                    (asset_id,),
+                )
+            ],
+            "workspace_previews": [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM workflow_drafts WHERE current_result_asset_id = ?",
+                    (asset_id,),
+                )
+            ],
+            "job_snapshots": [],
+            "generation_results": [],
+            "knowledge_evidence": [],
+            "execution_traces": [],
+        }
+        for row in connection.execute("SELECT job_id, source_asset_ids_json FROM job_snapshots"):
+            if json_contains_value(decode_json(row["source_asset_ids_json"], []), asset_id):
+                references["job_snapshots"].append(str(row["job_id"]))
+        for row in connection.execute("SELECT id, result_asset_ids_json FROM generations"):
+            if json_contains_value(decode_json(row["result_asset_ids_json"], []), asset_id):
+                references["generation_results"].append(str(row["id"]))
+        for row in connection.execute(
+            "SELECT id, current_value_json, proposed_value_json, evidence_json FROM memory_suggestions"
+        ):
+            values = (
+                decode_json(row["current_value_json"], None),
+                decode_json(row["proposed_value_json"], None),
+                decode_json(row["evidence_json"], []),
+            )
+            if any(json_contains_value(value, asset_id) for value in values):
+                references["knowledge_evidence"].append(str(row["id"]))
+        for row in connection.execute(
+            "SELECT id, user_input_json, parameters_json, output_json FROM execution_traces"
+        ):
+            values = (
+                decode_json(row["user_input_json"], {}),
+                decode_json(row["parameters_json"], {}),
+                decode_json(row["output_json"], {}),
+            )
+            if any(json_contains_value(value, asset_id) for value in values):
+                references["execution_traces"].append(str(row["id"]))
+
+        active_memberships = [
+            item["collection"] for item in memberships if item["status"] == "active"
+        ]
+        retention_days = max(0, int(retention_days))
+        anchors = [
+            str(item["removed_at"])
+            for item in memberships
+            if item["status"] == "trashed" and item["removed_at"]
+        ]
+        anchor_text = max(anchors) if anchors else str(asset["created_at"])
+        try:
+            anchor = datetime.fromisoformat(anchor_text)
+            if anchor.tzinfo is None:
+                anchor = anchor.replace(tzinfo=timezone.utc)
+        except ValueError:
+            anchor = datetime.now(timezone.utc)
+        eligible_at = anchor + timedelta(days=retention_days)
+        retention_pending = datetime.now(timezone.utc) < eligible_at
+        reference_count = sum(len(ids) for ids in references.values())
+        blockers = []
+        if active_memberships:
+            blockers.append("active_membership")
+        blockers.extend(key for key, ids in references.items() if ids)
+        if retention_pending:
+            blockers.append("retention_period")
+        return {
+            "asset_id": asset_id,
+            "blob_sha256": str(asset["sha256"] or ""),
+            "storage_path": str(asset["storage_path"] or ""),
+            "memberships": memberships,
+            "active_memberships": active_memberships,
+            "references": references,
+            "reference_count": reference_count,
+            "retention_days": retention_days,
+            "purge_eligible_at": eligible_at.isoformat(timespec="milliseconds"),
+            "retention_pending": retention_pending,
+            "blockers": blockers,
+            "purge_allowed": not blockers,
+        }
+
+    def asset_reference_summary(
+        self, asset_id: str, *, retention_days: int = 30
+    ) -> dict[str, Any]:
+        with self._connection() as connection:
+            return self._asset_reference_summary(
+                connection, asset_id, retention_days=retention_days
+            )
+
+    def purge_workspace_asset(
+        self, asset_id: str, *, retention_days: int = 30
+    ) -> dict[str, Any]:
+        """Permanently remove unreferenced metadata after the recycle retention period."""
+        with self._immediate_connection() as connection:
+            summary = self._asset_reference_summary(
+                connection, asset_id, retention_days=retention_days
+            )
+            if not summary["purge_allowed"]:
+                raise AssetPurgeBlockedError(
+                    "workspace asset is still protected and cannot be purged", summary
+                )
+            blob_id = connection.execute(
+                "SELECT blob_id FROM assets WHERE id = ?", (asset_id,)
+            ).fetchone()["blob_id"]
+            connection.execute(
+                "DELETE FROM asset_collection_members WHERE asset_id = ?", (asset_id,)
+            )
+            connection.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
+            blob_deleted = False
+            if blob_id and connection.execute(
+                "SELECT 1 FROM assets WHERE blob_id = ? LIMIT 1", (blob_id,)
+            ).fetchone() is None:
+                connection.execute("DELETE FROM asset_blobs WHERE id = ?", (blob_id,))
+                blob_deleted = True
+        return {**summary, "purged": True, "blob_deleted": blob_deleted}
 
     def get_workflow_draft(self, mode: str) -> dict[str, Any]:
         if mode not in WORKFLOW_DRAFT_IDS:
@@ -1803,12 +2067,20 @@ class AtelierLedger:
             raise KeyError(f"unknown job item: {item_id}")
         return self._job_item_row(row)
 
-    def list_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
+    def list_jobs(self, limit: int = 100, *, mode: str | None = None) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 500))
+        if mode is not None and mode not in WORKFLOW_DRAFT_IDS:
+            raise ValueError(f"unsupported workflow mode: {mode}")
         with self._connection() as connection:
-            rows = connection.execute(
-                "SELECT id FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
+            if mode is None:
+                rows = connection.execute(
+                    "SELECT id FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT id FROM jobs WHERE mode = ? ORDER BY created_at DESC LIMIT ?",
+                    (mode, limit),
+                ).fetchall()
         return [self.get_job(str(row["id"]), include_attempts=False) for row in rows]
 
     def list_runnable_job_heads(self) -> list[dict[str, Any]]:
@@ -2978,6 +3250,226 @@ class AtelierLedger:
             ).fetchall()
         return [self._feedback_row(row) for row in rows]
 
+    def record_execution_trace(
+        self,
+        client_request_id: str,
+        *,
+        stage: str,
+        status: str,
+        job_id: str | None = None,
+        job_item_id: str | None = None,
+        generation_id: str | None = None,
+        user_input: Mapping[str, Any] | None = None,
+        compiled_prompt: str = "",
+        applied_knowledge: Iterable[Any] | None = None,
+        ignored_fields: Iterable[Any] | None = None,
+        model: str = "",
+        parameters: Mapping[str, Any] | None = None,
+        output: Mapping[str, Any] | None = None,
+        error_code: str = "",
+        error_message: str = "",
+    ) -> dict[str, Any]:
+        """Persist one explainable execution stage with retry-safe identity."""
+        trace_id = idempotent_id("trace", client_request_id)
+        stage = str(stage).strip()
+        if not stage:
+            raise ValueError("trace stage is required")
+        if status not in {"started", "completed", "failed", "skipped"}:
+            raise ValueError(f"unsupported trace status: {status}")
+        candidate = {
+            "id": trace_id,
+            "job_id": job_id,
+            "job_item_id": job_item_id,
+            "generation_id": generation_id,
+            "stage": stage,
+            "status": status,
+            "user_input": dict(user_input or {}),
+            "compiled_prompt": str(compiled_prompt),
+            "applied_knowledge": list(applied_knowledge or []),
+            "ignored_fields": list(ignored_fields or []),
+            "model": str(model),
+            "parameters": dict(parameters or {}),
+            "output": dict(output or {}),
+            "error_code": str(error_code),
+            "error_message": str(error_message),
+        }
+        with self._immediate_connection() as connection:
+            existing_row = connection.execute(
+                "SELECT * FROM execution_traces WHERE id = ?", (trace_id,)
+            ).fetchone()
+            if existing_row is not None:
+                existing = self._trace_row(existing_row)
+                comparable = {key: existing.get(key) for key in candidate}
+                if comparable != candidate:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different execution trace"
+                    )
+                return existing
+            if job_id:
+                if connection.execute(
+                    "SELECT 1 FROM jobs WHERE id = ?", (job_id,)
+                ).fetchone() is None:
+                    raise KeyError(f"unknown job: {job_id}")
+            if job_item_id:
+                item = connection.execute(
+                    "SELECT job_id, generation_id FROM job_items WHERE id = ?",
+                    (job_item_id,),
+                ).fetchone()
+                if item is None:
+                    raise KeyError(f"unknown job item: {job_item_id}")
+                if job_id and str(item["job_id"]) != job_id:
+                    raise ValueError("trace job item does not belong to its job")
+                if generation_id and str(item["generation_id"] or "") != generation_id:
+                    raise ValueError("trace generation does not belong to its job item")
+            elif generation_id:
+                generation = connection.execute(
+                    """
+                    SELECT ji.job_id FROM job_items ji
+                    WHERE ji.generation_id = ?
+                    """,
+                    (generation_id,),
+                ).fetchone()
+                if generation is None:
+                    raise KeyError(f"unknown job generation: {generation_id}")
+                if job_id and str(generation["job_id"]) != job_id:
+                    raise ValueError("trace generation does not belong to its job")
+            now = utc_now()
+            connection.execute(
+                """
+                INSERT INTO execution_traces(
+                    id, job_id, job_item_id, generation_id, stage, status,
+                    user_input_json, compiled_prompt, applied_knowledge_json,
+                    ignored_fields_json, model, parameters_json, output_json,
+                    error_code, error_message, created_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trace_id, job_id, job_item_id, generation_id, stage, status,
+                    encode_json(candidate["user_input"]), candidate["compiled_prompt"],
+                    encode_json(candidate["applied_knowledge"]),
+                    encode_json(candidate["ignored_fields"]), candidate["model"],
+                    encode_json(candidate["parameters"]), encode_json(candidate["output"]),
+                    candidate["error_code"], candidate["error_message"], now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM execution_traces WHERE id = ?", (trace_id,)
+            ).fetchone()
+        assert row is not None
+        return self._trace_row(row)
+
+    def list_execution_traces(self, job_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 1000))
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM execution_traces WHERE job_id = ? "
+                "ORDER BY created_at ASC, id ASC LIMIT ?",
+                (job_id, limit),
+            ).fetchall()
+        return [self._trace_row(row) for row in rows]
+
+    def submit_result_review(
+        self,
+        client_request_id: str,
+        *,
+        result_asset_id: str,
+        decision: str,
+        job_id: str | None = None,
+        generation_id: str | None = None,
+        reason_codes: Iterable[str] | None = None,
+        note: str = "",
+        learning_action: str = "none",
+    ) -> dict[str, Any]:
+        """Record a result judgment without conflating it with learning scope."""
+        review_id = idempotent_id("review", client_request_id)
+        if decision not in {"adopt", "adjust", "reject"}:
+            raise ValueError(f"unsupported review decision: {decision}")
+        if learning_action not in {"none", "record", "regenerate", "suggest"}:
+            raise ValueError(f"unsupported learning action: {learning_action}")
+        normalized_reasons = [str(reason).strip() for reason in reason_codes or [] if str(reason).strip()]
+        if len(normalized_reasons) > 20:
+            raise ValueError("a result review accepts at most 20 reason codes")
+        candidate = {
+            "id": review_id,
+            "job_id": job_id,
+            "generation_id": generation_id,
+            "result_asset_id": str(result_asset_id),
+            "decision": decision,
+            "reason_codes": normalized_reasons,
+            "note": str(note).strip(),
+            "learning_action": learning_action,
+            "status": "submitted",
+        }
+        with self._immediate_connection() as connection:
+            existing_row = connection.execute(
+                "SELECT * FROM result_reviews WHERE id = ?", (review_id,)
+            ).fetchone()
+            if existing_row is not None:
+                existing = self._review_row(existing_row)
+                comparable = {key: existing.get(key) for key in candidate}
+                if comparable != candidate:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different result review"
+                    )
+                return existing
+            asset = connection.execute(
+                "SELECT role FROM assets WHERE id = ?", (result_asset_id,)
+            ).fetchone()
+            if asset is None or str(asset["role"]) not in {"result_main", "result_cutout"}:
+                raise KeyError(f"unknown result asset: {result_asset_id}")
+            if job_id:
+                generations = connection.execute(
+                    """
+                    SELECT g.id, g.result_asset_ids_json
+                    FROM generations g
+                    JOIN job_items ji ON ji.generation_id = g.id
+                    WHERE ji.job_id = ?
+                    """,
+                    (job_id,),
+                ).fetchall()
+                if not generations:
+                    raise KeyError(f"unknown job: {job_id}")
+                matching = [
+                    row for row in generations
+                    if result_asset_id in decode_json(row["result_asset_ids_json"], [])
+                ]
+                if not matching:
+                    raise ValueError("review result does not belong to its job")
+                if generation_id and all(
+                    str(row["id"]) != generation_id for row in matching
+                ):
+                    raise ValueError("review result does not belong to its generation")
+            now = utc_now()
+            connection.execute(
+                """
+                INSERT INTO result_reviews(
+                    id, job_id, generation_id, result_asset_id, decision,
+                    reason_codes_json, note, learning_action, status,
+                    created_at, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?)
+                """,
+                (
+                    review_id, job_id, generation_id, result_asset_id, decision,
+                    encode_json(normalized_reasons), candidate["note"], learning_action,
+                    now, now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM result_reviews WHERE id = ?", (review_id,)
+            ).fetchone()
+        assert row is not None
+        return self._review_row(row)
+
+    def list_result_reviews(self, job_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 1000))
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM result_reviews WHERE job_id = ? "
+                "ORDER BY created_at ASC, id ASC LIMIT ?",
+                (job_id, limit),
+            ).fetchall()
+        return [self._review_row(row) for row in rows]
+
     def add_memory_suggestion(
         self,
         scope_type: str,
@@ -3296,6 +3788,26 @@ class AtelierLedger:
     def _feedback_row(row: sqlite3.Row) -> dict[str, Any]:
         item = dict(row)
         item["structured"] = decode_json(item.pop("structured_json", "{}"), {})
+        return item
+
+    @staticmethod
+    def _review_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["reason_codes"] = decode_json(item.pop("reason_codes_json", "[]"), [])
+        return item
+
+    @staticmethod
+    def _trace_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["user_input"] = decode_json(item.pop("user_input_json", "{}"), {})
+        item["applied_knowledge"] = decode_json(
+            item.pop("applied_knowledge_json", "[]"), []
+        )
+        item["ignored_fields"] = decode_json(
+            item.pop("ignored_fields_json", "[]"), []
+        )
+        item["parameters"] = decode_json(item.pop("parameters_json", "{}"), {})
+        item["output"] = decode_json(item.pop("output_json", "{}"), {})
         return item
 
     @staticmethod

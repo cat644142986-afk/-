@@ -6,7 +6,7 @@ FastAPI backend wrapping the existing AI image processing logic.
 Runs as a sidecar process alongside the Tauri desktop app.
 All business logic preserved 100% from ecom_workbench.py.
 """
-import base64, json, time, io, os, sys, re, mimetypes, threading, traceback, uuid, shutil, hashlib, math
+import base64, json, time, io, os, sys, re, mimetypes, threading, traceback, uuid, shutil, hashlib, math, sqlite3
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from datetime import datetime
@@ -23,7 +23,9 @@ import uvicorn
 try:
     from asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
     from atelier_ledger import (
+        AssetPurgeBlockedError,
         AtelierLedger,
+        DraftRevisionConflictError,
         IdempotencyConflictError,
         InvalidStatusTransitionError,
     )
@@ -33,7 +35,9 @@ try:
 except ImportError:  # Allows importing as python.server during local tests.
     from python.asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
     from python.atelier_ledger import (
+        AssetPurgeBlockedError,
         AtelierLedger,
+        DraftRevisionConflictError,
         IdempotencyConflictError,
         InvalidStatusTransitionError,
     )
@@ -111,8 +115,14 @@ MODEL_OPTIONS = {
 MAX_GROUP_PRODUCTS = 12
 GROUP_PRODUCT_TYPES = frozenset({"food", "packaging", "dish"})
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-22.2"
+SIDECAR_CONTRACT_VERSION = "2026-08-22.3"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
+try:
+    TRASH_RETENTION_DAYS = max(
+        0, int(os.environ.get("PRODUCT_ATELIER_TRASH_RETENTION_DAYS", "30"))
+    )
+except ValueError:
+    TRASH_RETENTION_DAYS = 30
 
 
 def sidecar_runtime_info() -> dict[str, Any]:
@@ -922,7 +932,7 @@ async def ledger_status():
 
 
 def workspace_asset_response(asset: dict) -> dict:
-    return {
+    response = {
         "id": asset["id"],
         "name": asset.get("name", ""),
         "mime": asset.get("mime", ""),
@@ -935,6 +945,9 @@ def workspace_asset_response(asset: dict) -> dict:
         "thumbnail_url": f"/api/assets/{asset['id']}/thumbnail",
         "content_url": f"/api/assets/{asset['id']}/content",
     }
+    if asset.get("membership"):
+        response["membership"] = dict(asset["membership"])
+    return response
 
 
 def result_asset_response(asset: dict) -> dict:
@@ -1012,13 +1025,25 @@ async def list_workspace_assets(limit: int = 500):
     }
 
 
+def _validate_collection_key(collection: str) -> str:
+    collection = str(collection).strip()
+    if collection not in {"product", "group", "cutout"}:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_COLLECTION", "message": f"Unsupported asset collection: {collection}"},
+        )
+    return collection
+
+
 @app.post("/api/assets/import")
-async def import_workspace_asset(file: UploadFile = File(...)):
+async def import_workspace_asset(file: UploadFile = File(...), collection: str = "product"):
+    collection = _validate_collection_key(collection)
     try:
         asset = await run_in_threadpool(
             ASSET_STORE.import_stream,
             file.file,
             file.filename or "upload",
+            collection,
         )
         return workspace_asset_response(asset)
     except AssetStoreError as exc:
@@ -1028,7 +1053,11 @@ async def import_workspace_asset(file: UploadFile = File(...)):
 
 
 @app.post("/api/assets/import-batch")
-async def import_workspace_assets(files: list[UploadFile] = File(...)):
+async def import_workspace_assets(
+    files: list[UploadFile] = File(...),
+    collection: str = "product",
+):
+    collection = _validate_collection_key(collection)
     if not files:
         raise HTTPException(status_code=400, detail={"code": "EMPTY_BATCH", "message": "No files provided"})
     if len(files) > 100:
@@ -1044,6 +1073,7 @@ async def import_workspace_assets(files: list[UploadFile] = File(...)):
                 ASSET_STORE.import_stream,
                 file.file,
                 file.filename or f"upload-{position}",
+                collection,
             )
             imported.append(workspace_asset_response(asset))
         except AssetStoreError as exc:
@@ -1113,6 +1143,295 @@ async def get_workspace_asset_thumbnail(asset_id: str, size: int = 512):
         )
     except AssetStoreError as exc:
         raise_asset_http_error(exc)
+
+
+class WorkflowDraftRequest(BaseModel):
+    expected_revision: int
+    selected_asset_ids: list[str] = Field(default_factory=list)
+    brief: dict[str, Any] = Field(default_factory=dict)
+    intent: dict[str, Any] = Field(default_factory=dict)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    active_job_id: Optional[str] = None
+    current_generation_id: Optional[str] = None
+    current_result_asset_id: Optional[str] = None
+    compare_state: dict[str, Any] = Field(default_factory=dict)
+    ui_state: dict[str, Any] = Field(default_factory=dict)
+    mask_state: dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        extra = "forbid"
+
+
+class CollectionOrderRequest(BaseModel):
+    asset_ids: list[str]
+
+    class Config:
+        extra = "forbid"
+
+
+class ExecutionTraceRequest(BaseModel):
+    client_request_id: str
+    stage: str
+    status: str
+    job_item_id: Optional[str] = None
+    generation_id: Optional[str] = None
+    user_input: dict[str, Any] = Field(default_factory=dict)
+    compiled_prompt: str = ""
+    applied_knowledge: list[Any] = Field(default_factory=list)
+    ignored_fields: list[Any] = Field(default_factory=list)
+    model: str = ""
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    output: dict[str, Any] = Field(default_factory=dict)
+    error_code: str = ""
+    error_message: str = ""
+
+    class Config:
+        extra = "forbid"
+
+
+class ResultReviewRequest(BaseModel):
+    client_request_id: str
+    result_asset_id: str
+    decision: str
+    generation_id: Optional[str] = None
+    reason_codes: list[str] = Field(default_factory=list)
+    note: str = ""
+    learning_action: str = "none"
+
+    class Config:
+        extra = "forbid"
+
+
+@app.get("/api/collections/{collection_key}/assets")
+async def list_scoped_assets(
+    collection_key: str,
+    limit: int = 100,
+    offset: int = 0,
+    include_trashed: bool = False,
+):
+    collection_key = _validate_collection_key(collection_key)
+    assets = LEDGER.list_collection_assets(
+        collection_key,
+        include_trashed=include_trashed,
+        limit=limit,
+        offset=offset,
+    )
+    return {
+        "collection": collection_key,
+        "assets": [workspace_asset_response(asset) for asset in assets],
+        "count": len(assets),
+        "total": LEDGER.count_collection_assets(
+            collection_key, include_trashed=include_trashed
+        ),
+        "limit": max(1, min(int(limit), 2000)),
+        "offset": max(0, int(offset)),
+    }
+
+
+@app.put("/api/collections/{collection_key}/order")
+async def reorder_scoped_assets(
+    collection_key: str, request: CollectionOrderRequest
+):
+    collection_key = _validate_collection_key(collection_key)
+    try:
+        assets = LEDGER.reorder_collection_assets(collection_key, request.asset_ids)
+        return {
+            "collection": collection_key,
+            "assets": [workspace_asset_response(asset) for asset in assets],
+            "count": len(assets),
+        }
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_COLLECTION_ORDER", "message": str(exc)},
+        )
+
+
+@app.post("/api/collections/{collection_key}/assets/{asset_id}")
+@app.post("/api/collections/{collection_key}/assets/{asset_id}/restore")
+async def restore_scoped_asset(collection_key: str, asset_id: str):
+    collection_key = _validate_collection_key(collection_key)
+    try:
+        asset = LEDGER.add_asset_to_collection(asset_id, collection_key)
+        return {"asset": workspace_asset_response(asset), "restored": True}
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "ASSET_NOT_FOUND", "message": str(exc)},
+        )
+
+
+@app.delete("/api/collections/{collection_key}/assets/{asset_id}")
+async def remove_scoped_asset(collection_key: str, asset_id: str):
+    collection_key = _validate_collection_key(collection_key)
+    try:
+        asset = LEDGER.remove_asset_from_collection(asset_id, collection_key)
+        return {"asset": workspace_asset_response(asset), "removed": True}
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "COLLECTION_MEMBER_NOT_FOUND", "message": str(exc)},
+        )
+
+
+@app.get("/api/trash")
+async def list_asset_trash(collection: Optional[str] = None, limit: int = 200):
+    keys = [_validate_collection_key(collection)] if collection else ["product", "group", "cutout"]
+    groups = {}
+    for key in keys:
+        items = [
+            asset for asset in LEDGER.list_collection_assets(
+                key, include_trashed=True, limit=limit
+            ) if asset["membership"]["status"] == "trashed"
+        ]
+        groups[key] = [workspace_asset_response(asset) for asset in items]
+    return {"collections": groups, "count": sum(len(items) for items in groups.values())}
+
+
+def _public_reference_summary(summary: dict) -> dict:
+    payload = dict(summary)
+    payload.pop("storage_path", None)
+    return payload
+
+
+@app.get("/api/assets/{asset_id}/references")
+async def get_asset_references(asset_id: str):
+    try:
+        return _public_reference_summary(
+            LEDGER.asset_reference_summary(
+                asset_id, retention_days=TRASH_RETENTION_DAYS
+            )
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "ASSET_NOT_FOUND", "message": str(exc)},
+        )
+
+
+@app.delete("/api/trash/assets/{asset_id}")
+async def purge_asset_from_trash(asset_id: str, confirm_asset_id: str):
+    if str(confirm_asset_id).strip() != asset_id:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "PURGE_CONFIRMATION_MISMATCH",
+                "message": "confirm_asset_id must exactly match the requested asset",
+            },
+        )
+    try:
+        result = await run_in_threadpool(
+            ASSET_STORE.purge_asset,
+            asset_id,
+            retention_days=TRASH_RETENTION_DAYS,
+        )
+        return _public_reference_summary(result)
+    except AssetPurgeBlockedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "ASSET_PURGE_BLOCKED",
+                "message": str(exc),
+                "summary": _public_reference_summary(exc.summary),
+            },
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "ASSET_NOT_FOUND", "message": str(exc)},
+        )
+    except AssetStoreError as exc:
+        raise_asset_http_error(exc)
+
+
+def _workspace_recent_results(jobs: list[dict], limit: int = 20) -> list[dict]:
+    results = []
+    seen = set()
+    for job in jobs:
+        for item in job.get("items", []):
+            for asset_id in item.get("result_asset_ids", []):
+                if asset_id in seen:
+                    continue
+                seen.add(asset_id)
+                try:
+                    asset = LEDGER.get_asset(asset_id)
+                except KeyError:
+                    continue
+                results.append(result_asset_response(asset))
+                if len(results) >= limit:
+                    return results
+    return results
+
+
+@app.get("/api/workspaces/{mode}")
+async def get_workflow_workspace(mode: str, asset_limit: int = 200, job_limit: int = 20):
+    try:
+        draft = LEDGER.get_workflow_draft(mode)
+        assets = LEDGER.list_collection_assets(
+            draft["collection_key"], limit=asset_limit
+        )
+        jobs = LEDGER.list_jobs(job_limit, mode=mode)
+        recent_reviews = []
+        for job in jobs:
+            recent_reviews.extend(LEDGER.list_result_reviews(job["id"], limit=20))
+        return {
+            "mode": mode,
+            "collection": draft["collection_key"],
+            "draft": draft,
+            "assets": [workspace_asset_response(asset) for asset in assets],
+            "asset_total": LEDGER.count_collection_assets(draft["collection_key"]),
+            "jobs": jobs,
+            "active_jobs": [
+                job for job in jobs
+                if job.get("status") not in {"completed", "failed", "canceled"}
+            ],
+            "recent_results": _workspace_recent_results(jobs),
+            "recent_reviews": recent_reviews[:50],
+        }
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_WORKFLOW", "message": str(exc)},
+        )
+
+
+@app.put("/api/workspaces/{mode}/draft")
+async def save_workflow_workspace_draft(mode: str, request: WorkflowDraftRequest):
+    try:
+        draft = LEDGER.save_workflow_draft(
+            mode,
+            expected_revision=request.expected_revision,
+            selected_asset_ids=request.selected_asset_ids,
+            brief=request.brief,
+            intent=request.intent,
+            parameters=request.parameters,
+            active_job_id=request.active_job_id,
+            current_generation_id=request.current_generation_id,
+            current_result_asset_id=request.current_result_asset_id,
+            compare_state=request.compare_state,
+            ui_state=request.ui_state,
+            mask_state=request.mask_state,
+        )
+        return {"draft": draft}
+    except DraftRevisionConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DRAFT_REVISION_CONFLICT",
+                "message": str(exc),
+                "current": LEDGER.get_workflow_draft(mode),
+            },
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "DRAFT_REFERENCE_NOT_FOUND", "message": str(exc)},
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_DRAFT", "message": str(exc)},
+        )
 
 
 class JobCreateRequest(BaseModel):
@@ -1257,6 +1576,103 @@ async def get_durable_job(job_id: str):
         raise HTTPException(
             status_code=404,
             detail={"code": "JOB_NOT_FOUND", "message": str(exc)},
+        )
+
+
+@app.get("/api/jobs/{job_id}/traces")
+async def list_job_traces(job_id: str, limit: int = 200):
+    try:
+        LEDGER.get_job(job_id, include_attempts=False)
+        traces = LEDGER.list_execution_traces(job_id, limit)
+        return {"traces": traces, "count": len(traces)}
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "JOB_NOT_FOUND", "message": str(exc)},
+        )
+
+
+@app.post("/api/jobs/{job_id}/traces")
+async def create_job_trace(job_id: str, request: ExecutionTraceRequest):
+    try:
+        LEDGER.get_job(job_id, include_attempts=False)
+        trace = LEDGER.record_execution_trace(
+            request.client_request_id,
+            job_id=job_id,
+            job_item_id=request.job_item_id,
+            generation_id=request.generation_id,
+            stage=request.stage,
+            status=request.status,
+            user_input=request.user_input,
+            compiled_prompt=request.compiled_prompt,
+            applied_knowledge=request.applied_knowledge,
+            ignored_fields=request.ignored_fields,
+            model=request.model,
+            parameters=request.parameters,
+            output=request.output,
+            error_code=request.error_code,
+            error_message=request.error_message,
+        )
+        return {"trace": trace}
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "TRACE_REFERENCE_NOT_FOUND", "message": str(exc)},
+        )
+    except (sqlite3.IntegrityError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_TRACE", "message": str(exc)},
+        )
+
+
+@app.get("/api/jobs/{job_id}/reviews")
+async def list_job_reviews(job_id: str, limit: int = 200):
+    try:
+        LEDGER.get_job(job_id, include_attempts=False)
+        reviews = LEDGER.list_result_reviews(job_id, limit)
+        return {"reviews": reviews, "count": len(reviews)}
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "JOB_NOT_FOUND", "message": str(exc)},
+        )
+
+
+@app.post("/api/jobs/{job_id}/reviews")
+async def create_job_review(job_id: str, request: ResultReviewRequest):
+    try:
+        LEDGER.get_job(job_id, include_attempts=False)
+        review = LEDGER.submit_result_review(
+            request.client_request_id,
+            job_id=job_id,
+            generation_id=request.generation_id,
+            result_asset_id=request.result_asset_id,
+            decision=request.decision,
+            reason_codes=request.reason_codes,
+            note=request.note,
+            learning_action=request.learning_action,
+        )
+        return {"review": review}
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "RESULT_NOT_FOUND", "message": str(exc)},
+        )
+    except (sqlite3.IntegrityError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_REVIEW", "message": str(exc)},
         )
 
 
@@ -1996,15 +2412,72 @@ def run_cutout_batch_task(task_id, uploads, session_id):
 # ======================== DURABLE JOB WORKFLOWS ========================
 def _job_trace_context(ctx):
     session = LEDGER.get_session(str(ctx.job["session_id"]), include_timeline=False)
+    snapshot = dict(ctx.job.get("snapshot") or {})
+    parameters = dict(ctx.job.get("parameters") or {})
+    brief = snapshot.get("brief") if isinstance(snapshot.get("brief"), dict) else {}
+    if not brief and isinstance(parameters.get("brief"), dict):
+        brief = dict(parameters["brief"])
+    intent = snapshot.get("intent") if isinstance(snapshot.get("intent"), dict) else {}
+    if not intent and isinstance(parameters.get("intent_locks"), dict):
+        intent = dict(parameters["intent_locks"])
     return {
+        "job_id": str(ctx.job_id),
+        "job_item_id": str(ctx.item_id),
+        "attempt_count": max(1, int(ctx.item.get("attempt_count", 1))),
         "session_id": str(ctx.job["session_id"]),
         "generation_id": str(ctx.item.get("generation_id") or ""),
         "source_asset_id": str(ctx.item["source_asset_id"]),
-        "brief": session.get("brief", {}),
-        "intent_locks": session.get("intent_locks", {}),
+        "brief": brief or session.get("brief", {}),
+        "intent_locks": intent or session.get("intent_locks", {}),
         "category": session.get("category", "general"),
         "brand_profile": session.get("brand_profile", ""),
+        "model": str(parameters.get("model") or ""),
+        "parameters": parameters,
     }
+
+
+def _record_execution_trace_safe(
+    trace,
+    stage,
+    status,
+    *,
+    compiled_prompt="",
+    applied_knowledge=None,
+    ignored_fields=None,
+    parameters=None,
+    output=None,
+    error_code="",
+    error_message="",
+):
+    """Write execution evidence without making observability break the task."""
+    try:
+        request_id = (
+            f"{trace['job_id']}:{trace['job_item_id']}:"
+            f"{trace['attempt_count']}:{stage}"
+        )
+        return LEDGER.record_execution_trace(
+            request_id,
+            job_id=trace["job_id"],
+            job_item_id=trace["job_item_id"],
+            generation_id=trace["generation_id"],
+            stage=stage,
+            status=status,
+            user_input={
+                "brief": trace.get("brief") or {},
+                "intent_locks": trace.get("intent_locks") or {},
+            },
+            compiled_prompt=compiled_prompt,
+            applied_knowledge=applied_knowledge or [],
+            ignored_fields=ignored_fields or [],
+            model=trace.get("model", ""),
+            parameters=parameters if parameters is not None else trace.get("parameters", {}),
+            output=output or {},
+            error_code=error_code,
+            error_message=error_message,
+        )
+    except Exception as exc:
+        print(f"[ledger] execution trace failed: {exc}", file=sys.stderr, flush=True)
+        return None
 
 
 def _record_job_prompt(trace, prompt, negative_prompt, stage, knowledge_refs):
@@ -2027,6 +2500,18 @@ def _record_job_prompt(trace, prompt, negative_prompt, stage, knowledge_refs):
             "knowledge_refs": knowledge_refs or [],
         },
         generation_id=generation_id,
+    )
+    _record_execution_trace_safe(
+        trace,
+        f"prompt.{stage}",
+        "completed",
+        compiled_prompt=prompt,
+        applied_knowledge=knowledge_refs or [],
+        parameters={
+            **dict(trace.get("parameters") or {}),
+            "negative_prompt": negative_prompt,
+        },
+        output={"prompt_stage": stage},
     )
 
 
@@ -2119,6 +2604,15 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata):
             )
             durable_committed = True
             committed_asset_ids.extend(asset_ids)
+            _record_execution_trace_safe(
+                trace,
+                "result.publish",
+                "completed",
+                output={
+                    "result_asset_ids": list(committed_asset_ids),
+                    "output_count": len(committed_asset_ids),
+                },
+            )
             return {
                 "result_asset_ids": list(committed_asset_ids),
                 "output_count": len(committed_asset_ids),
@@ -2190,6 +2684,13 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
         ctx.progress(0.03, {"phase": "vlm"})
         with ctx.resource("vlm"):
             detection = vlm_detect_products(str(source_asset["path"]), str(ctx.job_id))
+        _record_execution_trace_safe(
+            trace,
+            "vlm.detect",
+            "completed",
+            parameters={"model": "gemini-3.5-flash", "purpose": "product-detection"},
+            output={"detected_products": len(detection.get("products") or [])},
+        )
         products = detection.get("products") or []
         if products:
             product = products[0]
@@ -2199,6 +2700,13 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
                 platter = "remove"
         else:
             product_name = "产品"
+    else:
+        _record_execution_trace_safe(
+            trace,
+            "vlm.detect",
+            "skipped",
+            output={"reason": "product_name_supplied", "product_name": product_name},
+        )
 
     negative = build_negative(platter)
     outputs = []
@@ -2367,6 +2875,16 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
     # Validate the complete untrusted VLM response before the first paid image
     # call. A late malformed product must not waste earlier successful calls.
     products = _validated_group_products(detection)
+    _record_execution_trace_safe(
+        trace,
+        "vlm.detect",
+        "completed",
+        parameters={"model": "gemini-3.5-flash", "purpose": "group-detection"},
+        output={
+            "detected_products": len(products),
+            "product_names": [product["name"] for product in products],
+        },
+    )
 
     width, height = image.size
     outputs = []
@@ -2459,11 +2977,30 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
     return outputs, {"detected_products": len(products), "refined": do_refine}
 
 
-def _execute_cutout_job(ctx, image, stage_dir):
+def _execute_cutout_job(ctx, image, stage_dir, trace):
     ctx.progress(0.08, {"phase": "local-cutout"})
     with ctx.resource("local-cutout"):
         cutout = tight_crop_alpha(remove_bg_hd(image))
     output = _stage_output(cutout, stage_dir, "01_cutout.png", "result_cutout")
+    ignored_fields = []
+    if trace.get("brief"):
+        ignored_fields.append("brief")
+    if trace.get("intent_locks"):
+        ignored_fields.append("intent_locks")
+    _record_execution_trace_safe(
+        trace,
+        "cutout.segment",
+        "completed",
+        ignored_fields=ignored_fields,
+        parameters={
+            "model": "local-rembg/birefnet-general",
+            "operation": "foreground-segmentation",
+        },
+        output={
+            "output_name": output["name"],
+            "selection_prompt_supported": False,
+        },
+    )
     return [output], {"operation": "background-removal"}
 
 
@@ -2479,6 +3016,12 @@ def execute_job_workflow(ctx):
     except Exception as exc:
         raise JobExecutionError("INVALID_SOURCE_IMAGE", "The persisted source image cannot be decoded") from exc
     trace = _job_trace_context(ctx)
+    _record_execution_trace_safe(
+        trace,
+        "workflow.start",
+        "started",
+        output={"mode": str(ctx.job["mode"]), "source_asset_id": trace["source_asset_id"]},
+    )
     stage_dir = _attempt_directory(ctx)
     try:
         mode = str(ctx.job["mode"])
@@ -2487,12 +3030,20 @@ def execute_job_workflow(ctx):
         elif mode == "group-split":
             outputs, metadata = _execute_group_job(ctx, source_asset, image, stage_dir, trace)
         elif mode == "cutout-batch":
-            outputs, metadata = _execute_cutout_job(ctx, image, stage_dir)
+            outputs, metadata = _execute_cutout_job(ctx, image, stage_dir, trace)
         else:
             raise JobExecutionError("UNSUPPORTED_JOB_MODE", f"Unsupported job mode: {mode}")
         ctx.progress(0.98, {"phase": "publishing"})
         return _staged_job_result(ctx, trace, stage_dir, outputs, {"mode": mode, **metadata})
-    except Exception:
+    except Exception as exc:
+        _record_execution_trace_safe(
+            trace,
+            "workflow.failed",
+            "failed",
+            error_code=str(getattr(exc, "code", "PROCESSOR_ERROR")),
+            error_message=str(exc) or type(exc).__name__,
+            output={"exception_type": type(exc).__name__},
+        )
         if stage_dir.exists():
             shutil.rmtree(stage_dir)
         raise

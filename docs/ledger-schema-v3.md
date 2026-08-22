@@ -50,10 +50,11 @@ ordering and the recycle-bin state:
 - `trashed`: removed from the domain but retained for undo, task lineage and
   historical evidence.
 
-Removing a membership never deletes `assets` or `asset_blobs`. Permanent purge
-will be a guarded API operation in Phase 3 and may proceed only when no active
-membership, task item, generation result, review, feedback or knowledge evidence
-references the asset.
+Removing a membership never deletes `assets` or `asset_blobs`. The Phase 3 purge
+API defaults to a 30-day recycle retention period, requires an exact asset-ID
+confirmation and proceeds only when no active membership, draft, task item,
+snapshot, generation result, review, feedback, knowledge evidence or execution
+trace references the asset.
 
 ### `workflow_drafts`
 
@@ -100,7 +101,8 @@ Stores one result-level review with the three product decisions:
 Reason codes and notes are separate from `learning_action`. Recording feedback,
 regenerating the current result and creating a knowledge suggestion are distinct
 actions; the UI must not imply that every comment automatically changes future
-behavior.
+behavior. API idempotency keys map to deterministic row IDs, so reconnects cannot
+create duplicate review decisions.
 
 ### `execution_traces`
 
@@ -109,6 +111,7 @@ ignored fields, model, parameters, output and failure stage. This makes it
 possible to explain whether a description influenced the result. For example,
 the current quick background-removal path can explicitly trace a natural-language
 selection request as ignored instead of silently accepting it.
+Trace writes use the same deterministic-row idempotency contract.
 
 ## Compatibility behavior
 
@@ -116,8 +119,8 @@ selection request as ignored instead of silently accepting it.
   Nothing is assigned to `group` or `cutout` without a user or API decision.
 - Existing v2 jobs, attempts, generations and results remain unchanged. They do
   not receive invented snapshots; only jobs created by v3 code do.
-- The legacy global asset-listing method remains available while the Phase 3 API
-  and Phase 4 UI migrate to scoped queries.
+- The legacy global asset-listing method remains available while the Phase 4 UI
+  migrates to the Phase 3 scoped workspace API.
 - New imports default to the product collection for compatibility. Callers may
   explicitly choose `group` or `cutout`.
 

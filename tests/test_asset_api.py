@@ -4,6 +4,7 @@ import io
 import os
 import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -256,6 +257,281 @@ class AssetApiTests(unittest.TestCase):
         allowed_output.write_bytes(data)
         allowed_legacy = self.client.get("/api/thumbnail", params={"path": str(allowed_output)})
         self.assertEqual(allowed_legacy.status_code, 200)
+
+    def test_scoped_assets_trash_restore_and_duplicate_membership(self) -> None:
+        data = png_bytes((90, 140, 30))
+        imported = self.client.post(
+            "/api/assets/import?collection=cutout",
+            files={"file": ("cutout.png", data, "image/png")},
+        )
+        self.assertEqual(imported.status_code, 200, imported.text)
+        asset_id = imported.json()["id"]
+
+        self.assertEqual(
+            self.client.get("/api/collections/product/assets").json()["total"], 0
+        )
+        cutout = self.client.get("/api/collections/cutout/assets").json()
+        self.assertEqual(cutout["total"], 1)
+        self.assertEqual(cutout["assets"][0]["id"], asset_id)
+
+        duplicate = self.client.post(
+            "/api/assets/import?collection=group",
+            files={"file": ("same.png", data, "image/png")},
+        )
+        self.assertEqual(duplicate.status_code, 200, duplicate.text)
+        self.assertEqual(duplicate.json()["id"], asset_id)
+        self.assertEqual(
+            self.client.get("/api/collections/group/assets").json()["total"], 1
+        )
+
+        removed = self.client.delete(f"/api/collections/cutout/assets/{asset_id}")
+        self.assertEqual(removed.status_code, 200, removed.text)
+        self.assertEqual(removed.json()["asset"]["membership"]["status"], "trashed")
+        self.assertEqual(
+            self.client.get("/api/collections/cutout/assets").json()["total"], 0
+        )
+        trash = self.client.get("/api/trash?collection=cutout").json()
+        self.assertEqual(trash["count"], 1)
+        self.assertEqual(trash["collections"]["cutout"][0]["id"], asset_id)
+
+        restored = self.client.post(
+            f"/api/collections/cutout/assets/{asset_id}/restore"
+        )
+        self.assertEqual(restored.status_code, 200, restored.text)
+        self.assertEqual(restored.json()["asset"]["membership"]["status"], "active")
+
+    def test_collection_order_and_guarded_permanent_purge(self) -> None:
+        first = self.client.post(
+            "/api/assets/import",
+            files={"file": ("first.png", png_bytes((10, 20, 30)), "image/png")},
+        ).json()
+        second = self.client.post(
+            "/api/assets/import",
+            files={"file": ("second.png", png_bytes((40, 50, 60)), "image/png")},
+        ).json()
+        reordered = self.client.put(
+            "/api/collections/product/order",
+            json={"asset_ids": [second["id"], first["id"]]},
+        )
+        self.assertEqual(reordered.status_code, 200, reordered.text)
+        self.assertEqual(
+            [asset["id"] for asset in reordered.json()["assets"]],
+            [second["id"], first["id"]],
+        )
+        incomplete_order = self.client.put(
+            "/api/collections/product/order",
+            json={"asset_ids": [first["id"]]},
+        )
+        self.assertEqual(incomplete_order.status_code, 400, incomplete_order.text)
+
+        active_refs = self.client.get(
+            f"/api/assets/{first['id']}/references"
+        ).json()
+        self.assertFalse(active_refs["purge_allowed"])
+        self.assertIn("active_membership", active_refs["blockers"])
+        self.client.delete(f"/api/collections/product/assets/{first['id']}")
+        retention_block = self.client.delete(
+            f"/api/trash/assets/{first['id']}",
+            params={"confirm_asset_id": first["id"]},
+        )
+        self.assertEqual(retention_block.status_code, 409, retention_block.text)
+        self.assertIn(
+            "retention_period",
+            retention_block.json()["detail"]["summary"]["blockers"],
+        )
+
+        original_retention = server.TRASH_RETENTION_DAYS
+        server.TRASH_RETENTION_DAYS = 0
+        try:
+            mismatch = self.client.delete(
+                f"/api/trash/assets/{first['id']}",
+                params={"confirm_asset_id": "wrong"},
+            )
+            self.assertEqual(mismatch.status_code, 400, mismatch.text)
+            source_path = Path(
+                self.ledger.get_workspace_asset(first["id"])["blob"]["storage_path"]
+            )
+            purged = self.client.delete(
+                f"/api/trash/assets/{first['id']}",
+                params={"confirm_asset_id": first["id"]},
+            )
+            self.assertEqual(purged.status_code, 200, purged.text)
+            self.assertTrue(purged.json()["purged"])
+            self.assertTrue(purged.json()["file_deleted"])
+            self.assertFalse(source_path.exists())
+            self.assertEqual(self.client.get(f"/api/assets/{first['id']}").status_code, 404)
+
+            self.ledger.create_job(
+                "single",
+                [second["id"]],
+                engine_key="mock-cloud",
+                idempotency_key="protected-purge-job",
+            )
+            self.client.delete(f"/api/collections/product/assets/{second['id']}")
+            protected = self.client.delete(
+                f"/api/trash/assets/{second['id']}",
+                params={"confirm_asset_id": second["id"]},
+            )
+            self.assertEqual(protected.status_code, 409, protected.text)
+            protected_summary = protected.json()["detail"]["summary"]
+            self.assertIn("jobs", protected_summary["blockers"])
+            self.assertIn("job_snapshots", protected_summary["blockers"])
+        finally:
+            server.TRASH_RETENTION_DAYS = original_retention
+
+    def test_scoped_asset_pagination_handles_two_hundred_rows(self) -> None:
+        for index in range(200):
+            self.ledger.register_workspace_asset(
+                sha256=f"{index + 1:064x}",
+                storage_path=str(self.asset_dir / f"{index + 1:064x}.png"),
+                mime="image/png",
+                size_bytes=64,
+                width=8,
+                height=8,
+                name=f"asset-{index + 1:03d}.png",
+            )
+        started = time.perf_counter()
+        page = self.client.get(
+            "/api/collections/product/assets", params={"limit": 50, "offset": 75}
+        )
+        full = self.client.get(
+            "/api/collections/product/assets", params={"limit": 200, "offset": 0}
+        )
+        elapsed = time.perf_counter() - started
+        self.assertEqual(page.status_code, 200, page.text)
+        self.assertEqual(page.json()["count"], 50)
+        self.assertEqual(page.json()["total"], 200)
+        self.assertEqual(page.json()["offset"], 75)
+        self.assertEqual(full.status_code, 200, full.text)
+        self.assertEqual(full.json()["count"], 200)
+        self.assertLess(elapsed, 2.0)
+
+    def test_workspace_drafts_share_assets_without_sharing_state(self) -> None:
+        product = self.client.post(
+            "/api/assets/import",
+            files={"file": ("product.png", png_bytes(), "image/png")},
+        ).json()
+        cutout = self.client.post(
+            "/api/assets/import?collection=cutout",
+            files={"file": ("cutout.png", png_bytes((20, 50, 180)), "image/png")},
+        ).json()
+
+        single = self.client.get("/api/workspaces/single").json()
+        multi = self.client.get("/api/workspaces/multi-file").json()
+        self.assertEqual(single["collection"], "product")
+        self.assertEqual(multi["collection"], "product")
+        self.assertEqual([asset["id"] for asset in single["assets"]], [product["id"]])
+        self.assertEqual(single["draft"]["selected_asset_ids"], [])
+        self.assertEqual(multi["draft"]["selected_asset_ids"], [])
+
+        saved = self.client.put(
+            "/api/workspaces/single/draft",
+            json={
+                "expected_revision": 1,
+                "selected_asset_ids": [product["id"]],
+                "brief": {"goal": "保留包装文字"},
+                "parameters": {"batch": 1},
+                "ui_state": {"zoom": 1.2},
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json()["draft"]["revision"], 2)
+        self.assertEqual(
+            self.client.get("/api/workspaces/multi-file").json()["draft"]["revision"], 1
+        )
+
+        stale = self.client.put(
+            "/api/workspaces/single/draft",
+            json={"expected_revision": 1, "selected_asset_ids": [product["id"]]},
+        )
+        self.assertEqual(stale.status_code, 409, stale.text)
+        self.assertEqual(stale.json()["detail"]["code"], "DRAFT_REVISION_CONFLICT")
+        self.assertEqual(stale.json()["detail"]["current"]["revision"], 2)
+
+        cross_domain = self.client.put(
+            "/api/workspaces/single/draft",
+            json={"expected_revision": 2, "selected_asset_ids": [cutout["id"]]},
+        )
+        self.assertEqual(cross_domain.status_code, 400, cross_domain.text)
+        self.assertEqual(cross_domain.json()["detail"]["code"], "INVALID_DRAFT")
+
+    def test_trace_and_review_writes_are_idempotent_and_lineage_checked(self) -> None:
+        source = self.client.post(
+            "/api/assets/import",
+            files={"file": ("source.png", png_bytes(), "image/png")},
+        ).json()
+        job, _ = self.ledger.create_job(
+            "single",
+            [source["id"]],
+            engine_key="mock-cloud",
+            parameters={"model": "offline-model"},
+            idempotency_key="workspace-api-job",
+        )
+        item_id = job["items"][0]["id"]
+        generation_id = job["items"][0]["generation_id"]
+        self.ledger.claim_job_item(item_id)
+        result_path = self.output_dir / "result.png"
+        result_path.write_bytes(png_bytes((240, 180, 20)))
+        result_asset_id = self.ledger.commit_generation_results(
+            generation_id,
+            source["id"],
+            [{"path": str(result_path), "name": "result.png", "role": "result_main"}],
+            job_item_id=item_id,
+        )[0]
+
+        trace_payload = {
+            "client_request_id": "trace-request-1",
+            "stage": "prompt.compile",
+            "status": "completed",
+            "job_item_id": item_id,
+            "generation_id": generation_id,
+            "user_input": {"brief": "只保留主体"},
+            "applied_knowledge": ["K-1"],
+            "ignored_fields": [],
+            "model": "offline-model",
+        }
+        first_trace = self.client.post(
+            f"/api/jobs/{job['id']}/traces", json=trace_payload
+        )
+        replay_trace = self.client.post(
+            f"/api/jobs/{job['id']}/traces", json=trace_payload
+        )
+        self.assertEqual(first_trace.status_code, 200, first_trace.text)
+        self.assertEqual(replay_trace.status_code, 200, replay_trace.text)
+        self.assertEqual(first_trace.json()["trace"]["id"], replay_trace.json()["trace"]["id"])
+        conflict_payload = dict(trace_payload)
+        conflict_payload["status"] = "failed"
+        conflict = self.client.post(
+            f"/api/jobs/{job['id']}/traces", json=conflict_payload
+        )
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+
+        review_payload = {
+            "client_request_id": "review-request-1",
+            "result_asset_id": result_asset_id,
+            "generation_id": generation_id,
+            "decision": "adjust",
+            "reason_codes": ["主体"],
+            "note": "只保留两个汉堡",
+            "learning_action": "record",
+        }
+        first_review = self.client.post(
+            f"/api/jobs/{job['id']}/reviews", json=review_payload
+        )
+        replay_review = self.client.post(
+            f"/api/jobs/{job['id']}/reviews", json=review_payload
+        )
+        self.assertEqual(first_review.status_code, 200, first_review.text)
+        self.assertEqual(replay_review.status_code, 200, replay_review.text)
+        self.assertEqual(
+            first_review.json()["review"]["id"], replay_review.json()["review"]["id"]
+        )
+        self.assertEqual(
+            self.client.get(f"/api/jobs/{job['id']}/traces").json()["count"], 1
+        )
+        self.assertEqual(
+            self.client.get(f"/api/jobs/{job['id']}/reviews").json()["count"], 1
+        )
 
 
 if __name__ == "__main__":

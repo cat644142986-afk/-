@@ -275,6 +275,20 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertEqual(len(body["results"]["main"]), 2)
             self.assertEqual(len(body["results"]["cutout"]), 2)
             self.assertEqual(body["job"]["id"], final["id"])
+            traces = client.get(f"/api/jobs/{final['id']}/traces")
+            self.assertEqual(traces.status_code, 200, traces.text)
+            trace_items = traces.json()["traces"]
+            self.assertTrue(any(
+                item["stage"] == "prompt.primary"
+                and item["compiled_prompt"]
+                and item["status"] == "completed"
+                for item in trace_items
+            ))
+            self.assertTrue(any(
+                item["stage"] == "result.publish"
+                and len(item["output"]["result_asset_ids"]) == 4
+                for item in trace_items
+            ))
             self.network_request.assert_not_called()
 
     def test_group_split_is_one_item_with_per_product_outputs_and_lineage(self) -> None:
@@ -486,7 +500,7 @@ class DurableJobApiTests(unittest.TestCase):
                 {
                     "mode": "cutout-batch",
                     "source_asset_ids": [source["id"] for source in sources],
-                    "parameters": {},
+                    "parameters": {"brief": {"goal": "只保留两个汉堡"}},
                     "requested_concurrency": 3,
                 },
             )
@@ -512,6 +526,17 @@ class DurableJobApiTests(unittest.TestCase):
             )
             self.assertEqual(self.remove_mock.call_count, 3)
             self.assertEqual(self.ai_mock.call_count, 0)
+            traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
+            cutout_traces = [
+                item for item in traces if item["stage"] == "cutout.segment"
+            ]
+            self.assertEqual(len(cutout_traces), 3)
+            self.assertTrue(all(
+                item["ignored_fields"] == ["brief"]
+                and item["output"]["selection_prompt_supported"] is False
+                and item["model"] == "local-rembg/birefnet-general"
+                for item in cutout_traces
+            ))
             self.network_request.assert_not_called()
 
     def test_multi_file_partial_failure_retry_only_failed_item_then_completes(self) -> None:

@@ -183,7 +183,12 @@ class AssetStore:
         finally:
             temp_path.unlink(missing_ok=True)
 
-    def import_stream(self, stream: BinaryIO, original_name: str) -> dict:
+    def import_stream(
+        self,
+        stream: BinaryIO,
+        original_name: str,
+        collection_key: str = "product",
+    ) -> dict:
         spool, sha256, size_bytes = self._spool_and_hash(stream)
         final_path: Path | None = None
         created_file = False
@@ -200,7 +205,9 @@ class AssetStore:
                             code="STORAGE_METADATA_CONFLICT",
                         )
                     if final_path.exists() and self._file_sha256(final_path) == sha256:
-                        return existing
+                        return self.ledger.add_asset_to_collection(
+                            existing["id"], collection_key
+                        )
 
                 created_file = self._write_atomic(spool, final_path, sha256)
                 try:
@@ -213,6 +220,7 @@ class AssetStore:
                         height=height,
                         name=Path(original_name).name,
                         metadata={"original_name": Path(original_name).name},
+                        collection_key=collection_key,
                     )
                 except Exception:
                     if created_file:
@@ -233,8 +241,39 @@ class AssetStore:
         finally:
             spool.close()
 
-    def import_bytes(self, data: bytes, original_name: str) -> dict:
-        return self.import_stream(io.BytesIO(data), original_name)
+    def import_bytes(
+        self,
+        data: bytes,
+        original_name: str,
+        collection_key: str = "product",
+    ) -> dict:
+        return self.import_stream(io.BytesIO(data), original_name, collection_key)
+
+    def purge_asset(self, asset_id: str, *, retention_days: int = 30) -> dict:
+        """Purge eligible metadata first, then remove its now-unreferenced blob file."""
+        summary = self.ledger.asset_reference_summary(
+            asset_id, retention_days=retention_days
+        )
+        raw_path = Path(str(summary["storage_path"]))
+        candidate = raw_path.resolve(strict=False)
+        if not candidate.is_relative_to(self.root.resolve()):
+            raise AssetAccessError("Workspace asset path is outside the allowed root")
+        result = self.ledger.purge_workspace_asset(
+            asset_id, retention_days=retention_days
+        )
+        file_deleted = False
+        file_error = ""
+        if result["blob_deleted"]:
+            try:
+                candidate.unlink(missing_ok=True)
+                file_deleted = True
+                try:
+                    candidate.parent.rmdir()
+                except OSError:
+                    pass
+            except OSError as exc:
+                file_error = str(exc)
+        return {**result, "file_deleted": file_deleted, "file_error": file_error}
 
     def resolve_asset_path(self, asset_id: str) -> tuple[dict, Path]:
         try:
