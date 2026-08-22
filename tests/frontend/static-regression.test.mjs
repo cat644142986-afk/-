@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, config, settings, shell, studioState, html, css] = await Promise.all([
+const [app, api, assets, config, settings, shell, studioState, html, css] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-config.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-settings.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-shell.js'), 'utf8'),
@@ -15,6 +16,19 @@ const [app, api, config, settings, shell, studioState, html, css] = await Promis
   readFile(path.join(root, 'src/index.html'), 'utf8'),
   readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8'),
 ]);
+
+test('asset management exposes discoverable safe removal, undo, recycle, restore, and references', () => {
+  assert.match(html, /id="btn-asset-manager"/);
+  assert.match(html, /id="asset-drawer"/);
+  assert.match(html, /data-asset-view="active"/);
+  assert.match(html, /data-asset-view="trash"/);
+  assert.match(app, /createAssetManagerController/);
+  assert.match(assets, /removeAssetFromCollectionSelections/);
+  assert.match(assets, /api\.restoreAssetToCollection/);
+  assert.match(assets, /api\.getAssetReferences/);
+  assert.match(assets, /label: '撤销'/);
+  assert.match(css, /\.drawer--assets/);
+});
 
 test('settings and knowledge connection behavior lives outside the page orchestrator', () => {
   assert.match(app, /createSettingsController/);
@@ -152,8 +166,8 @@ test('workspace restores its latest result and exposes recoverable asset removal
   assert.match(app, /current_result_asset_id: items\[0\]\?\.asset_id \|\| null/);
   assert.match(api, /export async function removeAssetFromCollection\(collection, assetId\)/);
   assert.match(app, /data-remove-asset-id=/);
-  assert.match(app, /await API\.removeAssetFromCollection\(collection, assetId\)/);
-  assert.match(app, /素材已移入回收站/);
+  assert.match(assets, /await api\.removeAssetFromCollection\(targetCollection, assetId\)/);
+  assert.match(assets, /已移入当前域回收站/);
 });
 
 test('quick cutout does not pretend to understand a semantic brief or knowledge rules', () => {

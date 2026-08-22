@@ -1466,6 +1466,43 @@ class AtelierLedger:
                 ).fetchone()
                 if row is None:
                     raise KeyError(f"asset is not in {collection_key}: {asset_id}")
+            affected_drafts = connection.execute(
+                """
+                SELECT d.id
+                FROM workflow_drafts d
+                JOIN draft_asset_selections s ON s.draft_id = d.id
+                WHERE d.collection_id = ? AND s.asset_id = ?
+                ORDER BY d.id
+                """,
+                (COLLECTION_IDS[collection_key], asset_id),
+            ).fetchall()
+            for draft_row in affected_drafts:
+                draft_id = str(draft_row["id"])
+                connection.execute(
+                    "DELETE FROM draft_asset_selections WHERE draft_id = ? AND asset_id = ?",
+                    (draft_id, asset_id),
+                )
+                remaining = connection.execute(
+                    "SELECT asset_id FROM draft_asset_selections "
+                    "WHERE draft_id = ? ORDER BY position, selected_at, asset_id",
+                    (draft_id,),
+                ).fetchall()
+                connection.execute(
+                    "UPDATE draft_asset_selections SET position = position + 1000000 "
+                    "WHERE draft_id = ?",
+                    (draft_id,),
+                )
+                for position, selection in enumerate(remaining):
+                    connection.execute(
+                        "UPDATE draft_asset_selections SET position = ? "
+                        "WHERE draft_id = ? AND asset_id = ?",
+                        (position, draft_id, str(selection["asset_id"])),
+                    )
+                connection.execute(
+                    "UPDATE workflow_drafts "
+                    "SET revision = revision + 1, updated_at = ? WHERE id = ?",
+                    (now, draft_id),
+                )
         return next(
             item for item in self.list_collection_assets(
                 collection_key, include_trashed=True

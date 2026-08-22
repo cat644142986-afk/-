@@ -502,15 +502,37 @@ class LedgerMigrationTests(unittest.TestCase):
         )
 
         ledger.add_asset_to_collection(product["id"], "group")
+        single_before_remove = ledger.get_workflow_draft("single")
+        multi_before_remove = ledger.get_workflow_draft("multi-file")
         removed = ledger.remove_asset_from_collection(product["id"], "product")
         self.assertEqual(removed["membership"]["status"], "trashed")
         self.assertEqual(ledger.list_collection_assets("product"), [])
+        single_after_remove = ledger.get_workflow_draft("single")
+        multi_after_remove = ledger.get_workflow_draft("multi-file")
+        self.assertEqual(single_after_remove["selected_asset_ids"], [])
+        self.assertEqual(multi_after_remove["selected_asset_ids"], [])
+        self.assertEqual(
+            single_after_remove["revision"], single_before_remove["revision"] + 1
+        )
+        self.assertEqual(
+            multi_after_remove["revision"], multi_before_remove["revision"] + 1
+        )
+        self.assertEqual(
+            ledger.get_job(job["id"])["snapshot"]["source_asset_ids"],
+            [product["id"]],
+        )
         self.assertIn(
             product["id"],
             [item["id"] for item in ledger.list_collection_assets("group")],
         )
         restored = ledger.add_asset_to_collection(product["id"], "product")
         self.assertEqual(restored["membership"]["status"], "active")
+        self.assertEqual(
+            ledger.get_workflow_draft("single")["selected_asset_ids"], []
+        )
+        self.assertEqual(
+            ledger.get_workflow_draft("multi-file")["selected_asset_ids"], []
+        )
 
     def test_migration_failure_rolls_back_schema_version_ddl_and_data(self) -> None:
         create_v1_fixture(self.db_path)

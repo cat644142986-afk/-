@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 日期：2026-08-22<br>
-> 状态：Phase 0–3 已完成；Phase 4 正式前端、960×600 抽屉、全页基础排版与 Windows DPI 坐标契约已通过，真实多 DPI/多显示器与业务模块拆分继续收尾<br>
+> 状态：Phase 0–3 已完成；Phase 4 正式前端骨架已通过；Phase 5 素材安全移除、撤销、回收站、恢复与引用解释检查点已通过，继续完成批量管理与 Task Dock<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -16,6 +16,7 @@
 | Phase 2 schema v3 | 已完成 | `docs/ledger-schema-v3.md`、真实 v2 副本迁移演练 |
 | Phase 3 工作区与 trace API | 已完成 | `docs/phase-3-workspace-api-contract-2026-08-22.md`、87 项 Python 与 16 项前端测试 |
 | Phase 4 正式 UI 骨架 | 检查点通过，继续收尾 | `docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、87 项 Python 与 32 项前端测试 |
+| Phase 5 素材管理与 Task Dock | 素材管理检查点通过，继续实施 | `docs/phase-5-asset-manager-checkpoint-2026-08-22.md`、前端 36 项测试与隔离账本真实浏览器链路 |
 
 ## 0. 这次要把什么做成
 
@@ -43,12 +44,12 @@ Product Atelier 不是一个“上传图片—选择模型—下载结果”的�
 
 ### 1.2 当前必须解决的问题
 
-- 三个素材域、四个持久草稿和素材软移除已接入正式前端，但完整回收站、撤销、引用解释与批量管理界面仍未完成。
+- 三个素材域、四个持久草稿、软移除、即时撤销、分域回收站、恢复与引用解释已接入正式前端；批量选择/整理、受控永久清理和大素材量性能仍未完成。
 - “对比”已从一级导航移除并保留为结果上下文动作；Phase 6 仍需完成对象选择、首次引导和评审恢复。
 - 快速抠图已明确只做全部前景分离并隐藏无效输入；语义选物、数量约束、蒙版确认与模型评测仍属于 Phase 7。
 - 反馈与 trace 已写入账本，用户尚未在完整 Result Review 中看到作用对象、影响范围和知识建议状态。
 - 主界面已完成第一轮信息减法、融合左栏、单舞台与 960×600 控制抽屉；Windows 物理/逻辑坐标契约和 DWM 圆角策略已修复，100/125/150% 真实屏幕与多显示器验收尚未收口。
-- `app.js` 已抽出配置、纯状态、响应式 shell 和 settings/knowledge connection 控制器，但 workspace/assets/jobs/review/knowledge 业务职责仍需继续拆分。
+- `app.js` 已抽出配置、纯状态、响应式 shell、settings/knowledge connection 与素材管理控制器，但 workspace/jobs/review/knowledge 业务职责仍需继续拆分。
 - 发布链已具备 sidecar 清单和真实健康检查；任何 API 契约变更后仍必须重建便携包，不能只复制旧可执行文件。
 
 ## 2. 不可妥协的产品与工程原则
@@ -613,7 +614,7 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 从 Phase 4 剩余门禁开始，不重复 Phase 0–3，也不退回历史 `vXX-fixes.css` 补丁路线。
-4. 960×600 抽屉已通过；下一步完成 Tauri 多 DPI 壳层与模块边界，再进入 Phase 5 素材管理/Task Dock。
+4. 960×600 控制抽屉与素材管理抽屉已通过；下一步完成 Phase 5 批量素材管理和 Task Dock 跨工作流定位，同时继续补 Tauri 100/125% 与多显示器门禁。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 

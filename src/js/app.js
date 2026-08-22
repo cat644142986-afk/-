@@ -11,6 +11,7 @@ import {
   selectionAfterImport,
   submissionFingerprint,
 } from './workspace-state.js';
+import { createAssetManagerController } from './studio-assets.js';
 import { JOB_STATUS, MODE_CONFIG, MODE_IDS, PAGE_CONFIG, STAGE_IDS } from './studio-config.js';
 import { createSettingsController } from './studio-settings.js';
 import { createWorkflowDockController } from './studio-shell.js';
@@ -32,6 +33,21 @@ const settingsController = createSettingsController({
   toast,
   updateQuickControls,
   compileKnowledgePreview,
+});
+const assetManager = createAssetManagerController({
+  api: API,
+  state,
+  query: $,
+  queryAll: $$,
+  modeConfig: MODE_CONFIG,
+  escapeHtml,
+  assetUrl,
+  hydrateAssetUrls,
+  loadWorkspace,
+  syncLegacySelection,
+  renderQueue,
+  toast,
+  openDrawer,
 });
 window.ProductAtelier = { state };
 
@@ -351,11 +367,26 @@ async function hydrateAssetUrls(assets) {
   }));
 }
 
-function toast(message, type = 'info', duration = 3200) {
+function toast(message, type = 'info', duration = 3200, action = null) {
   const wrap = $('#toast-wrap');
   const item = document.createElement('div');
   item.className = `toast ${type}`;
-  item.textContent = message;
+  const copy = document.createElement('span');
+  copy.textContent = message;
+  item.appendChild(copy);
+  if (action?.label && typeof action.onClick === 'function') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = action.label;
+    button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      try { await action.onClick(); item.remove(); }
+      catch (_) { button.disabled = false; }
+    });
+    item.appendChild(button);
+    item.classList.add('toast--action');
+  }
   wrap.appendChild(item);
   window.setTimeout(() => {
     item.style.opacity = '0';
@@ -499,6 +530,7 @@ function switchMode(mode, preserveCurrent = true, loadDurable = true) {
     state.knowledgeBundle = null;
     renderKnowledge(null);
   }
+  assetManager.sync();
 }
 
 function renderFileMeta() {
@@ -619,19 +651,7 @@ async function loadAssets(silent = false) {
 }
 
 async function removeWorkspaceAsset(assetId) {
-  if (!assetId || !state.backendReady) return;
-  const mode = state.currentMode;
-  const collection = MODE_CONFIG[mode].collection;
-  try {
-    await API.removeAssetFromCollection(collection, assetId);
-    state.modeSelections[mode] = selectedAssetIds(mode).filter((id) => id !== assetId);
-    await loadWorkspace(mode, true);
-    scheduleWorkspaceDraftSave(mode, 0);
-    await flushWorkspaceDraft(mode, true);
-    toast('素材已移入回收站，可在素材管理中恢复', 'success');
-  } catch (error) {
-    toast(`移除失败：${formatApiError(error, '素材接口不可用')}`, 'error');
-  }
+  return assetManager.remove(assetId);
 }
 
 function getIntentLocks() {
@@ -1252,7 +1272,7 @@ async function recordFeedback(signal, reason = '') {
 }
 
 function openDrawer(name) {
-  const drawers = { advanced: $('#advanced-drawer'), intelligence: $('#intelligence-drawer'), jobs: $('#job-drawer') };
+  const drawers = { assets: $('#asset-drawer'), advanced: $('#advanced-drawer'), intelligence: $('#intelligence-drawer'), jobs: $('#job-drawer') };
   const layer = drawers[name];
   if (!layer) return;
   drawerReturnFocus = document.activeElement;
@@ -1266,7 +1286,7 @@ function openDrawer(name) {
 }
 
 function closeDrawer(name) {
-  const drawers = { advanced: $('#advanced-drawer'), intelligence: $('#intelligence-drawer'), jobs: $('#job-drawer') };
+  const drawers = { assets: $('#asset-drawer'), advanced: $('#advanced-drawer'), intelligence: $('#intelligence-drawer'), jobs: $('#job-drawer') };
   const layer = drawers[name];
   if (!layer) return;
   layer.hidden = true;
@@ -1427,6 +1447,7 @@ function bindEvents() {
   $('#btn-feedback').addEventListener('click', () => { const reason = $('#feedback-input').value.trim(); if (!reason) { toast('请先写下具体判断'); return; } recordFeedback(state.lastFeedbackSignal === 'rejected' ? 'rejected' : 'note', reason); });
   $('#btn-refresh-history').addEventListener('click', loadSessions);
   $('#btn-refresh-memory').addEventListener('click', loadMemory);
+  assetManager.bind();
   settingsController.bind();
   $('#modal-backdrop').addEventListener('click', closeModal);
   $('#modal-close').addEventListener('click', closeModal);
@@ -1439,7 +1460,7 @@ function bindEvents() {
   canvas.addEventListener('drop', (event) => { event.preventDefault(); canvas.style.outline = ''; handleFiles(event.dataTransfer.files); });
   document.addEventListener('keydown', (event) => {
     const workflowLayer = $('#settings-panel').classList.contains('is-open') ? $('#settings-panel') : null;
-    const openLayer = [$('#img-modal'), $('#job-drawer'), $('#advanced-drawer'), $('#intelligence-drawer'), workflowLayer].find((layer) => layer && !layer.hidden);
+    const openLayer = [$('#img-modal'), $('#job-drawer'), $('#asset-drawer'), $('#advanced-drawer'), $('#intelligence-drawer'), workflowLayer].find((layer) => layer && !layer.hidden);
     if (event.key === 'Tab' && openLayer) {
       const focusRoot = openLayer.id === 'img-modal' ? $('.modal-card', openLayer) : openLayer.id === 'settings-panel' ? openLayer : $('.drawer', openLayer);
       const focusable = $$('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])', focusRoot).filter((element) => element.offsetParent !== null);
@@ -1453,6 +1474,7 @@ function bindEvents() {
     if (!$('#advanced-drawer').hidden) closeDrawer('advanced');
     if (!$('#intelligence-drawer').hidden) closeDrawer('intelligence');
     if (!$('#job-drawer').hidden) closeDrawer('jobs');
+    if (!$('#asset-drawer').hidden) closeDrawer('assets');
     if ($('#settings-panel').classList.contains('is-open')) workflowDock.close();
   });
   workflowDock.bind();
