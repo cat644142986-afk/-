@@ -3,6 +3,11 @@
 // Hide console window on Windows release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// A release binary without Tauri's custom protocol opens build.devUrl and
+// fails as soon as the Vite server is absent. Refuse to create such a binary.
+#[cfg(all(not(debug_assertions), not(feature = "custom-protocol")))]
+compile_error!("Product Atelier release builds require --features custom-protocol; use `npx tauri build --no-bundle`");
+
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
@@ -491,6 +496,14 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            log_msg(&format!(
+                "[ProductAtelier] Frontend mode: {}",
+                if cfg!(feature = "custom-protocol") {
+                    "embedded-custom-protocol"
+                } else {
+                    "development-server"
+                }
+            ));
             if let Some(window) = app.get_webview_window("main") {
                 if let Err(error) = apply_windows_window_chrome(&window) {
                     log_msg(&format!("[ProductAtelier] WARNING: Could not apply Windows chrome: {error}"));

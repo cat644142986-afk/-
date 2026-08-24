@@ -630,6 +630,13 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 - Product Atelier 的本地账本、已批准知识与任务 trace 保持唯一事实来源。第三方智能体的“长期记忆”默认不作为正式知识，避免重复记忆、隐私/留存不透明、供应商锁定、幻觉和不可控调用成本。
 - 接入层优先设计为可替换 provider，并优先兼容标准聊天/Responses 协议；专有 `/v1/agent/chat` 只作为实验提供方。上线顺序位于 Result Review、trace 展示和知识审批稳定之后。
 
+### 2026-08-24 正式壳 localhost 回归修复
+
+- 发现单独执行 `cargo build --release` 会在未启用 Tauri `custom-protocol` 时生成仍访问 `devUrl` 的 EXE；sidecar 和账本健康检查虽然通过，WebView 仍显示 `ERR_CONNECTION_REFUSED`。
+- `Cargo.toml` 现已声明应用级 `custom-protocol`，release 缺少该 feature 时通过 `compile_error!` 直接拒绝编译；所有构建入口统一显式传入 `--features custom-protocol`。
+- 桌面壳启动日志新增前端模式，`Test-Portable-App.ps1` 必须确认 `Frontend mode: embedded-custom-protocol`。未通过时构建流程不得更新桌面快捷方式。
+- 新旧两个便携目录均已替换为同一嵌入式正式 EXE，桌面唯一快捷方式指向通过门禁的 `dist\ProductAtelier-Portable`；Windows 实机确认正式 Studio 可见且不依赖 Vite/localhost。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：

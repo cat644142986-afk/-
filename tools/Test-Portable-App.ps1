@@ -83,6 +83,9 @@ try {
         throw "Portable app did not keep its shell log inside the isolated data directory"
     }
     $appLog = Get-Content -LiteralPath $appLogPath -Raw
+    if ($appLog -notmatch 'Frontend mode: embedded-custom-protocol') {
+        throw "Portable app is not using embedded frontend assets; refusing a localhost-dependent release"
+    }
     if ($appLog -notmatch 'Window metrics: scale=') {
         throw "Portable app did not report DPI-aware window metrics"
     }

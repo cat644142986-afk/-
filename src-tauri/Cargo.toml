@@ -27,3 +27,8 @@ windows = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Controls",
 ] }
+
+[features]
+# Production builds must embed frontendDist behind Tauri's custom protocol.
+# Keep this app-level feature so `tauri build` can enable it automatically.
+custom-protocol = ["tauri/custom-protocol"]

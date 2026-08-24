@@ -64,7 +64,7 @@ if (-not $Quick) {
     Write-Host "[4/7] Building Rust binary (Tauri)..." -ForegroundColor Yellow
     Push-Location $ProjectRoot
     try {
-        & npx.cmd tauri build --no-bundle
+        & npx.cmd tauri build --no-bundle --features custom-protocol
         if ($LASTEXITCODE -ne 0) { throw "Rust build failed" }
     } finally {
         Pop-Location
@@ -91,21 +91,23 @@ if (-not (Test-Path $PythonServer)) {
     throw "Python server not found at $PythonServer"
 }
 
-# Update desktop shortcut
-$desktopShortcut = "$env:USERPROFILE\Desktop\Product Atelier.lnk"
-if (Test-Path $desktopShortcut) {
-    $WshShell = New-Object -ComObject WScript.Shell
-    $shortcut = $WshShell.CreateShortcut($desktopShortcut)
-    $shortcut.TargetPath = $TargetExe
-    $shortcut.WorkingDirectory = $PortableDir
-    $shortcut.Save()
-    Write-Host "  Desktop shortcut updated" -ForegroundColor Green
-}
-
-# Step 6: Verify the exact packaged sidecar before launch
-Write-Host "[6/7] Verifying portable sidecar..." -ForegroundColor Yellow
+# Step 6: Verify the exact packaged sidecar and embedded frontend before launch
+Write-Host "[6/7] Verifying portable app..." -ForegroundColor Yellow
 & "$PSScriptRoot\Test-Portable.ps1" -PortableDir $PortableDir
 if ($LASTEXITCODE -ne 0) { throw "Portable verification failed" }
+& "$PSScriptRoot\Test-Portable-App.ps1" -PortableDir $PortableDir
+if ($LASTEXITCODE -ne 0) { throw "Portable application verification failed" }
+
+# Only publish the desktop entry after the full app has proved that it embeds
+# frontendDist instead of depending on the temporary Vite localhost server.
+$desktopShortcut = "$env:USERPROFILE\Desktop\Product Atelier.lnk"
+$WshShell = New-Object -ComObject WScript.Shell
+$shortcut = $WshShell.CreateShortcut($desktopShortcut)
+$shortcut.TargetPath = $TargetExe
+$shortcut.WorkingDirectory = $PortableDir
+$shortcut.IconLocation = "$TargetExe,0"
+$shortcut.Save()
+Write-Host "  Desktop shortcut updated after full smoke test" -ForegroundColor Green
 
 # Step 7: Launch & Screenshot
 Write-Host "[7/7] Launching application..." -ForegroundColor Yellow

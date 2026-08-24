@@ -83,7 +83,7 @@ powershell -ExecutionPolicy Bypass -File tools\Build-Sidecar.ps1 -DeployPortable
 powershell -ExecutionPolicy Bypass -File tools\Test-Portable.ps1
 
 # 3. 构建完整Tauri应用 (前端Vite + Rust + NSIS)
-npm run tauri build
+npm run tauri build -- --features custom-protocol
 
 # 4. 部署便携外壳后，按正式启动链执行整包冒烟测试
 powershell -ExecutionPolicy Bypass -File tools\Test-Portable-App.ps1
@@ -102,12 +102,16 @@ powershell -ExecutionPolicy Bypass -File tools\Test-Portable-App.ps1
 
 ### 开发调试
 ```powershell
-# 默认重建 sidecar、前端和 Rust，验证后再启动
+# 默认重建 sidecar、前端和嵌入式 Rust 正式壳，验证后再启动
 powershell -ExecutionPolicy Bypass -File tools\dev.ps1
 
 # 只跳过 Rust；sidecar 仍会重建
 powershell -ExecutionPolicy Bypass -File tools\dev.ps1 -Quick
 ```
+
+正式版不得直接执行不带 feature 的 `cargo build --release`。项目会在编译期拒绝
+这种会继续访问 `localhost:1420` 的伪发布包；请使用上述 Tauri 命令或
+`build-portable.bat`，并以 `Test-Portable-App.ps1` 的嵌入前端门禁为准。
 
 ## 目录结构
 
