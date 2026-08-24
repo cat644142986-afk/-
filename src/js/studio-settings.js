@@ -20,7 +20,7 @@ export function knowledgeStatusCopy(status) {
     };
   }
   return {
-    pill: `${Number(status.document_count || 0)} docs · ${Number(status.rule_count || 0)} rules`,
+    pill: `${Number(status.document_count || 0)} 份文档 · ${Number(status.rule_count || 0)} 条规则`,
     title: '只读连接正常',
     detail: `${Number(status.document_count || 0)} 份文档 · ${Number(status.rule_count || 0)} 条规则`,
   };

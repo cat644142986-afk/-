@@ -451,17 +451,20 @@ fn set_window_pos_size(app: tauri::AppHandle, x: i32, y: i32, w: u32, h: u32) ->
 }
 
 #[cfg(windows)]
-fn apply_windows_window_chrome<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(), String> {
+fn apply_windows_window_chrome<R: tauri::Runtime>(window: &tauri::Window<R>) -> Result<(), String> {
     use std::ffi::c_void;
     use windows::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE,
-        DWMWCP_ROUND,
+        DWMWCP_DONOTROUND,
     };
 
     let hwnd = window.hwnd().map_err(|error| error.to_string())?;
-    let corner_preference = DWMWCP_ROUND;
-    // DWMWA_COLOR_NONE: retain the system shadow and rounded window shape but
-    // do not add another one-pixel DWM border around the CSS shell.
+    // The production shell owns its exact 36 logical pixel shape through a
+    // Win32 region. Disable the smaller system rounding so DWM cannot clip a
+    // second, visually conflicting radius over that region.
+    let corner_preference = DWMWCP_DONOTROUND;
+    // DWMWA_COLOR_NONE: suppress the native one-pixel frame. Tauri's native
+    // shadow is disabled as well, so the Win32 region is the only outer edge.
     let border_color = 0xFFFF_FFFEu32;
     unsafe {
         DwmSetWindowAttribute(
@@ -479,15 +482,44 @@ fn apply_windows_window_chrome<R: tauri::Runtime>(window: &tauri::WebviewWindow<
         )
         .map_err(|error| error.to_string())?;
     }
+    apply_windows_window_region(window)
+}
+
+#[cfg(windows)]
+fn apply_windows_window_region<R: tauri::Runtime>(window: &tauri::Window<R>) -> Result<(), String> {
+    use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ};
+
+    const WINDOW_CORNER_RADIUS_LOGICAL: f64 = 36.0;
+
+    let hwnd = window.hwnd().map_err(|error| error.to_string())?;
+    if window.is_maximized().map_err(|error| error.to_string())? {
+        unsafe { SetWindowRgn(hwnd, None, true); }
+        return Ok(());
+    }
+
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    let scale = window.scale_factor().map_err(|error| error.to_string())?;
+    let diameter = (WINDOW_CORNER_RADIUS_LOGICAL * 2.0 * scale).round() as i32;
+    let width = i32::try_from(size.width).map_err(|_| "window width exceeds Win32 region limits")?;
+    let height = i32::try_from(size.height).map_err(|_| "window height exceeds Win32 region limits")?;
+    let region = unsafe { CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter) };
+    if region.0.is_null() {
+        return Err("CreateRoundRectRgn returned a null region".to_string());
+    }
+    if unsafe { SetWindowRgn(hwnd, Some(region), true) } == 0 {
+        unsafe { let _ = DeleteObject(HGDIOBJ(region.0)); }
+        return Err("SetWindowRgn failed".to_string());
+    }
+    // After a successful SetWindowRgn call, Windows owns the region handle.
     Ok(())
 }
 
 #[cfg(not(windows))]
-fn apply_windows_window_chrome<R: tauri::Runtime>(_window: &tauri::WebviewWindow<R>) -> Result<(), String> {
+fn apply_windows_window_chrome<R: tauri::Runtime>(_window: &tauri::Window<R>) -> Result<(), String> {
     Ok(())
 }
 
-fn log_window_metrics<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+fn log_window_metrics<R: tauri::Runtime>(window: &tauri::Window<R>) {
     let Ok(scale) = window.scale_factor() else { return; };
     let Ok(size) = window.outer_size() else { return; };
     let logical_width = size.width as f64 / scale;
@@ -511,7 +543,8 @@ fn main() {
                     "development-server"
                 }
             ));
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(webview_window) = app.get_webview_window("main") {
+                let window = webview_window.as_ref().window();
                 if let Err(error) = apply_windows_window_chrome(&window) {
                     log_msg(&format!("[ProductAtelier] WARNING: Could not apply Windows chrome: {error}"));
                 }
@@ -536,9 +569,9 @@ fn main() {
                 api_port: Mutex::new(port),
                 config: Mutex::new(cfg),
             });
-            // Windows 11 supplies the outer shadow and rounded window region.
-            // The web surface stays opaque so no underlying window can bleed
-            // through the anti-aliased corners.
+            // Win32 supplies the exact rounded window region. The web surface
+            // stays opaque and the native Tauri shadow is disabled so no white
+            // frame or desktop content can bleed through the corners.
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -560,6 +593,14 @@ fn main() {
                     }
                 }
                 tauri::WindowEvent::Focused(_) => {}
+                tauri::WindowEvent::Moved(_)
+                | tauri::WindowEvent::Resized(_)
+                | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                    #[cfg(windows)]
+                    if let Err(error) = apply_windows_window_region(window) {
+                        log_msg(&format!("[ProductAtelier] WARNING: Could not refresh window region: {error}"));
+                    }
+                }
                 _ => {}
             }
         })

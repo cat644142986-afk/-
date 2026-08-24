@@ -1,9 +1,9 @@
 export const PAGE_CONFIG = {
-  process: { eyebrow: 'PRODUCT ATELIER', title: '创作工作台', subtitle: '素材、任务与判断持续留在现场' },
-  compare: { eyebrow: 'QUALITY REVIEW', title: '版本对比', subtitle: '检查轮廓、材质、颜色与构图偏差' },
-  history: { eyebrow: 'CREATION LEDGER', title: '创作会话', subtitle: '每次生成都有来源、理由和版本' },
-  memory: { eyebrow: 'DESIGN DNA', title: '成长中心', subtitle: '把反复出现的判断沉淀为可审核的偏好' },
-  settings: { eyebrow: 'SYSTEM & KNOWLEDGE', title: '应用设置', subtitle: '管理模型、知识库与本地存储' },
+  process: { eyebrow: 'PRODUCT ATELIER', title: '创作', subtitle: '素材与任务现场' },
+  compare: { eyebrow: 'QUALITY REVIEW', title: '评审', subtitle: '版本对比与设计判断' },
+  history: { eyebrow: 'CREATION LEDGER', title: '会话', subtitle: '恢复项目现场与历史结果' },
+  memory: { eyebrow: 'DESIGN DNA', title: '成长', subtitle: '设计偏好与知识审核' },
+  settings: { eyebrow: 'SYSTEM & KNOWLEDGE', title: '设置', subtitle: '模型、知识与交付' },
 };
 
 export const MODE_CONFIG = {

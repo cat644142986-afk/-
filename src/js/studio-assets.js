@@ -111,7 +111,7 @@ export function createAssetManagerController({
   function renderList(items, kind) {
     const list = query('#asset-manager-list');
     if (!items.length) {
-      list.innerHTML = `<div class="asset-manager-empty"><strong>${kind === 'trash' ? '回收站是空的' : '当前还没有素材'}</strong><p>${kind === 'trash' ? '移出的图片会保留在这里，可随时恢复。' : '从 Studio 导入图片后，会持久保存在这个素材域。'}</p></div>`;
+      list.innerHTML = `<div class="asset-manager-empty"><strong>${kind === 'trash' ? '回收站是空的' : '当前还没有素材'}</strong><p>${kind === 'trash' ? '移出的图片会保留在这里，可随时恢复。' : '从创作工作台导入图片后，会持久保存在这个素材域。'}</p></div>`;
       return;
     }
     list.innerHTML = items.map((asset) => {

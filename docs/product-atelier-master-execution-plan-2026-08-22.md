@@ -658,6 +658,15 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 - 本检查点没有修改生产 `src/`、Python、Rust 或 schema。原型确认后先迁移 Shell 2.0，再把 Phase 5 真实部分失败/恢复状态接入新任务中心；不能把原型演示误报为后端稳定性完成。
 - 规格与证据见 `docs/experience-shell2-knowledge-motion-prototype-2026-08-24.md`。
 
+### 2026-08-24 生产体验外壳与稳定性收口
+
+- Experience Shell 2.0 已迁移到正式 `src/` 与 Tauri 壳，四个真实工作流、独立草稿、素材管理、全局后台任务、设置和动态知识投影继续使用原有数据与 API。
+- 外层使用 36px DPI 感知 Win32 region；Tauri 原生阴影关闭，消除白边和底部灰条。主面板 27px、普通卡片 19px、控件 14px、左侧胶囊 29px。
+- 按用户最新确认移除右下“终稿候选”，任务控制跨两行向下占满且无内部滚动；结果对比、反馈和导出能力没有删除。
+- 正式 EXE 已完成部分成功、失败项单独重试、永久失败中文解释、sidecar 中断后恢复、成功项不重复和退出后资源释放故障注入。
+- 验证通过：前端 50 项、Python 100 项、Vite、Rust 两种 feature 检查和 custom-protocol 正式 EXE 构建。
+- 详细证据见 `docs/phase-5-production-experience-shell-checkpoint-2026-08-24.md`。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：
@@ -665,7 +674,7 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 从 Phase 4 剩余门禁开始，不重复 Phase 0–3，也不退回历史 `vXX-fixes.css` 补丁路线。
-4. 960×600 控制抽屉、素材管理抽屉与 Task Dock、10+20+1 离线并发、1283×803 真实 Tauri 数据态和自定义交付目录故障注入已通过；下一步只做部分失败/单项重试/永久失败中文解释/进程中断恢复/成功项不重复/后台资源释放，再进入批量素材管理。
+4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳和 Phase 5 第一组稳定性故障注入已通过；下一步进入 50+ 素材批量管理、统一状态组件和结果评审深化。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 

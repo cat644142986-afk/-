@@ -121,3 +121,25 @@ git -C D:\ProductAtelier-Desktop switch -c restore/before-experience-shell2-prot
 ```
 
 原型不会写入用户账本，通常无需恢复数据库。只有用户正式账本本身另有损坏时才使用上方备份；恢复前仍必须退出桌面程序和 sidecar，并先保留当前数据库副本。
+
+## 2026-08-24 生产体验外壳实施前基线
+
+- 实施前标签：`baseline-2026-08-24-before-production-experience-shell`
+- 标签提交：`949d34f`
+- 生产检查点标签：`checkpoint-2026-08-24-production-experience-shell`
+- 实现与验收说明：`docs/phase-5-production-experience-shell-checkpoint-2026-08-24.md`
+- 数据库 schema：仍为 v3；本检查点没有数据库迁移。
+
+回看生产外壳实施前状态时创建独立恢复分支：
+
+```powershell
+git -C D:\ProductAtelier-Desktop switch -c restore/before-production-experience-shell baseline-2026-08-24-before-production-experience-shell
+```
+
+回到本次生产检查点时创建独立恢复分支：
+
+```powershell
+git -C D:\ProductAtelier-Desktop switch -c restore/production-experience-shell checkpoint-2026-08-24-production-experience-shell
+```
+
+回退前先退出 `Product Atelier.exe` 与 `python-server.exe`。本次变更不迁移或删除用户账本、素材、结果与外部交付目录，因此通常只需切换源码；仍应先保留 `%APPDATA%\ProductAtelier` 和外部成品目录的副本。回到实施前版本后会恢复旧生产 UI，但既有 schema v3 数据和任务记录保持可读。

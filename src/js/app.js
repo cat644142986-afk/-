@@ -924,7 +924,7 @@ function updateCtaState() {
   button.disabled = !hasFiles || state.submitting || !state.assetsAvailable || !capacityOkay;
   $('#param-batch').setAttribute('aria-invalid', String(!capacityOkay));
   button.classList.toggle('loading', state.submitting);
-  if (state.submitting) $('#generate-text').textContent = '正在加入任务 Dock';
+  if (state.submitting) $('#generate-text').textContent = '正在加入后台任务';
   else if (!hasFiles) $('#generate-text').textContent = '选择图片开始';
   else $('#generate-text').textContent = MODE_CONFIG[state.currentMode].action;
   if (!hasFiles) $('#cta-hint').textContent = state.currentMode === 'cutout-batch'
@@ -1087,8 +1087,8 @@ async function handleGenerate() {
     }
     toast(
       responses.length > 1
-        ? `${submissionDraft.source_asset_ids.length} 张已拆为 ${responses.length} 批加入 Dock`
-        : '任务已加入 Dock，可继续组织素材',
+        ? `${submissionDraft.source_asset_ids.length} 张已拆为 ${responses.length} 批加入后台任务`
+        : '任务已加入后台，可继续组织素材',
       'success',
     );
     await loadJobs(true);
@@ -1142,6 +1142,8 @@ function renderJobDockSummary() {
   const outcomeCopy = decided ? ` · 已结束项成功率 ${Math.round((completed / decided) * 100)}%` : '';
   const percent = Math.round(overall * 100);
   $('#job-dock-progress').textContent = `${percent}%`;
+  $('#workspace-progress-percent').textContent = `${percent}%`;
+  $('#workspace-progress-bar').style.width = `${percent}%`;
   $('#job-dock-summary').textContent = state.jobsAvailable
     ? (ongoing.length
       ? `${ongoing.length} 个未结束${paused.length ? ` · ${paused.length} 个已暂停` : ''} · ${jobs.length} 个记录`
@@ -1324,7 +1326,7 @@ async function loadJobs(silent = false) {
     if (requestVersion !== state.jobsRequestVersion) return null;
     state.jobsAvailable = false;
     renderJobs();
-    if (!silent) toast(`任务 Dock 读取失败：${formatApiError(error, '持久任务接口不可用')}`, 'error', 6000);
+    if (!silent) toast(`后台任务读取失败：${formatApiError(error, '持久任务接口不可用')}`, 'error', 6000);
     return false;
   } finally {
     if (requestVersion === state.jobsRequestVersion) state.jobsAbortController = null;
@@ -1471,7 +1473,7 @@ async function openJobResults(jobId) {
   switchPage('process');
   closeDrawer('jobs');
   $('#summary-result').textContent = `${items.length} 个结果已从任务账本恢复`;
-  $('#summary-result-note').textContent = '可先检查成功项，再在任务 Dock 重试失败项';
+  $('#summary-result-note').textContent = '可先检查成功项，再在后台任务中重试失败项';
 }
 
 function getResultItems(tab = state.resultTab) {
@@ -1672,14 +1674,82 @@ async function loadSessions() {
   } catch (error) { grid.innerHTML = `<div class="page-empty">读取失败：${escapeHtml(error)}</div>`; }
 }
 
+function selectMemoryNode(node) {
+  if (!node) return;
+  $$('[data-memory-node]').forEach((item) => item.classList.toggle('is-selected', item === node));
+  const caption = $('#memory-dna-caption');
+  $('strong', caption).textContent = node.dataset.memoryNode || '设计判断';
+  $('small', caption).textContent = node.dataset.memoryDetail || '所有关系都来自真实账本和唯一知识库。';
+}
+
+function replayMemoryMotion() {
+  const panel = $('#memory-dna-panel');
+  const trace = $('#memory-trace');
+  [panel, trace].forEach((element) => {
+    element.classList.remove('is-replaying');
+    void element.offsetWidth;
+    element.classList.add('is-replaying');
+  });
+  window.setTimeout(() => {
+    panel.classList.remove('is-replaying');
+    trace.classList.remove('is-replaying');
+  }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 900);
+  toast('正在回放：正式知识 → 创作现场 → 终稿反馈 → 待审核建议', 'success');
+}
+
+function renderMemoryProjection(ledger, suggestions, knowledgeStatus) {
+  const counts = ledger.counts || {};
+  const sessions = Number(counts.sessions || 0);
+  const feedback = Number(counts.feedback || 0);
+  const pending = Number(ledger.pending_memory || suggestions.length || 0);
+  const documents = Number(knowledgeStatus?.document_count || 0);
+  const knowledgeRules = Number(knowledgeStatus?.rule_count || 0);
+  const bundle = state.knowledgeBundle || {};
+  const sources = Array.isArray(bundle.sources) ? bundle.sources : [];
+  const executionRules = (Array.isArray(bundle.positive_rules) ? bundle.positive_rules.length : 0)
+    + (Array.isArray(bundle.negative_rules) ? bundle.negative_rules.length : 0);
+  const brief = bundle.creative_brief || {};
+  const intent = brief.objective || brief.user_request || $('#brief-input').value.trim();
+
+  $('#memory-session-count').textContent = sessions;
+  $('#memory-feedback-count').textContent = feedback;
+  $('#memory-pending-count').textContent = pending;
+  $('#memory-rule-count').textContent = knowledgeStatus?.available === false
+    ? '主库暂不可用'
+    : `${documents} 份文档 · ${knowledgeRules} 条规则`;
+  $('#memory-core-summary').textContent = `${documents} 份正式知识 · ${sessions} 个现场`;
+  $('#memory-trace-intent').textContent = intent || '当前任务尚未输入创作目标';
+  $('#memory-trace-knowledge').textContent = sources.length
+    ? `本次引用 ${sources.length} 份正式知识`
+    : '当前任务尚未编译知识来源';
+  $('#memory-trace-rules').textContent = executionRules
+    ? `形成 ${executionRules} 条可检查执行规则`
+    : '只采用已批准规则，不使用待审核建议';
+  $('#memory-trace-feedback').textContent = feedback
+    ? `已有 ${feedback} 条反馈证据；新建议仍需确认`
+    : '确认终稿后才形成待审核建议';
+
+  const details = {
+    设计判断: `${documents} 份正式知识、${sessions} 个创作现场和 ${feedback} 条反馈共同构成当前投影。`,
+    正式知识: `唯一主库当前只读加载 ${documents} 份文档、${knowledgeRules} 条规则；正式页面不会被后台修改。`,
+    创作现场: `${sessions} 个会话保留各自素材、参数、知识引用与结果版本。`,
+    终稿反馈: `${feedback} 条有效反馈作为学习证据，不会直接覆盖正式知识。`,
+    待审核建议: `${pending} 条建议等待人工确认；未批准前不参与未来生成。`,
+  };
+  $$('[data-memory-node]').forEach((node) => { node.dataset.memoryDetail = details[node.dataset.memoryNode] || ''; });
+  selectMemoryNode($('.memory-dna-node.is-selected') || $('[data-memory-node]'));
+}
+
 async function loadMemory() {
   try {
     await API.synthesizeMemory().catch(() => null);
-    const [ledger, suggestions] = await Promise.all([API.getLedgerStatus(), API.getMemorySuggestions('pending')]);
-    const counts = ledger.counts || {};
-    $('#memory-session-count').textContent = counts.sessions || 0;
-    $('#memory-feedback-count').textContent = counts.feedback || 0;
-    $('#memory-pending-count').textContent = ledger.pending_memory || suggestions.length || 0;
+    const [ledger, suggestions, knowledgeStatus] = await Promise.all([
+      API.getLedgerStatus(),
+      API.getMemorySuggestions('pending'),
+      API.getKnowledgeStatus().catch(() => state.knowledgeStatus || {}),
+    ]);
+    state.knowledgeStatus = knowledgeStatus;
+    renderMemoryProjection(ledger, suggestions, knowledgeStatus);
     const list = $('#memory-list');
     if (!suggestions.length) { list.innerHTML = '<div class="page-empty">暂无待审核偏好。继续使用后，重复模式会在这里出现。</div>'; return; }
     list.innerHTML = suggestions.map((item) => {
@@ -1690,7 +1760,12 @@ async function loadMemory() {
     }).join('');
     $$('[data-review]', list).forEach((button) => button.addEventListener('click', async () => {
       const item = button.closest('.memory-item');
-      try { await API.reviewMemorySuggestion(item.dataset.id, button.dataset.review); item.remove(); toast('审核结果已记录', 'success'); loadMemory(); }
+      try {
+        await API.reviewMemorySuggestion(item.dataset.id, button.dataset.review);
+        item.classList.add('is-leaving');
+        toast(button.dataset.review === 'approved' ? '已批准；从下一个新任务开始生效' : '已拒绝并保留在审核历史中', 'success');
+        window.setTimeout(loadMemory, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 240);
+      }
       catch (error) { toast(`审核失败：${error}`, 'error'); }
     }));
   } catch (error) { $('#memory-list').innerHTML = `<div class="page-empty">读取失败：${escapeHtml(error)}</div>`; }
@@ -1727,6 +1802,7 @@ function bindEvents() {
   $$('[data-open-advanced]').forEach((button) => button.addEventListener('click', () => openDrawer('advanced')));
   $('#btn-open-intelligence').addEventListener('click', () => openDrawer('intelligence'));
   $('#btn-job-dock').addEventListener('click', () => openDrawer('jobs'));
+  $('#btn-rail-jobs').addEventListener('click', () => openDrawer('jobs'));
   $('#btn-refresh-jobs').addEventListener('click', async () => {
     const button = $('#btn-refresh-jobs');
     if (button.disabled) return;
@@ -1750,6 +1826,10 @@ function bindEvents() {
   $('#btn-feedback').addEventListener('click', () => { const reason = $('#feedback-input').value.trim(); if (!reason) { toast('请先写下具体判断'); return; } recordFeedback(state.lastFeedbackSignal === 'rejected' ? 'rejected' : 'note', reason); });
   $('#btn-refresh-history').addEventListener('click', loadSessions);
   $('#btn-refresh-memory').addEventListener('click', loadMemory);
+  $('#btn-replay-memory').addEventListener('click', replayMemoryMotion);
+  $$('[data-memory-node]').forEach((node) => node.addEventListener('click', () => selectMemoryNode(node)));
+  $('#btn-open-memory-evidence').addEventListener('click', () => openDrawer('intelligence'));
+  $('#btn-open-memory-trace').addEventListener('click', () => openDrawer('intelligence'));
   assetManager.bind();
   settingsController.bind();
   $('#modal-backdrop').addEventListener('click', closeModal);

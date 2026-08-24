@@ -27,9 +27,9 @@ test('settings payload trims paths and only sends a non-empty key on explicit sa
   assert.equal('api_key' in normalizeSettingsPayload({ ...values, apiKey: '   ' }, true), false);
 });
 
-test('knowledge status keeps English decorative and Chinese explanatory', () => {
+test('knowledge status keeps all core meaning in Chinese', () => {
   assert.deepEqual(knowledgeStatusCopy({ available: true, document_count: 61, rule_count: 2094 }), {
-    pill: '61 docs · 2094 rules',
+    pill: '61 份文档 · 2094 条规则',
     title: '只读连接正常',
     detail: '61 份文档 · 2094 条规则',
   });

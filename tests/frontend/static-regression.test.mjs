@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, assets, config, jobs, settings, shell, studioState, html, css] = await Promise.all([
+const [app, api, assets, config, jobs, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
@@ -16,6 +16,8 @@ const [app, api, assets, config, jobs, settings, shell, studioState, html, css] 
   readFile(path.join(root, 'src/js/studio-state.js'), 'utf8'),
   readFile(path.join(root, 'src/index.html'), 'utf8'),
   readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8'),
+  readFile(path.join(root, 'src-tauri/src/main.rs'), 'utf8'),
+  readFile(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'),
 ]);
 
 test('task dock filters all workflows and returns to immutable task context', () => {
@@ -166,19 +168,57 @@ test('unsupported Folder action is absent and export handles all result roles in
   assert.match(css, /\.result-actions \{[^}]*repeat\(2,1fr\)/);
 });
 
-test('production shell keeps review contextual and removes the redundant bottom dashboard', () => {
+test('production shell lands the extended-workflow experience frame with exact native and component radii', () => {
   assert.doesNotMatch(html, /class="rail-button"[^>]*data-page="compare"/);
   assert.match(html, /id="btn-open-compare"/);
   assert.doesNotMatch(html, /class="studio-meta-grid"/);
-  assert.match(html, /class="workspace-announcer"/);
-  assert.match(css, /\.studio-grid \{[^}]*grid-template-rows: minmax\(0, 1fr\)/);
-  assert.match(css, /\.traffic-light \{ width: 12px; height: 12px/);
+  assert.match(html, /class="studio-context-panel workspace-announcer"/);
+  assert.doesNotMatch(html, /studio-review-panel|终稿候选已准备/);
+  assert.match(css, /\.studio-grid \{[^}]*grid-template-columns: minmax\(0, 1\.55fr\) minmax\(310px, \.9fr\)[^}]*grid-template-rows: minmax\(330px, 1fr\) 160px/);
+  assert.match(css, /--radius-panel: 27px/);
+  assert.match(css, /--radius-card: 19px/);
+  assert.match(css, /--radius-control: 14px/);
+  assert.doesNotMatch(css, /--radius-shell/);
+  assert.match(css, /\.app-shell \{[^}]*border-radius: 0/);
+  assert.match(mainRust, /DWMWA_WINDOW_CORNER_PREFERENCE/);
+  assert.match(mainRust, /DWMWA_BORDER_COLOR/);
+  assert.match(mainRust, /let border_color = 0xFFFF_FFFEu32/);
+  assert.match(mainRust, /WINDOW_CORNER_RADIUS_LOGICAL: f64 = 36\.0/);
+  assert.match(mainRust, /CreateRoundRectRgn/);
+  assert.match(mainRust, /SetWindowRgn/);
+  assert.match(tauriConfig, /"shadow": false/);
+  assert.match(tauriConfig, /"backgroundColor": "#F4F1EB"/);
+  assert.match(css, /\.canvas-card,[^}]*box-shadow: none/);
+  assert.match(css, /\.task-dock \{[^}]*grid-row: 1 \/ 3/);
+  assert.match(css, /\.rail-cluster \{[^}]*border-radius: 29px;[^}]*background: var\(--paper\)/);
+  assert.match(css, /\.traffic-light \{[^}]*width: 28px; height: 28px/);
+  assert.match(css, /\.traffic-light::before \{[^}]*width: 12px; height: 12px/);
+  assert.match(html, /<strong>设计依据<\/strong>/);
+  assert.match(html, /<strong>后台任务<\/strong>/);
+  assert.doesNotMatch(html, />Studio<\/span>/);
+  assert.match(css, /\.canvas-empty::before, \.canvas-empty::after \{ display: none; \}/);
+});
+
+test('growth page projects real knowledge, evidence, review, and motion without demo business content', () => {
+  assert.match(html, /id="memory-dna-map"/);
+  assert.match(html, /id="memory-rule-count"/);
+  assert.match(html, /id="memory-trace"/);
+  assert.match(html, /正式知识、创作现场与终稿反馈各自保留来源/);
+  assert.doesNotMatch(html, /牛油果|AVOCADO/);
+  assert.match(app, /function renderMemoryProjection\(ledger, suggestions, knowledgeStatus\)/);
+  assert.match(app, /API\.getKnowledgeStatus\(\)/);
+  assert.match(app, /function replayMemoryMotion\(\)/);
+  assert.match(app, /未批准前不参与未来生成/);
+  assert.match(css, /@keyframes memoryDrawLine/);
+  assert.match(css, /@keyframes memoryNodeReveal/);
+  assert.match(css, /@keyframes memoryTraceReveal/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
 test('narrow windows turn workflow controls into an accessible drawer instead of squeezing the stage', () => {
   assert.match(html, /id="btn-workflow-drawer"[^>]*aria-controls="settings-panel"[^>]*aria-expanded="false"/);
   assert.match(html, /id="task-dock-backdrop"[^>]*hidden/);
-  assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.studio-grid \{ grid-template-columns: minmax\(0,1fr\); \}/);
+  assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.studio-grid \{[^}]*grid-template-columns: minmax\(0,1fr\)/);
   assert.match(css, /\.task-dock\.is-open \{ opacity: 1; pointer-events: auto; transform: translateX\(0\); \}/);
   assert.match(shell, /panel\.toggleAttribute\('inert', presentation\.inert\)/);
   assert.match(shell, /panel\.setAttribute\('role', presentation\.role\)/);
@@ -229,7 +269,10 @@ test('quick cutout does not pretend to understand a semantic brief or knowledge 
   assert.match(app, /if \(!bundle\) \{[\s\S]*?knowledge-summary'\)\.textContent = '等待知识编译'/);
 });
 
-test('knowledge summary stays content-sized instead of stretching into an empty dark panel', () => {
-  assert.match(css, /\.task-dock \{[^}]*grid-template-rows: auto auto auto auto auto auto minmax\(0,1fr\) auto/);
-  assert.match(css, /\.task-dock__footer \{ grid-row: -2 \/ -1/);
+test('real workflow controls share the dark production dock without stretching empty space', () => {
+  assert.match(html, /<aside class="task-dock"[\s\S]*?class="task-dock__body"[\s\S]*?class="mode-grid"[\s\S]*?id="folder-source"/);
+  assert.match(css, /\.task-dock \{[^}]*display: grid;[^}]*grid-template-rows: auto minmax\(0,1fr\) auto/);
+  assert.match(css, /\.task-dock__body \{[^}]*overflow: hidden/);
+  assert.doesNotMatch(css, /\.task-dock__body \{[^}]*overflow: hidden auto/);
+  assert.match(css, /\.task-dock \.folder-source \{[^}]*border-radius: 17px/);
 });
