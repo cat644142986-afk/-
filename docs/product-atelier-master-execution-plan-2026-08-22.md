@@ -647,6 +647,17 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 - 正式 EXE 已完成“原生选目录 → 目录离线 → 中文阻断 → 恢复目录 → 本地抠图成功 → 进程重启 → 设置和结果仍可读”的隔离故障注入；同时修复 PyInstaller 缺少 `numba._devicearray` 导致正式包本地抠图失败的问题。
 - 详细实现与验收见 `docs/phase-5-custom-output-root-checkpoint-2026-08-24.md`。
 
+### 2026-08-24 体验外壳 2.0 与动态知识原型
+
+- 根据用户最新 Be.run 参考，已在独立 `prototypes/experience-shell2/` 建立新的可点击高保真原型；旧“整高文字左轨”不再是最终目标。
+- 左侧结构改为 Logo、主导航、任务/设置、退出/头像四段：白色竖向胶囊、图标单独导航、当前项墨黑正圆配暖黄色图标；中文语义由页面标题、tooltip 和无障碍名称承担。
+- 圆角基准更新为 36px 原型外壳、27px 主面板、29px 左侧胶囊、19px 普通卡片和 14px 控件。生产落地时仍须与 Win32 region 和 100/125/150% DPI 实测同步，不能直接把浏览器数值当作壳层结论。
+- 原型覆盖 Studio、Sessions、Growth、Settings、Task Dock、设计解释与 Result Review；知识以工作流胶囊、可解释 trace、二维 Design DNA 和人工审核队列呈现。
+- 动效只用于知识采用、状态推进、图谱进入、建议审核和层级切换；支持中断、`Escape`、焦点恢复和 `prefers-reduced-motion`，不引入 GSAP 或新的运行时依赖。
+- 1440×900、1280×720、960×600 浏览器实测无页面溢出；1280 首轮发现并修复主要生成按钮被面板裁切，960 知识节点复验无重叠；控制台 0 error / 0 warning。
+- 本检查点没有修改生产 `src/`、Python、Rust 或 schema。原型确认后先迁移 Shell 2.0，再把 Phase 5 真实部分失败/恢复状态接入新任务中心；不能把原型演示误报为后端稳定性完成。
+- 规格与证据见 `docs/experience-shell2-knowledge-motion-prototype-2026-08-24.md`。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：

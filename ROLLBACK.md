@@ -102,3 +102,22 @@ git -C D:\ProductAtelier-Desktop switch -c restore/before-custom-output-root che
 回退前必须先退出 `Product Atelier.exe` 与 `python-server.exe`。本功能不移动账本、缓存或学习证据，因此不需要恢复数据库；外部交付目录中的成品也不会被代码回退删除。
 
 注意：功能实施前的 sidecar 只允许从内部 `output` 根读取结果。若账本已经登记外部目录成品，旧版界面可能无法预览这些结果，尽管文件仍安全存在。因此已使用自定义交付目录的数据环境优先回滚到本检查点；确需运行旧版时，先保留 `%APPDATA%\ProductAtelier` 和所有外部交付目录的完整副本，并准备结果路径兼容迁移，不要直接覆盖账本路径。
+
+## 2026-08-24 体验外壳 2.0 与动态知识原型
+
+- 实施前标签：`baseline-2026-08-24-before-experience-shell2-prototype`
+- 标签提交：`236525b89fb5ebfd761b90a19cc9e1c08c50bc9e`
+- 原型检查点标签：`checkpoint-2026-08-24-experience-shell2-prototype`
+- 原型目录：`prototypes/experience-shell2/`
+- 交互与验收说明：`docs/experience-shell2-knowledge-motion-prototype-2026-08-24.md`
+- 用户账本在线备份：`D:\ProductAtelier-Backups\experience-shell2-2026-08-24\atelier-before-experience-shell2.sqlite3`
+- 备份 SHA-256：`F2F78087B14EEACA59578C55B8822F5CF122225AFA02BFAA2B18D758ECF07A02`
+- 备份检查：`integrity_check=ok`、0 个外键异常；不包含 API Key。
+
+本检查点只新增独立静态原型、测试与文档，没有修改生产 `src/`、Python sidecar、Rust 壳或 schema。回看原型前状态可创建独立恢复分支：
+
+```powershell
+git -C D:\ProductAtelier-Desktop switch -c restore/before-experience-shell2-prototype baseline-2026-08-24-before-experience-shell2-prototype
+```
+
+原型不会写入用户账本，通常无需恢复数据库。只有用户正式账本本身另有损坏时才使用上方备份；恢复前仍必须退出桌面程序和 sidecar，并先保留当前数据库副本。
