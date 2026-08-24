@@ -56,3 +56,13 @@ test('icon-only controls keep accessible Chinese names and overlay focus handlin
   assert.match(js, /button svg'[\s\S]*aria-hidden/);
   assert.match(css, /button:focus-visible/);
 });
+
+test('feedback refinement keeps the header concise and the lower panels color-clean', () => {
+  assert.match(html, /<h1 id="pageTitle">创作<\/h1>/);
+  assert.match(html, /<strong>设计依据<\/strong><small>3 条生效规则<\/small>/);
+  assert.match(html, /<strong>后台任务<\/strong><small>1 项待处理<\/small>/);
+  assert.doesNotMatch(html, /下午好，Miyo|知识正在参与/);
+  assert.match(css, /\.window-light\s*\{[\s\S]*?width:\s*28px;[\s\S]*?height:\s*28px;/);
+  assert.match(css, /\.window-light::before\s*\{[\s\S]*?width:\s*12px;[\s\S]*?height:\s*12px;/);
+  assert.match(css, /\.panel\s*\{[\s\S]*?background:\s*var\(--surface\);/);
+});

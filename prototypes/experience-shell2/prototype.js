@@ -5,23 +5,23 @@ document.querySelectorAll('button svg').forEach((icon) => icon.setAttribute('ari
 const pageMeta = {
   studio: {
     eyebrow: 'CREATIVE STUDIO',
-    title: '下午好，Miyo',
-    subtitle: '继续完成牛油果饮品的主图方向',
+    title: '创作',
+    subtitle: '牛油果夏季上新',
   },
   sessions: {
     eyebrow: 'PROJECT SESSIONS',
-    title: '会话与项目',
-    subtitle: '每个工作流都保留自己的素材、任务和评审现场',
+    title: '会话',
+    subtitle: '项目现场与历史结果',
   },
   growth: {
     eyebrow: 'DESIGN INTELLIGENCE',
-    title: '成长与知识',
-    subtitle: '看见知识怎样参与，也决定系统可以学到什么',
+    title: '成长',
+    subtitle: '设计偏好与知识审核',
   },
   settings: {
     eyebrow: 'SYSTEM & KNOWLEDGE',
-    title: '应用设置',
-    subtitle: '管理模型、唯一知识库与成品交付位置',
+    title: '设置',
+    subtitle: '模型、知识与交付',
   },
 };
 
