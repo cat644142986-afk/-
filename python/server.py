@@ -114,6 +114,10 @@ MODEL_OPTIONS = {
 }
 MAX_GROUP_PRODUCTS = 12
 GROUP_PRODUCT_TYPES = frozenset({"food", "packaging", "dish"})
+FOLDER_SCAN_MAX_FILES = 500
+FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
+FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
+_FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
 SIDECAR_CONTRACT_VERSION = "2026-08-22.4"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
@@ -1088,6 +1092,131 @@ async def import_workspace_assets(
     return {"assets": imported, "errors": errors, "count": len(imported)}
 
 
+class FolderSourceRequest(BaseModel):
+    folder_path: str
+
+    class Config:
+        extra = "forbid"
+
+
+def _resolve_source_folder(value: str) -> Path:
+    raw = str(value or "").strip().strip('"').strip("'")
+    if not raw:
+        raise ValueError("请输入图片文件夹地址")
+    try:
+        folder = Path(raw).expanduser().resolve(strict=True)
+    except (FileNotFoundError, OSError) as exc:
+        raise ValueError("文件夹不存在或当前无法访问") from exc
+    if not folder.is_dir():
+        raise ValueError("输入路径不是文件夹")
+    return folder
+
+
+def _folder_delivery_name() -> str:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"{FOLDER_DELIVERY_PREFIX}{timestamp}-{uuid.uuid4().hex[:6]}"
+
+
+@app.post("/api/folder-sources/import")
+async def import_folder_sources(request: FolderSourceRequest):
+    """Import one flat image folder into the durable product workspace.
+
+    Folder traversal is intentionally non-recursive. Existing Product Atelier
+    delivery folders are directories and therefore never re-imported.
+    """
+    try:
+        folder = _resolve_source_folder(request.folder_path)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_FOLDER", "message": str(exc)},
+        )
+    try:
+        image_paths = sorted(
+            path for path in folder.iterdir()
+            if path.is_file() and path.suffix.lower() in FOLDER_IMAGE_EXTENSIONS
+        )
+    except OSError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "FOLDER_ACCESS_DENIED", "message": "无法读取这个文件夹"},
+        ) from exc
+    if not image_paths:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "EMPTY_IMAGE_FOLDER", "message": "文件夹内没有 JPG、PNG 或 WEBP 图片"},
+        )
+    if len(image_paths) > FOLDER_SCAN_MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "FOLDER_TOO_LARGE",
+                "message": f"当前单次最多接收 {FOLDER_SCAN_MAX_FILES} 张，检测到 {len(image_paths)} 张",
+            },
+        )
+
+    imported = []
+    errors = []
+    source_names = {}
+    seen_asset_ids = set()
+    for position, path in enumerate(image_paths):
+        try:
+            with path.open("rb") as handle:
+                asset = await run_in_threadpool(
+                    ASSET_STORE.import_stream,
+                    handle,
+                    path.name,
+                    "product",
+                )
+            asset_id = str(asset["id"])
+            if asset_id in seen_asset_ids:
+                errors.append({
+                    "position": position,
+                    "name": path.name,
+                    "code": "DUPLICATE_CONTENT",
+                    "message": "与本文件夹中另一张图片内容完全相同，已去重",
+                })
+                continue
+            seen_asset_ids.add(asset_id)
+            source_names[asset_id] = path.name
+            imported.append(workspace_asset_response(asset))
+        except (AssetStoreError, OSError) as exc:
+            errors.append({
+                "position": position,
+                "name": path.name,
+                "code": getattr(exc, "code", "FILE_READ_ERROR"),
+                "message": str(exc),
+            })
+
+    if not imported:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "FOLDER_IMPORT_FAILED",
+                "message": "文件夹中的图片均未能导入",
+                "errors": errors[:20],
+            },
+        )
+    delivery_root = folder / _folder_delivery_name()
+    folder_batch = {
+        "batch_id": f"folder-{uuid.uuid4().hex}",
+        "source_folder": str(folder),
+        "delivery_root": str(delivery_root),
+        "asset_ids": [asset["id"] for asset in imported],
+        "source_names": source_names,
+        "detected_count": len(image_paths),
+        "imported_count": len(imported),
+        "error_count": len(errors),
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    return {
+        "folder_batch": folder_batch,
+        "assets": imported,
+        "errors": errors,
+        "count": len(imported),
+    }
+
+
 @app.get("/api/assets/{asset_id}")
 async def get_workspace_asset(asset_id: str):
     try:
@@ -1468,6 +1597,38 @@ def _default_job_concurrency(mode: str, item_count: int) -> int:
     return max(1, min(item_count, 4))
 
 
+def _normalize_folder_delivery(value: Any) -> dict[str, Any] | None:
+    if value in (None, "", {}):
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("folder_delivery must be an object")
+    source_folder = _resolve_source_folder(str(value.get("source_folder", "")))
+    raw_delivery = str(value.get("delivery_root", "")).strip()
+    if not raw_delivery:
+        raise ValueError("folder delivery path is required")
+    delivery_root = Path(raw_delivery).expanduser().resolve(strict=False)
+    if delivery_root.parent != source_folder:
+        raise ValueError("folder delivery must stay directly inside its source folder")
+    if not delivery_root.name.startswith(FOLDER_DELIVERY_PREFIX):
+        raise ValueError("folder delivery name is not owned by Product Atelier")
+    source_names = value.get("source_names") or {}
+    if not isinstance(source_names, dict):
+        raise ValueError("folder delivery source_names must be an object")
+    normalized_names = {
+        str(asset_id): Path(str(name)).name
+        for asset_id, name in source_names.items()
+        if str(asset_id).strip() and Path(str(name)).name
+    }
+    return {
+        "batch_id": str(value.get("batch_id") or "").strip()[:120],
+        "source_folder": str(source_folder),
+        "delivery_root": str(delivery_root),
+        "source_names": normalized_names,
+        "part_index": max(1, int(value.get("part_index", 1))),
+        "part_count": max(1, int(value.get("part_count", 1))),
+    }
+
+
 def _normalize_job_parameters(mode: str, parameters: dict) -> dict:
     normalized = dict(parameters or {})
     default_model = {
@@ -1482,6 +1643,13 @@ def _normalize_job_parameters(mode: str, parameters: dict) -> dict:
         normalized["model"] = default_model
     elif not str(normalized.get("model") or "").strip():
         normalized["model"] = default_model
+    folder_delivery = _normalize_folder_delivery(normalized.get("folder_delivery"))
+    if folder_delivery is not None:
+        if mode != "multi-file":
+            raise ValueError("folder delivery is only available in multi-file mode")
+        normalized["folder_delivery"] = folder_delivery
+    else:
+        normalized.pop("folder_delivery", None)
     return normalized
 
 
@@ -2545,7 +2713,100 @@ def _stage_output(image, directory, name, role):
     }
 
 
-def _staged_job_result(ctx, trace, stage_dir, outputs, metadata):
+def _publish_folder_delivery(ctx, source_asset, published_outputs):
+    delivery = dict((ctx.job.get("parameters") or {}).get("folder_delivery") or {})
+    if not delivery:
+        return [], None
+    delivery_root = Path(str(delivery["delivery_root"])).resolve(strict=False)
+    source_folder = Path(str(delivery["source_folder"])).resolve(strict=True)
+    if delivery_root.parent != source_folder or not delivery_root.name.startswith(FOLDER_DELIVERY_PREFIX):
+        raise JobExecutionError("INVALID_DELIVERY_PATH", "Folder delivery path failed its safety check")
+
+    source_id = str(ctx.item["source_asset_id"])
+    source_name = str((delivery.get("source_names") or {}).get(source_id) or source_asset.get("name") or "image")
+    source_stem = safe_stem(Path(source_name).stem, "image")
+    part_index = max(1, int(delivery.get("part_index", 1)))
+    item_index = max(1, int(ctx.item.get("position", 0)) + 1)
+    role_counts = {}
+    delivered = []
+    for output in published_outputs:
+        role = str(output.get("role") or "result_main")
+        role_counts[role] = role_counts.get(role, 0) + 1
+        if role == "result_cutout":
+            category = "02_透明PNG"
+            label = "透明图"
+            suffix = ".png"
+        elif role == "result_main":
+            category = "01_商业主图"
+            label = "主图"
+            suffix = ".jpg"
+        else:
+            category = "03_其他结果"
+            label = "结果"
+            suffix = Path(str(output.get("name") or "")).suffix.lower() or ".bin"
+        category_dir = delivery_root / category
+        category_dir.mkdir(parents=True, exist_ok=True)
+        target_name = (
+            f"{source_stem}__P{part_index:02d}-I{item_index:03d}"
+            f"-{label}{role_counts[role]:02d}{suffix}"
+        )
+        target = category_dir / target_name
+        temp = category_dir / f".{target_name}.{uuid.uuid4().hex}.tmp"
+        try:
+            shutil.copy2(Path(str(output["path"])), temp)
+            os.replace(temp, target)
+        finally:
+            temp.unlink(missing_ok=True)
+        delivered.append({
+            "role": role,
+            "path": str(target),
+            "relative_path": str(target.relative_to(delivery_root)),
+        })
+    return delivered, delivery
+
+
+def _update_folder_delivery_manifest(ctx, source_asset, delivered, delivery):
+    if not delivered or not delivery:
+        return ""
+    delivery_root = Path(str(delivery["delivery_root"])).resolve(strict=False)
+    manifest_path = delivery_root / "处理记录.json"
+    with _FOLDER_DELIVERY_LOCK:
+        manifest = {
+            "format": "product-atelier-folder-delivery-v1",
+            "batch_id": str(delivery.get("batch_id") or ""),
+            "source_folder": str(delivery.get("source_folder") or ""),
+            "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "items": {},
+        }
+        if manifest_path.exists():
+            try:
+                existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if isinstance(existing, dict):
+                    manifest.update(existing)
+                    manifest["items"] = dict(existing.get("items") or {})
+            except (OSError, ValueError, TypeError):
+                pass
+        manifest["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        manifest["items"][str(ctx.item_id)] = {
+            "job_id": str(ctx.job_id),
+            "source_asset_id": str(ctx.item["source_asset_id"]),
+            "source_name": str(source_asset.get("name") or ""),
+            "status": "completed",
+            "files": delivered,
+        }
+        temp_path = delivery_root / f".{manifest_path.name}.{uuid.uuid4().hex}.tmp"
+        try:
+            temp_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(temp_path, manifest_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+    return str(manifest_path)
+
+
+def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset):
     target_dir = (
         OUTPUT_DIR
         / "jobs"
@@ -2554,6 +2815,7 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata):
         / f"attempt-{max(1, int(ctx.item.get('attempt_count', 1)))}"
     )
     moved_paths = []
+    delivered_paths = []
     committed_asset_ids = []
     durable_committed = False
 
@@ -2573,6 +2835,9 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata):
         for path in list(moved_paths):
             Path(path).unlink(missing_ok=True)
         moved_paths.clear()
+        for path in list(delivered_paths):
+            Path(path).unlink(missing_ok=True)
+        delivered_paths.clear()
         if stage_dir.exists():
             shutil.rmtree(stage_dir)
         if target_dir.exists() and not any(target_dir.iterdir()):
@@ -2595,6 +2860,8 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata):
             # step capable of turning a completed item into a result-less one.
             if stage_dir.exists():
                 shutil.rmtree(stage_dir)
+            delivered, delivery = _publish_folder_delivery(ctx, source_asset, published)
+            delivered_paths.extend(entry["path"] for entry in delivered)
             asset_ids = LEDGER.commit_generation_results(
                 trace["generation_id"],
                 trace["source_asset_id"],
@@ -2604,6 +2871,13 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata):
             )
             durable_committed = True
             committed_asset_ids.extend(asset_ids)
+            manifest_path = ""
+            try:
+                manifest_path = _update_folder_delivery_manifest(
+                    ctx, source_asset, delivered, delivery
+                )
+            except Exception as exc:
+                print(f"[folder-delivery] manifest update failed: {exc}", file=sys.stderr, flush=True)
             _record_execution_trace_safe(
                 trace,
                 "result.publish",
@@ -2611,11 +2885,15 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata):
                 output={
                     "result_asset_ids": list(committed_asset_ids),
                     "output_count": len(committed_asset_ids),
+                    "delivery_files": [entry["relative_path"] for entry in delivered],
                 },
             )
             return {
                 "result_asset_ids": list(committed_asset_ids),
                 "output_count": len(committed_asset_ids),
+                "delivery_root": str(delivery.get("delivery_root") or "") if delivery else "",
+                "delivery_files": [entry["relative_path"] for entry in delivered],
+                "delivery_manifest": manifest_path,
             }
         except Exception:
             cleanup()
@@ -3034,7 +3312,14 @@ def execute_job_workflow(ctx):
         else:
             raise JobExecutionError("UNSUPPORTED_JOB_MODE", f"Unsupported job mode: {mode}")
         ctx.progress(0.98, {"phase": "publishing"})
-        return _staged_job_result(ctx, trace, stage_dir, outputs, {"mode": mode, **metadata})
+        return _staged_job_result(
+            ctx,
+            trace,
+            stage_dir,
+            outputs,
+            {"mode": mode, **metadata},
+            source_asset,
+        )
     except Exception as exc:
         _record_execution_trace_safe(
             trace,

@@ -39,6 +39,20 @@ test('multi-file restores twenty sources and blocks plans above twenty-four outp
   assert.match(app, /aria-invalid/);
 });
 
+test('multi-file accepts a durable folder queue and splits it into safe concurrent jobs', () => {
+  assert.match(html, /id="folder-source"[^>]*hidden/);
+  assert.match(html, /id="folder-path"/);
+  assert.match(html, /id="btn-folder-browse"/);
+  assert.match(html, /id="btn-folder-load"/);
+  assert.match(api, /export async function importFolderSources\(folderPath\)/);
+  assert.match(app, /await API\.importFolderSources\(folderPath\)/);
+  assert.match(app, /Math\.floor\(24 \/ variations\)/);
+  assert.match(app, /part_index: index \+ 1/);
+  assert.match(app, /responses\.length > 1/);
+  assert.match(studioState, /folderBatches: modeMap\(modeIds, \(\) => null\)/);
+  assert.match(css, /\.folder-source \{/);
+});
+
 test('asset management exposes discoverable safe removal, undo, recycle, restore, and references', () => {
   assert.match(html, /id="btn-asset-manager"/);
   assert.match(html, /id="asset-drawer"/);
@@ -190,6 +204,8 @@ test('workspace restores its latest result and exposes recoverable asset removal
   assert.match(app, /data-remove-asset-id=/);
   assert.match(assets, /await api\.removeAssetFromCollection\(targetCollection, assetId\)/);
   assert.match(assets, /已移入当前域回收站/);
+  assert.match(app, /asset\.url = asset\.content_url \|\| asset\.url \|\| ''/);
+  assert.match(app, /return item\.content_url \|\| item\.url \|\| ''/);
 });
 
 test('quick cutout does not pretend to understand a semantic brief or knowledge rules', () => {

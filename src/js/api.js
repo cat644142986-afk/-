@@ -199,6 +199,14 @@ export async function importAssets(files, collection = 'product') {
   Array.from(files || []).forEach(function(file) { fd.append('files', file); });
   return postForm('/api/assets/import-batch?collection=' + encodeURIComponent(collection), fd);
 }
+export async function importFolderSources(folderPath) {
+  return fetchJSON('/api/folder-sources/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder_path: String(folderPath || '') }),
+    timeoutMs: 120000,
+  });
+}
 export async function getAsset(assetId) {
   return fetchJSON('/api/assets/' + encodeURIComponent(assetId));
 }

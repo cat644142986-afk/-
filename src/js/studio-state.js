@@ -24,6 +24,7 @@ export function createStudioState(modeIds) {
     assetsByCollection: { product: [], group: [], cutout: [] },
     assetUrls: new Map(),
     modeSelections: modeMap(modeIds, () => []),
+    folderBatches: modeMap(modeIds, () => null),
     modeSnapshots: modeMap(modeIds, () => null),
     workspaceDrafts: modeMap(modeIds, () => null),
     workspaceRevisions: modeMap(modeIds, () => 1),

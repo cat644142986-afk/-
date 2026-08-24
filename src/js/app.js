@@ -73,6 +73,18 @@ function selectedAssets(mode = state.currentMode) {
   return state.assets.filter((asset) => ids.has(asset.id));
 }
 
+function folderBatchForMode(mode = state.currentMode, readyOnly = false) {
+  const batch = state.folderBatches?.[mode];
+  if (!batch || !Array.isArray(batch.asset_ids) || !batch.asset_ids.length) return null;
+  if (readyOnly && batch.status && batch.status !== 'ready') return null;
+  return batch;
+}
+
+function sourceAssetIdsForSubmission(mode = state.currentMode) {
+  const folderBatch = mode === 'multi-file' ? folderBatchForMode(mode, true) : null;
+  return folderBatch ? [...folderBatch.asset_ids] : selectedAssetIds(mode);
+}
+
 function createClientRequestId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -152,7 +164,10 @@ function captureModeSnapshot(mode = state.currentMode) {
     current_generation_id: previous.current_generation_id || state.workspaceDrafts[mode]?.current_generation_id || null,
     current_result_asset_id: previous.current_result_asset_id || state.workspaceDrafts[mode]?.current_result_asset_id || null,
     compare_state: previous.compare_state || state.workspaceDrafts[mode]?.compare_state || {},
-    ui_state: previous.ui_state || state.workspaceDrafts[mode]?.ui_state || {},
+    ui_state: {
+      ...(previous.ui_state || state.workspaceDrafts[mode]?.ui_state || {}),
+      folder_batch: mode === 'multi-file' ? (state.folderBatches[mode] || null) : null,
+    },
     mask_state: previous.mask_state || state.workspaceDrafts[mode]?.mask_state || {},
   };
   state.modeSnapshots[mode] = next;
@@ -244,6 +259,9 @@ function hydrateWorkspace(mode, payload) {
       .filter((assetId) => activeAssetIds.has(assetId))
       .slice(0, MODE_CONFIG[mode].maxFiles);
     state.modeSnapshots[mode] = snapshotFromDraft(draft, state.modeSnapshots[mode] || {});
+    state.folderBatches[mode] = mode === 'multi-file'
+      ? (state.modeSnapshots[mode]?.ui_state?.folder_batch || null)
+      : null;
     state.assetsByCollection[collection] = assets;
     if (MODE_CONFIG[state.currentMode]?.collection === collection) state.assets = assets;
     state.workspaceLoaded.add(mode);
@@ -267,7 +285,10 @@ async function loadWorkspace(mode = state.currentMode, silent = false) {
       state.assetsAvailable = true;
       state.hydratingWorkspace = true;
       try {
-        if (mode === state.currentMode) restoreModeSnapshot(mode);
+        if (mode === state.currentMode) {
+          restoreModeSnapshot(mode);
+          renderFolderSource();
+        }
         syncLegacySelection();
         renderQueue();
         updateQuickControls();
@@ -316,6 +337,7 @@ async function restoreWorkspaceResult(mode, payload) {
     };
   });
   await hydrateAssetUrls(assets);
+  assets.forEach((asset) => { asset.url = asset.content_url || asset.url || ''; });
   const source = state.assets.find((asset) => asset.id === job.items?.[0]?.source_asset_id)
     || selectedAssets(mode)[0];
   state.originalDataUrl = assetUrl(source, 'content');
@@ -471,7 +493,9 @@ function clearSession(keepMode = true) {
   state.resultTab = state.currentMode === 'cutout-batch' ? 'cutout' : 'main';
   state.viewerIndex = 0;
   state.knowledgeBundle = null;
+  state.folderBatches[state.currentMode] = null;
   $('#file-input').value = '';
+  $('#folder-path').value = '';
   $('#brief-input').value = '';
   $('#canvas-img-preview').removeAttribute('src');
   $('#summary-result').textContent = '等待选择任务素材';
@@ -481,9 +505,32 @@ function clearSession(keepMode = true) {
   state.modeSnapshots[state.currentMode] = null;
   if (!keepMode) switchMode('single', false);
   renderQueue();
+  renderFolderSource();
   persistWorkspaceState();
   scheduleWorkspaceDraftSave(state.currentMode, 0);
   updateCtaState();
+}
+
+function renderFolderSource() {
+  const row = $('#folder-source');
+  const input = $('#folder-path');
+  const status = $('#folder-source-status');
+  if (!row || !input || !status) return;
+  const visible = state.currentMode === 'multi-file';
+  row.hidden = !visible;
+  if (!visible) return;
+  const batch = folderBatchForMode('multi-file');
+  row.classList.toggle('is-ready', Boolean(batch));
+  if (!batch) {
+    status.textContent = '自动拆批并发，结果回到原文件夹';
+    return;
+  }
+  input.value = batch.source_folder || input.value;
+  const count = Number(batch.imported_count || batch.asset_ids.length || 0);
+  const target = String(batch.delivery_root || '').split(/[\\/]/).filter(Boolean).pop() || '已处理文件夹';
+  status.textContent = batch.status === 'submitted'
+    ? `${count} 张已入队 · 完成后归类到 ${target}`
+    : `${count} 张整夹来源已就绪 · 将归类到 ${target}`;
 }
 
 function switchMode(mode, preserveCurrent = true, loadDurable = true) {
@@ -506,6 +553,7 @@ function switchMode(mode, preserveCurrent = true, loadDurable = true) {
   const quickCutout = mode === 'cutout-batch';
   $('#creative-command').hidden = quickCutout;
   $('#cutout-capability').hidden = !quickCutout;
+  renderFolderSource();
   $('#field-model').hidden = quickCutout;
   $('#field-composition').hidden = quickCutout;
   $('#field-intent').hidden = quickCutout;
@@ -572,11 +620,18 @@ async function hydrateJobSourceAssets(jobs) {
 function renderFileMeta() {
   const selection = selectedAssets();
   const count = selection.length;
+  const folderBatch = state.currentMode === 'multi-file'
+    ? folderBatchForMode('multi-file', true)
+    : null;
   $('#asset-count').textContent = `${state.assets.length} 素材`;
   $('#btn-replace').hidden = false;
   $('#btn-replace').disabled = state.importing;
   $('#btn-clear').hidden = count === 0;
-  if (count) {
+  if (folderBatch) {
+    const folderCount = Number(folderBatch.imported_count || folderBatch.asset_ids.length || 0);
+    $('#info-filename').textContent = `${folderCount} 张文件夹图片等待入队`;
+    $('#ready-count').textContent = `${folderCount} FOLDER SOURCES`;
+  } else if (count) {
     $('#info-filename').textContent = count === 1 ? selection[0].name : `${count} 张源图已选中`;
     $('#ready-count').textContent = `${count} SOURCE${count > 1 ? 'S' : ''} READY`;
   } else {
@@ -640,10 +695,15 @@ async function handleFiles(fileList) {
       imported.map((asset) => asset.id),
       config,
     );
+    if (importMode === 'multi-file') {
+      state.folderBatches[importMode] = null;
+      captureModeSnapshot(importMode);
+    }
     scheduleWorkspaceDraftSave(importMode, 0);
     await flushWorkspaceDraft(importMode, true);
     syncLegacySelection();
     if (state.currentMode === importMode) renderQueue();
+    renderFolderSource();
     persistWorkspaceState();
     $('#summary-result').textContent = `${imported.length} 张素材已写入工作台`;
     $('#summary-result-note').textContent = '切换模式或重启后仍可继续使用';
@@ -662,9 +722,74 @@ async function handleFiles(fileList) {
   }
 }
 
+async function chooseFolderSource() {
+  try {
+    const selected = await API.selectFolder();
+    if (selected) $('#folder-path').value = selected;
+  } catch (error) {
+    toast(`无法打开文件夹选择器：${formatApiError(error)}`, 'error');
+  }
+}
+
+async function importFolderSource() {
+  if (state.importing) return;
+  const folderPath = $('#folder-path').value.trim();
+  if (!folderPath) {
+    toast('请粘贴文件夹地址，或点击“选择”', 'error');
+    $('#folder-path').focus();
+    return;
+  }
+  state.importing = true;
+  $('#btn-folder-browse').disabled = true;
+  $('#btn-folder-load').disabled = true;
+  $('#folder-source-status').textContent = '正在扫描并写入持久素材工作台…';
+  try {
+    const result = await API.importFolderSources(folderPath);
+    const imported = Array.isArray(result?.assets) ? result.assets : [];
+    const folderBatch = { ...(result?.folder_batch || {}), status: 'ready' };
+    await loadWorkspace('multi-file', true);
+    state.folderBatches['multi-file'] = folderBatch;
+    state.modeSelections['multi-file'] = imported
+      .map((asset) => asset.id)
+      .slice(0, MODE_CONFIG['multi-file'].maxFiles);
+    captureModeSnapshot('multi-file');
+    scheduleWorkspaceDraftSave('multi-file', 0);
+    await flushWorkspaceDraft('multi-file', true);
+    syncLegacySelection();
+    renderQueue();
+    renderFolderSource();
+    updateCtaState();
+    const errorCount = Number(folderBatch.error_count || 0);
+    $('#summary-result').textContent = `${folderBatch.imported_count || imported.length} 张整夹图片已就绪`;
+    $('#summary-result-note').textContent = '运行后自动拆批并发，完成文件回到原目录';
+    toast(
+      errorCount
+        ? `整夹已载入，${errorCount} 个文件跳过或失败`
+        : `整夹已载入：${folderBatch.imported_count || imported.length} 张`,
+      errorCount ? 'error' : 'success',
+      5200,
+    );
+    await compileKnowledgePreview();
+  } catch (error) {
+    $('#folder-source-status').textContent = '载入失败；请检查路径、权限和图片格式';
+    toast(`文件夹载入失败：${formatApiError(error, '文件夹接口不可用')}`, 'error', 6500);
+  } finally {
+    state.importing = false;
+    $('#btn-folder-browse').disabled = false;
+    $('#btn-folder-load').disabled = false;
+    renderFileMeta();
+  }
+}
+
 function toggleAssetSelection(assetId) {
   const config = MODE_CONFIG[state.currentMode];
   const current = selectedAssetIds();
+  if (state.currentMode === 'multi-file' && folderBatchForMode('multi-file', true)) {
+    state.folderBatches['multi-file'] = null;
+    captureModeSnapshot('multi-file');
+    renderFolderSource();
+    toast('已退出整夹队列，改为手动选择素材');
+  }
   const selected = current.includes(assetId);
   let next;
   if (selected) next = current.filter((id) => id !== assetId);
@@ -788,11 +913,14 @@ function renderCutoutCapability() {
 
 function updateCtaState() {
   const button = $('#btn-generate');
-  const count = selectedAssetIds().length;
+  const folderBatch = state.currentMode === 'multi-file'
+    ? folderBatchForMode('multi-file', true)
+    : null;
+  const count = folderBatch ? folderBatch.asset_ids.length : selectedAssetIds().length;
   const hasFiles = count > 0;
   const batch = Number($('#param-batch').value);
   const plan = multiFileOutputPlan(count, batch);
-  const capacityOkay = state.currentMode !== 'multi-file' || plan.valid;
+  const capacityOkay = state.currentMode !== 'multi-file' || Boolean(folderBatch) || plan.valid;
   button.disabled = !hasFiles || state.submitting || !state.assetsAvailable || !capacityOkay;
   $('#param-batch').setAttribute('aria-invalid', String(!capacityOkay));
   button.classList.toggle('loading', state.submitting);
@@ -803,7 +931,11 @@ function updateCtaState() {
     ? '从抠图素材中选择后可入队'
     : '从当前素材区选择后可入队';
   else if (!capacityOkay) $('#cta-hint').textContent = `${count} 张 × ${batch} 方案 = ${plan.total} 个输出；单批最多 ${plan.maxOutputs}，请改为每图 ${plan.maxVariations} 个`;
-  else if (state.currentMode === 'cutout-batch') $('#cta-hint').textContent = `${count} 张素材 · 本地分离全部前景`;
+  else if (folderBatch) {
+    const chunkSize = Math.max(1, Math.min(20, Math.floor(24 / Math.max(1, batch))));
+    const partCount = Math.ceil(count / chunkSize);
+    $('#cta-hint').textContent = `${count} 张整夹素材 · 自动拆为 ${partCount} 批并发任务`;
+  } else if (state.currentMode === 'cutout-batch') $('#cta-hint').textContent = `${count} 张素材 · 本地分离全部前景`;
   else $('#cta-hint').textContent = `${count} 张素材 · ${Object.values(getIntentLocks()).filter(Boolean).length} 项锁定`;
 }
 
@@ -823,9 +955,10 @@ function updateQuickControls() {
 function captureSubmissionDraft() {
   const mode = state.currentMode;
   const brief = buildBrief(mode);
+  const folderBatch = mode === 'multi-file' ? folderBatchForMode(mode, true) : null;
   return createSubmissionSnapshot({
     mode,
-    sourceAssetIds: selectedAssetIds(mode),
+    sourceAssetIds: sourceAssetIdsForSubmission(mode),
     parameters: {
       model: $('#param-model').value,
       variations: Number($('#param-batch').value),
@@ -837,8 +970,44 @@ function captureSubmissionDraft() {
       brief,
       intent_locks: getIntentLocks(),
       category: 'general',
+      ...(folderBatch ? {
+        folder_delivery: {
+          batch_id: folderBatch.batch_id,
+          source_folder: folderBatch.source_folder,
+          delivery_root: folderBatch.delivery_root,
+          source_names: folderBatch.source_names || {},
+        },
+      } : {}),
     },
   });
+}
+
+function jobPayloadsForSubmission(payload) {
+  const delivery = payload?.parameters?.folder_delivery;
+  if (payload?.mode !== 'multi-file' || !delivery) return [payload];
+  const variations = Math.max(1, Number(payload.parameters.variations || 1));
+  const chunkSize = Math.max(1, Math.min(20, Math.floor(24 / variations)));
+  const sourceIds = Array.from(payload.source_asset_ids || []);
+  const chunks = [];
+  for (let index = 0; index < sourceIds.length; index += chunkSize) {
+    chunks.push(sourceIds.slice(index, index + chunkSize));
+  }
+  return chunks.map((assetIds, index) => ({
+    ...payload,
+    source_asset_ids: assetIds,
+    client_request_id: `${payload.client_request_id}-part-${index + 1}`,
+    parameters: {
+      ...payload.parameters,
+      folder_delivery: {
+        ...delivery,
+        source_names: Object.fromEntries(
+          assetIds.map((assetId) => [assetId, delivery.source_names?.[assetId] || 'image']),
+        ),
+        part_index: index + 1,
+        part_count: chunks.length,
+      },
+    },
+  }));
 }
 
 async function compileSubmissionPayload(draft) {
@@ -883,8 +1052,14 @@ async function handleGenerate() {
     if (!savedDraft) savedDraft = await flushWorkspaceDraft(submissionDraft.mode, false);
     if (!savedDraft) throw new Error('当前工作草稿未能安全保存，请重试');
     payload = await compileSubmissionPayload(submissionDraft);
-    const response = await API.createJob(payload);
+    const jobPayloads = jobPayloadsForSubmission(payload);
+    const responses = [];
+    if (jobPayloads.length === 1) responses.push(await API.createJob(payload));
+    else {
+      for (const jobPayload of jobPayloads) responses.push(await API.createJob(jobPayload));
+    }
     clearPendingSubmission(payload.client_request_id);
+    const response = responses[0];
     const job = response?.job || response;
     const jobId = job?.id || response?.job_id || '';
     const sessionId = job?.session_id || response?.session_id || '';
@@ -903,12 +1078,25 @@ async function handleGenerate() {
       $('#summary-result').textContent = `${submissionDraft.source_asset_ids.length} 项任务已入队`;
       $('#summary-result-note').textContent = '可继续选素材、切换模式或发起新任务';
     }
-    toast('任务已加入 Dock，可继续组织素材', 'success');
+    if (submissionDraft.parameters.folder_delivery) {
+      const currentFolderBatch = state.folderBatches[submissionDraft.mode];
+      if (currentFolderBatch) currentFolderBatch.status = 'submitted';
+      captureModeSnapshot(submissionDraft.mode);
+      renderFolderSource();
+    }
+    toast(
+      responses.length > 1
+        ? `${submissionDraft.source_asset_ids.length} 张已拆为 ${responses.length} 批加入 Dock`
+        : '任务已加入 Dock，可继续组织素材',
+      'success',
+    );
     await loadJobs(true);
     workflowDock.close(false);
     openDrawer('jobs');
   } catch (error) {
-    if (payload && isDefinitiveJobRejection(error)) clearPendingSubmission(payload.client_request_id);
+    if (payload && !payload.parameters?.folder_delivery && isDefinitiveJobRejection(error)) {
+      clearPendingSubmission(payload.client_request_id);
+    }
     toast(`任务提交失败：${formatApiError(error, '持久任务接口不可用')}`, 'error', 6500);
   } finally {
     state.submitting = false;
@@ -1297,7 +1485,7 @@ function resultDataUrl(item, tab = state.resultTab) {
   if (!item) return '';
   if (item.data && String(item.data).startsWith('data:')) return item.data;
   if (item.data) return API.b64ToDataURL(item.data, tab === 'cutout' ? 'image/png' : 'image/jpeg');
-  return item.url || '';
+  return item.content_url || item.url || '';
 }
 
 function renderResults() {
@@ -1513,6 +1701,11 @@ function bindEvents() {
   const input = $('#file-input');
   $('#btn-browse').addEventListener('click', () => input.click());
   $('#btn-replace').addEventListener('click', () => input.click());
+  $('#btn-folder-browse').addEventListener('click', chooseFolderSource);
+  $('#btn-folder-load').addEventListener('click', importFolderSource);
+  $('#folder-path').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') importFolderSource();
+  });
   input.addEventListener('change', () => handleFiles(input.files));
   $('#btn-clear').addEventListener('click', () => clearSession(true));
   $('#btn-new-session').addEventListener('click', () => { clearSession(true); switchPage('process'); });

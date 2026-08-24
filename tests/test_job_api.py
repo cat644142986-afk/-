@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import io
+import json
 import os
 import tempfile
 import threading
@@ -496,6 +497,56 @@ class DurableJobApiTests(unittest.TestCase):
             server._validate_job_request("multi-file", twenty + ["asset-20"], {"variations": 1})
         with self.assertRaisesRegex(ValueError, "at most 24 generated variations"):
             server._validate_job_request("multi-file", twenty, {"variations": 2})
+
+    def test_folder_multi_file_job_auto_classifies_delivery_without_moving_sources(self) -> None:
+        source_folder = self.root / "整夹来源"
+        source_folder.mkdir()
+        first_path = source_folder / "商品甲.png"
+        second_path = source_folder / "商品乙.png"
+        first_path.write_bytes(png_bytes((210, 70, 40)))
+        second_path.write_bytes(png_bytes((40, 130, 210)))
+
+        with self.live_client() as client:
+            imported = client.post(
+                "/api/folder-sources/import",
+                json={"folder_path": str(source_folder)},
+            )
+            self.assertEqual(imported.status_code, 200, imported.text)
+            folder_batch = imported.json()["folder_batch"]
+            created = self.create_job(
+                client,
+                {
+                    "mode": "multi-file",
+                    "source_asset_ids": folder_batch["asset_ids"],
+                    "parameters": {
+                        "variations": 1,
+                        "model": "offline-model",
+                        "folder_delivery": {
+                            "batch_id": folder_batch["batch_id"],
+                            "source_folder": folder_batch["source_folder"],
+                            "delivery_root": folder_batch["delivery_root"],
+                            "source_names": folder_batch["source_names"],
+                            "part_index": 1,
+                            "part_count": 1,
+                        },
+                    },
+                    "requested_concurrency": 2,
+                },
+            )
+            final = self.wait_for_job(created["job"]["id"])
+
+        self.assertEqual(final["status"], "completed")
+        delivery_root = Path(folder_batch["delivery_root"])
+        main_files = list((delivery_root / "01_商业主图").glob("*.jpg"))
+        cutout_files = list((delivery_root / "02_透明PNG").glob("*.png"))
+        self.assertEqual(len(main_files), 2)
+        self.assertEqual(len(cutout_files), 2)
+        manifest = json.loads((delivery_root / "处理记录.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["batch_id"], folder_batch["batch_id"])
+        self.assertEqual(len(manifest["items"]), 2)
+        self.assertTrue(first_path.exists())
+        self.assertTrue(second_path.exists())
+        self.network_request.assert_not_called()
 
     def test_cutout_batch_has_one_item_and_one_output_per_source(self) -> None:
         with self.live_client() as client:

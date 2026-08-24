@@ -116,7 +116,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .app-page { width: 100%; height: 100%; min-width: 0; min-height: 0; padding: 0 16px 16px 6px; }
 .studio-grid { display: grid; grid-template-columns: minmax(0, 1fr) var(--dock-width); grid-template-rows: minmax(0, 1fr); gap: 14px; width: 100%; height: 100%; min-width: 0; min-height: 0; }
 .canvas-card, .task-dock, .meta-card, .page-panel, .settings-card, .memory-hero, .memory-list-card { border: 1px solid var(--line); box-shadow: var(--shadow-card); }
-.canvas-card { display: grid; grid-template-rows: 51px 48px minmax(0,1fr); min-width: 0; min-height: 0; overflow: hidden; border-radius: var(--radius-card); background: var(--paper); }
+.canvas-card { display: grid; grid-template-rows: 51px auto minmax(0,1fr); min-width: 0; min-height: 0; overflow: hidden; border-radius: var(--radius-card); background: var(--paper); }
 .canvas-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px 5px 17px; border-bottom: 1px solid var(--line); }
 .canvas-title { display: flex; align-items: center; gap: 9px; }
 .canvas-title p, .task-dock__head p { margin: 0; color: var(--ink-3); font-size: 7.5px; font-weight: 800; letter-spacing: .18em; }
@@ -128,7 +128,8 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .ghost-icon:hover { background: var(--paper-soft); color: var(--ink); }
 .workflow-drawer-trigger { display: none; }
 .ghost-icon svg { width: 17px; height: 17px; }
-.creative-command { display: grid; grid-template-columns: 25px minmax(0,1fr) auto; align-items: center; gap: 8px; margin: 7px 12px 5px; padding: 0 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-soft); }
+.canvas-command-zone { display: grid; min-width: 0; }
+.creative-command { display: grid; grid-template-columns: 25px minmax(0,1fr) auto; align-items: center; gap: 8px; min-height: 38px; margin: 7px 12px 5px; padding: 0 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-soft); }
 .creative-command input { min-width: 0; height: 34px; border: 0; outline: 0; background: transparent; font-size: var(--type-body); user-select: text; }
 .creative-command input::placeholder { color: var(--ink-3); }
 .command-index { color: var(--coral); font-size: 8px; font-weight: 850; }
@@ -137,6 +138,18 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .capability-notice > span { color: var(--coral-deep); font-size: 7px; font-weight: 850; letter-spacing: .12em; }
 .capability-notice strong { font-size: 11px; white-space: nowrap; }
 .capability-notice p { overflow: hidden; margin: 0; color: var(--ink-2); font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
+.folder-source { display: grid; grid-template-columns: auto minmax(0,1fr) auto auto; align-items: center; gap: 7px; min-height: 40px; margin: 0 12px 6px; padding: 5px 6px 5px 10px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--paper-soft) 82%, var(--yellow) 18%); }
+.folder-source__label { color: var(--ink-2); font-size: var(--type-caption); font-weight: 800; white-space: nowrap; }
+.folder-source input { min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: color-mix(in srgb, var(--paper) 78%, transparent); color: var(--ink); font-size: var(--type-caption); user-select: text; }
+.folder-source input:focus { border-color: rgba(255,107,67,.52); box-shadow: 0 0 0 2px rgba(255,107,67,.09); }
+.folder-source input::placeholder { color: var(--ink-3); }
+.folder-source button { height: 28px; padding: 0 9px; border-radius: 8px; font-size: var(--type-caption); font-weight: 750; cursor: pointer; }
+.folder-source__browse { border: 1px solid var(--line); background: var(--paper); color: var(--ink-2); }
+.folder-source__load { background: var(--dark); color: #fff; }
+.folder-source button:disabled { cursor: wait; opacity: .56; }
+.folder-source small { grid-column: 2 / 5; overflow: hidden; color: var(--ink-3); font-size: var(--type-micro); white-space: nowrap; text-overflow: ellipsis; }
+.folder-source.is-ready { border-color: rgba(40,200,64,.24); background: color-mix(in srgb, var(--paper-soft) 86%, #b8efc2 14%); }
+.folder-source.is-ready small { color: #347242; }
 .preview-canvas { position: relative; min-width: 0; min-height: 0; overflow: hidden; margin: 6px 12px 12px; border-radius: 16px; background: var(--tone); }
 .canvas-state { width: 100%; height: 100%; }
 .canvas-empty { position: relative; display: grid; place-items: center; align-content: center; gap: 14px; overflow: hidden; padding: 20px; text-align: center; isolation: isolate; }
@@ -548,9 +561,11 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .app-frame { grid-template-rows: 70px minmax(0,1fr); }
   .app-header { padding-block: 8px 6px; }
   .studio-grid { grid-template-rows: minmax(0,1fr); gap: 10px; }
-  .canvas-card { grid-template-rows: 44px 42px minmax(0,1fr); }
+  .canvas-card { grid-template-rows: 44px auto minmax(0,1fr); }
   .canvas-toolbar { padding-block: 5px 3px; }
   .creative-command { margin-block: 4px 3px; }
+  .folder-source { min-height: 34px; margin-bottom: 3px; padding-block: 3px; }
+  .folder-source small { display: none; }
   .task-dock { gap: 6px; padding: 9px 10px; }
   .task-dock__head { min-height: 29px; }
   .mode-button { padding-block: 6px; }

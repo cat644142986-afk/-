@@ -178,6 +178,7 @@ class AssetApiTests(unittest.TestCase):
         listing = self.client.get("/api/assets").json()
         self.assertEqual(listing["count"], 1)
         self.assertEqual(listing["assets"][0]["id"], imported["id"])
+
         metadata = self.client.get(f"/api/assets/{imported['id']}")
         self.assertEqual(metadata.status_code, 200)
         self.assertEqual(metadata.json()["sha256"], imported["sha256"])
@@ -196,6 +197,34 @@ class AssetApiTests(unittest.TestCase):
         restarted_listing = self.client.get("/api/assets").json()
         self.assertEqual(restarted_listing["count"], 1)
         self.assertEqual(restarted_listing["assets"][0]["id"], imported["id"])
+
+    def test_folder_source_import_is_flat_durable_and_plans_delivery_inside_source(self) -> None:
+        source_folder = self.root / "待处理商品"
+        source_folder.mkdir()
+        (source_folder / "商品甲.png").write_bytes(png_bytes((220, 80, 40)))
+        (source_folder / "商品乙.png").write_bytes(png_bytes((40, 120, 210)))
+        (source_folder / "说明.txt").write_text("not an image", encoding="utf-8")
+        nested = source_folder / "子目录"
+        nested.mkdir()
+        (nested / "不递归.png").write_bytes(png_bytes((30, 30, 30)))
+
+        response = self.client.post(
+            "/api/folder-sources/import",
+            json={"folder_path": f'"{source_folder}"'},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        batch = payload["folder_batch"]
+        self.assertEqual(payload["count"], 2)
+        self.assertEqual(batch["detected_count"], 2)
+        self.assertEqual(batch["imported_count"], 2)
+        self.assertEqual(Path(batch["source_folder"]), source_folder.resolve())
+        delivery = Path(batch["delivery_root"])
+        self.assertEqual(delivery.parent, source_folder.resolve())
+        self.assertTrue(delivery.name.startswith(server.FOLDER_DELIVERY_PREFIX))
+        self.assertFalse(delivery.exists(), "delivery folder is created by completed jobs, not scanning")
+        self.assertEqual(set(batch["source_names"].values()), {"商品甲.png", "商品乙.png"})
 
     def test_batch_import_twenty_images(self) -> None:
         files = [
