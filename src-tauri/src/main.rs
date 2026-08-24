@@ -25,6 +25,7 @@ struct AppState {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
 struct AppConfig {
     api_key: String,
     default_model: String,
@@ -32,6 +33,9 @@ struct AppConfig {
     default_angle: String,
     default_fidelity: i32,
     auto_refine: bool,
+    knowledge_base_path: String,
+    output_root: String,
+    known_output_roots: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -43,6 +47,9 @@ impl Default for AppConfig {
             default_angle: "auto".to_string(),
             default_fidelity: 40,
             auto_refine: true,
+            knowledge_base_path: String::new(),
+            output_root: String::new(),
+            known_output_roots: Vec::new(),
         }
     }
 }

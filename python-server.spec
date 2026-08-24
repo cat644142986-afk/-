@@ -47,6 +47,7 @@ hidden = [
     'pymatting.util',
     'pymatting.util.util',
     'numba',
+    'numba._devicearray',
     'certifi',
     'requests',
     'requests.adapters',

@@ -78,3 +78,27 @@ cargo check --manifest-path src-tauri\Cargo.toml
 基线包含当前前端、Tauri 桌面壳、Python 服务、知识编译、成长记忆、创作账本和验证脚本。
 
 以下内容有意排除：API Key、本机配置、SQLite 运行数据、生成结果、模型缓存、构建产物、历史截图、旧备份目录以及未被当前入口引用的 v35-v133 试验 UI 层。它们不属于可复现源码，并可能包含隐私信息或造成样式冲突。
+
+## 2026-08-24 自定义交付目录检查点
+
+- Git 标签：`checkpoint-2026-08-24-custom-output-root`
+- 前一检查点：`checkpoint-2026-08-24-knowledge-path`（提交 `eff925a`）
+- 数据库 schema：仍为 v3，没有数据库迁移。
+- 新增配置字段：`output_root`、`known_output_roots`；旧版本会忽略这些 JSON 字段，不会自动删除外部成品。
+- sidecar contract：`2026-08-24.1`。
+
+从本检查点创建恢复分支：
+
+```powershell
+git -C D:\ProductAtelier-Desktop switch -c restore/custom-output-root checkpoint-2026-08-24-custom-output-root
+```
+
+若要回到功能实施前源码，应另建分支，不要覆盖当前分支：
+
+```powershell
+git -C D:\ProductAtelier-Desktop switch -c restore/before-custom-output-root checkpoint-2026-08-24-knowledge-path
+```
+
+回退前必须先退出 `Product Atelier.exe` 与 `python-server.exe`。本功能不移动账本、缓存或学习证据，因此不需要恢复数据库；外部交付目录中的成品也不会被代码回退删除。
+
+注意：功能实施前的 sidecar 只允许从内部 `output` 根读取结果。若账本已经登记外部目录成品，旧版界面可能无法预览这些结果，尽管文件仍安全存在。因此已使用自定义交付目录的数据环境优先回滚到本检查点；确需运行旧版时，先保留 `%APPDATA%\ProductAtelier` 和所有外部交付目录的完整副本，并准备结果路径兼容迁移，不要直接覆盖账本路径。

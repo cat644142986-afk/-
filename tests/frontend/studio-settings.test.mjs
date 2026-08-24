@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { knowledgeStatusCopy, normalizeSettingsPayload } from '../../src/js/studio-settings.js';
+import {
+  knowledgeStatusCopy,
+  normalizeSettingsPayload,
+  outputRootStatusCopy,
+} from '../../src/js/studio-settings.js';
 
 test('settings payload trims paths and only sends a non-empty key on explicit save', () => {
   const values = {
@@ -33,5 +37,22 @@ test('knowledge status keeps English decorative and Chinese explanatory', () => 
     pill: '知识库未连接',
     title: '未找到知识库',
     detail: 'D:\\知识库',
+  });
+});
+
+test('output root status keeps path failures explanatory in Chinese', () => {
+  assert.deepEqual(outputRootStatusCopy({
+    available: true,
+    message: '新任务将保存到这里；运行中任务保持原目录',
+  }), {
+    text: '新任务将保存到这里；运行中任务保持原目录',
+    error: false,
+  });
+  assert.deepEqual(outputRootStatusCopy({
+    available: false,
+    message: '交付目录不存在，或所在磁盘当前不可用',
+  }), {
+    text: '交付目录不存在，或所在磁盘当前不可用',
+    error: true,
   });
 });

@@ -967,6 +967,7 @@ function captureSubmissionDraft() {
       fidelity: Number($('#param-fidelity').value),
       angle: $('#param-angle').value,
       refine: $('#param-refine').checked,
+      output_root: String(state.settings?.output_root || state.settings?.output_dir || '').trim(),
       brief,
       intent_locks: getIntentLocks(),
       category: 'general',

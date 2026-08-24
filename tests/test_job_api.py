@@ -4,6 +4,7 @@ import copy
 import io
 import json
 import os
+import shutil
 import tempfile
 import threading
 import unittest
@@ -45,6 +46,10 @@ class OfflineKnowledge:
     """Small deterministic replacement for prompt enrichment in API tests."""
 
     @staticmethod
+    def status() -> dict:
+        return {"available": False, "document_count": 0, "rule_count": 0}
+
+    @staticmethod
     def enrich_prompt(prompt, negative_prompt, _context):  # type: ignore[no-untyped-def]
         return {
             "prompt": prompt,
@@ -70,6 +75,8 @@ class DurableJobApiTests(unittest.TestCase):
             "ASSET_STORE": server.ASSET_STORE,
             "ASSET_DIR": server.ASSET_DIR,
             "OUTPUT_DIR": server.OUTPUT_DIR,
+            "CONFIG_PATH": server.CONFIG_PATH,
+            "_RUNTIME_OUTPUT_ROOT": server._RUNTIME_OUTPUT_ROOT,
             "KNOWLEDGE": server.KNOWLEDGE,
             "JOB_ENGINE": server.JOB_ENGINE,
         }
@@ -77,8 +84,14 @@ class DurableJobApiTests(unittest.TestCase):
         server.ASSET_STORE = self.store
         server.ASSET_DIR = self.asset_dir
         server.OUTPUT_DIR = self.output_dir
+        server.CONFIG_PATH = self.root / "config.json"
+        server._RUNTIME_OUTPUT_ROOT = self.output_dir
         server.KNOWLEDGE = OfflineKnowledge()
         server.JOB_ENGINE = None
+        server.save_config({
+            "output_root": str(self.output_dir),
+            "known_output_roots": [str(self.output_dir)],
+        })
 
         self.vlm_products = [
             {
@@ -291,6 +304,71 @@ class DurableJobApiTests(unittest.TestCase):
                 for item in trace_items
             ))
             self.network_request.assert_not_called()
+
+    def test_output_root_is_frozen_per_job_and_old_results_remain_readable(self) -> None:
+        first_root = self.root / "delivery-a"
+        second_root = self.root / "delivery-b"
+        first_root.mkdir()
+        second_root.mkdir()
+        self.ai_started = threading.Event()
+        self.ai_release = threading.Event()
+        with self.live_client() as client:
+            selected = client.post("/api/settings", json={"output_root": str(first_root)})
+            self.assertEqual(selected.status_code, 200, selected.text)
+            source = self.import_asset(client, "frozen-root.png", (210, 110, 50))
+            created = self.create_job(client, {
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "parameters": {"batch": 1},
+                "client_request_id": "frozen-output-root",
+            })
+            self.assertEqual(created["job"]["parameters"]["output_root"], str(first_root.resolve()))
+            self.assertTrue(self.ai_started.wait(timeout=10))
+
+            switched = client.post("/api/settings", json={"output_root": str(second_root)})
+            self.assertEqual(switched.status_code, 200, switched.text)
+            self.ai_release.set()
+            final = self.wait_for_job(created["job"]["id"])
+
+            self.assertEqual(final["status"], "completed")
+            self.assertEqual(final["parameters"]["output_root"], str(first_root.resolve()))
+            for asset_id in final["items"][0]["result_asset_ids"]:
+                stored = server.LEDGER.get_asset(asset_id)
+                result_path = Path(stored["path"])
+                self.assertTrue(result_path.is_relative_to(first_root.resolve()))
+                self.assertEqual(stored["metadata"]["output_root"], str(first_root.resolve()))
+                content = client.get(f"/api/assets/{asset_id}/content")
+                self.assertEqual(content.status_code, 200, content.text)
+            self.assertFalse(any(second_root.rglob("*.jpg")))
+            self.assertFalse(any(second_root.rglob("*.png")))
+
+    def test_unavailable_snapshot_root_fails_in_chinese_before_model_work(self) -> None:
+        delivery_root = self.root / "detached-delivery"
+        delivery_root.mkdir()
+        client = TestClient(server.app)
+        try:
+            selected = client.post("/api/settings", json={"output_root": str(delivery_root)})
+            self.assertEqual(selected.status_code, 200, selected.text)
+            source = self.import_asset(client, "detached.png", (80, 130, 190))
+            created = self.create_job(client, {
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "parameters": {"batch": 1},
+                "client_request_id": "detached-output-root",
+                "max_attempts": 1,
+            })
+        finally:
+            client.close()
+        shutil.rmtree(delivery_root)
+
+        with self.live_client():
+            final = self.wait_for_job(created["job"]["id"])
+        item = final["items"][0]
+        self.assertEqual(final["status"], "failed")
+        self.assertEqual(item["error_code"], "OUTPUT_ROOT_UNAVAILABLE")
+        self.assertIn("磁盘", item["error_message"])
+        self.assertEqual(self.ai_calls, [])
+        self.network_request.assert_not_called()
 
     def test_group_split_is_one_item_with_per_product_outputs_and_lineage(self) -> None:
         self.vlm_products = [

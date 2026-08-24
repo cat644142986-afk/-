@@ -119,7 +119,11 @@ export async function saveSettings(settings) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
   });
-  if (!resp.ok) throw new Error('Failed to save settings');
+  if (!resp.ok) {
+    const payload = await resp.json().catch(() => ({}));
+    const detail = payload?.detail;
+    throw new Error(detail?.message || detail || `设置保存失败（HTTP ${resp.status}）`);
+  }
   return resp.json();
 }
 export async function getAppConfig() { return isTauriRuntime ? invoke('get_app_config') : {}; }

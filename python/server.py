@@ -32,6 +32,14 @@ try:
     from job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from memory_engine import MemoryEngine
+    from storage_paths import (
+        OutputRootError,
+        canonicalize_output_root,
+        job_delivery_directory,
+        output_root_status,
+        publish_staged_file,
+        validate_output_root,
+    )
 except ImportError:  # Allows importing as python.server during local tests.
     from python.asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
     from python.atelier_ledger import (
@@ -44,6 +52,14 @@ except ImportError:  # Allows importing as python.server during local tests.
     from python.job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from python.knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from python.memory_engine import MemoryEngine
+    from python.storage_paths import (
+        OutputRootError,
+        canonicalize_output_root,
+        job_delivery_directory,
+        output_root_status,
+        publish_staged_file,
+        validate_output_root,
+    )
 
 # ======================== GUI MODE STDOUT GUARD ========================
 # When running as windowed (no console) exe, sys.stdout/sys.stderr may be None.
@@ -119,7 +135,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-22.4"
+SIDECAR_CONTRACT_VERSION = "2026-08-24.1"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -350,6 +366,9 @@ def ledger_fail_task(context, error):
 # ======================== CONFIG PERSISTENCE ========================
 _RUNTIME_CONFIG_LOCK = threading.RLock()
 _RUNTIME_KNOWLEDGE_PATH = str(KNOWLEDGE.vault_path)
+_RUNTIME_OUTPUT_ROOT = canonicalize_output_root(
+    str(_startup_config.get("output_root") or OUTPUT_DIR)
+)
 
 
 @contextmanager
@@ -439,6 +458,62 @@ def save_config(cfg: dict):
         finally:
             temp_path.unlink(missing_ok=True)
 
+
+def _output_root_protected_paths() -> tuple[Path, ...]:
+    program_root = (
+        Path(sys.executable).resolve().parent
+        if getattr(sys, "frozen", False)
+        else Path(__file__).resolve().parents[1]
+    )
+    knowledge_root = getattr(KNOWLEDGE, "vault_path", None)
+    roots = [APP_DIR, program_root]
+    if knowledge_root:
+        roots.append(Path(str(knowledge_root)))
+    return tuple(roots)
+
+
+def _validate_output_root(value: str | Path, *, test_write: bool = False) -> Path:
+    return validate_output_root(
+        value,
+        default_root=OUTPUT_DIR,
+        protected_roots=_output_root_protected_paths(),
+        require_available=True,
+        test_write=test_write,
+    )
+
+
+def _configured_output_roots(cfg: dict | None = None) -> tuple[Path, ...]:
+    config = cfg if isinstance(cfg, dict) else load_config()
+    values = [OUTPUT_DIR, config.get("output_root")]
+    known = config.get("known_output_roots") or []
+    if isinstance(known, list):
+        values.extend(known)
+    roots: list[Path] = []
+    for value in values:
+        if not str(value or "").strip():
+            continue
+        try:
+            root = validate_output_root(
+                value,
+                default_root=OUTPUT_DIR,
+                protected_roots=_output_root_protected_paths(),
+                require_available=False,
+                test_write=False,
+            )
+        except OutputRootError:
+            continue
+        if root not in roots:
+            roots.append(root)
+    return tuple(roots)
+
+
+def _output_root_state() -> dict[str, object]:
+    return output_root_status(
+        _RUNTIME_OUTPUT_ROOT,
+        default_root=OUTPUT_DIR,
+        protected_roots=_output_root_protected_paths(),
+    )
+
 API_KEY = load_api_key()
 
 def get_api_key():
@@ -459,9 +534,10 @@ def set_api_key(key: str):
 
 def refresh_runtime_config() -> dict:
     """Refresh process-local runtime objects from the shared atomic config."""
-    global API_KEY, _RUNTIME_KNOWLEDGE_PATH
+    global API_KEY, _RUNTIME_KNOWLEDGE_PATH, _RUNTIME_OUTPUT_ROOT
     cfg = load_config()
     with _RUNTIME_CONFIG_LOCK:
+        updates: dict[str, object] = {}
         configured_key = str(cfg.get("api_key") or "").strip()
         API_KEY = configured_key or load_api_key()
         configured_path = str(cfg.get("knowledge_base_path") or _RUNTIME_KNOWLEDGE_PATH).strip()
@@ -470,8 +546,32 @@ def refresh_runtime_config() -> dict:
             KNOWLEDGE.set_path(canonical_path)
             _RUNTIME_KNOWLEDGE_PATH = canonical_path
         if str(cfg.get("knowledge_base_path") or "").strip() != canonical_path:
-            save_config({"knowledge_base_path": canonical_path})
-            cfg = {**cfg, "knowledge_base_path": canonical_path}
+            updates["knowledge_base_path"] = canonical_path
+
+        configured_output = str(cfg.get("output_root") or OUTPUT_DIR).strip()
+        try:
+            canonical_output = validate_output_root(
+                configured_output,
+                default_root=OUTPUT_DIR,
+                protected_roots=_output_root_protected_paths(),
+                require_available=False,
+                test_write=False,
+            )
+        except OutputRootError:
+            canonical_output = OUTPUT_DIR.resolve()
+        _RUNTIME_OUTPUT_ROOT = canonical_output
+        if str(cfg.get("output_root") or "").strip() != str(canonical_output):
+            updates["output_root"] = str(canonical_output)
+
+        known_roots = [str(path) for path in _configured_output_roots({
+            **cfg,
+            "output_root": str(canonical_output),
+        })]
+        if cfg.get("known_output_roots") != known_roots:
+            updates["known_output_roots"] = known_roots
+        if updates:
+            save_config(updates)
+            cfg = {**cfg, **updates}
     return cfg
 
 def get_settings():
@@ -484,7 +584,10 @@ def get_settings():
         "default_angle": cfg.get("default_angle", "auto"),
         "default_fidelity": cfg.get("default_fidelity", 40),
         "auto_refine": cfg.get("auto_refine", True),
-        "output_dir": str(OUTPUT_DIR),
+        "output_dir": str(_RUNTIME_OUTPUT_ROOT),
+        "output_root": str(_RUNTIME_OUTPUT_ROOT),
+        "output_root_status": _output_root_state(),
+        "internal_data_dir": str(APP_DIR),
         "knowledge_base_path": _RUNTIME_KNOWLEDGE_PATH,
         "knowledge": KNOWLEDGE.status(),
     }
@@ -921,12 +1024,14 @@ async def reject_untrusted_browser_origin(request: Request, call_next):
 
 @app.get("/api/health")
 async def health():
+    refresh_runtime_config()
     configured_key = load_api_key()
     return {
         "status": "ok",
         "service": sidecar_runtime_info(),
         "api_key_configured": bool(configured_key),
-        "output_dir": str(OUTPUT_DIR),
+        "output_dir": str(_RUNTIME_OUTPUT_ROOT),
+        "output_root_status": _output_root_state(),
         "ledger": {
             "schema_version": LEDGER.stats()["schema_version"],
             "startup_repair": LEDGER.last_schema_repair,
@@ -978,15 +1083,24 @@ def result_asset_response(asset: dict) -> dict:
 def _resolve_result_asset_path(asset: dict) -> Path:
     if asset.get("role") not in {"result_main", "result_cutout"}:
         raise AssetAccessError("Asset is not an exported generation result", code="ASSET_NOT_FOUND")
-    root = OUTPUT_DIR.resolve()
     candidate = Path(str(asset.get("path", ""))).resolve(strict=False)
-    if not candidate.is_relative_to(root):
+    allowed_roots = _configured_output_roots()
+    asset_metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+    declared_value = str(asset_metadata.get("output_root") or "").strip()
+    declared_root = canonicalize_output_root(declared_value) if declared_value else None
+    if declared_root is not None:
+        roots = (declared_root,) if declared_root in allowed_roots else ()
+    else:
+        # Results created before output-root snapshots existed use the root that
+        # contains their persisted path, including the legacy internal root.
+        roots = tuple(root for root in allowed_roots if candidate.is_relative_to(root))
+    if not roots or not any(candidate.is_relative_to(root) for root in roots):
         raise AssetAccessError("Generation result path is outside the allowed root")
     try:
         resolved = candidate.resolve(strict=True)
     except (FileNotFoundError, OSError) as exc:
         raise AssetAccessError("Generation result file is unavailable", code="ASSET_FILE_MISSING") from exc
-    if not resolved.is_file() or not resolved.is_relative_to(root):
+    if not resolved.is_file() or not any(resolved.is_relative_to(root) for root in roots):
         raise AssetAccessError("Generation result path is outside the allowed root")
     return resolved
 
@@ -1635,6 +1749,15 @@ def _normalize_folder_delivery(value: Any) -> dict[str, Any] | None:
 
 def _normalize_job_parameters(mode: str, parameters: dict) -> dict:
     normalized = dict(parameters or {})
+    requested_output = str(normalized.get("output_root") or _RUNTIME_OUTPUT_ROOT).strip()
+    output_root = _validate_output_root(requested_output, test_write=True)
+    configured_roots = _configured_output_roots()
+    if output_root != _RUNTIME_OUTPUT_ROOT and output_root not in configured_roots:
+        raise OutputRootError(
+            "OUTPUT_ROOT_NOT_CONFIGURED",
+            "该交付目录不在已保存位置中，请先到设置页重新选择",
+        )
+    normalized["output_root"] = str(output_root)
     default_model = {
         "single": "gpt-image-2",
         "multi-file": "gpt-image-2",
@@ -1692,8 +1815,9 @@ def _wake_job_engine():
 async def create_durable_job(request: JobCreateRequest):
     mode = str(request.mode).strip()
     source_asset_ids = [str(asset_id).strip() for asset_id in request.source_asset_ids]
-    parameters = _normalize_job_parameters(mode, request.parameters or {})
     try:
+        refresh_runtime_config()
+        parameters = _normalize_job_parameters(mode, request.parameters or {})
         _validate_job_request(mode, source_asset_ids, parameters)
         requested_concurrency = (
             request.requested_concurrency
@@ -1726,6 +1850,11 @@ async def create_durable_job(request: JobCreateRequest):
         raise HTTPException(
             status_code=404,
             detail={"code": "SOURCE_ASSET_NOT_FOUND", "message": str(exc)},
+        )
+    except OutputRootError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "message": exc.message},
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(
@@ -2116,13 +2245,46 @@ async def get_app_settings():
 
 @app.post("/api/settings")
 async def update_settings(data: dict):
-    save = {k: v for k, v in data.items() if k != "api_key"}
+    allowed = {
+        "default_model",
+        "default_platter",
+        "default_angle",
+        "default_fidelity",
+        "auto_refine",
+        "knowledge_base_path",
+    }
+    save = {key: value for key, value in data.items() if key in allowed}
     if "api_key" in data and data["api_key"]:
         save["api_key"] = str(data["api_key"])
-    if save:
-        save_config(save)
-    refresh_runtime_config()
-    return get_settings()
+    try:
+        if "output_root" in data:
+            selected = _validate_output_root(str(data.get("output_root") or ""), test_write=True)
+            existing = load_config()
+            prior_roots = existing.get("known_output_roots") or []
+            if not isinstance(prior_roots, list):
+                prior_roots = []
+            candidates = [
+                *prior_roots,
+                existing.get("output_root"),
+                OUTPUT_DIR,
+                selected,
+            ]
+            known_roots = _configured_output_roots({
+                **existing,
+                "output_root": str(selected),
+                "known_output_roots": candidates,
+            })
+            save["output_root"] = str(selected)
+            save["known_output_roots"] = [str(path) for path in known_roots]
+        if save:
+            save_config(save)
+        refresh_runtime_config()
+        return get_settings()
+    except OutputRootError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "message": exc.message},
+        )
 
 @app.get("/api/balance")
 async def balance():
@@ -2687,6 +2849,16 @@ def _record_job_prompt(trace, prompt, negative_prompt, stage, knowledge_refs):
     )
 
 
+def _job_output_root(ctx, *, test_write: bool = True) -> Path:
+    parameters = dict(ctx.job.get("parameters") or {})
+    # Jobs created before custom delivery roots existed retain the legacy path.
+    raw_root = str(parameters.get("output_root") or OUTPUT_DIR).strip()
+    try:
+        return _validate_output_root(raw_root, test_write=test_write)
+    except OutputRootError as exc:
+        raise JobExecutionError(exc.code, exc.message) from exc
+
+
 def _attempt_directory(ctx):
     job_part = safe_stem(str(ctx.job_id), "job")
     item_part = safe_stem(str(ctx.item_id), "item")
@@ -2810,14 +2982,17 @@ def _update_folder_delivery_manifest(ctx, source_asset, delivered, delivery):
     return str(manifest_path)
 
 
-def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset):
-    target_dir = (
-        OUTPUT_DIR
-        / "jobs"
-        / safe_stem(str(ctx.job_id), "job")
-        / safe_stem(str(ctx.item_id), "item")
-        / f"attempt-{max(1, int(ctx.item.get('attempt_count', 1)))}"
+def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, output_root):
+    target_dir = job_delivery_directory(
+        output_root,
+        created_at=str(ctx.job.get("created_at") or ""),
+        mode=str(ctx.job.get("mode") or ""),
+        job_id=str(ctx.job_id),
+        item_id=str(ctx.item_id),
+        item_position=int(ctx.item.get("position", 0)),
+        attempt=max(1, int(ctx.item.get("attempt_count", 1))),
     )
+    metadata = {**dict(metadata), "output_root": str(output_root)}
     moved_paths = []
     delivered_paths = []
     committed_asset_ids = []
@@ -2849,16 +3024,35 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset):
 
     def commit():
         nonlocal durable_committed
-        target_dir.mkdir(parents=True, exist_ok=False)
         published = []
         try:
+            try:
+                _job_output_root(ctx, test_write=True)
+                target_dir.mkdir(parents=True, exist_ok=False)
+            except (OSError, OutputRootError) as exc:
+                raise JobExecutionError(
+                    "OUTPUT_ROOT_WRITE_FAILED",
+                    "成品交付目录当前无法写入，请恢复磁盘连接或重新选择目录",
+                ) from exc
             for output in outputs:
                 target = target_dir / str(output["name"])
-                os.replace(output["temp_path"], target)
+                try:
+                    publish_staged_file(output["temp_path"], target)
+                except OSError as exc:
+                    raise JobExecutionError(
+                        "OUTPUT_ROOT_WRITE_FAILED",
+                        "成品交付目录当前无法写入，请恢复磁盘连接或重新选择目录",
+                    ) from exc
                 moved_paths.append(target)
                 published.append({
                     key: value for key, value in output.items() if key != "temp_path"
-                } | {"path": str(target)})
+                } | {
+                    "path": str(target),
+                    "metadata": {
+                        **(output.get("metadata") if isinstance(output.get("metadata"), dict) else {}),
+                        "output_root": str(output_root),
+                    },
+                })
             # Remove the now-empty private stage before the durable transaction.
             # Once the transaction returns, there must be no fallible cleanup
             # step capable of turning a completed item into a result-less one.
@@ -2889,12 +3083,14 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset):
                 output={
                     "result_asset_ids": list(committed_asset_ids),
                     "output_count": len(committed_asset_ids),
+                    "output_root": str(output_root),
                     "delivery_files": [entry["relative_path"] for entry in delivered],
                 },
             )
             return {
                 "result_asset_ids": list(committed_asset_ids),
                 "output_count": len(committed_asset_ids),
+                "output_root": str(output_root),
                 "delivery_root": str(delivery.get("delivery_root") or "") if delivery else "",
                 "delivery_files": [entry["relative_path"] for entry in delivered],
                 "delivery_manifest": manifest_path,
@@ -3290,6 +3486,7 @@ def execute_job_workflow(ctx):
     """Execute one durable item from its persisted source asset id."""
     refresh_runtime_config()
     ctx.checkpoint()
+    output_root = _job_output_root(ctx, test_write=True)
     source_asset, source_path = ASSET_STORE.resolve_asset_path(str(ctx.item["source_asset_id"]))
     source_asset = {**source_asset, "path": str(source_path)}
     try:
@@ -3323,6 +3520,7 @@ def execute_job_workflow(ctx):
             outputs,
             {"mode": mode, **metadata},
             source_asset,
+            output_root,
         )
     except Exception as exc:
         _record_execution_trace_safe(
@@ -3559,7 +3757,7 @@ async def cutout_only(
 async def get_thumbnail(path: str):
     """Serve a local image file for display in the UI."""
     try:
-        allowed_roots = (OUTPUT_DIR.resolve(), ASSET_DIR.resolve())
+        allowed_roots = (*_configured_output_roots(), ASSET_DIR.resolve())
         candidate = Path(path).resolve(strict=False)
         if not any(candidate.is_relative_to(root) for root in allowed_roots):
             return JSONResponse({"error": "access denied"}, status_code=403)

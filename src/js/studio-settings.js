@@ -26,6 +26,19 @@ export function knowledgeStatusCopy(status) {
   };
 }
 
+export function outputRootStatusCopy(status) {
+  if (!status?.available) {
+    return {
+      text: status?.message || '交付目录当前不可用，请重新选择',
+      error: true,
+    };
+  }
+  return {
+    text: status?.message || '新任务将保存到这里；运行中任务保持原目录',
+    error: false,
+  };
+}
+
 export function createSettingsController({
   api,
   state,
@@ -43,6 +56,16 @@ export function createSettingsController({
     query('#knowledge-pill-text').textContent = copy.pill;
     query('#setting-knowledge-status').textContent = copy.title;
     query('#setting-knowledge-detail').textContent = copy.detail;
+  }
+
+  function renderOutputRoot(settings) {
+    const path = String(settings?.output_root || settings?.output_dir || '').trim();
+    const status = outputRootStatusCopy(settings?.output_root_status);
+    query('#setting-output-root').value = path;
+    const statusNode = query('#output-root-status');
+    statusNode.textContent = status.text;
+    statusNode.classList.toggle('is-error', status.error);
+    query('#btn-open-output-root').disabled = !path || status.error;
   }
 
   async function load() {
@@ -70,7 +93,7 @@ export function createSettingsController({
         if (!hasModeSnapshot) query('#param-fidelity').value = settings.default_fidelity;
       }
       query('#setting-fid-val').textContent = `${query('#setting-fidelity').value}%`;
-      query('#output-dir').textContent = settings.output_dir || '—';
+      renderOutputRoot(settings);
       query('#setting-api-key').placeholder = settings.api_key_set ? '已配置（留空不修改）' : '输入 API Key';
       query('#setting-knowledge-path').value = settings.knowledge_base_path || '';
       renderKnowledgeStatus(settings.knowledge);
@@ -97,6 +120,7 @@ export function createSettingsController({
       state.settings = result;
       query('#setting-api-key').value = '';
       renderKnowledgeStatus(result.knowledge);
+      renderOutputRoot(result);
       toast('设置已保存', 'success');
     } catch (error) {
       toast(`保存失败：${error}`, 'error');
@@ -124,17 +148,54 @@ export function createSettingsController({
     }
   }
 
+  async function selectOutputRoot() {
+    const button = query('#btn-select-output-root');
+    button.disabled = true;
+    try {
+      const selected = await api.selectFolder();
+      if (!selected) return;
+      const result = await api.saveSettings({ output_root: selected });
+      state.settings = result;
+      renderOutputRoot(result);
+      toast('交付目录已更新，仅影响之后创建的任务', 'success');
+    } catch (error) {
+      toast(`目录设置失败：${error}`, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function openOutputRoot() {
+    const path = query('#setting-output-root').value.trim();
+    if (!path) return;
+    try {
+      await api.openInFolder(path);
+    } catch (error) {
+      toast(`无法打开交付目录：${error}`, 'error');
+    }
+  }
+
   function bind() {
     if (bound) return;
     query('#btn-save-key').addEventListener('click', () => save(true));
     query('#btn-save-settings').addEventListener('click', () => save(false));
     query('#btn-reload-knowledge').addEventListener('click', reloadKnowledge);
     query('#btn-check-balance').addEventListener('click', checkBalance);
+    query('#btn-select-output-root').addEventListener('click', selectOutputRoot);
+    query('#btn-open-output-root').addEventListener('click', openOutputRoot);
     query('#setting-fidelity').addEventListener('input', () => {
       query('#setting-fid-val').textContent = `${query('#setting-fidelity').value}%`;
     });
     bound = true;
   }
 
-  return { bind, checkBalance, load, reloadKnowledge, renderKnowledgeStatus, save };
+  return {
+    bind,
+    checkBalance,
+    load,
+    reloadKnowledge,
+    renderKnowledgeStatus,
+    renderOutputRoot,
+    save,
+  };
 }

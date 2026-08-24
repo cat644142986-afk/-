@@ -67,6 +67,7 @@ try {
         "python/job_engine.py",
         "python/knowledge_engine.py",
         "python/memory_engine.py",
+        "python/storage_paths.py",
         "python-server.spec"
     )
     $sourceHashes = [ordered]@{}

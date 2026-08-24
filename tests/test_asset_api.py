@@ -48,11 +48,19 @@ class AssetApiTests(unittest.TestCase):
             server.ASSET_STORE,
             server.ASSET_DIR,
             server.OUTPUT_DIR,
+            server.CONFIG_PATH,
+            server._RUNTIME_OUTPUT_ROOT,
         )
         server.LEDGER = self.ledger
         server.ASSET_STORE = self.store
         server.ASSET_DIR = self.asset_dir
         server.OUTPUT_DIR = self.output_dir
+        server.CONFIG_PATH = self.root / "config.json"
+        server._RUNTIME_OUTPUT_ROOT = self.output_dir
+        server.save_config({
+            "output_root": str(self.output_dir),
+            "known_output_roots": [str(self.output_dir)],
+        })
         self.client = TestClient(server.app)
 
     def tearDown(self) -> None:
@@ -62,6 +70,8 @@ class AssetApiTests(unittest.TestCase):
             server.ASSET_STORE,
             server.ASSET_DIR,
             server.OUTPUT_DIR,
+            server.CONFIG_PATH,
+            server._RUNTIME_OUTPUT_ROOT,
         ) = self.original_globals
         self.temp_dir.cleanup()
 
@@ -78,6 +88,22 @@ class AssetApiTests(unittest.TestCase):
         self.assertFalse(payload["service"]["packaged"])
         self.assertEqual(payload["ledger"]["schema_version"], SCHEMA_VERSION)
         self.assertIsNone(payload["ledger"]["startup_repair"])
+
+    def test_output_root_settings_reject_program_and_unavailable_paths(self) -> None:
+        program_root = Path(server.__file__).resolve().parents[1]
+        protected = self.client.post(
+            "/api/settings",
+            json={"output_root": str(program_root)},
+        )
+        self.assertEqual(protected.status_code, 400, protected.text)
+        self.assertEqual(protected.json()["detail"]["code"], "OUTPUT_ROOT_PROTECTED")
+
+        unavailable = self.client.post(
+            "/api/settings",
+            json={"output_root": str(self.root / "missing-delivery")},
+        )
+        self.assertEqual(unavailable.status_code, 400, unavailable.text)
+        self.assertEqual(unavailable.json()["detail"]["code"], "OUTPUT_ROOT_UNAVAILABLE")
 
     def test_cors_rejects_untrusted_web_origin_for_reads_and_mutations(self) -> None:
         attacker_headers = {"Origin": "https://attacker.example"}

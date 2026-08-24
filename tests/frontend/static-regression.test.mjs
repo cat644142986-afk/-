@@ -76,6 +76,13 @@ test('settings and knowledge connection behavior lives outside the page orchestr
   assert.match(settings, /if \(bound\) return/);
   assert.match(html, /<label for="setting-knowledge-path">知识库主路径<\/label>/);
   assert.match(html, /id="setting-knowledge-path"[^>]*readonly[^>]*aria-readonly="true"/);
+  assert.match(html, /<label for="setting-output-root">交付文件目录<\/label>/);
+  assert.match(html, /id="setting-output-root"[^>]*readonly[^>]*aria-readonly="true"/);
+  assert.match(html, /id="btn-select-output-root"/);
+  assert.match(html, /id="output-root-status"[^>]*aria-live="polite"/);
+  assert.match(settings, /api\.selectFolder\(\)/);
+  assert.match(settings, /api\.saveSettings\(\{ output_root: selected \}\)/);
+  assert.match(css, /\.output-root-field/);
 });
 
 test('job submission captures an immutable draft before any knowledge await', () => {
@@ -87,6 +94,7 @@ test('job submission captures an immutable draft before any knowledge await', ()
   assert.match(app, /clearPendingSubmission\(payload\.client_request_id\)/);
   assert.match(app, /if \(!savedDraft\) savedDraft = await flushWorkspaceDraft\(submissionDraft\.mode, false\)/);
   assert.match(app, /当前工作草稿未能安全保存/);
+  assert.match(app, /output_root: String\(state\.settings\?\.output_root/);
 });
 
 test('asset import writes selection back to the mode that initiated the async import', () => {

@@ -60,9 +60,14 @@ class ConfigConcurrencyTests(unittest.TestCase):
                 "API_KEY": server.API_KEY,
                 "KNOWLEDGE": server.KNOWLEDGE,
                 "_RUNTIME_KNOWLEDGE_PATH": server._RUNTIME_KNOWLEDGE_PATH,
+                "OUTPUT_DIR": server.OUTPUT_DIR,
+                "_RUNTIME_OUTPUT_ROOT": server._RUNTIME_OUTPUT_ROOT,
             }
             try:
                 server.CONFIG_PATH = config_path
+                server.OUTPUT_DIR = Path(temp_dir) / "output"
+                server.OUTPUT_DIR.mkdir()
+                server._RUNTIME_OUTPUT_ROOT = server.OUTPUT_DIR
                 server.API_KEY = "stale-process-value"
                 recorder = _RecordingKnowledge()
                 server.KNOWLEDGE = recorder
@@ -90,7 +95,11 @@ class ConfigConcurrencyTests(unittest.TestCase):
                 self.assertEqual(stored["knowledge_base_path"], str(Path(temp_dir) / "vault"))
                 self.assertEqual(server.get_api_key(), "shared-offline-key")
                 refreshed = server.refresh_runtime_config()
-                self.assertEqual(refreshed, stored)
+                self.assertEqual(
+                    refreshed,
+                    json.loads(config_path.read_text(encoding="utf-8")),
+                )
+                self.assertEqual(refreshed["output_root"], str(server.OUTPUT_DIR.resolve()))
                 self.assertEqual(recorder.paths, [str(Path(temp_dir) / "vault")])
             finally:
                 for name, value in original.items():
