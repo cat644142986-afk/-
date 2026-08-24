@@ -16,12 +16,28 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_VAULT = Path(
-    os.environ.get(
-        "PRODUCT_ATELIER_KNOWLEDGE_BASE",
-        str(Path.home() / "Documents" / "知识库"),
-    )
-).expanduser()
+PREFERRED_WINDOWS_VAULT = Path("D:/知识库")
+
+
+def canonicalize_vault_path(path: str | Path) -> Path:
+    """Return one stable path, resolving Windows junction compatibility aliases."""
+    candidate = Path(path).expanduser()
+    try:
+        return candidate.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return candidate
+
+
+def default_vault_path() -> Path:
+    override = str(os.environ.get("PRODUCT_ATELIER_KNOWLEDGE_BASE", "")).strip()
+    if override:
+        return canonicalize_vault_path(override)
+    if os.name == "nt" and PREFERRED_WINDOWS_VAULT.exists():
+        return canonicalize_vault_path(PREFERRED_WINDOWS_VAULT)
+    return canonicalize_vault_path(Path.home() / "Documents" / "知识库")
+
+
+DEFAULT_VAULT = default_vault_path()
 DESIGN_RELATIVE = Path("20 知识库") / "设计知识"
 
 
@@ -116,7 +132,7 @@ class KnowledgeCompiler:
 
     def __init__(self, vault_path: str | Path = DEFAULT_VAULT):
         self._lock = threading.RLock()
-        self.vault_path = Path(vault_path).expanduser()
+        self.vault_path = canonicalize_vault_path(vault_path)
         self.design_path = self._resolve_design_path(self.vault_path)
         self.documents: list[dict[str, Any]] = []
         self.by_name: dict[str, dict[str, Any]] = {}
@@ -133,7 +149,7 @@ class KnowledgeCompiler:
 
     def set_path(self, path: str | Path) -> dict[str, Any]:
         with self._lock:
-            self.vault_path = Path(path).expanduser()
+            self.vault_path = canonicalize_vault_path(path)
             self.design_path = self._resolve_design_path(self.vault_path)
         return self.reload()
 

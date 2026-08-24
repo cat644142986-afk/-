@@ -74,6 +74,8 @@ test('settings and knowledge connection behavior lives outside the page orchestr
   assert.match(settings, /normalizeSettingsPayload/);
   assert.match(settings, /knowledgeStatusCopy/);
   assert.match(settings, /if \(bound\) return/);
+  assert.match(html, /<label for="setting-knowledge-path">知识库主路径<\/label>/);
+  assert.match(html, /id="setting-knowledge-path"[^>]*readonly[^>]*aria-readonly="true"/);
 });
 
 test('job submission captures an immutable draft before any knowledge await', () => {

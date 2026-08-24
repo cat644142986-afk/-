@@ -30,7 +30,7 @@ try:
         InvalidStatusTransitionError,
     )
     from job_engine import JobEngine, JobExecutionError, JobProcessorResult
-    from knowledge_engine import KnowledgeCompiler
+    from knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from memory_engine import MemoryEngine
 except ImportError:  # Allows importing as python.server during local tests.
     from python.asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
@@ -42,7 +42,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         InvalidStatusTransitionError,
     )
     from python.job_engine import JobEngine, JobExecutionError, JobProcessorResult
-    from python.knowledge_engine import KnowledgeCompiler
+    from python.knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from python.memory_engine import MemoryEngine
 
 # ======================== GUI MODE STDOUT GUARD ========================
@@ -349,7 +349,7 @@ def ledger_fail_task(context, error):
 
 # ======================== CONFIG PERSISTENCE ========================
 _RUNTIME_CONFIG_LOCK = threading.RLock()
-_RUNTIME_KNOWLEDGE_PATH = _knowledge_path
+_RUNTIME_KNOWLEDGE_PATH = str(KNOWLEDGE.vault_path)
 
 
 @contextmanager
@@ -464,10 +464,14 @@ def refresh_runtime_config() -> dict:
     with _RUNTIME_CONFIG_LOCK:
         configured_key = str(cfg.get("api_key") or "").strip()
         API_KEY = configured_key or load_api_key()
-        configured_path = str(cfg.get("knowledge_base_path") or "").strip()
-        if configured_path and configured_path != _RUNTIME_KNOWLEDGE_PATH:
-            KNOWLEDGE.set_path(configured_path)
-            _RUNTIME_KNOWLEDGE_PATH = configured_path
+        configured_path = str(cfg.get("knowledge_base_path") or _RUNTIME_KNOWLEDGE_PATH).strip()
+        canonical_path = str(canonicalize_vault_path(configured_path))
+        if canonical_path != _RUNTIME_KNOWLEDGE_PATH:
+            KNOWLEDGE.set_path(canonical_path)
+            _RUNTIME_KNOWLEDGE_PATH = canonical_path
+        if str(cfg.get("knowledge_base_path") or "").strip() != canonical_path:
+            save_config({"knowledge_base_path": canonical_path})
+            cfg = {**cfg, "knowledge_base_path": canonical_path}
     return cfg
 
 def get_settings():
@@ -481,7 +485,7 @@ def get_settings():
         "default_fidelity": cfg.get("default_fidelity", 40),
         "auto_refine": cfg.get("auto_refine", True),
         "output_dir": str(OUTPUT_DIR),
-        "knowledge_base_path": cfg.get("knowledge_base_path", str(KNOWLEDGE.vault_path)),
+        "knowledge_base_path": _RUNTIME_KNOWLEDGE_PATH,
         "knowledge": KNOWLEDGE.status(),
     }
 
@@ -1940,7 +1944,7 @@ async def reload_knowledge(data: dict | None = None):
     try:
         path = str((data or {}).get("path", "")).strip()
         if path:
-            save_config({"knowledge_base_path": path})
+            save_config({"knowledge_base_path": str(canonicalize_vault_path(path))})
             refresh_runtime_config()
             return KNOWLEDGE.status()
         refresh_runtime_config()
