@@ -76,7 +76,8 @@ test('settings and knowledge connection behavior lives outside the page orchestr
   assert.match(settings, /normalizeSettingsPayload/);
   assert.match(settings, /knowledgeStatusCopy/);
   assert.match(settings, /if \(bound\) return/);
-  assert.match(html, /<label for="setting-knowledge-path">知识库主路径<\/label>/);
+  assert.match(html, /<h2>唯一知识库<\/h2>/);
+  assert.match(html, /<label for="setting-knowledge-path">唯一知识库主路径<\/label>/);
   assert.match(html, /id="setting-knowledge-path"[^>]*readonly[^>]*aria-readonly="true"/);
   assert.match(html, /<label for="setting-output-root">交付文件目录<\/label>/);
   assert.match(html, /id="setting-output-root"[^>]*readonly[^>]*aria-readonly="true"/);
@@ -194,7 +195,7 @@ test('production shell lands the extended-workflow experience frame with exact n
   assert.match(css, /\.traffic-light \{[^}]*width: 28px; height: 28px/);
   assert.match(css, /\.traffic-light::before \{[^}]*width: 12px; height: 12px/);
   assert.match(html, /<strong>设计依据<\/strong>/);
-  assert.match(html, /<strong>后台任务<\/strong>/);
+  assert.match(html, /<strong>任务中心<\/strong>/);
   assert.doesNotMatch(html, />Studio<\/span>/);
   assert.match(css, /\.canvas-empty::before, \.canvas-empty::after \{ display: none; \}/);
 });
@@ -228,13 +229,42 @@ test('narrow windows turn workflow controls into an accessible drawer instead of
 });
 
 test('primary studio copy uses readable type tokens instead of shrinking every label', () => {
-  assert.match(css, /--type-caption: 10px/);
-  assert.match(css, /--type-control: 12px/);
-  assert.match(css, /--type-body: 13px/);
+  assert.match(css, /--type-caption: 11px/);
+  assert.match(css, /--type-control: 13px/);
+  assert.match(css, /--type-body: 14px/);
   assert.match(css, /\.creative-command input \{[^}]*font-size: var\(--type-body\)/);
   assert.match(css, /\.mode-button strong \{[^}]*font-size: var\(--type-control\)/);
   assert.match(css, /\.dock-field select,[^}]*font-size: var\(--type-control\)/);
   assert.match(css, /\.canvas-empty p \{[^}]*font-size: var\(--type-body\)/);
+});
+
+test('production sessions, task center, and result review use the approved information architecture', () => {
+  assert.match(html, /class="sessions-layout"/);
+  assert.match(html, /id="history-project-filter"/);
+  assert.match(html, /id="history-session-count"/);
+  assert.match(html, /id="history-timeline"/);
+  assert.match(html, /DURABLE TASK CENTER/);
+  assert.match(html, /id="job-summary-completed"/);
+  assert.match(html, /id="job-runtime"/);
+  assert.match(html, /class="review-workspace"/);
+  assert.match(html, /data-review-decision="adopted"/);
+  assert.match(app, /function renderSessionsDashboard\(\)/);
+  assert.match(app, /async function openSessionFromHistory\(sessionId\)/);
+  assert.match(app, /function jobFailureCopy\(item\)/);
+  assert.match(app, /PERMANENT_JOB_ERRORS/);
+  assert.match(app, /API\.getJobRuntime/);
+  assert.match(api, /export async function getJobRuntime/);
+  assert.match(css, /\.sessions-project-visual/);
+  assert.match(css, /\.job-runtime/);
+  assert.match(css, /\.review-decision-panel/);
+});
+
+test('core production status copy remains Chinese-first', () => {
+  assert.match(app, /completed: '已完成'/);
+  assert.match(app, /INVALID_SOURCE_IMAGE: '源文件已经损坏/);
+  assert.match(app, /只重试失败项/);
+  assert.doesNotMatch(app, /\$\{session\.status \|\| 'draft'\}/);
+  assert.doesNotMatch(html, />Compare</);
 });
 
 test('result, settings, memory, and job controls keep readable core copy', () => {
@@ -275,4 +305,14 @@ test('real workflow controls share the dark production dock without stretching e
   assert.match(css, /\.task-dock__body \{[^}]*overflow: hidden/);
   assert.doesNotMatch(css, /\.task-dock__body \{[^}]*overflow: hidden auto/);
   assert.match(css, /\.task-dock \.folder-source \{[^}]*border-radius: 17px/);
+});
+
+test('approved feedback is shown as an applied rule, not only a count', () => {
+  assert.match(html, /id="memory-trace-knowledge"/);
+  assert.match(html, /id="memory-trace-rules"/);
+  assert.match(app, /记忆反馈\/已批准/);
+  assert.match(app, /appliedRuleTexts/);
+  assert.match(app, /positive_rules[\s\S]*?negative_rules[\s\S]*?intent_lock_rules/);
+  assert.match(app, /其中 \$\{memorySources\.length\} 条是你已批准的反馈/);
+  assert.match(app, /已应用 \$\{executionRules\} 条可检查执行规则/);
 });

@@ -309,6 +309,7 @@ class KnowledgeCompiler:
     def compile(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         context = dict(context or {})
         brief = self.build_creative_brief(context)
+        approved_memory = self._approved_memory_rules(context)
         with self._lock:
             selected = self._select_documents(context)
         positives: list[dict[str, Any]] = []
@@ -333,6 +334,20 @@ class KnowledgeCompiler:
                     positive_count += 1
         positives = self._dedupe(positives, 10)
         negatives = self._dedupe(negatives, 14)
+        # User-approved memory suggestions are highest priority constraints. They are
+        # prepended to the positive rules so they survive the [:10] enrichment slice,
+        # and surfaced as a distinct source so the UI can show exactly what was applied.
+        memory_sources: list[dict[str, Any]] = []
+        for item in approved_memory:
+            source = {
+                "id": item["id"],
+                "title": item["label"],
+                "path": "",
+                "relative_path": "记忆反馈/已批准",
+            }
+            positives.insert(0, {"text": f"已批准记忆反馈：{item['text']}", "source": source})
+            memory_sources.append(source)
+        positives = positives[:10]
         all_rules = positives + negatives
         sources = []
         seen_paths: set[str] = set()
@@ -346,6 +361,9 @@ class KnowledgeCompiler:
                 "path": doc["path"],
                 "relative_path": doc["relative_path"],
             })
+        for source in memory_sources:
+            if not any(existing.get("id") == source["id"] for existing in sources):
+                sources.append(source)
         return {
             "compiled_at": utc_now(),
             "context": context,
@@ -357,6 +375,32 @@ class KnowledgeCompiler:
             "conflicts": self._detect_conflicts(context, all_rules),
             "fallback": not bool(sources),
         }
+
+    @staticmethod
+    def _approved_memory_rules(context: dict[str, Any]) -> list[dict[str, str]]:
+        """Normalize approved memory rules passed in by the generation/preview layer.
+
+        The knowledge engine stays ledger-agnostic: callers resolve approved feedback
+        from the runbook/ledger and hand over a small, validated list here. Each item
+        must carry ``text`` (the executable directive), ``label`` and ``id`` so the
+        prompt enrichment and the UI can trace it back to a real, user-approved rule.
+        """
+        raw = context.get("approved_memory_rules") or []
+        if not isinstance(raw, list):
+            return []
+        rules: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            rules.append({
+                "id": str(item.get("id", "")).strip() or f"memory:{hash(text)}",
+                "label": str(item.get("label", "")).strip() or "已批准记忆反馈",
+                "text": text,
+            })
+        return rules[:5]
 
     def enrich_prompt(self, prompt: str, negative_prompt: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         bundle = self.compile(context)

@@ -1869,6 +1869,30 @@ async def list_durable_jobs(limit: int = 100):
     return {"jobs": jobs, "count": len(jobs)}
 
 
+@app.get("/api/jobs/runtime")
+async def durable_job_runtime():
+    """Expose read-only executor ownership and resource use for the task center."""
+    engine = JOB_ENGINE
+    if engine is None:
+        return {
+            "running": False,
+            "leader": False,
+            "in_flight": 0,
+            "resource_in_use": {},
+            "resource_limits": {},
+            "unreconciled_workers": [],
+        }
+    snapshot = engine.snapshot()
+    return {
+        "running": bool(snapshot.get("running")),
+        "leader": bool(snapshot.get("leader")),
+        "in_flight": int(snapshot.get("in_flight", 0)),
+        "resource_in_use": dict(snapshot.get("resource_in_use") or {}),
+        "resource_limits": dict(snapshot.get("resource_limits") or {}),
+        "unreconciled_workers": list(snapshot.get("unreconciled_workers") or []),
+    }
+
+
 @app.get("/api/jobs/{job_id}")
 async def get_durable_job(job_id: str):
     try:
@@ -2086,7 +2110,9 @@ async def reload_knowledge(data: dict | None = None):
 async def compile_knowledge(data: dict):
     try:
         refresh_runtime_config()
-        return KNOWLEDGE.compile(data if isinstance(data, dict) else {})
+        context = dict(data if isinstance(data, dict) else {})
+        context["approved_memory_rules"] = _approved_memory_rules(context)
+        return KNOWLEDGE.compile(context)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -2150,6 +2176,7 @@ async def compile_creation_session(session_id: str, data: dict | None = None):
             "intent_locks": session.get("intent_locks") or {},
         })
         context.update(data or {})
+        context["approved_memory_rules"] = _approved_memory_rules(context)
         bundle = KNOWLEDGE.compile(context)
         LEDGER.update_session(
             session_id,
@@ -3133,6 +3160,37 @@ def _cloud_job_call(ctx, prompt, reference, model, *, negative_prompt, stage):
         )
 
 
+def _approved_memory_rules(context: dict | None = None) -> list[dict]:
+    """Resolve user-approved memory suggestions into executable prompt rules.
+
+    This is the bridge that makes feedback actually affect future generation:
+    a suggestion only becomes an active constraint once the user has reviewed it
+    and marked it ``approved``. Unreviewed or rejected suggestions never reach the
+    prompt, so feedback cannot silently override formal knowledge.
+    """
+    try:
+        suggestions = LEDGER.list_memory_suggestions(status="approved", limit=50)
+    except Exception:
+        return []
+    scope = dict(context or {})
+    category = str(scope.get("category", "general"))
+    rules: list[dict] = []
+    for suggestion in suggestions:
+        proposal = suggestion.get("proposed_value") or {}
+        directive = str(proposal.get("directive") or proposal.get("label") or "").strip()
+        if not directive:
+            continue
+        scope_category = str(suggestion.get("category") or "general")
+        if scope_category not in ("general", category):
+            continue
+        rules.append({
+            "id": str(suggestion.get("rule_key") or suggestion.get("id") or ""),
+            "label": str(proposal.get("label") or "已批准记忆反馈"),
+            "text": directive,
+        })
+    return rules
+
+
 def _job_knowledge_context(trace, **values):
     context = {
         "brand_profile": trace.get("brand_profile", ""),
@@ -3141,6 +3199,7 @@ def _job_knowledge_context(trace, **values):
     }
     if isinstance(trace.get("brief"), dict):
         context = {**trace["brief"], **context}
+    context["approved_memory_rules"] = _approved_memory_rules(context)
     return context
 
 

@@ -249,6 +249,17 @@ class DurableJobApiTests(unittest.TestCase):
                 seen_per_source[source_id] += 1
         self.assertEqual(seen_per_source, expected_per_source)
 
+    def test_job_runtime_endpoint_reports_real_executor_ownership(self) -> None:
+        with self.live_client() as client:
+            response = client.get("/api/jobs/runtime")
+            self.assertEqual(response.status_code, 200, response.text)
+            runtime = response.json()
+            self.assertTrue(runtime["running"])
+            self.assertIn("leader", runtime)
+            self.assertEqual(runtime["in_flight"], 0)
+            self.assertEqual(runtime["resource_in_use"], {})
+            self.assertEqual(runtime["unreconciled_workers"], [])
+
     def test_single_job_api_outputs_lineage_urls_and_legacy_progress_from_db(self) -> None:
         with self.live_client() as client:
             source = self.import_asset(client, "single.png", (220, 80, 40))

@@ -396,8 +396,9 @@ async function hydrateAssetUrls(assets) {
   }));
 }
 
-function toast(message, type = 'info', duration = 3200, action = null) {
+function toast(message, type = 'info', duration = 1800, action = null) {
   const wrap = $('#toast-wrap');
+  while (wrap.children.length >= 3) wrap.firstElementChild?.remove();
   const item = document.createElement('div');
   item.className = `toast ${type}`;
   const copy = document.createElement('span');
@@ -630,13 +631,13 @@ function renderFileMeta() {
   if (folderBatch) {
     const folderCount = Number(folderBatch.imported_count || folderBatch.asset_ids.length || 0);
     $('#info-filename').textContent = `${folderCount} 张文件夹图片等待入队`;
-    $('#ready-count').textContent = `${folderCount} FOLDER SOURCES`;
+    $('#ready-count').textContent = `${folderCount} 个文件夹已就绪`;
   } else if (count) {
     $('#info-filename').textContent = count === 1 ? selection[0].name : `${count} 张源图已选中`;
-    $('#ready-count').textContent = `${count} SOURCE${count > 1 ? 'S' : ''} READY`;
+    $('#ready-count').textContent = `${count} 张素材已就绪`;
   } else {
     $('#info-filename').textContent = '从素材工作台选择任务输入';
-    $('#ready-count').textContent = '0 SELECTED';
+    $('#ready-count').textContent = '0 张已选';
   }
 }
 
@@ -651,7 +652,7 @@ function renderQueue() {
     return;
   }
   const selection = new Set(selectedAssetIds());
-  queue.innerHTML = state.assets.map((asset, index) => {
+  const items = state.assets.map((asset, index) => {
     const selected = selection.has(asset.id);
     const dimensions = asset.width && asset.height ? `${asset.width}×${asset.height}` : '已持久化';
     return `<article class="queue-item asset-card ${selected ? 'selected' : ''}">
@@ -662,8 +663,12 @@ function renderQueue() {
       <button class="asset-card__remove" type="button" data-remove-asset-id="${escapeHtml(asset.id)}" aria-label="将 ${escapeHtml(asset.name)} 移入回收站" title="移入回收站"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/></svg></button>
     </article>`;
   }).join('');
+  if (state.currentMode !== 'single') {
+    queue.innerHTML += '<button class="queue-item queue-add" type="button" id="btn-queue-add"><span>+</span><strong>添加图片</strong><small>继续导入本工作流素材</small></button>';
+  }
   $$('[data-asset-id]', queue).forEach((button) => button.addEventListener('click', () => toggleAssetSelection(button.dataset.assetId)));
   $$('[data-remove-asset-id]', queue).forEach((button) => button.addEventListener('click', () => removeWorkspaceAsset(button.dataset.removeAssetId)));
+  $('#btn-queue-add')?.addEventListener('click', () => $('#file-input').click());
   setStage('ready');
   renderFileMeta();
 }
@@ -896,8 +901,9 @@ function renderKnowledge(bundle) {
   $('#knowledge-source-count').textContent = `${sources.length} 条来源`;
   $('#knowledge-source-list').innerHTML = sources.length ? sources.map((source, index) => `<div class="source-item"><span>${String(index + 1).padStart(2, '0')}</span><div><strong>${escapeHtml(source.title || source.id || '设计规则')}</strong><small>${escapeHtml(source.relative_path || source.path || '')}</small></div></div>`).join('') : '<div class="page-empty">本次使用安全默认规则。</div>';
   const brief = bundle.creative_brief || {};
+  const memorySources = sources.filter((source) => source.relative_path === '记忆反馈/已批准');
   $('#intelligence-brief').textContent = brief.objective || '本次商业图片任务';
-  $('#intelligence-context').textContent = `${MODE_CONFIG[state.currentMode].label} · ${brief.output_kind || '商业输出'} · ${Object.values(brief.intent_locks || {}).filter(Boolean).length} 项 Intent Locks`;
+  $('#intelligence-context').textContent = `${MODE_CONFIG[state.currentMode].label} · ${brief.output_kind || '商业输出'} · ${Object.values(brief.intent_locks || {}).filter(Boolean).length} 项意图锁定${memorySources.length ? ` · ${memorySources.length} 条已批准记忆反馈` : ''}`;
   const conflicts = bundle.conflicts || [];
   $('#knowledge-conflicts').innerHTML = conflicts.length ? conflicts.map((item) => `<div class="conflict-item"><span>!</span><p>${escapeHtml(item.message)}</p></div>`).join('') : '<div class="conflict-item ok"><span>✓</span><p>当前没有检测到规则冲突</p></div>';
 }
@@ -1157,6 +1163,108 @@ function renderJobDockSummary() {
     : (paused.length
       ? `${paused.length} 个任务已暂停，继续后将领取剩余排队项${outcomeCopy}`
       : (jobs.length ? `任务状态已从本地账本恢复${outcomeCopy}` : '新任务会在这里持续追踪'));
+  $('#job-summary-completed').textContent = String(jobs.filter((job) => job.status === 'completed').length);
+  $('#job-summary-running').textContent = String(jobs.filter((job) => ['queued', 'running', 'canceling'].includes(job.status)).length);
+  $('#job-summary-attention').textContent = String(jobs.filter((job) => ['partial', 'failed', 'interrupted', 'paused'].includes(job.status)).length);
+  renderJobRuntime();
+  renderRailNotice();
+}
+
+function renderRailNotice() {
+  const badge = $('.rail-notice-dot', $('#btn-rail-jobs'));
+  if (!badge) return;
+  const jobs = state.jobs || [];
+  const pendingItems = (jobs || []).reduce((sum, job) => {
+    if (!['partial', 'failed', 'interrupted', 'paused', 'queued', 'running'].includes(job.status)) return sum;
+    const items = Array.isArray(job.items) ? job.items : [];
+    return sum + items.filter((item) => ['failed', 'interrupted', 'running'].includes(item.status)).length;
+  }, 0);
+  const attention = pendingItems
+    || jobs.filter((job) => ['partial', 'failed', 'interrupted', 'paused'].includes(job.status)).length;
+  badge.textContent = attention > 0 ? String(Math.min(attention, 99)) : '';
+  badge.classList.toggle('has-count', attention > 0);
+  badge.setAttribute('aria-hidden', attention > 0 ? 'false' : 'true');
+}
+
+function renderJobRuntime() {
+  const root = $('#job-runtime');
+  const title = $('#job-runtime-title');
+  const detail = $('#job-runtime-detail');
+  const icon = $('.job-runtime__icon', root);
+  const runtime = state.jobRuntime;
+  root.classList.remove('is-active', 'is-warning');
+  if (!runtime) {
+    root.classList.add('is-warning');
+    icon.textContent = '·';
+    title.textContent = '资源状态暂不可读';
+    detail.textContent = '任务账本仍可用，等待执行器重新连接';
+    return;
+  }
+  const inFlight = Number(runtime.in_flight || 0);
+  const unreconciled = Array.isArray(runtime.unreconciled_workers) ? runtime.unreconciled_workers.length : 0;
+  const use = runtime.resource_in_use || {};
+  const limits = runtime.resource_limits || {};
+  const resourceNames = { 'cloud-image': '云端生图', 'local-cutout': '本地抠图', vlm: '视觉理解' };
+  const resourceCopy = Object.entries(limits).map(([name, limit]) => `${resourceNames[name] || name} ${Number(use[name] || 0)}/${Number(limit || 0)}`).join(' · ');
+  if (unreconciled) {
+    root.classList.add('is-warning');
+    icon.textContent = '!';
+    title.textContent = '后台正在收口中断现场';
+    detail.textContent = `${unreconciled} 个工作项等待账本确认${resourceCopy ? ` · ${resourceCopy}` : ''}`;
+  } else if (inFlight || Object.values(use).some((value) => Number(value) > 0)) {
+    root.classList.add('is-active');
+    icon.textContent = '↻';
+    title.textContent = '后台资源正在工作';
+    detail.textContent = `${inFlight} 个执行项${resourceCopy ? ` · ${resourceCopy}` : ''}`;
+  } else if (runtime.running) {
+    icon.textContent = '✓';
+    title.textContent = '后台资源已释放';
+    detail.textContent = `${resourceCopy || '执行资源 0 占用'} · 没有未归属工作项`;
+  } else {
+    root.classList.add('is-warning');
+    icon.textContent = '·';
+    title.textContent = '任务执行器尚未启动';
+    detail.textContent = '任务记录安全保存在本地账本中';
+  }
+}
+
+const PERMANENT_JOB_ERRORS = new Set([
+  'INVALID_SOURCE_IMAGE', 'UNSUPPORTED_JOB_MODE', 'INVALID_VARIATION_COUNT',
+  'INVALID_PRODUCT_DETECTION', 'NO_PRODUCTS_DETECTED', 'TOO_MANY_PRODUCTS_DETECTED',
+  'INVALID_DELIVERY_PATH',
+]);
+
+function jobFailureCopy(item) {
+  const code = String(item?.error_code || '').trim();
+  const raw = String(item?.error_message || item?.error || '').trim();
+  const known = {
+    PROCESS_RESTARTED: '应用曾在处理中断；该项目可以从安全检查点重新执行。',
+    WORKER_INFRASTRUCTURE_FAILURE: '后台工作进程意外停止；素材和已成功结果仍然保留。',
+    OUTPUT_ROOT_WRITE_FAILED: '交付目录当前无法写入，请恢复磁盘连接或在设置中重新选择目录。',
+    INVALID_OUTPUT_ROOT: '交付目录无效，请在设置中重新选择可写入的位置。',
+    INVALID_SOURCE_IMAGE: '源文件已经损坏或不是可读取的图片，重复执行不会修复该文件。',
+    UNSUPPORTED_JOB_MODE: '这条历史任务使用了当前版本不支持的工作流，无法继续执行。',
+    INVALID_VARIATION_COUNT: '历史任务的方案数量不符合当前规则，需要回到现场重新设置。',
+    INVALID_PRODUCT_DETECTION: '合照识别结果结构无效，请更换清晰素材后重新建立任务。',
+    NO_PRODUCTS_DETECTED: '图片中没有识别到可拆分产品，请更换更清晰的合照。',
+    TOO_MANY_PRODUCTS_DETECTED: '图片中的产品数量超过当前安全拆分上限，请分组后重新导入。',
+    INVALID_DELIVERY_PATH: '整夹交付路径未通过安全检查，需要重新载入源文件夹。',
+    USER_CANCELED: '该项目已由你取消。',
+    PROCESSOR_ERROR: '处理器未能完成该项目；可以单独重试，若再次失败请查看原始详情。',
+  };
+  const hasChinese = /[\u3400-\u9fff]/.test(raw);
+  return {
+    code,
+    permanent: PERMANENT_JOB_ERRORS.has(code),
+    message: known[code] || (hasChinese ? raw : '处理过程中发生未分类错误；可以单独重试，原始详情已保留。'),
+    raw,
+  };
+}
+
+function retryableJobItems(job) {
+  return (job?.items || []).filter((item) => (
+    ['failed', 'interrupted'].includes(item.status) && !jobFailureCopy(item).permanent
+  ));
 }
 
 const MUTATING_JOB_ACTIONS = new Set(['pause', 'resume', 'cancel', 'retry-item', 'retry-failed']);
@@ -1229,8 +1337,8 @@ function renderJobs(force = false) {
     state.jobsAvailable,
     state.jobActionsInFlight,
   );
-  if (!force && signature === state.jobsRenderSignature) return;
   renderJobDockSummary();
+  if (!force && signature === state.jobsRenderSignature) return;
   renderJobFilters();
   const list = $('#job-list');
   const view = captureJobListView(list);
@@ -1246,34 +1354,45 @@ function renderJobs(force = false) {
       const status = JOB_STATUS[job.status] || { label: job.status || '未知', tone: 'unknown' };
       const progress = Math.round(jobProgress(job) * 100);
       const counts = jobCounts(job);
-      const retryable = (job.items || []).filter((item) => ['failed', 'interrupted'].includes(item.status));
+      const retryable = retryableJobItems(job);
       const hasResults = resultIdsForJob(job).length > 0;
       const lifecycleActions = jobLifecycleActions(job.status);
       const canPause = lifecycleActions.includes('pause');
       const canResume = lifecycleActions.includes('resume');
       const canCancel = lifecycleActions.includes('cancel');
-      const items = (job.items || []).map((item, index) => {
+      const visibleItems = (job.items || []).filter((item) => ['failed', 'interrupted', 'running'].includes(item.status)).slice(0, 5);
+      const items = visibleItems.map((item, index) => {
         const source = findJobSourceAsset(item.source_asset_id);
         const itemStatus = JOB_STATUS[item.status] || { label: item.status || '未知', tone: 'unknown' };
         const itemProgress = Math.round(itemCompletionProgress(item) * 100);
-        const error = item.error_message || item.error || '';
-        const canRetryItem = ['failed', 'interrupted'].includes(item.status);
+        const failure = jobFailureCopy(item);
+        const canRetryItem = ['failed', 'interrupted'].includes(item.status) && !failure.permanent;
         return `<li class="job-item job-item--${escapeHtml(itemStatus.tone)}">
-          <img src="${escapeHtml(assetUrl(source))}" alt="" loading="lazy" />
-          <span class="job-item__copy"><strong>${escapeHtml(source?.name || `素材 ${index + 1}`)}</strong><span>${escapeHtml(itemStatus.label)} · 完成度 ${itemProgress}%</span>${error ? `<small title="${escapeHtml(error)}">${escapeHtml(error)}</small>` : ''}</span>
+          <img src="${escapeHtml(assetUrl(source))}" alt="${escapeHtml(source?.name || `任务素材 ${index + 1}`)}" loading="lazy" />
+          <span class="job-item__copy"><strong>${escapeHtml(source?.name || `任务素材 ${index + 1}`)}</strong><span>${escapeHtml(itemStatus.label)} · 完成度 ${itemProgress}%${failure.permanent ? ' · 永久失败' : ''}</span>${failure.message ? `<small title="${escapeHtml(failure.raw || failure.message)}">${escapeHtml(failure.message)}</small>` : ''}</span>
           <span class="job-item__bar"><i style="width:${itemProgress}%"></i></span>
-          ${canRetryItem ? `<button type="button" data-job-action="retry-item" data-job-id="${escapeHtml(job.id)}" data-item-id="${escapeHtml(item.id)}" ${jobActionDisabled('retry-item', job.id, item.id) ? 'disabled aria-busy="true"' : ''}>重试</button>` : ''}
+          ${canRetryItem ? `<button type="button" data-job-action="retry-item" data-job-id="${escapeHtml(job.id)}" data-item-id="${escapeHtml(item.id)}" ${jobActionDisabled('retry-item', job.id, item.id) ? 'disabled aria-busy="true"' : ''}>单独重试</button>` : ''}
         </li>`;
       }).join('');
+      const issueCount = (job.items || []).filter((item) => ['failed', 'interrupted'].includes(item.status)).length;
+      const outcome = status.tone === 'completed'
+        ? '成功项目已经锁定，不会因其他项目失败而重复执行。'
+        : (issueCount
+          ? `${counts.completed} 个成功项目保持不变；${retryable.length} 个可重试，${issueCount - retryable.length} 个需要更换素材或设置。`
+          : (['running', 'queued', 'canceling'].includes(status.tone)
+            ? '任务在后台继续推进，切换页面不会中断当前工作。'
+            : '任务现场、素材选择与参数快照均已保存在本地账本。'));
+      const icon = status.tone === 'completed' ? '✓' : (['partial', 'failed', 'interrupted'].includes(status.tone) ? '!' : '↻');
       return `<article class="job-card job-card--${escapeHtml(status.tone)}" data-job-id="${escapeHtml(job.id)}" tabindex="-1">
-        <header><span><small>${escapeHtml(MODE_CONFIG[job.mode]?.badge || String(job.mode || '').toUpperCase())}</small><strong>${escapeHtml(MODE_CONFIG[job.mode]?.label || job.title || '创作任务')}</strong></span><span class="job-status job-status--${escapeHtml(status.tone)}">${escapeHtml(status.label)}</span></header>
+        <header><span><i class="job-card__icon">${icon}</i><small>${escapeHtml(MODE_CONFIG[job.mode]?.badge || '创作任务')} · ${escapeHtml(status.label)}</small><strong>${escapeHtml(job.title || MODE_CONFIG[job.mode]?.label || '创作任务')}</strong></span><span class="job-status job-status--${escapeHtml(status.tone)}">${counts.completed}/${counts.total}</span></header>
         <div class="job-progress"><span><i style="width:${progress}%"></i></span><strong>${progress}%</strong></div>
         <div class="job-counts"><span>${counts.total} 项</span><span>${counts.completed} 成功</span><span>${counts.failed} 失败</span><span>${counts.canceled} 取消</span><span>成功率 ${counts.successRate === null ? '—' : `${counts.successRate}%`}</span><time>${escapeHtml(formatTime(job.updated_at || job.created_at))}</time></div>
+        <p class="job-outcome"><i></i><span>${escapeHtml(outcome)}</span></p>
         ${items ? `<ul class="job-items">${items}</ul>` : ''}
         <footer>
           ${hasResults ? `<button type="button" data-job-action="open-results" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-results', job.id) ? 'disabled aria-busy="true"' : ''}>打开结果</button>` : ''}
           ${!hasResults ? `<button type="button" data-job-action="open-workspace" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-workspace', job.id) ? 'disabled aria-busy="true"' : ''}>回到现场</button>` : ''}
-          ${retryable.length ? `<button type="button" data-job-action="retry-failed" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('retry-failed', job.id) ? 'disabled aria-busy="true"' : ''}>重试失败项</button>` : ''}
+          ${retryable.length ? `<button class="primary-job-action" type="button" data-job-action="retry-failed" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('retry-failed', job.id) ? 'disabled aria-busy="true"' : ''}>只重试失败项</button>` : ''}
           ${canPause ? `<button type="button" data-job-action="pause" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('pause', job.id) ? 'disabled aria-busy="true"' : ''}>暂停任务</button>` : ''}
           ${canResume ? `<button type="button" data-job-action="resume" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('resume', job.id) ? 'disabled aria-busy="true"' : ''}>继续任务</button>` : ''}
           ${canCancel ? `<button class="danger" type="button" data-job-action="cancel" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('cancel', job.id) ? 'disabled aria-busy="true"' : ''}>取消任务</button>` : ''}
@@ -1312,19 +1431,24 @@ async function loadJobs(silent = false) {
   const controller = new AbortController();
   state.jobsAbortController = controller;
   try {
-    const result = await API.getJobs(100, { signal: controller.signal, timeoutMs: 8000 });
+    const [result, runtime] = await Promise.all([
+      API.getJobs(100, { signal: controller.signal, timeoutMs: 8000 }),
+      API.getJobRuntime({ signal: controller.signal, timeoutMs: 8000 }).catch(() => null),
+    ]);
     if (requestVersion !== state.jobsRequestVersion) return null;
     const jobs = Array.isArray(result) ? result : (result?.jobs || []);
     await hydrateJobSourceAssets(jobs);
     if (requestVersion !== state.jobsRequestVersion) return null;
     announceJobChanges(jobs);
     state.jobs = jobs;
+    state.jobRuntime = runtime;
     state.jobsAvailable = true;
     renderJobs();
     return true;
   } catch (error) {
     if (requestVersion !== state.jobsRequestVersion) return null;
     state.jobsAvailable = false;
+    state.jobRuntime = null;
     renderJobs();
     if (!silent) toast(`后台任务读取失败：${formatApiError(error, '持久任务接口不可用')}`, 'error', 6000);
     return false;
@@ -1370,7 +1494,8 @@ async function handleJobAction(button) {
     else if (action === 'retry-failed') {
       invalidateJobsRead();
       const job = state.jobs.find((entry) => entry.id === jobId);
-      const ids = (job?.items || []).filter((item) => ['failed', 'interrupted'].includes(item.status)).map((item) => item.id);
+      const ids = retryableJobItems(job).map((item) => item.id);
+      if (!ids.length) throw new Error('没有可重试项目；永久失败项需要更换素材或设置');
       await API.retryJob(jobId, ids);
       toast(`${ids.length} 个失败项已重新入队`, 'success');
     } else if (action === 'open-results') await openJobResults(jobId);
@@ -1553,7 +1678,7 @@ async function saveCurrentResults() {
 }
 
 async function recordFeedback(signal, reason = '') {
-  if (!state.currentSessionId) { toast('当前没有可反馈的创作会话', 'error'); return; }
+  if (!state.currentSessionId) { toast('当前没有可反馈的创作会话', 'error'); return false; }
   try {
     await API.recordFeedback(state.currentSessionId, {
       signal,
@@ -1564,7 +1689,8 @@ async function recordFeedback(signal, reason = '') {
     });
     toast(signal === 'adopted' ? '已记录采用：这版会成为成功证据' : '反馈已进入本地学习证据', 'success');
     $('#feedback-input').value = '';
-  } catch (error) { toast(`反馈记录失败：${error}`, 'error'); }
+    return true;
+  } catch (error) { toast(`反馈记录失败：${error}`, 'error'); return false; }
 }
 
 function openDrawer(name) {
@@ -1613,6 +1739,25 @@ function renderCompare() {
   const has = Boolean(state.compareData?.original && state.compareData?.result);
   $('#compare-empty').hidden = has;
   $('#compare-view').hidden = !has;
+  const rail = $('#review-version-rail');
+  const entries = [
+    ...(state.results?.main || []).map((item, index) => ({ item, index, tab: 'main' })),
+    ...(state.results?.cutout || []).map((item, index) => ({ item, index, tab: 'cutout' })),
+  ];
+  rail.innerHTML = entries.length ? `${entries.map((entry, order) => {
+    const selected = entry.tab === state.resultTab && entry.index === state.viewerIndex;
+    return `<button class="review-version ${selected ? 'is-selected' : ''}" type="button" data-review-tab="${entry.tab}" data-review-index="${entry.index}"><img src="${escapeHtml(resultDataUrl(entry.item, entry.tab))}" alt="结果版本 ${order + 1}" /><strong>版本 ${order + 1}</strong><small>${selected ? '当前' : '查看'}</small></button>`;
+  }).join('')}<button class="review-version" type="button" data-review-source><span class="session-card__color" aria-hidden="true"></span><strong>原图</strong><small>来源</small></button>` : '<div class="page-empty">等待结果版本</div>';
+  $$('[data-review-tab]', rail).forEach((button) => button.addEventListener('click', () => {
+    state.resultTab = button.dataset.reviewTab;
+    state.viewerIndex = Number(button.dataset.reviewIndex || 0);
+    renderResults();
+    renderCompare();
+  }));
+  $('[data-review-source]', rail)?.addEventListener('click', () => {
+    setComparePosition(97);
+    toast('已将对比滑块移到原图侧');
+  });
   if (!has) return;
   $('#compare-img-original').src = state.compareData.original;
   $('#compare-img-result').src = state.compareData.result;
@@ -1621,8 +1766,8 @@ function renderCompare() {
 
 function setComparePosition(percent) {
   const value = Math.max(3, Math.min(97, percent));
-  $('#compare-after').style.left = `${value}%`;
-  $('#compare-slider').style.left = `${value}%`;
+  const view = $('#compare-view');
+  view.style.setProperty('--compare-slide', `${value}%`);
   $('#compare-slider').setAttribute('aria-valuenow', String(Math.round(value)));
 }
 
@@ -1654,24 +1799,124 @@ function formatTime(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+function sessionProjectName(session) {
+  return String(session?.project_name || '').trim() || '未归类项目';
+}
+
+function sessionStatusCopy(status) {
+  return ({ completed: '已完成', partial: '部分完成', processing: '处理中', draft: '草稿', failed: '需要处理', canceled: '已取消' })[status] || '已保存';
+}
+
+function sessionActionCopy(session) {
+  if (['failed', 'partial'].includes(session.status)) return '处理';
+  if (session.status === 'completed') return '查看';
+  return '继续';
+}
+
+function sessionJob(sessionId) {
+  const matches = state.jobs.filter((job) => String(job.session_id || '') === String(sessionId || ''));
+  return matches.find((job) => resultIdsForJob(job).length) || matches[0] || null;
+}
+
+async function openSessionFromHistory(sessionId) {
+  try {
+    const session = await API.getSession(sessionId);
+    const job = sessionJob(sessionId);
+    if (job) {
+      if (resultIdsForJob(job).length) await openJobResults(job.id);
+      else await openJobWorkspace(job);
+      return;
+    }
+    const generations = session.generations || [];
+    const generation = generations[generations.length - 1];
+    state.currentSessionId = session.id || '';
+    state.knowledgeBundle = {
+      creative_brief: session.brief || {},
+      sources: generation?.knowledge_refs || [],
+      positive_rules: [], negative_rules: [], conflicts: [],
+    };
+    renderKnowledge(state.knowledgeBundle);
+    openDrawer('intelligence');
+    toast('这条旧会话没有任务快照，已打开可追溯证据');
+  } catch (error) {
+    toast(`无法恢复会话：${formatApiError(error, '本地创作账本暂不可用')}`, 'error');
+  }
+}
+
+function renderSessionTimeline(session) {
+  const steps = $$('#history-timeline span');
+  const hasAssets = Number(session?.asset_count || 0) > 0;
+  const hasDirection = Boolean(session?.brief?.objective || session?.brief?.user_request);
+  const hasReview = Number(session?.feedback_count || 0) > 0;
+  const hasKnowledge = state.sessionPendingKnowledgeCount > 0;
+  const states = [hasAssets, hasDirection, hasReview, hasKnowledge];
+  const current = states.findIndex((done) => !done);
+  steps.forEach((step, index) => {
+    step.classList.toggle('is-done', states[index]);
+    step.classList.toggle('is-current', index === current || (current < 0 && index === steps.length - 1));
+  });
+  $('#history-memory-copy').textContent = session
+    ? `${MODE_CONFIG[session.mode]?.label || '创作工作流'}已保留素材、参数、任务和评审证据。`
+    : '素材、参数、任务和评审证据相互独立，随时可以继续。';
+}
+
+function renderSessionsDashboard() {
+  const grid = $('#history-grid');
+  const recentCard = $('#sessions-recent-card');
+  const toggle = $('#btn-toggle-history');
+  const filter = state.sessionProjectFilter;
+  const sessions = filter === 'all'
+    ? state.sessions
+    : state.sessions.filter((session) => sessionProjectName(session) === filter);
+  const projectTitle = filter === 'all' ? '全部创作项目' : filter;
+  $('#history-project-title').textContent = projectTitle;
+  $('#history-session-count').textContent = String(sessions.length);
+  $('#history-result-count').textContent = String(sessions.reduce((sum, session) => sum + Number(session.generation_count || 0), 0));
+  $('#history-pending-count').textContent = String(state.sessionPendingKnowledgeCount);
+  const completed = sessions.filter((session) => session.status === 'completed').length;
+  $('#history-complete-rate').textContent = sessions.length ? `${Math.round((completed / sessions.length) * 100)}%` : '0%';
+  renderSessionTimeline(sessions[0] || null);
+  const canExpand = sessions.length > 6;
+  if (!canExpand) state.sessionShowAll = false;
+  recentCard.classList.toggle('is-expanded', state.sessionShowAll);
+  toggle.hidden = !canExpand;
+  toggle.textContent = state.sessionShowAll ? '收起列表' : `查看全部 ${sessions.length} 个`;
+  toggle.setAttribute('aria-expanded', String(state.sessionShowAll));
+  if (!sessions.length) {
+    grid.innerHTML = '<div class="page-empty">这个项目还没有创作现场。完成第一项任务后，会话会自动出现在这里。</div>';
+    return;
+  }
+  const visibleSessions = state.sessionShowAll ? sessions : sessions.slice(0, 6);
+  grid.innerHTML = visibleSessions.map((session) => {
+    const job = sessionJob(session.id);
+    const counts = job ? jobCounts(job) : null;
+    const progress = counts ? `${counts.completed}/${counts.total} 项完成` : `${Number(session.generation_count || 0)} 个版本`;
+    const summary = `${MODE_CONFIG[session.mode]?.label || '创作任务'} · ${progress} · ${sessionStatusCopy(session.status)}`;
+    return `<button class="session-card" type="button" data-session-id="${escapeHtml(session.id)}"><span class="session-card__color" aria-hidden="true"></span><span class="session-card__copy"><strong>${escapeHtml(session.title || sessionProjectName(session))}</strong><small>${escapeHtml(summary)} · ${escapeHtml(formatTime(session.updated_at))}</small></span><span class="session-card__action">${sessionActionCopy(session)}</span><span class="session-card__chevron" aria-hidden="true">›</span></button>`;
+  }).join('');
+  $$('.session-card', grid).forEach((card) => card.addEventListener('click', () => openSessionFromHistory(card.dataset.sessionId)));
+}
+
 async function loadSessions() {
   const grid = $('#history-grid');
   grid.innerHTML = '<div class="page-empty">正在读取本地创作账本…</div>';
   try {
-    const sessions = await API.getSessions(60);
-    if (!sessions.length) { grid.innerHTML = '<div class="page-empty">还没有创作会话。完成第一项任务后，版本链会出现在这里。</div>'; return; }
-    grid.innerHTML = sessions.map((session) => `<article class="session-card" data-session-id="${escapeHtml(session.id)}"><div class="session-card__top"><span class="session-card__mode">${escapeHtml(MODE_CONFIG[session.mode]?.badge || String(session.mode).toUpperCase())}</span><span class="session-card__status">${escapeHtml(session.status || 'draft')}</span></div><div><h3>${escapeHtml(session.title || '未命名会话')}</h3><p>${escapeHtml(session.brief?.objective || session.brief?.user_request || '保留了素材、参数与生成证据')}</p></div><div class="session-card__meta"><span>${session.asset_count || 0} assets · ${session.generation_count || 0} versions</span><span>${formatTime(session.updated_at)}</span></div></article>`).join('');
-    $$('.session-card', grid).forEach((card) => card.addEventListener('click', async () => {
-      try {
-        const session = await API.getSession(card.dataset.sessionId);
-        const generations = session.generations || [];
-        const generation = generations[generations.length - 1];
-        state.knowledgeBundle = { creative_brief: session.brief || {}, sources: generation?.knowledge_refs || [], positive_rules: [], negative_rules: [], conflicts: [] };
-        renderKnowledge(state.knowledgeBundle);
-        openDrawer('intelligence');
-      } catch (error) { toast(`无法读取会话：${error}`, 'error'); }
-    }));
-  } catch (error) { grid.innerHTML = `<div class="page-empty">读取失败：${escapeHtml(error)}</div>`; }
+    const [sessions, suggestions] = await Promise.all([
+      API.getSessions(60),
+      API.getMemorySuggestions('pending').catch(() => []),
+    ]);
+    state.sessions = Array.isArray(sessions) ? sessions : [];
+    state.sessionPendingKnowledgeCount = Array.isArray(suggestions) ? suggestions.length : 0;
+    const projectFilter = $('#history-project-filter');
+    const projects = [...new Set(state.sessions.map(sessionProjectName))];
+    const available = state.sessionProjectFilter === 'all' || projects.includes(state.sessionProjectFilter);
+    if (!available) state.sessionProjectFilter = 'all';
+    projectFilter.innerHTML = `<option value="all">全部项目</option>${projects.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
+    projectFilter.value = state.sessionProjectFilter;
+    renderSessionsDashboard();
+  } catch (error) {
+    grid.innerHTML = `<div class="page-empty">读取失败：${escapeHtml(formatApiError(error, '本地创作账本暂不可用'))}</div>`;
+  }
 }
 
 function selectMemoryNode(node) {
@@ -1710,6 +1955,12 @@ function renderMemoryProjection(ledger, suggestions, knowledgeStatus) {
     + (Array.isArray(bundle.negative_rules) ? bundle.negative_rules.length : 0);
   const brief = bundle.creative_brief || {};
   const intent = brief.objective || brief.user_request || $('#brief-input').value.trim();
+  const memorySources = sources.filter((source) => source.relative_path === '记忆反馈/已批准');
+  const appliedRuleTexts = [
+    ...(Array.isArray(bundle.positive_rules) ? bundle.positive_rules : []).map((rule) => rule.text || rule),
+    ...(Array.isArray(bundle.negative_rules) ? bundle.negative_rules : []).map((rule) => rule.text || rule),
+    ...(Array.isArray(bundle.intent_lock_rules) ? bundle.intent_lock_rules : []),
+  ].filter(Boolean);
 
   $('#memory-session-count').textContent = sessions;
   $('#memory-feedback-count').textContent = feedback;
@@ -1720,10 +1971,12 @@ function renderMemoryProjection(ledger, suggestions, knowledgeStatus) {
   $('#memory-core-summary').textContent = `${documents} 份正式知识 · ${sessions} 个现场`;
   $('#memory-trace-intent').textContent = intent || '当前任务尚未输入创作目标';
   $('#memory-trace-knowledge').textContent = sources.length
-    ? `本次引用 ${sources.length} 份正式知识`
+    ? memorySources.length
+      ? `本次引用 ${sources.length} 份依据，其中 ${memorySources.length} 条是你已批准的反馈`
+      : `本次引用 ${sources.length} 份正式知识`
     : '当前任务尚未编译知识来源';
   $('#memory-trace-rules').textContent = executionRules
-    ? `形成 ${executionRules} 条可检查执行规则`
+    ? `已应用 ${executionRules} 条可检查执行规则：${appliedRuleTexts.slice(0, 3).join('；')}${appliedRuleTexts.length > 3 ? '…' : ''}`
     : '只采用已批准规则，不使用待审核建议';
   $('#memory-trace-feedback').textContent = feedback
     ? `已有 ${feedback} 条反馈证据；新建议仍需确认`
@@ -1820,11 +2073,48 @@ function bindEvents() {
   $('#viewer-next').addEventListener('click', () => { const items = getResultItems(); if (items.length) { state.viewerIndex = (state.viewerIndex + 1) % items.length; renderResults(); } });
   $('#btn-open-compare').addEventListener('click', () => { renderCompare(); switchPage('compare'); });
   $('#btn-compare-back').addEventListener('click', () => switchPage('process'));
+  $('#btn-review-why').addEventListener('click', () => openDrawer('intelligence'));
+  $$('[data-review-decision]').forEach((button) => button.addEventListener('click', () => {
+    state.reviewDecision = button.dataset.reviewDecision || '';
+    $$('[data-review-decision]').forEach((item) => item.classList.toggle('is-selected', item === button));
+    $('#review-reason').hidden = false;
+    $('#review-reason-input').focus();
+  }));
+  $('#btn-review-record').addEventListener('click', async () => {
+    if (!state.reviewDecision) { toast('请先选择一个结果判断'); return; }
+    const reason = $('#review-reason-input').value.trim();
+    const saved = await recordFeedback(state.reviewDecision, reason);
+    if (saved) $('#review-reason-input').value = '';
+  });
+  $('#btn-review-suggest').addEventListener('click', async () => {
+    if (!state.reviewDecision) { toast('请先选择一个结果判断'); return; }
+    const reason = $('#review-reason-input').value.trim();
+    if (!reason) { toast('形成知识建议前，请先写下具体判断依据'); return; }
+    const saved = await recordFeedback(state.reviewDecision, reason);
+    if (!saved) return;
+    await API.synthesizeMemory().catch(() => null);
+    $('#review-reason-input').value = '';
+    toast('已形成待审核建议；批准前不会影响未来生成', 'success', 5200);
+  });
   $('#btn-save-all').addEventListener('click', saveCurrentResults);
   $('#btn-adopt').addEventListener('click', () => { state.lastFeedbackSignal = 'adopted'; recordFeedback('adopted', $('#feedback-input').value.trim()); });
   $('#btn-reject').addEventListener('click', () => { state.lastFeedbackSignal = 'rejected'; $('#feedback-input').focus(); toast('请说出具体原因，它会成为下一版证据'); });
-  $('#btn-feedback').addEventListener('click', () => { const reason = $('#feedback-input').value.trim(); if (!reason) { toast('请先写下具体判断'); return; } recordFeedback(state.lastFeedbackSignal === 'rejected' ? 'rejected' : 'note', reason); });
+  $('#btn-feedback').addEventListener('click', async () => {
+    const reason = $('#feedback-input').value.trim();
+    if (!reason) { toast('请先写下具体判断'); return; }
+    const ok = await recordFeedback(state.lastFeedbackSignal === 'rejected' ? 'rejected' : 'note', reason);
+    if (ok) state.lastFeedbackSignal = 'note';
+  });
   $('#btn-refresh-history').addEventListener('click', loadSessions);
+  $('#history-project-filter').addEventListener('change', (event) => {
+    state.sessionProjectFilter = event.target.value || 'all';
+    state.sessionShowAll = false;
+    renderSessionsDashboard();
+  });
+  $('#btn-toggle-history').addEventListener('click', () => {
+    state.sessionShowAll = !state.sessionShowAll;
+    renderSessionsDashboard();
+  });
   $('#btn-refresh-memory').addEventListener('click', loadMemory);
   $('#btn-replay-memory').addEventListener('click', replayMemoryMotion);
   $$('[data-memory-node]').forEach((node) => node.addEventListener('click', () => selectMemoryNode(node)));

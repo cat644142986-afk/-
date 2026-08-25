@@ -8,26 +8,26 @@ export const PAGE_CONFIG = {
 
 export const MODE_CONFIG = {
   single: {
-    label: '单产品商业精修', badge: 'SINGLE', action: '开始生成', multiple: false, maxFiles: 1,
-    title: '导入素材，再选一张作为输入', eyebrow: 'PRODUCT ASSETS', limit: 'SELECT 1 · 20 MB / FILE',
+    label: '单产品商业精修', badge: '单产品', action: '开始生成', multiple: false, maxFiles: 1,
+    title: '导入素材，再选一张作为输入', eyebrow: 'PRODUCT ASSETS', limit: '选择 1 张 · 20 MB / 张',
     description: '与多文件共享产品素材；当前选择、描述和结果独立保存。',
     note: '一张主图，保真生成与透明底同步输出', outputKind: 'ecommerce-main', collection: 'product',
   },
   'multi-file': {
-    label: '多文件独立批量', badge: 'BATCH', action: '运行批量队列', multiple: true, maxFiles: 20,
-    title: '从产品素材选择一组独立商品', eyebrow: 'PRODUCT ASSETS', limit: 'SELECT UP TO 20',
+    label: '多文件独立批量', badge: '多文件', action: '运行批量队列', multiple: true, maxFiles: 20,
+    title: '从产品素材选择一组独立商品', eyebrow: 'PRODUCT ASSETS', limit: '每次最多选择 20 张',
     description: '与单产品共享素材；每张图片独立并发并保留逐项进度。',
     note: '多张源图逐一生成，不把它们误当成同一画面', outputKind: 'ecommerce-main', collection: 'product',
   },
   'group-split': {
-    label: '组合图智能拆分', badge: 'GROUP SPLIT', action: '识别并拆分', multiple: false, maxFiles: 1,
-    title: '导入或选择一张产品合照', eyebrow: 'GROUP ASSETS', limit: 'SELECT 1 GROUP IMAGE',
+    label: '组合图智能拆分', badge: '合照', action: '识别并拆分', multiple: false, maxFiles: 1,
+    title: '导入或选择一张产品合照', eyebrow: 'GROUP ASSETS', limit: '选择 1 张合照',
     description: '合照素材与产品、抠图素材分开保存，返回时恢复原任务现场。',
     note: '一张合照识别多个主体，再分别生成交付图', outputKind: 'group-split', collection: 'group',
   },
   'cutout-batch': {
-    label: '本地批量抠图', badge: 'LOCAL CUTOUT', action: '开始批量抠图', multiple: true, maxFiles: 24,
-    title: '导入或选择待抠图图片', eyebrow: 'CUTOUT ASSETS', limit: 'SELECT UP TO 24',
+    label: '本地批量抠图', badge: '抠图', action: '开始批量抠图', multiple: true, maxFiles: 24,
+    title: '导入或选择待抠图图片', eyebrow: 'CUTOUT ASSETS', limit: '每次最多选择 24 张',
     description: '抠图素材、描述、进度和预览独立保留；切换工作流不会停止任务。',
     note: '本地快速去背景；语义选物将在智能抠图工作流接入', outputKind: 'cutout', collection: 'cutout',
   },

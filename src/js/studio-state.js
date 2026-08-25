@@ -37,6 +37,7 @@ export function createStudioState(modeIds) {
     hydratingWorkspace: false,
     backendReady: false,
     jobs: [],
+    jobRuntime: null,
     jobFilter: 'all',
     jobSourceAssets: new Map(),
     knownJobStatuses: new Map(),
@@ -57,6 +58,11 @@ export function createStudioState(modeIds) {
     jobActionsInFlight: new Set(),
     jobMutationsInFlight: new Set(),
     pendingSubmission: null,
+    sessions: [],
+  sessionProjectFilter: 'all',
+  sessionShowAll: false,
+  sessionPendingKnowledgeCount: 0,
+    reviewDecision: '',
   };
 }
 

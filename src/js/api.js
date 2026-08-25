@@ -297,6 +297,9 @@ export async function createJob(payload) {
 export async function getJobs(limit, options) {
   return fetchJSON('/api/jobs?limit=' + encodeURIComponent(limit || 100), options);
 }
+export async function getJobRuntime(options) {
+  return fetchJSON('/api/jobs/runtime', options);
+}
 export async function getJob(jobId) {
   return fetchJSON('/api/jobs/' + encodeURIComponent(jobId));
 }
