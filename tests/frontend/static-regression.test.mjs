@@ -316,3 +316,11 @@ test('approved feedback is shown as an applied rule, not only a count', () => {
   assert.match(app, /其中 \$\{memorySources\.length\} 条是你已批准的反馈/);
   assert.match(app, /已应用 \$\{executionRules\} 条可检查执行规则/);
 });
+
+test('rendering a workspace queue must commit items before appending the add slot', () => {
+  // Regression guard: the asset-card list must be written to #file-queue, otherwise
+  // uploaded assets never render (no preview thumbnails) and the add-slot accumulates.
+  assert.match(app, /queue\.innerHTML = items;/);
+  assert.match(app, /queue\.innerHTML = items;[\s\S]*?queue\.innerHTML \+= '<button class="queue-item queue-add"/);
+  assert.match(app, /const items = state\.assets\.map[\s\S]*?\.join\(''\);/);
+});

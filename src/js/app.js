@@ -663,6 +663,7 @@ function renderQueue() {
       <button class="asset-card__remove" type="button" data-remove-asset-id="${escapeHtml(asset.id)}" aria-label="将 ${escapeHtml(asset.name)} 移入回收站" title="移入回收站"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/></svg></button>
     </article>`;
   }).join('');
+  queue.innerHTML = items;
   if (state.currentMode !== 'single') {
     queue.innerHTML += '<button class="queue-item queue-add" type="button" id="btn-queue-add"><span>+</span><strong>添加图片</strong><small>继续导入本工作流素材</small></button>';
   }
