@@ -769,6 +769,87 @@ class DurableJobApiTests(unittest.TestCase):
             ))
             self.network_request.assert_not_called()
 
+    def test_semantic_cutout_requires_confirmation_then_executes_manual_regions(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "two-burgers.png", (210, 80, 35))
+            preview = client.post(
+                "/api/semantic-cutout/preview",
+                json={
+                    "asset_id": source["id"],
+                    "query": "汉堡",
+                    "target_count": 1,
+                    "regions": [],
+                },
+            )
+            self.assertEqual(preview.status_code, 200, preview.text)
+            self.assertEqual(preview.json()["preview"]["status"], "needs_manual_grounding")
+            self.assertFalse(preview.json()["preview"]["automatic_grounding_available"])
+
+            rejected = client.post(
+                "/api/jobs",
+                json={
+                    "mode": "cutout-batch",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "cutout_selection": {
+                            "strategy": "semantic",
+                            "query": "汉堡",
+                            "target_count": 1,
+                            "sources": {},
+                        }
+                    },
+                    "client_request_id": "semantic-without-confirmation",
+                },
+            )
+            self.assertEqual(rejected.status_code, 400, rejected.text)
+            self.assertEqual(rejected.json()["detail"]["stage"], "selection")
+            self.assertEqual(
+                rejected.json()["detail"]["code"], "SEMANTIC_CONFIRMATION_REQUIRED"
+            )
+
+            confirmed = client.post(
+                "/api/semantic-cutout/confirm",
+                json={
+                    "asset_id": source["id"],
+                    "query": "汉堡",
+                    "target_count": 1,
+                    "regions": [
+                        {"id": "burger-1", "bbox": [0.1, 0.1, 0.4, 0.8]}
+                    ],
+                },
+            )
+            self.assertEqual(confirmed.status_code, 200, confirmed.text)
+            selection = confirmed.json()["selection"]
+            source_plan = selection["sources"][source["id"]]
+            self.assertEqual(source_plan["status"], "confirmed")
+            self.assertTrue(source_plan["digest"].startswith("sha256:"))
+
+            created = self.create_job(
+                client,
+                {
+                    "mode": "cutout-batch",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "brief": {"user_request": "只保留一个汉堡"},
+                        "cutout_selection": selection,
+                    },
+                },
+            )
+            final = self.wait_for_job(created["job"]["id"])
+            self.assertEqual(final["status"], "completed")
+            self.assertEqual(final["parameters"]["cutout_selection"], selection)
+            traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
+            segment = next(item for item in traces if item["stage"] == "cutout.segment")
+            self.assertEqual(segment["ignored_fields"], [])
+            self.assertEqual(segment["parameters"]["strategy"], "semantic")
+            self.assertEqual(segment["parameters"]["selection_method"], "manual-box")
+            self.assertFalse(segment["output"]["text_grounding_supported"])
+            self.assertTrue(segment["output"]["manual_grounding_confirmed"])
+            self.assertEqual(segment["output"]["selected_region_count"], 1)
+            self.assertEqual(self.remove_mock.call_count, 1)
+            self.assertEqual(self.ai_mock.call_count, 0)
+            self.network_request.assert_not_called()
+
     def test_multi_file_partial_failure_retry_only_failed_item_then_completes(self) -> None:
         self.fail_prompt_once = "fail-source"
         with self.live_client() as client:

@@ -46,6 +46,13 @@ import { createSettingsController } from './studio-settings.js';
 import { createWorkflowDockController } from './studio-shell.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 import { statusPanelHtml } from './status-view.js';
+import {
+  createSemanticCutoutState,
+  semanticCutoutPayload,
+  semanticCutoutReadiness,
+  semanticCutoutStageCopy,
+  updateSemanticCutoutState,
+} from './semantic-cutout.js';
 
 const MODE_STATE_KEY = 'pa-workspace-ui-v2';
 const PENDING_SUBMISSION_KEY = 'pa-pending-job-v1';
@@ -54,7 +61,17 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 let modalReturnFocus = null;
 let drawerReturnFocus = null;
+let semanticReturnFocus = null;
 let workspaceStatusTimer = null;
+const semanticCanvasState = {
+  image: null,
+  assetId: '',
+  query: '',
+  targetCount: 1,
+  regions: [],
+  dragStart: null,
+  dragCurrent: null,
+};
 
 const state = createStudioState(MODE_IDS);
 const workflowDock = createWorkflowDockController();
@@ -97,6 +114,27 @@ function selectedAssetIds(mode = state.currentMode) {
 function selectedAssets(mode = state.currentMode) {
   const ids = new Set(selectedAssetIds(mode));
   return state.assets.filter((asset) => ids.has(asset.id));
+}
+
+function cutoutSelectionState() {
+  const snapshot = state.modeSnapshots['cutout-batch'];
+  const durable = state.workspaceDrafts['cutout-batch'];
+  return createSemanticCutoutState(snapshot?.mask_state || durable?.mask_state || {});
+}
+
+function setCutoutSelectionState(next, persist = true) {
+  const currentSnapshot = state.modeSnapshots['cutout-batch']
+    || snapshotFromDraft(state.workspaceDrafts['cutout-batch'] || {}, {});
+  state.modeSnapshots['cutout-batch'] = {
+    ...currentSnapshot,
+    mask_state: createSemanticCutoutState(next),
+  };
+  renderCutoutControls();
+  if (persist) {
+    persistWorkspaceState();
+    scheduleWorkspaceDraftSave('cutout-batch');
+  }
+  return state.modeSnapshots['cutout-batch'].mask_state;
 }
 
 function folderBatchForMode(mode = state.currentMode, readyOnly = false) {
@@ -624,6 +662,7 @@ function restoreModeSnapshot(mode = state.currentMode) {
     input.checked = Boolean(snapshot.intent_locks?.[input.dataset.lock]);
     input.closest('.lock-chip').classList.toggle('active', input.checked);
   });
+  if (mode === 'cutout-batch') renderCutoutControls(snapshot.mask_state);
 }
 
 function assetUrl(asset, kind = 'thumbnail') {
@@ -892,7 +931,7 @@ function switchMode(mode, preserveCurrent = true, loadDurable = true) {
   $('#summary-note').textContent = config.note;
   const quickCutout = mode === 'cutout-batch';
   $('#creative-command').hidden = quickCutout;
-  $('#cutout-capability').hidden = !quickCutout;
+  $('#cutout-tools').hidden = !quickCutout;
   renderFolderSource();
   $('#field-model').hidden = quickCutout;
   $('#field-composition').hidden = quickCutout;
@@ -1154,6 +1193,7 @@ function toggleAssetSelection(assetId) {
   renderQueue();
   persistWorkspaceState();
   scheduleWorkspaceDraftSave(state.currentMode);
+  if (state.currentMode === 'cutout-batch') renderCutoutControls();
   updateCtaState();
   scheduleKnowledgeCompile();
 }
@@ -1178,7 +1218,11 @@ function getPlatter() {
 }
 
 function buildBrief(mode = state.currentMode) {
-  const request = $('#brief-input').value.trim();
+  const semantic = mode === 'cutout-batch' && cutoutSelectionState().strategy === 'semantic';
+  const selection = semantic ? cutoutSelectionState() : null;
+  const request = semantic
+    ? `只保留 ${selection.target_count} 个${selection.query ? `“${selection.query}”` : '已确认目标'}`
+    : $('#brief-input').value.trim();
   return {
     objective: request || '将产品原图转化为可交付的商业图片',
     user_request: request,
@@ -1281,15 +1325,78 @@ function renderKnowledge(bundle) {
   $('#knowledge-conflicts').innerHTML = conflicts.length ? conflicts.map((item) => `<div class="conflict-item"><span>!</span><p>${escapeHtml(item.message)}</p></div>`).join('') : '<div class="conflict-item ok"><span>✓</span><p>当前没有检测到规则冲突</p></div>';
 }
 
+function renderCutoutControls(rawSelection = null) {
+  if (!$('#cutout-tools')) return;
+  const selection = createSemanticCutoutState(rawSelection || cutoutSelectionState());
+  const semantic = selection.strategy === 'semantic';
+  $('#settings-panel').classList.toggle(
+    'is-semantic-cutout',
+    state.currentMode === 'cutout-batch' && semantic,
+  );
+  $$('[data-cutout-strategy]').forEach((button) => {
+    const active = button.dataset.cutoutStrategy === selection.strategy;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  $('#cutout-capability').hidden = state.currentMode !== 'cutout-batch';
+  $('#cutout-capability-title').textContent = semantic ? '智能选物 · 确认后执行' : '快速去背景';
+  $('#cutout-capability-copy').textContent = semantic
+    ? '按名称和数量建立确认清单；当前离线版不会自动猜测目标，必须先框选。'
+    : '分离画面中的全部前景；当前不理解物体名称、数量或“只保留某个物体”等文字要求。';
+  $('#semantic-cutout-controls').hidden = !semantic;
+  if (document.activeElement !== $('#semantic-query')) $('#semantic-query').value = selection.query;
+  if (document.activeElement !== $('#semantic-count')) $('#semantic-count').value = String(selection.target_count);
+  const readiness = semanticCutoutReadiness(selection, selectedAssetIds('cutout-batch'));
+  $('#semantic-cutout-status').textContent = readiness.message;
+  $('#semantic-cutout-status').classList.toggle('is-confirmed', readiness.ready);
+  $('#btn-semantic-preview').disabled = (
+    !['confirm', 'submit'].includes(readiness.action)
+    || !state.backendReady
+    || !state.assetsAvailable
+  );
+  $('#btn-semantic-preview').textContent = readiness.ready ? '重新框选目标' : '框选并确认目标';
+}
+
+function selectCutoutStrategy(strategy) {
+  const next = updateSemanticCutoutState(cutoutSelectionState(), { strategy });
+  setCutoutSelectionState(next);
+  renderCutoutCapability();
+  updateCtaState();
+  if (strategy === 'semantic' && selectedAssetIds('cutout-batch').length > 1) {
+    toast('智能选物首版每次确认 1 张；快速去背景仍支持批量', 'info', 4200);
+  }
+}
+
+function updateSemanticCutoutField() {
+  const next = updateSemanticCutoutState(cutoutSelectionState(), {
+    query: $('#semantic-query').value,
+    target_count: Number($('#semantic-count').value),
+  });
+  setCutoutSelectionState(next);
+  renderCutoutCapability();
+  updateCtaState();
+}
+
 function renderCutoutCapability() {
-  $('#knowledge-summary').textContent = '本地分割 · 不读取文字描述';
+  const selection = cutoutSelectionState();
+  const semantic = selection.strategy === 'semantic';
+  $('#knowledge-summary').textContent = semantic ? '本地选物 · 需要手动确认' : '本地分割 · 不读取文字描述';
   $('#knowledge-rule-count').textContent = '0 条规则';
-  $('#knowledge-rule-list').innerHTML = statusPanelHtml('empty', { title: '没有文字执行规则', detail: '快速去背景只执行本地前景分割。', compact: true });
+  $('#knowledge-rule-list').innerHTML = statusPanelHtml('empty', {
+    title: semantic ? '目标以确认框为准' : '没有文字执行规则',
+    detail: semantic ? '物体名称用于核对，实际执行只采用已确认选区。' : '快速去背景只执行本地前景分割。',
+    compact: true,
+  });
   $('#knowledge-source-count').textContent = '0 条执行知识';
   $('#knowledge-source-list').innerHTML = statusPanelHtml('empty', { title: '不读取知识来源', detail: '此工作流只执行本地前景分割。', compact: true });
-  $('#knowledge-conflicts').innerHTML = '<div class="conflict-item ok"><span>i</span><p>需要按名称或数量选物时，请等待“智能选物”工作流。</p></div>';
-  $('#intelligence-brief').textContent = '当前能力：分离全部前景';
-  $('#intelligence-context').textContent = '文字描述、物体数量和知识规则不会进入本次执行链。';
+  $('#knowledge-conflicts').innerHTML = semantic
+    ? '<div class="conflict-item ok"><span>i</span><p>当前不会自动猜测目标；未确认、数量不符或源图变化都会阻止入队。</p></div>'
+    : '<div class="conflict-item ok"><span>i</span><p>快速去背景只分离全部前景；需要按名称或数量选物时请切换“智能选物”。</p></div>';
+  $('#intelligence-brief').textContent = semantic ? '当前能力：确认后按区域选物' : '当前能力：分离全部前景';
+  $('#intelligence-context').textContent = semantic
+    ? '名称用于确认标签，框选区域进入执行链；全程本地处理。'
+    : '文字描述、物体数量和知识规则不会进入本次执行链。';
+  renderCutoutControls(selection);
 }
 
 function updateCtaState() {
@@ -1302,24 +1409,34 @@ function updateCtaState() {
   const batch = Number($('#param-batch').value);
   const plan = multiFileOutputPlan(count, batch);
   const capacityOkay = state.currentMode !== 'multi-file' || Boolean(folderBatch) || plan.valid;
-  button.disabled = !hasFiles || state.submitting || !state.assetsAvailable || !capacityOkay;
+  const cutoutReadiness = state.currentMode === 'cutout-batch'
+    ? semanticCutoutReadiness(cutoutSelectionState(), selectedAssetIds())
+    : null;
+  const semanticCanConfirm = cutoutReadiness?.action === 'confirm';
+  const semanticBlocked = cutoutReadiness
+    && cutoutSelectionState().strategy === 'semantic'
+    && !cutoutReadiness.ready
+    && !semanticCanConfirm;
+  button.disabled = !hasFiles || state.submitting || !state.assetsAvailable || !capacityOkay || semanticBlocked;
   $('#param-batch').setAttribute('aria-invalid', String(!capacityOkay));
   button.classList.toggle('loading', state.submitting);
   if (state.submitting) $('#generate-text').textContent = '正在加入后台任务';
   else if (!hasFiles) $('#generate-text').textContent = '选择图片开始';
+  else if (semanticCanConfirm) $('#generate-text').textContent = '先确认目标';
+  else if (cutoutReadiness?.ready && cutoutSelectionState().strategy === 'semantic') $('#generate-text').textContent = '开始智能抠图';
   else if (state.stage === 'success') $('#generate-text').textContent = '基于当前素材再生成';
   else $('#generate-text').textContent = MODE_CONFIG[state.currentMode].action;
   if (!hasFiles) $('#cta-hint').textContent = state.currentMode === 'cutout-batch'
     ? '从抠图素材中选择后可入队'
     : '从当前素材区选择后可入队';
   else if (!capacityOkay) $('#cta-hint').textContent = `${count} 张 × ${batch} 方案 = ${plan.total} 个输出；单批最多 ${plan.maxOutputs}，请改为每图 ${plan.maxVariations} 个`;
+  else if (state.currentMode === 'cutout-batch' && cutoutReadiness) $('#cta-hint').textContent = cutoutReadiness.message;
   else if (state.stage === 'success') $('#cta-hint').textContent = '调整创作要求后可继续生成；当前结果不会被覆盖';
   else if (folderBatch) {
     const chunkSize = Math.max(1, Math.min(20, Math.floor(24 / Math.max(1, batch))));
     const partCount = Math.ceil(count / chunkSize);
     $('#cta-hint').textContent = `${count} 张整夹素材 · 自动拆为 ${partCount} 批并发任务`;
-  } else if (state.currentMode === 'cutout-batch') $('#cta-hint').textContent = `${count} 张素材 · 本地分离全部前景`;
-  else $('#cta-hint').textContent = `${count} 张素材 · ${Object.values(getIntentLocks()).filter(Boolean).length} 项锁定`;
+  } else $('#cta-hint').textContent = `${count} 张素材 · ${Object.values(getIntentLocks()).filter(Boolean).length} 项锁定`;
 }
 
 function updateQuickControls() {
@@ -1364,8 +1481,11 @@ function captureSubmissionDraft() {
       refine: $('#param-refine').checked,
       output_root: String(state.settings?.output_root || state.settings?.output_dir || '').trim(),
       brief,
-      intent_locks: getIntentLocks(),
+      intent_locks: mode === 'cutout-batch' ? {} : getIntentLocks(),
       category: 'general',
+      ...(mode === 'cutout-batch' ? {
+        cutout_selection: semanticCutoutPayload(cutoutSelectionState(), sourceAssetIdsForSubmission(mode)),
+      } : {}),
       ...(folderBatch ? {
         folder_delivery: {
           batch_id: folderBatch.batch_id,
@@ -1437,6 +1557,14 @@ async function compileSubmissionPayload(draft) {
 
 async function handleGenerate() {
   if (state.submitting) return;
+  if (state.currentMode === 'cutout-batch' && cutoutSelectionState().strategy === 'semantic') {
+    const readiness = semanticCutoutReadiness(cutoutSelectionState(), selectedAssetIds());
+    if (!readiness.ready) {
+      if (readiness.action === 'confirm') await openSemanticSelection();
+      else toast(readiness.message, 'error', 4200);
+      return;
+    }
+  }
   const submissionDraft = captureSubmissionDraft();
   if (!submissionDraft.source_asset_ids.length) return;
   state.submitting = true;
@@ -2492,6 +2620,250 @@ function closeModal() {
   modalReturnFocus = null;
 }
 
+function semanticCanvasPoint(event) {
+  const canvas = $('#semantic-selection-canvas');
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width))),
+    y: Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height))),
+  };
+}
+
+function drawSemanticCanvas() {
+  const canvas = $('#semantic-selection-canvas');
+  const context = canvas.getContext('2d');
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  if (semanticCanvasState.image) context.drawImage(semanticCanvasState.image, 0, 0, canvas.width, canvas.height);
+  const outlines = [...semanticCanvasState.regions];
+  if (semanticCanvasState.dragStart && semanticCanvasState.dragCurrent) {
+    const start = semanticCanvasState.dragStart;
+    const current = semanticCanvasState.dragCurrent;
+    outlines.push({
+      id: 'preview',
+      bbox: [
+        Math.min(start.x, current.x),
+        Math.min(start.y, current.y),
+        Math.abs(current.x - start.x),
+        Math.abs(current.y - start.y),
+      ],
+    });
+  }
+  context.save();
+  context.lineWidth = Math.max(2, Math.round(Math.min(canvas.width, canvas.height) / 280));
+  context.font = `700 ${Math.max(14, Math.round(Math.min(canvas.width, canvas.height) / 34))}px "Segoe UI", sans-serif`;
+  outlines.forEach((region, index) => {
+    const [x, y, width, height] = region.bbox;
+    const left = x * canvas.width;
+    const top = y * canvas.height;
+    const boxWidth = width * canvas.width;
+    const boxHeight = height * canvas.height;
+    context.strokeStyle = region.id === 'preview' ? '#ffd351' : '#ff6b43';
+    context.fillStyle = region.id === 'preview' ? 'rgba(255,211,81,.14)' : 'rgba(255,107,67,.12)';
+    context.fillRect(left, top, boxWidth, boxHeight);
+    context.strokeRect(left, top, boxWidth, boxHeight);
+    if (region.id !== 'preview') {
+      const label = `${index + 1} · ${semanticCanvasState.query}`;
+      const labelWidth = context.measureText(label).width + 18;
+      const labelHeight = Math.max(24, Math.round(Math.min(canvas.width, canvas.height) / 25));
+      const labelTop = Math.max(0, top - labelHeight);
+      context.fillStyle = '#ff6b43';
+      context.fillRect(left, labelTop, labelWidth, labelHeight);
+      context.fillStyle = '#fff';
+      context.fillText(label, left + 9, labelTop + labelHeight * .7);
+    }
+  });
+  context.restore();
+}
+
+function renderSemanticRegions() {
+  const list = $('#semantic-region-list');
+  const count = semanticCanvasState.regions.length;
+  $('#semantic-region-count').textContent = `${count} / ${semanticCanvasState.targetCount}`;
+  $('#semantic-selection-summary').textContent = `要保留 ${semanticCanvasState.targetCount} 个“${semanticCanvasState.query}”`;
+  if (!count) {
+    list.innerHTML = '<div class="semantic-region-empty">尚未框选。可在左侧拖动鼠标，或用“添加全图范围”后在这里用键盘调整坐标。</div>';
+  } else {
+    const coordinateLabels = ['X', 'Y', '宽', '高'];
+    list.innerHTML = semanticCanvasState.regions.map((region, index) => `
+      <section class="semantic-region-item">
+        <div class="semantic-region-item__head"><strong>目标 ${index + 1} · ${escapeHtml(semanticCanvasState.query)}</strong><button type="button" data-remove-semantic-region="${index}" aria-label="移除目标 ${index + 1}">移除</button></div>
+        <div class="semantic-region-coordinates">
+          ${region.bbox.map((value, coordinate) => `<label>${coordinateLabels[coordinate]} %<input type="number" min="0" max="100" step="0.1" value="${Number((value * 100).toFixed(1))}" data-semantic-region-index="${index}" data-semantic-coordinate="${coordinate}" /></label>`).join('')}
+        </div>
+      </section>
+    `).join('');
+  }
+  const exact = count === semanticCanvasState.targetCount;
+  $('#semantic-selection-confirm').disabled = !exact;
+  $('#semantic-region-error').hidden = exact || count === 0;
+  $('#semantic-region-error').textContent = count > semanticCanvasState.targetCount
+    ? `多选了 ${count - semanticCanvasState.targetCount} 个目标，请移除多余选区。`
+    : `还需框选 ${semanticCanvasState.targetCount - count} 个目标。`;
+  $('#semantic-undo').disabled = count === 0;
+  $('#semantic-clear').disabled = count === 0;
+  $('#semantic-add-full').disabled = count >= semanticCanvasState.targetCount;
+  drawSemanticCanvas();
+}
+
+function addSemanticRegion(bbox) {
+  if (semanticCanvasState.regions.length >= semanticCanvasState.targetCount) {
+    $('#semantic-region-error').hidden = false;
+    $('#semantic-region-error').textContent = `已经框选 ${semanticCanvasState.targetCount} 个目标；请先移除一个再添加。`;
+    return;
+  }
+  const normalized = bbox.map((value) => Number(Math.max(0, Math.min(1, value)).toFixed(6)));
+  if (normalized[2] < 0.01 || normalized[3] < 0.01) {
+    $('#semantic-region-error').hidden = false;
+    $('#semantic-region-error').textContent = '选区太小，请拖出更大的范围。';
+    return;
+  }
+  semanticCanvasState.regions.push({
+    id: `target-${semanticCanvasState.regions.length + 1}`,
+    label: semanticCanvasState.query,
+    bbox: normalized,
+  });
+  renderSemanticRegions();
+}
+
+function updateSemanticRegionCoordinate(input) {
+  const index = Number(input.dataset.semanticRegionIndex);
+  const coordinate = Number(input.dataset.semanticCoordinate);
+  const region = semanticCanvasState.regions[index];
+  if (!region || !Number.isInteger(coordinate) || coordinate < 0 || coordinate > 3) return;
+  const next = [...region.bbox];
+  next[coordinate] = Math.max(0, Math.min(1, Number(input.value) / 100));
+  if (coordinate === 0) next[2] = Math.min(next[2], 1 - next[0]);
+  if (coordinate === 1) next[3] = Math.min(next[3], 1 - next[1]);
+  if (coordinate === 2) next[2] = Math.max(.01, Math.min(next[2], 1 - next[0]));
+  if (coordinate === 3) next[3] = Math.max(.01, Math.min(next[3], 1 - next[1]));
+  region.bbox = next.map((value) => Number(value.toFixed(6)));
+  renderSemanticRegions();
+}
+
+function loadSemanticCanvasImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      const scale = Math.min(1, 1600 / image.naturalWidth, 1100 / image.naturalHeight);
+      const canvas = $('#semantic-selection-canvas');
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      semanticCanvasState.image = image;
+      drawSemanticCanvas();
+      resolve();
+    };
+    image.onerror = () => reject(new Error('源图片预览无法加载'));
+    image.src = url;
+  });
+}
+
+async function openSemanticSelection() {
+  const selection = cutoutSelectionState();
+  const sourceIds = selectedAssetIds('cutout-batch');
+  const readiness = semanticCutoutReadiness(selection, sourceIds);
+  if (!['confirm', 'submit'].includes(readiness.action)) {
+    toast(readiness.message, 'error', 4200);
+    return;
+  }
+  const asset = selectedAssets('cutout-batch').find((item) => item.id === sourceIds[0]);
+  if (!asset) {
+    toast('源图片尚未恢复，请重新选择', 'error');
+    return;
+  }
+  const button = $('#btn-semantic-preview');
+  semanticReturnFocus = document.activeElement;
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  try {
+    const preview = await API.previewSemanticCutout({
+      asset_id: asset.id,
+      query: selection.query,
+      target_count: selection.target_count,
+      regions: [],
+    });
+    semanticCanvasState.assetId = asset.id;
+    semanticCanvasState.query = preview.preview.query;
+    semanticCanvasState.targetCount = preview.preview.target_count;
+    semanticCanvasState.regions = (
+      selection.source_asset_id === asset.id
+      && selection.query === preview.preview.query
+      && selection.target_count === preview.preview.target_count
+    ) ? selection.regions.map((region) => ({ ...region, bbox: [...region.bbox] })) : [];
+    semanticCanvasState.dragStart = null;
+    semanticCanvasState.dragCurrent = null;
+    $('#semantic-selection-modal').hidden = false;
+    await loadSemanticCanvasImage(assetUrl(asset, 'content'));
+    renderSemanticRegions();
+    $('#semantic-selection-close').focus();
+  } catch (error) {
+    const stage = error?.detail?.stage;
+    toast(stage ? semanticCutoutStageCopy(stage) : formatApiError(error, '目标确认暂不可用'), 'error', 5200);
+    closeSemanticSelection();
+  } finally {
+    button.removeAttribute('aria-busy');
+    renderCutoutControls();
+  }
+}
+
+function closeSemanticSelection(restoreFocus = true) {
+  const modal = $('#semantic-selection-modal');
+  if (!modal) return;
+  if (modal.hidden) {
+    if (restoreFocus && semanticReturnFocus instanceof HTMLElement) semanticReturnFocus.focus();
+    semanticReturnFocus = null;
+    return;
+  }
+  modal.hidden = true;
+  semanticCanvasState.image = null;
+  semanticCanvasState.dragStart = null;
+  semanticCanvasState.dragCurrent = null;
+  if (restoreFocus && semanticReturnFocus instanceof HTMLElement) semanticReturnFocus.focus();
+  semanticReturnFocus = null;
+}
+
+async function confirmSemanticSelection() {
+  if (semanticCanvasState.regions.length !== semanticCanvasState.targetCount) return;
+  const button = $('#semantic-selection-confirm');
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  const previous = button.textContent;
+  button.textContent = '正在确认';
+  try {
+    const response = await API.confirmSemanticCutout({
+      asset_id: semanticCanvasState.assetId,
+      query: semanticCanvasState.query,
+      target_count: semanticCanvasState.targetCount,
+      regions: semanticCanvasState.regions,
+    });
+    const selection = response.selection;
+    const sourcePlan = selection.sources[semanticCanvasState.assetId];
+    setCutoutSelectionState(createSemanticCutoutState({
+      strategy: 'semantic',
+      query: selection.query,
+      target_count: selection.target_count,
+      source_asset_id: semanticCanvasState.assetId,
+      status: sourcePlan.status,
+      method: sourcePlan.method,
+      digest: sourcePlan.digest,
+      regions: sourcePlan.regions,
+    }));
+    closeSemanticSelection();
+    updateCtaState();
+    toast(`已确认 ${selection.target_count} 个“${selection.query}”，现在可以开始本地抠图`, 'success', 4200);
+  } catch (error) {
+    const stage = error?.detail?.stage;
+    $('#semantic-region-error').hidden = false;
+    $('#semantic-region-error').textContent = stage
+      ? semanticCutoutStageCopy(stage)
+      : formatApiError(error, '目标确认失败，请重试');
+  } finally {
+    button.removeAttribute('aria-busy');
+    button.textContent = previous;
+    button.disabled = semanticCanvasState.regions.length !== semanticCanvasState.targetCount;
+  }
+}
+
 function compareStateForMode(mode = state.currentMode) {
   return normalizeCompareState(
     state.modeSnapshots[mode]?.compare_state
@@ -3130,6 +3502,64 @@ async function loadMemory(targetSuggestionId = state.memoryTargetSuggestionId) {
 function bindEvents() {
   $$('.rail-button[data-page]').forEach((button) => button.addEventListener('click', () => switchPage(button.dataset.page)));
   $$('.mode-button').forEach((button) => button.addEventListener('click', () => switchMode(button.dataset.mode)));
+  $$('[data-cutout-strategy]').forEach((button) => button.addEventListener('click', () => selectCutoutStrategy(button.dataset.cutoutStrategy)));
+  $('#semantic-query').addEventListener('input', updateSemanticCutoutField);
+  $('#semantic-count').addEventListener('input', updateSemanticCutoutField);
+  $('#btn-semantic-preview').addEventListener('click', openSemanticSelection);
+  $('#semantic-selection-backdrop').addEventListener('click', () => closeSemanticSelection());
+  $('#semantic-selection-close').addEventListener('click', () => closeSemanticSelection());
+  $('#semantic-selection-cancel').addEventListener('click', () => closeSemanticSelection());
+  $('#semantic-selection-confirm').addEventListener('click', confirmSemanticSelection);
+  $('#semantic-add-full').addEventListener('click', () => addSemanticRegion([0, 0, 1, 1]));
+  $('#semantic-undo').addEventListener('click', () => {
+    semanticCanvasState.regions.pop();
+    renderSemanticRegions();
+  });
+  $('#semantic-clear').addEventListener('click', () => {
+    semanticCanvasState.regions = [];
+    renderSemanticRegions();
+  });
+  $('#semantic-region-list').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-remove-semantic-region]');
+    if (!button) return;
+    semanticCanvasState.regions.splice(Number(button.dataset.removeSemanticRegion), 1);
+    semanticCanvasState.regions.forEach((region, index) => { region.id = `target-${index + 1}`; });
+    renderSemanticRegions();
+  });
+  $('#semantic-region-list').addEventListener('change', (event) => {
+    const input = event.target.closest('[data-semantic-region-index]');
+    if (input) updateSemanticRegionCoordinate(input);
+  });
+  const semanticCanvas = $('#semantic-selection-canvas');
+  semanticCanvas.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    if (semanticCanvasState.regions.length >= semanticCanvasState.targetCount) {
+      addSemanticRegion([0, 0, 0, 0]);
+      return;
+    }
+    semanticCanvas.setPointerCapture(event.pointerId);
+    semanticCanvasState.dragStart = semanticCanvasPoint(event);
+    semanticCanvasState.dragCurrent = semanticCanvasState.dragStart;
+    drawSemanticCanvas();
+  });
+  semanticCanvas.addEventListener('pointermove', (event) => {
+    if (!semanticCanvasState.dragStart) return;
+    semanticCanvasState.dragCurrent = semanticCanvasPoint(event);
+    drawSemanticCanvas();
+  });
+  semanticCanvas.addEventListener('pointerup', (event) => {
+    if (!semanticCanvasState.dragStart) return;
+    const start = semanticCanvasState.dragStart;
+    const end = semanticCanvasPoint(event);
+    semanticCanvasState.dragStart = null;
+    semanticCanvasState.dragCurrent = null;
+    addSemanticRegion([
+      Math.min(start.x, end.x),
+      Math.min(start.y, end.y),
+      Math.abs(end.x - start.x),
+      Math.abs(end.y - start.y),
+    ]);
+  });
   const input = $('#file-input');
   $('#btn-browse').addEventListener('click', () => input.click());
   $('#btn-replace').addEventListener('click', () => input.click());
@@ -3338,9 +3768,15 @@ function bindEvents() {
   canvas.addEventListener('drop', (event) => { event.preventDefault(); canvas.style.outline = ''; handleFiles(event.dataTransfer.files); });
   document.addEventListener('keydown', (event) => {
     const workflowLayer = $('#settings-panel').classList.contains('is-open') ? $('#settings-panel') : null;
-    const openLayer = [$('#img-modal'), $('#job-drawer'), $('#asset-drawer'), $('#advanced-drawer'), $('#intelligence-drawer'), workflowLayer].find((layer) => layer && !layer.hidden);
+    const openLayer = [$('#semantic-selection-modal'), $('#img-modal'), $('#job-drawer'), $('#asset-drawer'), $('#advanced-drawer'), $('#intelligence-drawer'), workflowLayer].find((layer) => layer && !layer.hidden);
     if (event.key === 'Tab' && openLayer) {
-      const focusRoot = openLayer.id === 'img-modal' ? $('.modal-card', openLayer) : openLayer.id === 'settings-panel' ? openLayer : $('.drawer', openLayer);
+      const focusRoot = openLayer.id === 'semantic-selection-modal'
+        ? $('.semantic-modal-card', openLayer)
+        : openLayer.id === 'img-modal'
+          ? $('.modal-card', openLayer)
+          : openLayer.id === 'settings-panel'
+            ? openLayer
+            : $('.drawer', openLayer);
       const focusable = $$('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])', focusRoot).filter((element) => element.offsetParent !== null);
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -3348,6 +3784,7 @@ function bindEvents() {
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
     if (event.key !== 'Escape') return;
+    if (!$('#semantic-selection-modal').hidden) { closeSemanticSelection(); return; }
     if (!$('#img-modal').hidden) closeModal();
     if (!$('#advanced-drawer').hidden) closeDrawer('advanced');
     if (!$('#intelligence-drawer').hidden) closeDrawer('intelligence');

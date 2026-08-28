@@ -33,6 +33,14 @@ try:
     from job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from memory_engine import MemoryEngine
+    from semantic_cutout import (
+        SemanticCutoutError,
+        apply_confirmed_regions,
+        build_confirmed_selection,
+        normalize_cutout_selection,
+        normalize_regions,
+        validate_selection_sources,
+    )
     from storage_paths import (
         OutputRootError,
         canonicalize_output_root,
@@ -54,6 +62,14 @@ except ImportError:  # Allows importing as python.server during local tests.
     from python.job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from python.knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from python.memory_engine import MemoryEngine
+    from python.semantic_cutout import (
+        SemanticCutoutError,
+        apply_confirmed_regions,
+        build_confirmed_selection,
+        normalize_cutout_selection,
+        normalize_regions,
+        validate_selection_sources,
+    )
     from python.storage_paths import (
         OutputRootError,
         canonicalize_output_root,
@@ -137,7 +153,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-27.2"
+SIDECAR_CONTRACT_VERSION = "2026-08-28.1"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -2077,6 +2093,92 @@ async def complete_workflow_workspace(mode: str, request: WorkflowCompletionRequ
         )
 
 
+class SemanticCutoutRequest(BaseModel):
+    asset_id: str
+    query: str
+    target_count: int = 1
+    regions: list[dict[str, Any]] = Field(default_factory=list)
+
+    class Config:
+        extra = "forbid"
+
+
+def _semantic_cutout_source(asset_id: str) -> tuple[dict[str, Any], Path]:
+    try:
+        return ASSET_STORE.resolve_asset_path(str(asset_id or "").strip())
+    except AssetStoreError as exc:
+        raise_asset_http_error(exc)
+
+
+def _semantic_cutout_error(exc: SemanticCutoutError) -> None:
+    raise HTTPException(
+        status_code=400,
+        detail={"code": exc.code, "stage": exc.stage, "message": exc.message},
+    )
+
+
+@app.post("/api/semantic-cutout/preview")
+async def preview_semantic_cutout(request: SemanticCutoutRequest):
+    asset, path = _semantic_cutout_source(request.asset_id)
+    try:
+        normalized = normalize_cutout_selection({
+            "strategy": "semantic",
+            "query": request.query,
+            "target_count": request.target_count,
+            "sources": {},
+        })
+        regions = normalize_regions(request.regions, normalized["query"]) if request.regions else []
+    except SemanticCutoutError as exc:
+        _semantic_cutout_error(exc)
+    width = int(asset.get("width") or 0)
+    height = int(asset.get("height") or 0)
+    if width <= 0 or height <= 0:
+        try:
+            with Image.open(path) as source:
+                width, height = source.size
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_SOURCE_IMAGE",
+                    "stage": "recognition",
+                    "message": "源图片无法读取，请重新导入",
+                },
+            ) from exc
+    return {
+        "preview": {
+            "status": "needs_confirmation" if regions else "needs_manual_grounding",
+            "source_asset_id": str(asset["id"]),
+            "query": normalized["query"],
+            "target_count": normalized["target_count"],
+            "regions": regions,
+            "source": {"width": width, "height": height},
+            "automatic_grounding_available": False,
+            "fallback": "manual-box",
+            "message": (
+                "请检查框选目标后确认"
+                if regions
+                else "当前离线版本不会假装识别名称；请在原图上框选目标"
+            ),
+        }
+    }
+
+
+@app.post("/api/semantic-cutout/confirm")
+async def confirm_semantic_cutout(request: SemanticCutoutRequest):
+    asset, _path = _semantic_cutout_source(request.asset_id)
+    try:
+        selection = build_confirmed_selection(
+            source_asset_id=str(asset["id"]),
+            query=request.query,
+            target_count=request.target_count,
+            regions=request.regions,
+        )
+    except SemanticCutoutError as exc:
+        _semantic_cutout_error(exc)
+    return {"selection": selection}
+
+
 class JobCreateRequest(BaseModel):
     mode: str
     source_asset_ids: list[str]
@@ -2165,6 +2267,9 @@ def _normalize_job_parameters(mode: str, parameters: dict) -> dict:
         # This workflow never invokes the model selector shown for cloud jobs.
         # Persist the model actually used by remove_bg_hd/_get_bgsession.
         normalized["model"] = default_model
+        normalized["cutout_selection"] = normalize_cutout_selection(
+            normalized.get("cutout_selection")
+        )
     elif not str(normalized.get("model") or "").strip():
         normalized["model"] = default_model
     if mode == "cutout-batch":
@@ -2213,6 +2318,11 @@ def _validate_job_request(mode: str, source_asset_ids: list[str], parameters: di
         raise ValueError("group-split refine must be a boolean")
     if mode == "cutout-batch" and len(source_asset_ids) > 24:
         raise ValueError("cutout-batch accepts at most 24 source assets")
+    if mode == "cutout-batch":
+        validate_selection_sources(
+            parameters.get("cutout_selection") or {"strategy": "foreground"},
+            source_asset_ids,
+        )
 
 
 def _wake_job_engine():
@@ -2265,6 +2375,11 @@ async def create_durable_job(request: JobCreateRequest):
         raise HTTPException(
             status_code=400,
             detail={"code": exc.code, "message": exc.message},
+        )
+    except SemanticCutoutError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "stage": exc.stage, "message": exc.message},
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(
@@ -4359,15 +4474,41 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
 
 
 def _execute_cutout_job(ctx, image, stage_dir, trace):
-    ctx.progress(0.08, {"phase": "local-cutout"})
-    with ctx.resource("local-cutout"):
-        cutout = tight_crop_alpha(remove_bg_hd(image))
+    selection = trace.get("parameters", {}).get("cutout_selection") or {
+        "strategy": "foreground"
+    }
+    semantic = selection.get("strategy") == "semantic"
+    ctx.progress(0.08, {"phase": "semantic-cutout" if semantic else "local-cutout"})
+    try:
+        with ctx.resource("local-cutout"):
+            segmented = remove_bg_hd(image)
+            if semantic:
+                source_plan = (selection.get("sources") or {}).get(trace["source_asset_id"])
+                if not source_plan:
+                    raise SemanticCutoutError(
+                        "SEMANTIC_CONFIRMATION_REQUIRED",
+                        "当前源图缺少已确认选区",
+                        stage="selection",
+                    )
+                segmented = apply_confirmed_regions(segmented, source_plan.get("regions"))
+            cutout = tight_crop_alpha(segmented)
+    except SemanticCutoutError as exc:
+        _record_execution_trace_safe(
+            trace,
+            f"cutout.{exc.stage}",
+            "failed",
+            error_code=exc.code,
+            error_message=exc.message,
+            parameters={"strategy": selection.get("strategy", "foreground")},
+        )
+        raise JobExecutionError(exc.code, exc.message) from exc
     output = _stage_output(cutout, stage_dir, "01_cutout.png", "result_cutout")
     ignored_fields = []
-    if trace.get("brief"):
+    if trace.get("brief") and not semantic:
         ignored_fields.append("brief")
     if trace.get("intent_locks"):
         ignored_fields.append("intent_locks")
+    source_plan = (selection.get("sources") or {}).get(trace["source_asset_id"], {})
     _record_execution_trace_safe(
         trace,
         "cutout.segment",
@@ -4375,14 +4516,28 @@ def _execute_cutout_job(ctx, image, stage_dir, trace):
         ignored_fields=ignored_fields,
         parameters={
             "model": "local-rembg/birefnet-general",
-            "operation": "foreground-segmentation",
+            "operation": (
+                "confirmed-region-segmentation" if semantic else "foreground-segmentation"
+            ),
+            "strategy": selection.get("strategy", "foreground"),
+            "selection_method": source_plan.get("method", "all-foreground"),
+            "query": selection.get("query", ""),
+            "target_count": selection.get("target_count", 0),
+            "confirmation_digest": source_plan.get("digest", ""),
         },
         output={
             "output_name": output["name"],
             "selection_prompt_supported": False,
+            "text_grounding_supported": False,
+            "manual_grounding_confirmed": semantic,
+            "selected_region_count": len(source_plan.get("regions") or []),
         },
     )
-    return [output], {"operation": "background-removal"}
+    return [output], {
+        "operation": "semantic-selection-cutout" if semantic else "background-removal",
+        "selection_method": source_plan.get("method", "all-foreground"),
+        "selected_region_count": len(source_plan.get("regions") or []),
+    }
 
 
 def execute_job_workflow(ctx):

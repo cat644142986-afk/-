@@ -163,7 +163,10 @@ test('job dialog does not repeatedly announce or focus its backdrop', () => {
   assert.match(html, /id="job-drawer"[\s\S]*?class="drawer-backdrop"[^>]*tabindex="-1"/);
   assert.match(html, /id="job-list" aria-live="off"/);
   assert.match(html, /id="job-status-announcer" role="status" aria-live="polite"/);
-  assert.match(app, /openLayer\.id === 'img-modal' \? \$\('\.modal-card', openLayer\) : openLayer\.id === 'settings-panel' \? openLayer : \$\('\.drawer', openLayer\)/);
+  assert.match(app, /openLayer\.id === 'semantic-selection-modal'/);
+  assert.match(app, /\$\('\.semantic-modal-card', openLayer\)/);
+  assert.match(app, /openLayer\.id === 'img-modal'/);
+  assert.match(app, /\$\('\.modal-card', openLayer\)/);
 });
 
 test('unsupported Folder action is absent and export handles all result roles independently', () => {
@@ -344,6 +347,21 @@ test('quick cutout does not pretend to understand a semantic brief or knowledge 
   assert.match(app, /本地分割 · 不读取文字描述/);
   assert.match(app, /else \{[\s\S]*?state\.knowledgeBundle = null;[\s\S]*?renderKnowledge\(null\);/);
   assert.match(app, /if \(!bundle\) \{[\s\S]*?knowledge-summary'\)\.textContent = '等待知识编译'/);
+});
+
+test('semantic cutout requires visible name, count, region confirmation, and keeps a keyboard alternative', () => {
+  assert.match(html, /data-cutout-strategy="semantic"[^>]*aria-pressed="false">智能选物/);
+  assert.match(html, /<label for="semantic-query">/);
+  assert.match(html, /id="semantic-count"[^>]*min="1"[^>]*max="8"/);
+  assert.match(html, /id="semantic-selection-modal"[^>]*role="dialog"[^>]*aria-modal="true"/);
+  assert.match(html, /id="semantic-region-list"/);
+  assert.match(html, /id="semantic-add-full"/);
+  assert.match(app, /API\.previewSemanticCutout/);
+  assert.match(app, /API\.confirmSemanticCutout/);
+  assert.match(app, /cutout_selection: semanticCutoutPayload/);
+  assert.match(api, /export async function previewSemanticCutout/);
+  assert.match(api, /export async function confirmSemanticCutout/);
+  assert.match(css, /\.semantic-region-coordinates/);
 });
 
 test('output canvas ratio and resolution are real durable controls instead of static square copy', () => {

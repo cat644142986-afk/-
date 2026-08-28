@@ -194,3 +194,19 @@ git -C D:\ProductAtelier-Desktop switch -c restore/unified-status-recovery check
 若未来正式包需要降级，应先退出正式 EXE 与其 `python-server.exe`，保留当前正式目录和 `%APPDATA%\ProductAtelier` 的新副本，再从目标 Git 检查点重新构建候选并走完整 `tools/dev.ps1` 发布事务；不要把上方备份直接覆盖到运行中的正式目录。上方备份保存的是前一正式包，用户账本、Key、素材与成品不在该目录事务内。
 
 同提交 NSIS 安装候选 SHA-256 为 `5750C444E6F4FC85BCCA2FA5C393BC2DA02E25B5E4E3A04DE664CD78B8647EEF`，已通过隔离安装 smoke，但尚未 Authenticode 签名；对外分发前应先签名并重新记录哈希，不能把未签名文件当最终公开发布物。
+
+## 2026-08-28 语义选物确认源码检查点
+
+- Git 标签：`checkpoint-2026-08-28-semantic-cutout-confirmation-source`
+- 性质：源码与离线门禁检查点；不是新的正式 EXE、sidecar、NSIS 或桌面快捷方式发布。
+- sidecar 源码合同：`2026-08-28.1`
+- 数据库 schema：仍为 v3；复用既有 `mask_state`，没有迁移、删除或覆盖用户账本。
+- 上一个已验证正式发布仍是 `checkpoint-2026-08-28-unified-status-recovery-portable`。
+
+只回看本次源码时创建独立分支：
+
+```powershell
+git -C D:\ProductAtelier-Desktop switch -c restore/semantic-cutout-confirmation checkpoint-2026-08-28-semantic-cutout-confirmation-source
+```
+
+如果未来已经用新 sidecar 创建 `cutout_selection.strategy=semantic` 的排队或暂停任务，回退到旧 sidecar 前必须先让这些任务完成或明确取消，并保留账本副本。旧 sidecar 不认识确认摘要与区域合同，不能让它接管未完成的语义任务，否则可能按旧“全部前景”语义执行。当前本轮只在隔离数据目录验收，正式用户账本尚未写入这种任务。

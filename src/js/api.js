@@ -233,6 +233,22 @@ export async function getAssetThumbnailUrl(assetId, size) {
   return absoluteApiUrl('/api/assets/' + encodeURIComponent(assetId) + '/thumbnail?size=' + encodeURIComponent(size || 320));
 }
 
+export async function previewSemanticCutout(payload) {
+  return fetchJSON('/api/semantic-cutout/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function confirmSemanticCutout(payload) {
+  return fetchJSON('/api/semantic-cutout/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
 export async function getCollectionAssets(collection, options = {}) {
   const limit = Number(options.limit || 200);
   const offset = Number(options.offset || 0);

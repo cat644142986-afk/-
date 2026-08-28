@@ -29,7 +29,7 @@ export const MODE_CONFIG = {
     label: '本地批量抠图', badge: '抠图', action: '开始批量抠图', multiple: true, maxFiles: 24,
     title: '导入或选择待抠图图片', eyebrow: 'CUTOUT ASSETS', limit: '每次最多选择 24 张',
     description: '抠图素材、描述、进度和预览独立保留；切换工作流不会停止任务。',
-    note: '本地快速去背景；语义选物将在智能抠图工作流接入', outputKind: 'cutout', collection: 'cutout',
+    note: '快速去背景支持批量；智能选物先确认名称、数量与目标框', outputKind: 'cutout', collection: 'cutout',
   },
 };
 

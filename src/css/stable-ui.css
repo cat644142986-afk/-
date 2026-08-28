@@ -146,6 +146,19 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .capability-notice > span { color: var(--coral-deep); font-size: 7px; font-weight: 850; letter-spacing: .12em; }
 .capability-notice strong { font-size: 11px; white-space: nowrap; }
 .capability-notice p { overflow: hidden; margin: 0; color: var(--ink-2); font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
+.cutout-tools { display: grid; gap: 7px; }
+.cutout-strategy { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 4px; border: 1px solid rgba(255,255,255,.07); border-radius: 14px; background: #181c20; }
+.cutout-strategy button { min-height: 32px; padding: 0 9px; border-radius: 10px; background: transparent; color: rgba(255,255,255,.56); font-size: var(--type-caption); font-weight: 760; }
+.cutout-strategy button.active { background: var(--paper); color: var(--ink); box-shadow: 0 5px 13px rgba(0,0,0,.16); }
+.semantic-cutout-controls { display: grid; grid-template-columns: minmax(0,1fr) 94px; gap: 7px; padding: 10px; border: 1px solid rgba(255,211,81,.16); border-radius: 16px; background: rgba(255,211,81,.07); }
+.semantic-cutout-controls label { display: grid; gap: 4px; min-width: 0; color: rgba(255,255,255,.58); font-size: var(--type-micro); }
+.semantic-cutout-controls input { width: 100%; min-width: 0; height: 34px; padding: 0 9px; border: 1px solid rgba(255,255,255,.11); border-radius: 9px; outline: 0; background: rgba(12,15,18,.42); color: #fff; font-size: var(--type-control); user-select: text; }
+.semantic-cutout-controls input::placeholder { color: rgba(255,255,255,.34); }
+.semantic-confirm-trigger { grid-column: 1 / -1; min-height: 34px; border-radius: 10px; background: var(--yellow); color: var(--dark); font-size: var(--type-caption); font-weight: 800; }
+.semantic-cutout-controls > p { grid-column: 1 / -1; margin: 0; font-size: var(--type-micro); line-height: 1.45; }
+#semantic-query-help { color: rgba(255,255,255,.42); }
+.semantic-cutout-status { color: #f6d978; }
+.semantic-cutout-status.is-confirmed { color: #89dda3; }
 .folder-source { display: grid; grid-template-columns: auto minmax(0,1fr) auto auto; align-items: center; gap: 7px; min-height: 40px; margin: 0 12px 6px; padding: 5px 6px 5px 10px; border: 1px solid var(--line); border-radius: var(--radius-control); background: color-mix(in srgb, var(--paper-soft) 82%, var(--yellow) 18%); }
 .folder-source__label { color: var(--ink-2); font-size: var(--type-caption); font-weight: 800; white-space: nowrap; }
 .folder-source input { min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: color-mix(in srgb, var(--paper) 78%, transparent); color: var(--ink); font-size: var(--type-caption); user-select: text; }
@@ -270,6 +283,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .task-dock__head h2 { margin: 2px 0 0; font-size: 18px; letter-spacing: -.03em; }
 .task-dock__head p { color: var(--yellow); }
 .task-dock__body { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: hidden; }
+.task-dock.is-semantic-cutout .task-dock__body { overflow-y: auto; padding-right: 3px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }
 .task-dock .ghost-icon { color: rgba(255,255,255,.62); }
 .task-dock .ghost-icon:hover { background: rgba(255,255,255,.07); color: #fff; }
 .task-dock .canvas-command-zone { display: grid; gap: 8px; }
@@ -706,6 +720,36 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .modal-card { position: relative; display: grid; place-items: center; overflow: hidden; width: min(88vw,1200px); height: min(86vh,820px); padding: 18px; border-radius: 20px; background: var(--paper); box-shadow: var(--shadow-float); }
 .modal-card img { max-width: 100%; max-height: 100%; width: 100%; height: 100%; min-height: 0; object-fit: contain; }
 .modal-close { position: absolute; z-index: 1; top: 10px; right: 10px; width: 32px; height: 32px; border-radius: 11px; background: var(--dark); color: white; cursor: pointer; }
+.semantic-selection-modal { position: fixed; z-index: 160; inset: 0; display: grid; place-items: center; padding: 18px; }
+.semantic-modal-card { position: relative; z-index: 1; display: grid; grid-template-rows: auto minmax(0,1fr) auto; width: min(1180px,94vw); height: min(820px,92vh); overflow: hidden; border: 1px solid var(--line); border-radius: 24px; background: var(--paper); color: var(--ink); box-shadow: var(--shadow-float); }
+.semantic-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 18px 22px 15px; border-bottom: 1px solid var(--line); }
+.semantic-modal-head p { margin: 0 0 3px; color: var(--coral); font-size: var(--type-micro); font-weight: 850; letter-spacing: .16em; }
+.semantic-modal-head h2 { margin: 0; font-size: 20px; }
+.semantic-modal-head span { display: block; margin-top: 4px; color: var(--ink-3); font-size: var(--type-caption); }
+.semantic-modal-close { position: static; flex: 0 0 auto; }
+.semantic-modal-body { display: grid; grid-template-columns: minmax(0,1fr) 280px; min-height: 0; gap: 14px; padding: 14px; background: var(--shell-deep); }
+.semantic-canvas-wrap { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; overflow: hidden; border-radius: 17px; background: #171a1e; }
+.semantic-canvas-wrap canvas { display: block; max-width: 100%; max-height: 100%; background: #fff; cursor: crosshair; touch-action: none; }
+.semantic-canvas-hint { position: absolute; right: 10px; bottom: 10px; left: 10px; padding: 7px 9px; border-radius: 9px; background: rgba(20,23,27,.72); color: rgba(255,255,255,.82); font-size: var(--type-caption); text-align: center; pointer-events: none; backdrop-filter: blur(8px); }
+.semantic-region-panel { display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; min-height: 0; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 17px; background: var(--paper); }
+.semantic-region-progress { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.semantic-region-progress strong { color: var(--coral); font-size: 18px; font-variant-numeric: tabular-nums; }
+.semantic-region-progress span { color: var(--ink-3); font-size: var(--type-caption); }
+.semantic-region-actions { display: grid; grid-template-columns: 1fr auto auto; gap: 5px; }
+.semantic-region-actions button { min-height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper-soft); color: var(--ink-2); font-size: var(--type-caption); }
+.semantic-region-list { display: grid; align-content: start; gap: 8px; min-height: 0; overflow: auto; padding-right: 2px; scrollbar-width: thin; }
+.semantic-region-empty { padding: 16px 8px; color: var(--ink-3); font-size: var(--type-caption); line-height: 1.6; text-align: center; }
+.semantic-region-item { display: grid; gap: 7px; padding: 9px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-soft); }
+.semantic-region-item__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.semantic-region-item__head strong { font-size: var(--type-caption); }
+.semantic-region-item__head button { min-width: 27px; min-height: 27px; border-radius: 8px; background: transparent; color: var(--red); font-size: var(--type-caption); }
+.semantic-region-coordinates { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 4px; }
+.semantic-region-coordinates label { display: grid; gap: 2px; color: var(--ink-3); font-size: 8px; }
+.semantic-region-coordinates input { width: 100%; min-width: 0; height: 28px; padding: 0 4px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); font-size: var(--type-caption); font-variant-numeric: tabular-nums; user-select: text; }
+.semantic-region-error { margin: 0; padding: 8px 9px; border-radius: 9px; background: color-mix(in srgb,var(--red) 10%,var(--paper)); color: var(--red); font-size: var(--type-caption); }
+.semantic-modal-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 18px; border-top: 1px solid var(--line); }
+.semantic-modal-footer > p { margin: 0; color: var(--ink-3); font-size: var(--type-caption); }
+.semantic-modal-footer > div { display: flex; gap: 7px; flex: 0 0 auto; }
 
 /* Persistent asset workspace + durable job Dock */
 .asset-count { padding: 5px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-3); font-size: var(--type-caption); font-weight: 750; white-space: nowrap; }
@@ -897,6 +941,7 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .preview-canvas { margin: 0 12px 12px; }
   .task-dock .creative-command { min-height: 44px; padding-block: 3px; }
   .task-dock .folder-source { min-height: 58px; padding-block: 4px; }
+  .task-dock.is-semantic-cutout #semantic-query-help { display: none; }
   .folder-source small { display: none; }
   .task-dock { gap: 6px; padding: 9px 10px; }
   .task-dock__body { gap: 6px; }
@@ -976,6 +1021,11 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .review-page__head { align-items: stretch; flex-direction: column; }
   .review-head-actions { justify-content: flex-end; }
   .review-compare-toolbar { flex-wrap: wrap; }
+  .semantic-selection-modal { padding: 8px; }
+  .semantic-modal-card { width: 100%; height: 100%; border-radius: 17px; }
+  .semantic-modal-body { grid-template-columns: 1fr; grid-template-rows: minmax(240px,1fr) minmax(210px,.7fr); }
+  .semantic-modal-footer { align-items: stretch; flex-direction: column; }
+  .semantic-modal-footer > div { justify-content: flex-end; }
 }
 
 @media (prefers-reduced-motion: reduce) {

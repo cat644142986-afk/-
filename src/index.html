@@ -105,7 +105,20 @@
               <div class="canvas-command-zone">
                 <div class="creative-command" id="creative-command"><span class="command-index">目标</span><input id="brief-input" type="text" placeholder="描述这次想得到的画面，例如：保留包装文字，做克制的高端白底主图" /><span class="command-hint">创作要求</span></div>
                 <div class="folder-source" id="folder-source" hidden><span class="folder-source__label">整夹队列</span><input id="folder-path" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴文件夹地址，或点击选择" aria-label="待处理图片文件夹地址" /><button class="folder-source__browse" id="btn-folder-browse" type="button">选择</button><button class="folder-source__load" id="btn-folder-load" type="button">载入整夹</button><small id="folder-source-status">自动拆批并发，结果回到原文件夹</small></div>
-                <div class="capability-notice" id="cutout-capability" hidden><span>本地抠图</span><strong>快速去背景</strong><p>分离画面中的全部前景；当前不理解物体名称、数量或“只保留某个物体”等文字要求。</p></div>
+                <div class="cutout-tools" id="cutout-tools" hidden>
+                  <div class="cutout-strategy" role="group" aria-label="抠图方式">
+                    <button class="active" id="cutout-strategy-foreground" type="button" data-cutout-strategy="foreground" aria-pressed="true">快速去背景</button>
+                    <button id="cutout-strategy-semantic" type="button" data-cutout-strategy="semantic" aria-pressed="false">智能选物</button>
+                  </div>
+                  <div class="capability-notice" id="cutout-capability" hidden><span>本地抠图</span><strong id="cutout-capability-title">快速去背景</strong><p id="cutout-capability-copy">分离画面中的全部前景；当前不理解物体名称、数量或“只保留某个物体”等文字要求。</p></div>
+                  <div class="semantic-cutout-controls" id="semantic-cutout-controls" hidden>
+                    <label for="semantic-query"><span>保留什么</span><input id="semantic-query" type="text" maxlength="80" autocomplete="off" placeholder="例如：汉堡" aria-describedby="semantic-query-help" /></label>
+                    <label for="semantic-count"><span>保留数量</span><input id="semantic-count" type="number" min="1" max="8" step="1" value="1" inputmode="numeric" /></label>
+                    <button class="semantic-confirm-trigger" id="btn-semantic-preview" type="button">框选并确认目标</button>
+                    <p id="semantic-query-help">离线首版由你框选目标，名称用于核对；不会调用生图 API。</p>
+                    <p class="semantic-cutout-status" id="semantic-cutout-status" role="status" aria-live="polite">等待选择一张图片</p>
+                  </div>
+                </div>
               </div>
               <div class="dock-field" id="field-model"><label for="param-model"><span>模型路由</span><small id="model-reason">质量优先</small></label><select id="param-model"><option value="gpt-image-2">GPT Image 2 · 高保真</option><option value="gemini-3.1-flash-image-preview">Gemini 3.1 Flash · 快速批量</option></select></div>
               <div class="quick-controls" id="field-composition"><button type="button" data-open-advanced="angle"><span>角度</span><strong id="quick-angle">自动</strong></button><button type="button" data-open-advanced="fidelity"><span>保真度</span><strong id="quick-fidelity">40%</strong></button><button type="button" data-open-advanced="batch"><span>输出</span><strong id="quick-batch">1</strong></button></div>
@@ -203,6 +216,22 @@
 
   <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
   <div class="image-modal" id="img-modal" role="dialog" aria-modal="true" aria-label="大图预览" hidden><button class="modal-backdrop" id="modal-backdrop" type="button" aria-label="关闭大图预览"></button><div class="modal-card"><button class="modal-close" id="modal-close" type="button" aria-label="关闭大图预览">×</button><img id="modal-img" alt="大图预览" /></div></div>
+  <div class="semantic-selection-modal" id="semantic-selection-modal" role="dialog" aria-modal="true" aria-labelledby="semantic-selection-title" hidden>
+    <button class="modal-backdrop" id="semantic-selection-backdrop" type="button" tabindex="-1" aria-label="取消目标确认"></button>
+    <section class="semantic-modal-card">
+      <header class="semantic-modal-head"><div><p>LOCAL TARGET CONFIRMATION</p><h2 id="semantic-selection-title">框选要保留的目标</h2><span id="semantic-selection-summary">请在原图上拖动框选</span></div><button class="modal-close semantic-modal-close" id="semantic-selection-close" type="button" aria-label="取消目标确认">×</button></header>
+      <div class="semantic-modal-body">
+        <div class="semantic-canvas-wrap"><canvas id="semantic-selection-canvas" width="960" height="640" aria-label="目标框选画布；可拖动框选，也可使用右侧坐标输入"></canvas><span class="semantic-canvas-hint">拖动鼠标框选目标；每个框只包住一个物体并留少量边距</span></div>
+        <aside class="semantic-region-panel" aria-label="已框选目标">
+          <div class="semantic-region-progress"><strong id="semantic-region-count">0 / 1</strong><span>已框选</span></div>
+          <div class="semantic-region-actions"><button id="semantic-add-full" type="button">添加全图范围</button><button id="semantic-undo" type="button">撤销</button><button id="semantic-clear" type="button">清空</button></div>
+          <div class="semantic-region-list" id="semantic-region-list"></div>
+          <p class="semantic-region-error" id="semantic-region-error" role="alert" hidden></p>
+        </aside>
+      </div>
+      <footer class="semantic-modal-footer"><p>此步只确认目标，不消耗生图额度。确认后仍由本地 BiRefNet 处理边缘。</p><div><button class="secondary-button" id="semantic-selection-cancel" type="button">取消</button><button class="primary-button primary-button--compact" id="semantic-selection-confirm" type="button">确认目标</button></div></footer>
+    </section>
+  </div>
   <script type="module" src="./js/app.js"></script>
 </body>
 </html>
