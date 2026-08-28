@@ -143,3 +143,31 @@ git -C D:\ProductAtelier-Desktop switch -c restore/production-experience-shell c
 ```
 
 回退前先退出 `Product Atelier.exe` 与 `python-server.exe`。本次变更不迁移或删除用户账本、素材、结果与外部交付目录，因此通常只需切换源码；仍应先保留 `%APPDATA%\ProductAtelier` 和外部成品目录的副本。回到实施前版本后会恢复旧生产 UI，但既有 schema v3 数据和任务记录保持可读。
+
+## 2026-08-28 便携版提升事务恢复
+
+`tools/dev.ps1` 现在只在隔离候选包通过两道 smoke 后触发正式提升。事务日志固定为
+`build\portable-promotion-transaction.json`，外部完整备份在
+`D:\ProductAtelier-Backups\release-before-<时间>-<Git短哈希>`，最终证据同时记录在备份旁与
+`build\last-portable-promotion.json`。不要手工删除 transaction、`previous` 或 `recovery` 目录。
+
+若脚本中断且 transaction 仍存在，先退出该正式目录下的桌面应用与 sidecar，再只读查看身份与阶段：
+
+```powershell
+$tx = Get-Content -Raw build\portable-promotion-transaction.json | ConvertFrom-Json
+$tx | Select-Object phase, git_commit, transaction_id, portable_dir, backup_dir
+```
+
+- `phase` 为 `prepared / backed_up / candidate_copied / previous_moved / promoted`时，如果正式 smoke 未通过，使用该日志中的精确身份回滚：
+
+  ```powershell
+  python tools\portable_release.py rollback --project-root $PWD.Path --transaction build\portable-promotion-transaction.json --reason "resume interrupted release" --git-commit $tx.git_commit --transaction-id $tx.transaction_id
+  ```
+
+- `phase` 为 `finalizing / finalized`时已跨过最终确认点，不得反向猜测回滚；重跑可幂等的 finalize：
+
+  ```powershell
+  python tools\portable_release.py finalize --project-root $PWD.Path --transaction build\portable-promotion-transaction.json --git-commit $tx.git_commit --transaction-id $tx.transaction_id
+  ```
+
+恢复器只会移动固定项目路径与该 transaction ID 派生的目录；如果 formal、previous、backup 或 recovery 出现未知文件树哈希，它会保留现场并拒绝删除。此时不要强制清理，应保留 transaction、`release\` 和对应备份后再审计。这套目录事务不操作 `%APPDATA%\ProductAtelier` 的账本、Key、素材或生成结果。

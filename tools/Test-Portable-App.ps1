@@ -1,6 +1,7 @@
 # Product Atelier full portable application smoke test.
 param(
     [string]$PortableDir = "",
+    [string]$ExpectedGitCommit = "",
     [int]$TimeoutSeconds = 45
 )
 
@@ -20,11 +21,28 @@ if (-not (Test-Path -LiteralPath $AppExe -PathType Leaf)) {
 $SidecarExe = [System.IO.Path]::GetFullPath((Join-Path $PortableDir "python-server\python-server.exe"))
 $ManifestPath = Join-Path $PortableDir "python-server\sidecar-manifest.json"
 
+if (-not $ExpectedGitCommit) {
+    $headOutput = @(& git.exe -C $ProjectRoot rev-parse --verify HEAD 2>&1)
+    $headExitCode = $LASTEXITCODE
+    if ($headExitCode -ne 0) { throw "Could not resolve Git HEAD: $($headOutput -join ' ')" }
+    $ExpectedGitCommit = (($headOutput -join "`n").Trim())
+}
+if ($ExpectedGitCommit -notmatch '^[0-9a-fA-F]{40}$') {
+    throw "Expected Git commit must be a full 40-character hash"
+}
+
 if (-not (Test-Path -LiteralPath $AppExe -PathType Leaf)) { throw "Portable app is missing: $AppExe" }
 if (-not (Test-Path -LiteralPath $SidecarExe -PathType Leaf)) { throw "Portable sidecar is missing: $SidecarExe" }
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) { throw "Portable manifest is missing: $ManifestPath" }
 
 $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+if (-not [string]::Equals(
+    ([string]$manifest.git_commit).Trim(),
+    $ExpectedGitCommit,
+    [System.StringComparison]::OrdinalIgnoreCase
+)) {
+    throw "Sidecar manifest git_commit does not match the expected Git HEAD"
+}
 $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $testData = [System.IO.Path]::GetFullPath((Join-Path $tempRoot ("ProductAtelier-app-test-" + [guid]::NewGuid().ToString("N"))))
 if (-not $testData.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -32,13 +50,26 @@ if (-not $testData.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnor
 }
 New-Item -ItemType Directory -Path $testData | Out-Null
 
-$beforeSidecars = @(
-    Get-CimInstance Win32_Process -Filter "Name='python-server.exe'" |
-        ForEach-Object { [int]$_.ProcessId }
-)
+function Test-ExpectedSidecarProcess($Process, [int]$ExpectedParentId) {
+    if (-not $Process) { return $false }
+    if ([int]$Process.ParentProcessId -ne $ExpectedParentId) { return $false }
+    if (-not $Process.ExecutablePath) { return $false }
+    try {
+        $processPath = [System.IO.Path]::GetFullPath([string]$Process.ExecutablePath)
+    } catch {
+        return $false
+    }
+    return [string]::Equals(
+        $processPath,
+        $SidecarExe,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
+}
+
 $previousDataDir = $env:PRODUCT_ATELIER_DATA_DIR
 $app = $null
 $newSidecars = @()
+$trackedSidecarPids = @()
 
 try {
     $env:PRODUCT_ATELIER_DATA_DIR = $testData
@@ -53,9 +84,13 @@ try {
         }
         $newSidecars = @(
             Get-CimInstance Win32_Process -Filter "Name='python-server.exe'" |
-                Where-Object { $beforeSidecars -notcontains [int]$_.ProcessId }
+                Where-Object { Test-ExpectedSidecarProcess $_ ([int]$app.Id) }
         )
         if ($newSidecars.Count -eq 1) {
+            $sidecarPid = [int]$newSidecars[0].ProcessId
+            if ($trackedSidecarPids -notcontains $sidecarPid) {
+                $trackedSidecarPids += $sidecarPid
+            }
             $portMatch = [regex]::Match([string]$newSidecars[0].CommandLine, '(\d+)\s*$')
             if ($portMatch.Success) {
                 $sidecarPort = [int]$portMatch.Groups[1].Value
@@ -75,6 +110,13 @@ try {
     if ($health.status -ne "ok") { throw "Portable app sidecar health status is not ok" }
     if ($health.service.contract_version -ne $manifest.contract_version) {
         throw "Running portable app contract does not match its manifest"
+    }
+    if (-not [string]::Equals(
+        ([string]$health.service.git_commit).Trim(),
+        $ExpectedGitCommit,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Running portable app Git commit does not match the expected Git HEAD"
     }
     if ([int]$health.ledger.schema_version -ne [int]$manifest.ledger_schema_version) {
         throw "Running portable app ledger schema does not match its manifest"
@@ -105,6 +147,7 @@ try {
     Write-Host "Dynamic sidecar port: $sidecarPort"
     Write-Host "Contract: $($health.service.contract_version)"
     Write-Host "Ledger schema: v$($health.ledger.schema_version)"
+    Write-Host "Git commit: $ExpectedGitCommit"
     Write-Host "Isolated ledger bytes: $((Get-Item -LiteralPath $ledgerPath).Length)"
     Write-Host "Isolated shell log: verified"
 } finally {
@@ -118,12 +161,23 @@ try {
         }
     }
 
-    $remainingNewSidecars = @(
-        Get-CimInstance Win32_Process -Filter "Name='python-server.exe'" |
-            Where-Object { $beforeSidecars -notcontains [int]$_.ProcessId }
-    )
-    foreach ($sidecar in $remainingNewSidecars) {
-        Stop-Process -Id $sidecar.ProcessId -Force -ErrorAction SilentlyContinue
+    if ($app) {
+        $remainingExpectedSidecars = @(
+            Get-CimInstance Win32_Process -Filter "Name='python-server.exe'" |
+                Where-Object { Test-ExpectedSidecarProcess $_ ([int]$app.Id) }
+        )
+        foreach ($sidecar in $remainingExpectedSidecars) {
+            $remainingPid = [int]$sidecar.ProcessId
+            if ($trackedSidecarPids -notcontains $remainingPid) {
+                $trackedSidecarPids += $remainingPid
+            }
+        }
+    }
+    foreach ($sidecarPid in $trackedSidecarPids) {
+        $sidecar = Get-CimInstance Win32_Process -Filter "ProcessId=$sidecarPid" -ErrorAction SilentlyContinue
+        if ($sidecar -and $app -and (Test-ExpectedSidecarProcess $sidecar ([int]$app.Id))) {
+            Stop-Process -Id $sidecarPid -Force -ErrorAction SilentlyContinue
+        }
     }
 
     if (Test-Path -LiteralPath $testData) {

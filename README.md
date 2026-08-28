@@ -61,6 +61,8 @@
 - **Python** 3.12 with packages:
   ```
   pip install -r python/requirements.txt
+  pip install -r python/requirements-test.txt
+  pip install -r python/requirements-build.txt
   ```
 
 ### 环境变量 (构建前必须设置)
@@ -79,24 +81,17 @@ cd C:\ProductAtelier-Desktop
 ```
 输出: `D:\rust-target\release\bundle\nsis\Product Atelier_1.0.0_x64-setup.exe` (~113MB)
 
-### 方式二：分步构建（推荐）
+### 方式二：正式便携版门禁（推荐）
 
 ```powershell
 cd D:\ProductAtelier-Desktop
 $env:PATH = "C:\mingw64\bin;$env:USERPROFILE\.cargo\bin;C:\Program Files\nodejs;$env:PATH"
 $env:CARGO_TARGET_DIR = "D:\rust-target"
 
-# 1. 从当前源码重建Python后端、生成源码指纹并同步便携版
-powershell -ExecutionPolicy Bypass -File tools\Build-Sidecar.ps1 -DeployPortable
-
-# 2. 静态哈希 + 独立运行时健康检查
-powershell -ExecutionPolicy Bypass -File tools\Test-Portable.ps1
-
-# 3. 构建完整Tauri应用 (前端Vite + Rust + NSIS)
-npm run tauri build -- --features custom-protocol
-
-# 4. 部署便携外壳后，按正式启动链执行整包冒烟测试
-powershell -ExecutionPolicy Bypass -File tools\Test-Portable-App.ps1
+# 脚本要求当前分支与 GitHub upstream 对齐、工作树干净，并依次执行：
+# sidecar 构建 -> Python/前端/Vite/Rust 门禁 -> 隔离候选双 smoke ->
+# 旧正式版完整备份 -> 事务提升 -> 正式目录双 smoke -> 最终证据/快捷方式。
+powershell -ExecutionPolicy Bypass -File tools\dev.ps1
 ```
 
 不要直接把旧 `python-server` 目录复制进发布包。正式 sidecar 必须带
@@ -108,15 +103,15 @@ powershell -ExecutionPolicy Bypass -File tools\Test-Portable-App.ps1
 ```powershell
 .\build-portable.bat
 ```
-输出: `dist\ProductAtelier-Portable\` (~375MB，双击exe直接运行)
+输出: `release\ProductAtelier-Portable\`（候选验证、备份和正式复验通过后才更新）
 
-### 开发调试
+### 开发调试与正式发布边界
 ```powershell
-# 默认重建 sidecar、前端和嵌入式 Rust 正式壳，验证后再启动
-powershell -ExecutionPolicy Bypass -File tools\dev.ps1
+# 前端开发调试，不写正式目录
+npm run dev
 
-# 只跳过 Rust；sidecar 仍会重建
-powershell -ExecutionPolicy Bypass -File tools\dev.ps1 -Quick
+# Windows 正式便携版提升；不允许 -Quick 或 -SkipSidecar
+powershell -ExecutionPolicy Bypass -File tools\dev.ps1
 ```
 
 正式版不得直接执行不带 feature 的 `cargo build --release`。项目会在编译期拒绝
@@ -148,7 +143,8 @@ ProductAtelier-Desktop/
 │   ├── capabilities/       # 权限配置
 │   ├── icons/              # 应用图标
 │   └── bin/python-server/  # PyInstaller编译的后端 (构建后生成)
-├── dist/                   # Vite构建输出 + 便携版
+├── dist/                   # Vite构建输出
+├── release/                # 已验证正式便携版（本机生成，不进 Git）
 ├── python-server.spec      # PyInstaller配置
 ├── dev.bat                 # 开发模式启动
 ├── build-installer.bat     # NSIS安装包一键构建
@@ -160,9 +156,8 @@ ProductAtelier-Desktop/
 
 | 文件 | 路径 | 大小 |
 |------|------|------|
-| NSIS安装包 | `D:\rust-target\release\bundle\nsis\Product Atelier_1.0.0_x64-setup.exe` | ~113 MB |
-| 便携版ZIP | `D:\ProductAtelier-Desktop\dist\ProductAtelier-Portable-v1.0.0.zip` | ~157 MB |
-| 便携版文件夹 | `D:\ProductAtelier-Desktop\dist\ProductAtelier-Portable\` | ~374 MB |
+| NSIS安装包候选 | `D:\rust-target\release\bundle\nsis\Product Atelier_1.0.0_x64-setup.exe` | 构建后仍需安装态 smoke |
+| 正式便携版文件夹 | `D:\ProductAtelier-Desktop\release\ProductAtelier-Portable\` | 以 promotion evidence 为准 |
 
 ## 数据存储
 

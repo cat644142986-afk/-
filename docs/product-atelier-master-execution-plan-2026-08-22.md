@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-08-28<br>
-> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 已有“输出规格”“立即修改本张”“50/200 素材”“批量任务大数据态”“完整 Result Review”五个检查点进入正式便携版，Phase 6 已闭环；统一状态组件已完成源码、83 项前端、115 项 Python、Vite、Rust 与隔离浏览器验收，尚未提升为正式便携版；下一游标执行该检查点的备份、便携门禁与正式发布<br>
+> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 已有“输出规格”“立即修改本张”“50/200 素材”“批量任务大数据态”“完整 Result Review”五个检查点进入正式便携版，Phase 6 已闭环；统一状态组件及“候选先验收、备份后提升、失败可恢复”发布链已完成源码与跨平台门禁，当前为前端 `87/87`、Python `146/146`、Vite 与 host Rust 全绿；尚未执行 Windows EXE/sidecar/NTFS/快捷方式正式验收，不得称为已提升正式便携版<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -516,10 +516,12 @@ R5 输出比例/像素规格正确性（已进入正式版）
 
 **已通过、尚未执行的门禁**
 
-- Python `115/115`、前端 `83/83`、`npm run build`、`cargo check --features custom-protocol` 与 `git diff --check` 全绿。
+- Python `146/146`、前端 `87/87`、`npm run build`、`cargo check --locked --features custom-protocol` 与 `git diff --check` 全绿；其中发布事务专项 `31/31` 覆盖候选组包、完整备份、排他锁、目录树哈希、中断续恢、证据重放、失败回滚、旧调用者身份与路径逃逸拒绝。
+- Windows 发布入口已收口到 `tools/dev.ps1`：只构建 `src-tauri/bin` sidecar，在 `build/portable-candidate-current` 通过两道 smoke 后才完整备份旧正式目录，以 transaction ID 提升、正式目录再 smoke，成功 finalize 后才更新快捷方式；`-Quick` / `-SkipSidecar` 不允许进入正式提升。
+- PyInstaller 发布依赖已独立锁定在 `python/requirements-build.txt`；`build-python.bat`、`build-portable.bat` 和 `build-installer.bat` 不再绕过 manifest 与 custom-protocol 门禁。NSIS 仍需 Windows 安装态 smoke，不因脚本收口而自动关闭。
 - 隔离浏览器使用 `build/ui-status-fixture-20260828` 验证：空任务、空历史、空审核队列；外部把草稿从 revision 1 更新到 2 后，前端捕获冲突并把用户修改保存到 revision 3；第二轮状态序列为约 355ms 显示“修改已安全合并”、约 5.5s 自动收起。
 - 关闭隔离 sidecar 后任务中心显示 `role=alert / aria-live=assertive` 的“任务账本暂时离线”和“重试连接”；恢复 sidecar 后自动回到“还没有任务”，全程无横向溢出。未调用生图接口或消耗额度。
-- **仍需在下一台电脑/下一轮首先执行**：创建正式包前备份，运行 `tools/dev.ps1` 的完整 sidecar、portable smoke、custom-protocol release 门禁，更新 EXE/sidecar/manifest/source fingerprint 与桌面快捷方式证据；完成前不得把本检查点称为正式发布。
+- **仍需在 Windows 电脑下一轮首先执行**：核对用户数据备份后，运行新 `tools/dev.ps1` 的 PowerShell 5、PyInstaller sidecar、NTFS 锁/目录换位、candidate/formal 双 smoke 与 custom-protocol release 门禁，再实机验证 960×600、亮/暗主题、离线/重连、revision 冲突，更新 EXE/sidecar/manifest/source fingerprint、备份、promotion evidence 与桌面快捷方式证据；完成前不得把本检查点称为正式发布。
 
 ## 0. 这次要把什么做成
 

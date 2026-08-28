@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
+
+test('formal portable promotion is candidate-first and rollback-capable', () => {
+  const script = read('tools/dev.ps1');
+  const stage = script.indexOf('$PromotionTool stage');
+  const candidateSmoke = script.indexOf('-PortableDir $CandidateDir');
+  const begin = script.indexOf('$PromotionTool begin');
+  const formalSmoke = script.indexOf('-PortableDir $PortableDir', candidateSmoke + 1);
+  const rollback = script.indexOf('$PromotionTool rollback');
+  const finalize = script.indexOf('$PromotionTool finalize');
+  const shortcut = script.indexOf('CreateShortcut($temporaryShortcut)');
+
+  assert.ok(stage >= 0, 'candidate staging must be present');
+  assert.ok(candidateSmoke > stage, 'candidate smoke must follow candidate staging');
+  assert.ok(begin > candidateSmoke, 'formal promotion must follow candidate smoke');
+  assert.ok(formalSmoke > begin, 'formal smoke must follow promotion');
+  assert.ok(rollback > begin, 'promotion failures must have a rollback path');
+  assert.ok(finalize > formalSmoke, 'finalization must follow formal smoke');
+  assert.ok(shortcut > finalize, 'desktop entry must be published after finalization');
+  assert.match(script, /transaction-id \$promotionTransactionId/);
+  assert.match(script, /-Quick and -SkipSidecar are not allowed/);
+  assert.doesNotMatch(script, /Build-Sidecar\.ps1"?\s+-DeployPortable/i);
+});
+
+test('sidecar build cannot overwrite the formal portable release', () => {
+  const script = read('tools/Build-Sidecar.ps1');
+
+  assert.doesNotMatch(script, /DeployPortable/);
+  assert.doesNotMatch(script, /release\\ProductAtelier-Portable/);
+  assert.match(script, /\.replacement-\$token/);
+  assert.match(script, /\.previous-\$token/);
+  assert.match(script, /sidecar-build\.lock/);
+  assert.match(script, /\[System\.IO\.FileShare\]::None/);
+  assert.match(script, /Assert-NoProjectReparsePoints/);
+  assert.match(script, /FileAttributes\]::ReparsePoint/);
+  assert.match(script, /sidecarBuildLockOwned/);
+  assert.match(script, /rev-parse --verify HEAD/);
+});
+
+test('portable smoke binds runtime identity to the candidate artifacts', () => {
+  const sidecarSmoke = read('tools/Test-Portable.ps1');
+  const appSmoke = read('tools/Test-Portable-App.ps1');
+
+  assert.match(sidecarSmoke, /manifest\.git_commit/);
+  assert.match(sidecarSmoke, /source_fingerprint does not match source_hashes/);
+  assert.match(sidecarSmoke, /health\.service\.git_commit/);
+  assert.match(appSmoke, /ParentProcessId/);
+  assert.match(appSmoke, /ExecutablePath/);
+  assert.match(appSmoke, /Test-ExpectedSidecarProcess/);
+  assert.match(appSmoke, /health\.service\.git_commit/);
+  assert.doesNotMatch(appSmoke, /beforeSidecars/);
+});
+
+test('all Windows entry points use the manifest-producing release chain', () => {
+  const portable = read('build-portable.bat');
+  const installer = read('build-installer.bat');
+  const python = read('build-python.bat');
+  const buildRequirements = read('python/requirements-build.txt');
+
+  assert.match(portable, /tools\\dev\.ps1/);
+  assert.match(installer, /tools\\dev\.ps1/);
+  assert.match(installer, /tauri build --features custom-protocol/);
+  assert.doesNotMatch(installer, /(^|\s)pyinstaller\s/im);
+  assert.match(python, /tools\\Build-Sidecar\.ps1/);
+  assert.doesNotMatch(python, /(^|\s)pyinstaller\s/im);
+  assert.match(buildRequirements, /^pyinstaller==6\.22\.2$/m);
+  assert.match(buildRequirements, /^pyinstaller-hooks-contrib==2026\.7$/m);
+});
