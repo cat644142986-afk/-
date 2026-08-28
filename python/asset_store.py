@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import ntpath
 import os
 import tempfile
 import threading
@@ -65,6 +66,12 @@ class AssetStore:
     ):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        # Resolve the trusted root once after it exists. Re-resolving the root
+        # concurrently with creation of its content-addressed child directory
+        # can transiently produce different Windows path representations and a
+        # false "escaped root" result for duplicate imports.
+        self._resolved_root = self.root.resolve(strict=True)
+        self._comparison_root = self._comparison_key(self._resolved_root)
         self.ledger = ledger
         self.max_file_bytes = max(1, int(max_file_bytes))
         self.max_pixels = max(1, int(max_pixels))
@@ -74,6 +81,36 @@ class AssetStore:
     def _hash_lock(self, sha256: str) -> threading.Lock:
         with self._hash_locks_guard:
             return self._hash_locks.setdefault(sha256, threading.Lock())
+
+    @staticmethod
+    def _comparison_key(path: Path) -> str:
+        """Return a stable key for an already-resolved path.
+
+        Windows may return the same path as either ``C:\\...`` or
+        ``\\\\?\\C:\\...`` while another thread creates the final directory.
+        The namespace prefix changes ``Path.is_relative_to`` semantics even
+        though both names address the same file. Strip only the documented
+        Windows extended namespace after resolution, then compare with the
+        platform path module.
+        """
+        value = str(path)
+        if os.name == "nt":
+            if value.startswith("\\\\?\\UNC\\"):
+                value = "\\\\" + value[8:]
+            elif value.startswith("\\\\?\\"):
+                value = value[4:]
+            return ntpath.normcase(ntpath.normpath(value))
+        return os.path.normcase(os.path.normpath(value))
+
+    def _is_within_root(self, path: Path, *, strict: bool) -> bool:
+        try:
+            candidate_key = self._comparison_key(path.resolve(strict=strict))
+            path_module = ntpath if os.name == "nt" else os.path
+            return path_module.commonpath(
+                [self._comparison_root, candidate_key]
+            ) == self._comparison_root
+        except (FileNotFoundError, OSError, ValueError):
+            return False
 
     def _spool_and_hash(self, stream: BinaryIO) -> tuple[tempfile.SpooledTemporaryFile, str, int]:
         spool = tempfile.SpooledTemporaryFile(max_size=min(self.max_file_bytes, 8 * 1024 * 1024), mode="w+b")
@@ -146,9 +183,8 @@ class AssetStore:
         return detected_format, mime, canonical_extension, width, height
 
     def _expected_path(self, sha256: str, extension: str) -> Path:
-        path = self.root / sha256[:2] / f"{sha256}{extension}"
-        resolved_root = self.root.resolve()
-        if not path.resolve().is_relative_to(resolved_root):
+        path = self._resolved_root / sha256[:2] / f"{sha256}{extension}"
+        if not self._is_within_root(path, strict=False):
             raise AssetAccessError("Resolved asset path escaped the asset root")
         return path
 
@@ -256,7 +292,7 @@ class AssetStore:
         )
         raw_path = Path(str(summary["storage_path"]))
         candidate = raw_path.resolve(strict=False)
-        if not candidate.is_relative_to(self.root.resolve()):
+        if not self._is_within_root(candidate, strict=False):
             raise AssetAccessError("Workspace asset path is outside the allowed root")
         result = self.ledger.purge_workspace_asset(
             asset_id, retention_days=retention_days
@@ -281,15 +317,14 @@ class AssetStore:
         except KeyError as exc:
             raise AssetAccessError("Unknown workspace asset", code="ASSET_NOT_FOUND") from exc
         raw_path = Path(str(asset["blob"]["storage_path"]))
-        resolved_root = self.root.resolve()
         candidate_path = raw_path.resolve(strict=False)
-        if not candidate_path.is_relative_to(resolved_root):
+        if not self._is_within_root(candidate_path, strict=False):
             raise AssetAccessError("Workspace asset path is outside the allowed root")
         try:
             resolved_path = raw_path.resolve(strict=True)
         except (FileNotFoundError, OSError) as exc:
             raise AssetAccessError("Workspace asset file is unavailable", code="ASSET_FILE_MISSING") from exc
-        if not resolved_path.is_relative_to(resolved_root) or not resolved_path.is_file():
+        if not self._is_within_root(resolved_path, strict=True) or not resolved_path.is_file():
             raise AssetAccessError("Workspace asset path is outside the allowed root")
         if self._file_sha256(resolved_path) != asset["blob"]["sha256"]:
             raise AssetAccessError("Workspace asset content hash does not match", code="ASSET_HASH_MISMATCH")

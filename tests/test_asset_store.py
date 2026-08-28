@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -86,6 +87,18 @@ class AssetStoreTests(unittest.TestCase):
         self.assertEqual(len({asset["id"] for asset in assets}), 1)
         self.assertEqual(len(self.physical_files()), 1)
         self.assertEqual(self.ledger.stats()["counts"]["asset_blobs"], 1)
+        self.assertEqual(self.store._resolved_root, self.asset_root.resolve(strict=True))
+
+    @unittest.skipUnless(os.name == "nt", "Windows namespace behavior")
+    def test_windows_extended_namespace_has_the_same_containment_identity(self) -> None:
+        regular = self.store._resolved_root
+        namespaced = Path("\\\\?\\" + str(regular))
+
+        self.assertEqual(
+            self.store._comparison_key(namespaced),
+            self.store._comparison_root,
+        )
+        self.assertTrue(self.store._is_within_root(namespaced, strict=True))
 
     def test_assets_survive_reopening_ledger_and_store(self) -> None:
         imported = self.store.import_bytes(image_bytes("JPEG"), "restart.jpeg")
