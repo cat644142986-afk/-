@@ -354,6 +354,8 @@ try {
 
     $desktopShortcut = ""
     $temporaryShortcut = ""
+    $shortcutBackup = ""
+    $keepShortcutBackup = $false
     $postPromotionWarnings = @()
     try {
         $desktopDirectory = [Environment]::GetFolderPath("Desktop")
@@ -367,13 +369,31 @@ try {
         $shortcut.IconLocation = "$TargetExe,0"
         $shortcut.Save()
         if (Test-Path -LiteralPath $desktopShortcut) {
-            [System.IO.File]::Replace($temporaryShortcut, $desktopShortcut, $null)
+            $shortcutBackup = Join-Path $desktopDirectory (".Product-Atelier-backup-" + [guid]::NewGuid().ToString("N") + ".lnk")
+            [System.IO.File]::Replace($temporaryShortcut, $desktopShortcut, $shortcutBackup, $true)
         } else {
             Move-Item -LiteralPath $temporaryShortcut -Destination $desktopShortcut
+        }
+        $shortcutReader = New-Object -ComObject WScript.Shell
+        $publishedShortcut = $shortcutReader.CreateShortcut($desktopShortcut)
+        if (
+            -not (Test-SamePath ([string]$publishedShortcut.TargetPath) $TargetExe) -or
+            -not (Test-SamePath ([string]$publishedShortcut.WorkingDirectory) $PortableDir)
+        ) {
+            throw "The published desktop shortcut does not target the finalized formal directory"
         }
     } catch {
         $shortcutError = [string]$_.Exception.Message
         $shortcutAlreadyValid = $false
+        if ($shortcutBackup -and (Test-Path -LiteralPath $shortcutBackup -PathType Leaf)) {
+            try {
+                Copy-Item -LiteralPath $shortcutBackup -Destination $desktopShortcut -Force
+                $shortcutError += "; the previous desktop shortcut was restored"
+            } catch {
+                $keepShortcutBackup = $true
+                $shortcutError += "; restoring the previous desktop shortcut failed: $([string]$_.Exception.Message)"
+            }
+        }
         try {
             if ($desktopShortcut -and (Test-Path -LiteralPath $desktopShortcut -PathType Leaf)) {
                 $shortcutReader = New-Object -ComObject WScript.Shell
@@ -393,6 +413,9 @@ try {
     } finally {
         if ($temporaryShortcut -and (Test-Path -LiteralPath $temporaryShortcut)) {
             Remove-Item -LiteralPath $temporaryShortcut -Force
+        }
+        if (-not $keepShortcutBackup -and $shortcutBackup -and (Test-Path -LiteralPath $shortcutBackup)) {
+            Remove-Item -LiteralPath $shortcutBackup -Force
         }
     }
     if ($postPromotionWarnings.Count -eq 0) {

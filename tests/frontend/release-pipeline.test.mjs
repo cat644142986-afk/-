@@ -25,6 +25,11 @@ test('formal portable promotion is candidate-first and rollback-capable', () => 
   assert.ok(finalize > formalSmoke, 'finalization must follow formal smoke');
   assert.ok(shortcut > finalize, 'desktop entry must be published after finalization');
   assert.match(script, /transaction-id \$promotionTransactionId/);
+  assert.match(script, /File\]::Replace\(\$temporaryShortcut, \$desktopShortcut, \$shortcutBackup, \$true\)/);
+  assert.doesNotMatch(script, /File\]::Replace\(\$temporaryShortcut, \$desktopShortcut, \$null\)/);
+  assert.match(script, /previous desktop shortcut was restored/i);
+  assert.match(script, /\$keepShortcutBackup = \$true/);
+  assert.match(script, /published desktop shortcut does not target the finalized formal directory/i);
   assert.match(script, /-Quick and -SkipSidecar are not allowed/);
   assert.doesNotMatch(script, /Build-Sidecar\.ps1"?\s+-DeployPortable/i);
 });
