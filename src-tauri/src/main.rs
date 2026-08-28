@@ -138,8 +138,13 @@ fn find_server_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<(Pat
     // copy left in target/debug by an earlier PyInstaller build.
     #[cfg(debug_assertions)]
     {
+        candidates.push((
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../python/server.py"),
+            false,
+        ));
         candidates.push((PathBuf::from("python/server.py"), false));
         if let Some(d) = &exe_dir {
+            candidates.push((d.join("../../../python/server.py"), false));
             candidates.push((d.join("../../../../python/server.py"), false));
             candidates.push((d.join("../../python/server.py"), false));
         }
@@ -173,12 +178,12 @@ fn find_server_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<(Pat
 /// Apply platform-specific flags to prevent console window from appearing.
 /// On Windows: sets CREATE_NO_WINDOW (0x08000000) to suppress conhost.exe window.
 /// On other platforms: no-op.
-fn apply_no_window_flags(cmd: &mut Command) {
+fn apply_no_window_flags(_cmd: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         // CREATE_NO_WINDOW = 0x08000000 — prevents the process from inheriting/creating a console
-        cmd.creation_flags(0x08000000);
+        _cmd.creation_flags(0x08000000);
     }
 }
 
@@ -394,10 +399,11 @@ fn save_base64_image(app: tauri::AppHandle, suggested_name: String, data_b64: St
 #[tauri::command]
 fn open_in_folder(path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     let target = if p.is_file() {
-        p.parent().map(|d| d.to_path_buf()).unwrap_or(p)
+        p.parent().map(|d| d.to_path_buf()).unwrap_or_else(|| p.clone())
     } else {
-        p
+        p.clone()
     };
     #[cfg(target_os = "windows")]
     {

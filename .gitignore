@@ -9,6 +9,9 @@ release/
 
 # Rust build
 src-tauri/target/
+# Tauri regenerates this host-specific schema during macOS checks; the shared
+# desktop schema is the tracked editor contract.
+src-tauri/gen/schemas/macOS-schema.json
 
 # Compiled Python binaries (sidecar)
 src-tauri/bin/

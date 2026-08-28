@@ -10,13 +10,13 @@
 
 这条命令不依赖 Windows 电脑的任何本地文件。它会：
 
-1. 检查或安装 Apple Command Line Tools、Homebrew、Node.js 20+、Python 3.12 和 Rust。
+1. 检查 Apple Command Line Tools，并优先复用已有的 Node.js 20+、用户目录 Python 3.12 和 Rust；只有缺少必要运行时时才调用 Homebrew 安装。
 2. 从 GitHub 克隆 `codex/master-roadmap-phase-0-1` 到 `~/ProductAtelier-Desktop`。
 3. 建立仓库内 `.venv`，通过 `package-lock.json` 安装确定版本的前端依赖。
 4. 执行前端测试、Python 测试、Vite production build 和 macOS Rust check。
 5. 把实际分支、提交和验证时间写入不进入 Git 的 `.macos-bootstrap-state`，方便接手者核对环境。
 
-脚本可以安全重跑：已有仓库只做 fast-forward 更新；发现未提交修改、错误仓库或同名非仓库目录时会停止，不会覆盖文件。首次安装 Apple 工具时需要在系统弹窗中确认；安装 Homebrew 时可能需要输入当前 Mac 的管理员密码。
+脚本可以安全重跑：已有仓库只做 fast-forward 更新；发现未提交修改、错误仓库或同名非仓库目录时会停止，不会覆盖文件。首次安装 Apple 工具时需要在系统弹窗中确认；只有本机缺少可复用运行时、确实需要安装 Homebrew 时，才可能要求输入当前 Mac 的管理员密码。依赖安装首次需要联网；这里的“离线门禁”是指不读取 API Key、不访问生图接口、不产生付费调用。
 
 ## Git 中已经包含的接续材料
 
@@ -46,7 +46,7 @@ source .venv/bin/activate
 npm run test:frontend
 python -m unittest discover -s tests -p 'test_*.py'
 npm run build
-cargo check --manifest-path src-tauri/Cargo.toml --features custom-protocol
+cargo check --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol
 ```
 
 ## Mac 可以继续什么，不能批准什么

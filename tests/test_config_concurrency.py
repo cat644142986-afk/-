@@ -55,6 +55,8 @@ class ConfigConcurrencyTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
+            knowledge_path = Path(temp_dir) / "vault"
+            canonical_knowledge_path = str(knowledge_path.resolve(strict=False))
             original = {
                 "CONFIG_PATH": server.CONFIG_PATH,
                 "API_KEY": server.API_KEY,
@@ -81,7 +83,7 @@ class ConfigConcurrencyTests(unittest.TestCase):
                 )
                 second = context.Process(
                     target=_save_config_in_process,
-                    args=(temp_dir, "knowledge_base_path", str(Path(temp_dir) / "vault"), barrier),
+                    args=(temp_dir, "knowledge_base_path", str(knowledge_path), barrier),
                 )
                 first.start()
                 second.start()
@@ -92,7 +94,7 @@ class ConfigConcurrencyTests(unittest.TestCase):
 
                 stored = json.loads(config_path.read_text(encoding="utf-8"))
                 self.assertEqual(stored["api_key"], "shared-offline-key")
-                self.assertEqual(stored["knowledge_base_path"], str(Path(temp_dir) / "vault"))
+                self.assertEqual(stored["knowledge_base_path"], str(knowledge_path))
                 self.assertEqual(server.get_api_key(), "shared-offline-key")
                 refreshed = server.refresh_runtime_config()
                 self.assertEqual(
@@ -100,7 +102,11 @@ class ConfigConcurrencyTests(unittest.TestCase):
                     json.loads(config_path.read_text(encoding="utf-8")),
                 )
                 self.assertEqual(refreshed["output_root"], str(server.OUTPUT_DIR.resolve()))
-                self.assertEqual(recorder.paths, [str(Path(temp_dir) / "vault")])
+                self.assertEqual(refreshed["knowledge_base_path"], canonical_knowledge_path)
+                self.assertEqual(recorder.paths, [canonical_knowledge_path])
+                self.assertEqual(server._RUNTIME_KNOWLEDGE_PATH, canonical_knowledge_path)
+                server.refresh_runtime_config()
+                self.assertEqual(recorder.paths, [canonical_knowledge_path])
             finally:
                 for name, value in original.items():
                     setattr(server, name, value)

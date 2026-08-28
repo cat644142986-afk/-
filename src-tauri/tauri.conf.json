@@ -38,9 +38,6 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "resources": {
-      "bin/python-server/": "python-server/"
-    },
     "windows": {
       "wix": {
         "language": "zh-CN"

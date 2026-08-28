@@ -9,6 +9,8 @@
 
 set -Eeuo pipefail
 
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
 REPO_URL="https://github.com/cat644142986-afk/-.git"
 BRANCH="codex/master-roadmap-phase-0-1"
 PROJECT_DIR="${PRODUCT_ATELIER_DIR:-$HOME/ProductAtelier-Desktop}"
@@ -49,51 +51,67 @@ if ! xcode-select -p >/dev/null 2>&1; then
   fi
 fi
 
-if [[ -x /opt/homebrew/bin/brew ]]; then
-  eval "$(/opt/homebrew/bin/brew shellenv)"
-elif [[ -x /usr/local/bin/brew ]]; then
-  eval "$(/usr/local/bin/brew shellenv)"
-fi
-
-if ! command -v brew >/dev/null 2>&1; then
-  log "Installing Homebrew"
-  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+load_homebrew() {
   if [[ -x /opt/homebrew/bin/brew ]]; then
     eval "$(/opt/homebrew/bin/brew shellenv)"
   elif [[ -x /usr/local/bin/brew ]]; then
     eval "$(/usr/local/bin/brew shellenv)"
-  else
-    fail "Homebrew was installed but could not be found."
   fi
-fi
+}
+
+ensure_homebrew() {
+  load_homebrew
+  if command -v brew >/dev/null 2>&1; then
+    return
+  fi
+  log "Installing Homebrew for missing development prerequisites"
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  load_homebrew
+  command -v brew >/dev/null 2>&1 || fail "Homebrew was installed but could not be found."
+}
+
+load_homebrew
 
 node_major=0
 if command -v node >/dev/null 2>&1; then
   node_major="$(node -p 'process.versions.node.split(".")[0]')"
 fi
-if [[ "$node_major" -lt 20 ]]; then
+if ! [[ "$node_major" =~ ^[0-9]+$ ]] || [[ "$node_major" -lt 20 ]] || ! command -v npm >/dev/null 2>&1; then
   log "Installing Node.js 20+"
+  ensure_homebrew
   brew install node
 fi
+command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 || fail "Node.js and npm are unavailable after installation."
 
-if ! command -v python3.12 >/dev/null 2>&1; then
-  log "Installing Python 3.12"
-  brew install python@3.12
-fi
 PYTHON_BIN="$(command -v python3.12 || true)"
+if [[ -z "$PYTHON_BIN" ]] && command -v uv >/dev/null 2>&1; then
+  log "Provisioning Python 3.12 in the user directory"
+  uv python install 3.12
+  PYTHON_BIN="$(uv python find --system 3.12 2>/dev/null || true)"
+fi
+if [[ -z "$PYTHON_BIN" ]]; then
+  log "Installing Python 3.12"
+  ensure_homebrew
+  brew install python@3.12
+  PYTHON_BIN="$(command -v python3.12 || true)"
+fi
 [[ -n "$PYTHON_BIN" ]] || fail "Python 3.12 is unavailable after installation."
+"$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)' ||
+  fail "The selected Python runtime is not Python 3.12."
 
 if [[ -f "$HOME/.cargo/env" ]]; then
   # shellcheck disable=SC1091
   source "$HOME/.cargo/env"
 fi
-if ! command -v cargo >/dev/null 2>&1; then
+if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then
   log "Installing the Rust toolchain"
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
     sh -s -- -y --profile minimal
   # shellcheck disable=SC1091
   source "$HOME/.cargo/env"
 fi
+command -v cargo >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1 ||
+  fail "Rust cargo and rustc are unavailable after installation."
 
 log "Synchronizing the Product Atelier source"
 if [[ ! -e "$PROJECT_DIR" ]]; then
@@ -135,7 +153,7 @@ log "Running offline verification (no image-generation charges)"
 npm run test:frontend
 python -m unittest discover -s tests -p 'test_*.py'
 npm run build
-cargo check --manifest-path src-tauri/Cargo.toml --features custom-protocol
+cargo check --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol
 
 resolved_head="$(git rev-parse HEAD)"
 cat > .macos-bootstrap-state <<EOF
