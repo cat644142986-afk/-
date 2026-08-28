@@ -19,7 +19,7 @@ import stat
 import sys
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 
@@ -53,9 +53,21 @@ def _resolved(path: str | Path) -> Path:
     return Path(path).expanduser().resolve(strict=False)
 
 
+def _is_broad_project_root(project: PurePath, home: PurePath) -> bool:
+    """Reject filesystem roots and the user home, but allow a drive child.
+
+    ``D:\\ProductAtelier-Desktop`` has only two ``Path.parts`` entries on
+    Windows (drive anchor plus directory). A generic ``len(parts) < 3`` check
+    therefore rejects the intended production checkout even though all release
+    mutations are further confined to its ``build`` and ``release`` children.
+    """
+    anchor = type(project)(project.anchor)
+    return project == anchor or project == home
+
+
 def _project_root(path: str | Path) -> Path:
     project = _resolved(path)
-    if project == Path(project.anchor) or project == _resolved(Path.home()) or len(project.parts) < 3:
+    if _is_broad_project_root(project, _resolved(Path.home())):
         raise ReleaseError(f"Project root is too broad: {project}")
     sentinels = (project / "package.json", project / "src-tauri" / "tauri.conf.json")
     if not all(sentinel.is_file() for sentinel in sentinels):

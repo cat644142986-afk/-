@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from unittest import mock
 
 
@@ -74,6 +74,26 @@ class PortableReleaseTests(unittest.TestCase):
             candidate_dir=self.candidate,
             expected_git_commit=self.commit,
         )
+
+    def test_project_root_breadth_allows_a_windows_drive_child_only(self) -> None:
+        windows_home = PureWindowsPath("C:/Users/designer")
+        self.assertFalse(portable_release._is_broad_project_root(
+            PureWindowsPath("D:/ProductAtelier-Desktop"), windows_home
+        ))
+        self.assertTrue(portable_release._is_broad_project_root(
+            PureWindowsPath("D:/"), windows_home
+        ))
+        self.assertTrue(portable_release._is_broad_project_root(
+            windows_home, windows_home
+        ))
+
+        posix_home = PurePosixPath("/Users/designer")
+        self.assertFalse(portable_release._is_broad_project_root(
+            PurePosixPath("/workspace/ProductAtelier-Desktop"), posix_home
+        ))
+        self.assertTrue(portable_release._is_broad_project_root(
+            PurePosixPath("/"), posix_home
+        ))
 
     def _write_old_formal(self) -> dict:
         self.formal.mkdir(parents=True)
