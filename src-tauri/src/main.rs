@@ -10,9 +10,11 @@ compile_error!("Product Atelier release builds require --features custom-protoco
 
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::path::PathBuf;
 use std::net::TcpStream;
 use std::io::{Read, Write};
+use std::time::Instant;
 use tauri::{Manager, PhysicalPosition, PhysicalSize, Position, Size, State};
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +24,9 @@ struct AppState {
     python_child: Mutex<Option<Child>>,
     api_port: Mutex<u16>,
     config: Mutex<AppConfig>,
+    started_at: Instant,
+    sidecar_starting: AtomicBool,
+    shutting_down: AtomicBool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -273,6 +278,89 @@ fn get_api_port(state: State<AppState>) -> u16 {
 }
 
 #[tauri::command]
+fn ensure_python_sidecar(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<u16, String> {
+    if state.shutting_down.load(Ordering::SeqCst) {
+        return Err("Application is shutting down".to_string());
+    }
+
+    {
+        let mut child_slot = state.python_child.lock().unwrap();
+        if let Some(child) = child_slot.as_mut() {
+            match child.try_wait() {
+                Ok(None) => return Ok(*state.api_port.lock().unwrap()),
+                Ok(Some(status)) => {
+                    log_msg(&format!(
+                        "[ProductAtelier] Sidecar exited unexpectedly ({status}); restarting"
+                    ));
+                }
+                Err(error) => {
+                    log_msg(&format!(
+                        "[ProductAtelier] Could not inspect sidecar process ({error}); restarting"
+                    ));
+                }
+            }
+        }
+        if let Some(mut stale_child) = child_slot.take() {
+            let _ = stale_child.kill();
+            let _ = stale_child.wait();
+        }
+    }
+
+    if state
+        .sidecar_starting
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Ok(*state.api_port.lock().unwrap());
+    }
+
+    let port = find_free_port();
+    *state.api_port.lock().unwrap() = port;
+    let result = match start_python_sidecar(port, &app) {
+        Some(mut child) => {
+            if state.shutting_down.load(Ordering::SeqCst) {
+                let _ = child.kill();
+                let _ = child.wait();
+                Err("Application is shutting down".to_string())
+            } else {
+                let pid = child.id();
+                *state.python_child.lock().unwrap() = Some(child);
+                log_msg(&format!(
+                    "[ProductAtelier] Sidecar recovery started (pid={pid}, port={port})"
+                ));
+                Ok(port)
+            }
+        }
+        None => Err("Could not restart the local service".to_string()),
+    };
+    state.sidecar_starting.store(false, Ordering::SeqCst);
+    result
+}
+
+#[tauri::command]
+fn report_startup_milestone(state: State<AppState>, milestone: String) -> Result<(), String> {
+    const ALLOWED: &[&str] = &[
+        "dom-ready",
+        "first-paint",
+        "backend-connecting",
+        "backend-ready",
+        "workspace-ready",
+        "backend-unavailable",
+    ];
+    if !ALLOWED.contains(&milestone.as_str()) {
+        return Err("Unknown startup milestone".to_string());
+    }
+    log_msg(&format!(
+        "[ProductAtelier] Startup milestone: {milestone} at {}ms",
+        state.started_at.elapsed().as_millis()
+    ));
+    Ok(())
+}
+
+#[tauri::command]
 fn get_app_config(state: State<AppState>) -> AppConfig {
     state.config.lock().unwrap().clone()
 }
@@ -346,6 +434,7 @@ fn verify_folder_exists(path: String) -> bool {
 
 #[tauri::command]
 fn close_app(app: tauri::AppHandle, state: State<AppState>) {
+    state.shutting_down.store(true, Ordering::SeqCst);
     if let Some(mut child) = state.python_child.lock().unwrap().take() {
         let _ = child.kill();
         let _ = child.wait();
@@ -455,62 +544,32 @@ fn apply_windows_window_chrome<R: tauri::Runtime>(window: &tauri::Window<R>) -> 
     use std::ffi::c_void;
     use windows::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE,
-        DWMWCP_DONOTROUND,
+        DWMWCP_ROUND,
     };
+    use windows::Win32::Graphics::Gdi::SetWindowRgn;
 
     let hwnd = window.hwnd().map_err(|error| error.to_string())?;
-    // The production shell owns its exact 36 logical pixel shape through a
-    // Win32 region. Disable the smaller system rounding so DWM cannot clip a
-    // second, visually conflicting radius over that region.
-    let corner_preference = DWMWCP_DONOTROUND;
-    // DWMWA_COLOR_NONE: suppress the native one-pixel frame. Tauri's native
-    // shadow is disabled as well, so the Win32 region is the only outer edge.
+    // Clear the legacy GDI region first. HRGN clipping is binary and produced
+    // visible stair-step edges at fractional DPI. Windows 11 DWM owns the
+    // composited outer edge; older Windows versions safely fall back to a
+    // rectangular opaque window if the corner attribute is unsupported.
+    unsafe { SetWindowRgn(hwnd, None, true); }
+    let corner_preference = DWMWCP_ROUND;
     let border_color = 0xFFFF_FFFEu32;
     unsafe {
-        DwmSetWindowAttribute(
+        let _ = DwmSetWindowAttribute(
             hwnd,
             DWMWA_WINDOW_CORNER_PREFERENCE,
             std::ptr::from_ref(&corner_preference).cast::<c_void>(),
             std::mem::size_of_val(&corner_preference) as u32,
-        )
-        .map_err(|error| error.to_string())?;
-        DwmSetWindowAttribute(
+        );
+        let _ = DwmSetWindowAttribute(
             hwnd,
             DWMWA_BORDER_COLOR,
             std::ptr::from_ref(&border_color).cast::<c_void>(),
             std::mem::size_of_val(&border_color) as u32,
-        )
-        .map_err(|error| error.to_string())?;
+        );
     }
-    apply_windows_window_region(window)
-}
-
-#[cfg(windows)]
-fn apply_windows_window_region<R: tauri::Runtime>(window: &tauri::Window<R>) -> Result<(), String> {
-    use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ};
-
-    const WINDOW_CORNER_RADIUS_LOGICAL: f64 = 36.0;
-
-    let hwnd = window.hwnd().map_err(|error| error.to_string())?;
-    if window.is_maximized().map_err(|error| error.to_string())? {
-        unsafe { SetWindowRgn(hwnd, None, true); }
-        return Ok(());
-    }
-
-    let size = window.outer_size().map_err(|error| error.to_string())?;
-    let scale = window.scale_factor().map_err(|error| error.to_string())?;
-    let diameter = (WINDOW_CORNER_RADIUS_LOGICAL * 2.0 * scale).round() as i32;
-    let width = i32::try_from(size.width).map_err(|_| "window width exceeds Win32 region limits")?;
-    let height = i32::try_from(size.height).map_err(|_| "window height exceeds Win32 region limits")?;
-    let region = unsafe { CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter) };
-    if region.0.is_null() {
-        return Err("CreateRoundRectRgn returned a null region".to_string());
-    }
-    if unsafe { SetWindowRgn(hwnd, Some(region), true) } == 0 {
-        unsafe { let _ = DeleteObject(HGDIOBJ(region.0)); }
-        return Err("SetWindowRgn failed".to_string());
-    }
-    // After a successful SetWindowRgn call, Windows owns the region handle.
     Ok(())
 }
 
@@ -531,10 +590,11 @@ fn log_window_metrics<R: tauri::Runtime>(window: &tauri::Window<R>) {
 }
 
 fn main() {
+    let process_started_at = Instant::now();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             log_msg(&format!(
                 "[ProductAtelier] Frontend mode: {}",
                 if cfg!(feature = "custom-protocol") {
@@ -552,30 +612,48 @@ fn main() {
             }
             let cfg = load_config();
             let port = find_free_port();
-            let handle = app.handle();
-            let child = start_python_sidecar(port, &handle);
-            if child.is_some() {
+            app.manage(AppState {
+                python_child: Mutex::new(None),
+                api_port: Mutex::new(port),
+                config: Mutex::new(cfg),
+                started_at: process_started_at,
+                sidecar_starting: AtomicBool::new(true),
+                shutting_down: AtomicBool::new(false),
+            });
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                if handle.state::<AppState>().shutting_down.load(Ordering::SeqCst) {
+                    handle.state::<AppState>().sidecar_starting.store(false, Ordering::SeqCst);
+                    return;
+                }
+                let Some(mut child) = start_python_sidecar(port, &handle) else {
+                    log_msg("[ProductAtelier] WARNING: Failed to start Python sidecar");
+                    handle.state::<AppState>().sidecar_starting.store(false, Ordering::SeqCst);
+                    return;
+                };
+                let state = handle.state::<AppState>();
+                let mut child_slot = state.python_child.lock().unwrap();
+                if state.shutting_down.load(Ordering::SeqCst) {
+                    drop(child_slot);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    state.sidecar_starting.store(false, Ordering::SeqCst);
+                    return;
+                }
+                *child_slot = Some(child);
+                drop(child_slot);
+                state.sidecar_starting.store(false, Ordering::SeqCst);
                 log_msg(&format!("[ProductAtelier] Waiting for backend on port {}...", port));
                 if !wait_for_server(port, 45) {
                     log_msg("[ProductAtelier] WARNING: Backend not ready after 45s");
                 } else {
                     log_msg(&format!("[ProductAtelier] Backend ready on port {}", port));
                 }
-            } else {
-                log_msg("[ProductAtelier] WARNING: Failed to start Python sidecar");
-            }
-            app.manage(AppState {
-                python_child: Mutex::new(child),
-                api_port: Mutex::new(port),
-                config: Mutex::new(cfg),
             });
-            // Win32 supplies the exact rounded window region. The web surface
-            // stays opaque and the native Tauri shadow is disabled so no white
-            // frame or desktop content can bleed through the corners.
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_api_port, get_app_config, set_app_config,
+            get_api_port, ensure_python_sidecar, report_startup_milestone, get_app_config, set_app_config,
             save_base64_image, open_in_folder,
             select_folder_dialog, verify_folder_exists,
             close_app,
@@ -586,6 +664,7 @@ fn main() {
             match event {
                 tauri::WindowEvent::CloseRequested { .. } => {
                     let state_mutex = window.state::<AppState>();
+                    state_mutex.shutting_down.store(true, Ordering::SeqCst);
                     let mut child_opt = state_mutex.python_child.lock().unwrap();
                     if let Some(mut child) = child_opt.take() {
                         let _ = child.kill();
@@ -593,14 +672,6 @@ fn main() {
                     }
                 }
                 tauri::WindowEvent::Focused(_) => {}
-                tauri::WindowEvent::Moved(_)
-                | tauri::WindowEvent::Resized(_)
-                | tauri::WindowEvent::ScaleFactorChanged { .. } => {
-                    #[cfg(windows)]
-                    if let Err(error) = apply_windows_window_region(window) {
-                        log_msg(&format!("[ProductAtelier] WARNING: Could not refresh window region: {error}"));
-                    }
-                }
                 _ => {}
             }
         })

@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  boundedJobsForDisplay,
   jobFilterCounts,
+  jobItemsForDisplay,
   jobsForFilter,
   jobSourceIds,
   jobWorkspaceSnapshot,
@@ -27,6 +29,29 @@ test('task dock filters one global queue without changing global counts', () => 
   });
 });
 
+test('large task lists stay segmented without hiding an older active task', () => {
+  const many = Array.from({ length: 31 }, (_, index) => ({
+    id: `job-${index + 1}`,
+    status: index === 30 ? 'running' : 'completed',
+  }));
+  const visible = boundedJobsForDisplay(many, 12);
+  assert.equal(visible.length, 13);
+  assert.equal(visible[0].id, 'job-1');
+  assert.equal(visible.at(-1).id, 'job-31');
+});
+
+test('twenty-item jobs show actionable work first and expand without reordering', () => {
+  const items = Array.from({ length: 20 }, (_, index) => ({
+    id: `item-${index + 1}`,
+    status: index === 3 ? 'failed' : (index === 7 ? 'running' : 'queued'),
+  }));
+  const job = { status: 'running', items };
+  assert.deepEqual(jobItemsForDisplay(job, false, 5).map((item) => item.id), [
+    'item-4', 'item-8', 'item-1', 'item-2', 'item-3',
+  ]);
+  assert.deepEqual(jobItemsForDisplay(job, true).map((item) => item.id), items.map((item) => item.id));
+});
+
 test('job source hydration uses immutable snapshot order and removes duplicates', () => {
   assert.deepEqual(jobSourceIds(jobs), ['a', 'b', 'c', 'd']);
   assert.deepEqual(jobSourceIds(jobs, 2), ['a', 'b']);
@@ -42,6 +67,7 @@ test('returning to a job restores its immutable brief and controls', () => {
       intent: { product_quantity: true },
       parameters: {
         model: 'gpt-image-2', angle: '45top', fidelity: 82,
+        output_ratio: '16:9', output_resolution: '4k',
         variations: 3, platter: 'remove', refine: false,
       },
     },
@@ -51,6 +77,8 @@ test('returning to a job restores its immutable brief and controls', () => {
     brief: '只保留两个汉堡',
     model: 'gpt-image-2',
     angle: '45top',
+    output_ratio: '16:9',
+    output_resolution: '4k',
     fidelity: 82,
     batch: 3,
     platter: 'remove',

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 import threading
 import time
@@ -1672,7 +1673,12 @@ class AtelierLedger:
         except ValueError:
             anchor = datetime.now(timezone.utc)
         eligible_at = anchor + timedelta(days=retention_days)
-        retention_pending = datetime.now(timezone.utc) < eligible_at
+        now_utc = datetime.now(timezone.utc)
+        retention_pending = now_utc < eligible_at
+        retention_remaining_days = max(
+            0,
+            int(math.ceil((eligible_at - now_utc).total_seconds() / 86400)),
+        )
         reference_count = sum(len(ids) for ids in references.values())
         blockers = []
         if active_memberships:
@@ -1689,6 +1695,7 @@ class AtelierLedger:
             "references": references,
             "reference_count": reference_count,
             "retention_days": retention_days,
+            "retention_remaining_days": retention_remaining_days,
             "purge_eligible_at": eligible_at.isoformat(timespec="milliseconds"),
             "retention_pending": retention_pending,
             "blockers": blockers,
@@ -1846,6 +1853,129 @@ class AtelierLedger:
                 )
         return self.get_workflow_draft(mode)
 
+    def complete_workflow(
+        self,
+        mode: str,
+        *,
+        expected_revision: int,
+        client_request_id: str,
+        job_id: str,
+        result_asset_id: str,
+    ) -> dict[str, Any]:
+        """Atomically close one task scene while preserving its durable history."""
+        if mode not in WORKFLOW_DRAFT_IDS:
+            raise ValueError(f"unsupported workflow mode: {mode}")
+        request_id = str(client_request_id).strip()
+        idempotent_id("completion", request_id)
+        job_id = str(job_id).strip()
+        result_asset_id = str(result_asset_id).strip()
+        if not job_id or not result_asset_id:
+            raise ValueError("job_id and result_asset_id are required")
+        candidate = {
+            "client_request_id": request_id,
+            "mode": mode,
+            "job_id": job_id,
+            "result_asset_id": result_asset_id,
+        }
+        event_id: int | None = None
+        replayed = False
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            for event in connection.execute(
+                "SELECT * FROM events WHERE event_type = 'workspace.completed' ORDER BY id DESC"
+            ).fetchall():
+                payload = decode_json(event["payload_json"], {})
+                if str(payload.get("client_request_id") or "") != request_id:
+                    continue
+                comparable = {key: payload.get(key) for key in candidate}
+                if comparable != candidate:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different workspace completion"
+                    )
+                event_id = int(event["id"])
+                replayed = True
+                break
+
+            if not replayed:
+                draft = connection.execute(
+                    "SELECT * FROM workflow_drafts WHERE mode = ?", (mode,)
+                ).fetchone()
+                if draft is None:
+                    raise LedgerSchemaError(f"missing workflow draft: {mode}")
+                if int(draft["revision"]) != int(expected_revision):
+                    raise DraftRevisionConflictError(
+                        f"draft {mode} is revision {draft['revision']}, not {expected_revision}"
+                    )
+                job = connection.execute(
+                    "SELECT id, session_id, mode FROM jobs WHERE id = ?", (job_id,)
+                ).fetchone()
+                if job is None:
+                    raise KeyError(f"unknown job: {job_id}")
+                if str(job["mode"]) != mode:
+                    raise ValueError("completed job does not belong to this workflow")
+                if str(draft["active_job_id"] or "") != job_id:
+                    raise DraftRevisionConflictError(
+                        "the workflow cursor no longer points to the completed job"
+                    )
+                generations = connection.execute(
+                    """
+                    SELECT g.id, g.result_asset_ids_json
+                    FROM generations g
+                    JOIN job_items ji ON ji.generation_id = g.id
+                    WHERE ji.job_id = ?
+                    """,
+                    (job_id,),
+                ).fetchall()
+                matching_generation = next((
+                    row for row in generations
+                    if result_asset_id in decode_json(row["result_asset_ids_json"], [])
+                ), None)
+                if matching_generation is None:
+                    raise ValueError("completed result does not belong to its job")
+
+                next_revision = int(draft["revision"]) + 1
+                connection.execute(
+                    """
+                    UPDATE workflow_drafts
+                    SET revision = ?, brief_json = '{}', intent_json = '{}',
+                        active_job_id = NULL, current_generation_id = NULL,
+                        current_result_asset_id = NULL, compare_state_json = '{}',
+                        ui_state_json = '{}', mask_state_json = '{}', updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (next_revision, now, draft["id"]),
+                )
+                connection.execute(
+                    "DELETE FROM draft_asset_selections WHERE draft_id = ?", (draft["id"],)
+                )
+                payload = {
+                    **candidate,
+                    "generation_id": str(matching_generation["id"]),
+                    "completed_revision": next_revision,
+                    "completed_at": now,
+                }
+                cursor = connection.execute(
+                    """
+                    INSERT INTO events(
+                        session_id, generation_id, event_type, payload_json, created_at
+                    ) VALUES(?, ?, 'workspace.completed', ?, ?)
+                    """,
+                    (
+                        str(job["session_id"]), str(matching_generation["id"]),
+                        encode_json(payload), now,
+                    ),
+                )
+                event_id = int(cursor.lastrowid)
+                connection.execute(
+                    "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                    (now, str(job["session_id"])),
+                )
+        return {
+            "event_id": event_id,
+            "replayed": replayed,
+            "draft": self.get_workflow_draft(mode),
+        }
+
     def has_asset_blob(self, sha256: str) -> bool:
         with self._connection() as connection:
             return connection.execute(
@@ -2002,15 +2132,24 @@ class AtelierLedger:
                 for position, source_asset_id in enumerate(source_asset_ids):
                     item_id = new_id("item")
                     generation_id = new_id("gen")
+                    adjustment = (
+                        parameters.get("adjustment")
+                        if isinstance(parameters.get("adjustment"), dict)
+                        else {}
+                    )
+                    parent_generation_id = (
+                        str(adjustment.get("parent_generation_id") or "").strip()
+                        or None
+                    )
                     connection.execute(
                         """
                         INSERT INTO generations(
-                            id, session_id, task_id, model, parameters_json,
-                            knowledge_refs_json, status, created_at
-                        ) VALUES(?, ?, ?, ?, ?, ?, 'queued', ?)
+                            id, session_id, task_id, parent_generation_id, model,
+                            parameters_json, knowledge_refs_json, status, created_at
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?, 'queued', ?)
                         """,
                         (
-                            generation_id, session_id, item_id,
+                            generation_id, session_id, item_id, parent_generation_id,
                             str(parameters.get("model", "")), encode_json(parameters),
                             encode_json(parameters.get("knowledge_refs") or []), now,
                         ),
@@ -2048,7 +2187,14 @@ class AtelierLedger:
 
     def get_job(self, job_id: str, *, include_attempts: bool = True) -> dict[str, Any]:
         with self._connection() as connection:
-            row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            row = connection.execute(
+                """
+                SELECT j.*, s.title AS session_title
+                FROM jobs j JOIN sessions s ON s.id = j.session_id
+                WHERE j.id = ?
+                """,
+                (job_id,),
+            ).fetchone()
             if row is None:
                 raise KeyError(f"unknown job: {job_id}")
             job = self._job_row(row)
@@ -2294,6 +2440,22 @@ class AtelierLedger:
             ).fetchone()
             if source is None:
                 raise KeyError(f"unknown source asset: {source_asset_id}")
+            lineage_parent_ids = [
+                str(output.get("parent_asset_id") or source_asset_id)
+                for output in normalized
+            ]
+            placeholders = ",".join("?" for _ in set(lineage_parent_ids))
+            lineage_rows = connection.execute(
+                f"SELECT id FROM assets WHERE id IN ({placeholders})",
+                tuple(set(lineage_parent_ids)),
+            ).fetchall()
+            known_lineage_parents = {str(row["id"]) for row in lineage_rows}
+            missing_lineage = [
+                asset_id for asset_id in lineage_parent_ids
+                if asset_id not in known_lineage_parents
+            ]
+            if missing_lineage:
+                raise KeyError(f"unknown result lineage parent: {missing_lineage[0]}")
             job_item = None
             if job_item_id:
                 job_item = connection.execute(
@@ -2316,7 +2478,9 @@ class AtelierLedger:
                 raise LedgerSchemaError(
                     f"generation already has committed results: {generation_id}"
                 )
-            for asset_id, output in zip(asset_ids, normalized):
+            for asset_id, output, lineage_parent_id in zip(
+                asset_ids, normalized, lineage_parent_ids
+            ):
                 role = str(output.get("role", "result_main"))
                 if role not in {"result_main", "result_cutout"}:
                     raise ValueError(f"unsupported generation result role: {role}")
@@ -2333,7 +2497,7 @@ class AtelierLedger:
                     (
                         asset_id,
                         generation["session_id"],
-                        source_asset_id,
+                        lineage_parent_id,
                         role,
                         path,
                         str(output.get("name", Path(path).name)),
@@ -3237,10 +3401,32 @@ class AtelierLedger:
         reason: str = "",
         structured: dict[str, Any] | None = None,
         scope: str = "session",
+        feedback_id: str | None = None,
     ) -> dict[str, Any]:
-        feedback_id = new_id("fb")
+        feedback_id = str(feedback_id or new_id("fb"))
+        candidate = {
+            "id": feedback_id,
+            "session_id": str(session_id),
+            "generation_id": generation_id,
+            "asset_id": asset_id,
+            "signal": str(signal),
+            "reason": str(reason),
+            "structured": dict(structured or {}),
+            "scope": str(scope),
+        }
         now = utc_now()
-        with self._connection() as connection:
+        with self._immediate_connection() as connection:
+            existing_row = connection.execute(
+                "SELECT * FROM feedback WHERE id = ?", (feedback_id,)
+            ).fetchone()
+            if existing_row is not None:
+                existing = self._feedback_row(existing_row)
+                comparable = {key: existing.get(key) for key in candidate}
+                if comparable != candidate:
+                    raise IdempotencyConflictError(
+                        "feedback id already belongs to different evidence"
+                    )
+                return existing
             connection.execute(
                 """
                 INSERT INTO feedback(
@@ -3249,27 +3435,46 @@ class AtelierLedger:
                 ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    feedback_id, session_id, generation_id, asset_id, signal,
-                    reason, encode_json(structured), scope, now,
+                    feedback_id, candidate["session_id"], generation_id, asset_id,
+                    candidate["signal"], candidate["reason"],
+                    encode_json(candidate["structured"]), candidate["scope"], now,
                 ),
             )
-        self.add_event(
-            session_id,
-            "feedback.recorded",
-            {"feedback_id": feedback_id, "signal": signal, "scope": scope},
-            generation_id=generation_id,
-        )
-        return {
-            "id": feedback_id,
-            "session_id": session_id,
-            "generation_id": generation_id,
-            "asset_id": asset_id,
-            "signal": signal,
-            "reason": reason,
-            "structured": structured or {},
-            "scope": scope,
-            "created_at": now,
-        }
+            connection.execute(
+                """
+                INSERT INTO events(
+                    session_id, generation_id, event_type, payload_json, created_at
+                ) VALUES(?, ?, 'feedback.recorded', ?, ?)
+                """,
+                (
+                    candidate["session_id"], generation_id,
+                    encode_json({
+                        "feedback_id": feedback_id,
+                        "signal": candidate["signal"],
+                        "scope": candidate["scope"],
+                        "review_id": candidate["structured"].get("review_id"),
+                    }),
+                    now,
+                ),
+            )
+            connection.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                (now, candidate["session_id"]),
+            )
+            row = connection.execute(
+                "SELECT * FROM feedback WHERE id = ?", (feedback_id,)
+            ).fetchone()
+        assert row is not None
+        return self._feedback_row(row)
+
+    def get_feedback(self, feedback_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM feedback WHERE id = ?", (feedback_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown feedback: {feedback_id}")
+        return self._feedback_row(row)
 
     def list_feedback(self, limit: int = 500) -> list[dict[str, Any]]:
         """Return recent explicit feedback with the session scope needed for synthesis."""
@@ -3774,6 +3979,8 @@ class AtelierLedger:
     def _job_row(row: sqlite3.Row) -> dict[str, Any]:
         item = dict(row)
         item["parameters"] = decode_json(item.pop("parameters_json", "{}"), {})
+        if "session_title" in item:
+            item["title"] = item.pop("session_title") or item.get("mode", "")
         return item
 
     @staticmethod

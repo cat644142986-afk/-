@@ -418,3 +418,36 @@ class KnowledgeCompiler:
             "prompt": enriched_prompt,
             "negative_prompt": enriched_negative,
         }
+
+    @staticmethod
+    def execution_evidence(bundle: dict[str, Any] | None) -> list[dict[str, Any]]:
+        """Freeze the exact rules and sources used by one prompt execution.
+
+        Generations keep ``knowledge_refs`` for backwards compatibility. Execution
+        traces additionally store rule text so a completed job can later explain the
+        exact constraints it used without recompiling the live knowledge vault.
+        """
+        payload = dict(bundle or {})
+        evidence: list[dict[str, Any]] = []
+        for text in payload.get("intent_lock_rules") or []:
+            value = str(text).strip()
+            if value:
+                evidence.append({"kind": "intent_lock", "text": value})
+        for kind, key in (("positive_rule", "positive_rules"), ("negative_rule", "negative_rules")):
+            for item in payload.get(key) or []:
+                if isinstance(item, dict):
+                    value = str(item.get("text", "")).strip()
+                    source = item.get("source")
+                else:
+                    value = str(item).strip()
+                    source = None
+                if not value:
+                    continue
+                row: dict[str, Any] = {"kind": kind, "text": value}
+                if isinstance(source, dict):
+                    row["source"] = source
+                evidence.append(row)
+        for source in payload.get("sources") or []:
+            if isinstance(source, dict):
+                evidence.append({"kind": "source", "source": source})
+        return evidence

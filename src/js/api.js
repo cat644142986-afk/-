@@ -104,7 +104,15 @@ export async function checkHealth() {
     const to = setTimeout(function() { ctrl.abort(); }, 5000);
     const resp = await fetch(base + '/api/health', { signal: ctrl.signal }).catch(function() { return null; });
     clearTimeout(to);
-    if (!resp || !resp.ok) return { ok: false };
+    if (!resp || !resp.ok) {
+      if (isTauriRuntime) {
+        try {
+          const port = await invoke('ensure_python_sidecar');
+          API_BASE = 'http://127.0.0.1:' + port;
+        } catch (_) { /* the connection UI owns the retry/error state */ }
+      }
+      return { ok: false };
+    }
     const data = await resp.json();
     return Object.assign({ ok: true }, data);
   } catch(e) { return { ok: false }; }
@@ -128,6 +136,10 @@ export async function saveSettings(settings) {
 }
 export async function getAppConfig() { return isTauriRuntime ? invoke('get_app_config') : {}; }
 export async function setAppConfig(config) { return isTauriRuntime ? invoke('set_app_config', { config: config }) : config; }
+export async function reportStartupMilestone(milestone) {
+  if (!isTauriRuntime) return;
+  try { await invoke('report_startup_milestone', { milestone }); } catch (_) { /* diagnostics only */ }
+}
 
 // Balance
 export async function checkBalance() { return fetchJSON('/api/balance'); }
@@ -337,6 +349,22 @@ export async function submitResultReview(jobId, payload) {
   });
 }
 
+export async function adjustResult(jobId, payload) {
+  return fetchJSON('/api/jobs/' + encodeURIComponent(jobId) + '/adjustments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function completeWorkspace(mode, payload) {
+  return fetchJSON('/api/workspaces/' + encodeURIComponent(mode) + '/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
 // Knowledge + creation ledger
 export async function getKnowledgeStatus() { return fetchJSON('/api/knowledge/status'); }
 export async function compileKnowledge(context) {
@@ -364,6 +392,9 @@ export async function recordFeedback(sessionId, data) {
   });
 }
 export async function getMemorySuggestions(status) { return fetchJSON('/api/memory/suggestions?status=' + encodeURIComponent(status || 'pending')); }
+export async function getMemorySuggestion(id) {
+  return fetchJSON('/api/memory/suggestions/' + encodeURIComponent(id));
+}
 export async function synthesizeMemory() {
   return fetchJSON('/api/memory/synthesize', { method: 'POST' });
 }

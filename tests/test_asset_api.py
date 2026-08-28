@@ -394,6 +394,7 @@ class AssetApiTests(unittest.TestCase):
         ).json()
         self.assertFalse(active_refs["purge_allowed"])
         self.assertIn("active_membership", active_refs["blockers"])
+        self.assertIn("retention_remaining_days", active_refs)
         self.client.delete(f"/api/collections/product/assets/{first['id']}")
         retention_block = self.client.delete(
             f"/api/trash/assets/{first['id']}",
@@ -592,11 +593,189 @@ class AssetApiTests(unittest.TestCase):
             first_review.json()["review"]["id"], replay_review.json()["review"]["id"]
         )
         self.assertEqual(
+            first_review.json()["review"]["feedback_id"],
+            replay_review.json()["review"]["feedback_id"],
+        )
+        self.assertEqual(
+            first_review.json()["review"]["learning_receipt"]["status"],
+            "accumulating",
+        )
+        self.assertEqual(
+            first_review.json()["review"]["learning_receipt"]["independent_sessions"],
+            1,
+        )
+        self.assertEqual(first_review.json()["review"]["learning_receipt"]["threshold"], 3)
+        self.assertEqual(
             self.client.get(f"/api/jobs/{job['id']}/traces").json()["count"], 1
         )
         self.assertEqual(
             self.client.get(f"/api/jobs/{job['id']}/reviews").json()["count"], 1
         )
+        self.assertEqual(self.ledger.stats()["counts"]["feedback"], 1)
+
+    def test_workspace_completion_is_atomic_idempotent_and_clears_only_task_state(self) -> None:
+        source = self.client.post(
+            "/api/assets/import",
+            files={"file": ("source.png", png_bytes(), "image/png")},
+        ).json()
+        job, _ = self.ledger.create_job(
+            "single",
+            [source["id"]],
+            engine_key="mock-cloud",
+            parameters={"model": "offline-model"},
+            idempotency_key="workspace-completion-job",
+        )
+        item_id = job["items"][0]["id"]
+        generation_id = job["items"][0]["generation_id"]
+        self.ledger.claim_job_item(item_id)
+        result_path = self.output_dir / "completion-result.png"
+        result_path.write_bytes(png_bytes((30, 170, 80)))
+        result_asset_id = self.ledger.commit_generation_results(
+            generation_id,
+            source["id"],
+            [{"path": str(result_path), "name": result_path.name, "role": "result_main"}],
+            job_item_id=item_id,
+        )[0]
+        active = self.ledger.save_workflow_draft(
+            "single",
+            expected_revision=1,
+            selected_asset_ids=[source["id"]],
+            brief={"user_request": "task-only brief"},
+            intent={"packaging_text": True},
+            parameters={"model": "offline-model", "fidelity": 70},
+            active_job_id=job["id"],
+            current_generation_id=generation_id,
+            current_result_asset_id=result_asset_id,
+            compare_state={"position": 0.4},
+            ui_state={"result_tab": "main"},
+            mask_state={"asset_id": source["id"]},
+        )
+        payload = {
+            "expected_revision": active["revision"],
+            "client_request_id": "complete-current-workspace-1",
+            "job_id": job["id"],
+            "result_asset_id": result_asset_id,
+        }
+
+        completed = self.client.post("/api/workspaces/single/complete", json=payload)
+        replayed = self.client.post("/api/workspaces/single/complete", json=payload)
+
+        self.assertEqual(completed.status_code, 200, completed.text)
+        self.assertEqual(replayed.status_code, 200, replayed.text)
+        self.assertFalse(completed.json()["replayed"])
+        self.assertTrue(replayed.json()["replayed"])
+        draft = completed.json()["draft"]
+        self.assertEqual(draft["selected_asset_ids"], [])
+        self.assertEqual(draft["brief"], {})
+        self.assertEqual(draft["intent"], {})
+        self.assertIsNone(draft["active_job_id"])
+        self.assertIsNone(draft["current_generation_id"])
+        self.assertIsNone(draft["current_result_asset_id"])
+        self.assertEqual(draft["compare_state"], {})
+        self.assertEqual(draft["ui_state"], {})
+        self.assertEqual(draft["mask_state"], {})
+        self.assertEqual(draft["parameters"], {"model": "offline-model", "fidelity": 70})
+        self.assertEqual(
+            self.ledger.get_job(job["id"])["items"][0]["result_asset_ids"],
+            [result_asset_id],
+        )
+        connection = sqlite3.connect(self.ledger.db_path)
+        try:
+            event_count = connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type = 'workspace.completed'"
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(event_count, 1)
+
+    def test_suggest_review_returns_the_actual_pending_suggestion_and_stable_receipt(self) -> None:
+        def create_reviewable_job(index: int):
+            source = self.client.post(
+                "/api/assets/import",
+                files={"file": (f"source-{index}.png", png_bytes((200, 80 + index, 40)), "image/png")},
+            ).json()
+            job, _ = self.ledger.create_job(
+                "single",
+                [source["id"]],
+                engine_key="mock-cloud",
+                parameters={"model": "offline-model"},
+                idempotency_key=f"suggest-review-job-{index}",
+            )
+            item = job["items"][0]
+            self.ledger.claim_job_item(item["id"])
+            result_path = self.output_dir / f"suggest-result-{index}.png"
+            result_path.write_bytes(png_bytes((40, 120, 160 + index)))
+            result_id = self.ledger.commit_generation_results(
+                item["generation_id"],
+                source["id"],
+                [{"path": str(result_path), "name": result_path.name, "role": "result_main"}],
+                job_item_id=item["id"],
+            )[0]
+            return job, item["generation_id"], result_id
+
+        first_job, first_generation, first_result = create_reviewable_job(1)
+        second_job, second_generation, second_result = create_reviewable_job(2)
+        first = self.client.post(
+            f"/api/jobs/{first_job['id']}/reviews",
+            json={
+                "client_request_id": "specific-evidence-1",
+                "result_asset_id": first_result,
+                "generation_id": first_generation,
+                "decision": "adjust",
+                "note": "包装文字变形",
+                "learning_action": "record",
+            },
+        )
+        second_payload = {
+            "client_request_id": "specific-evidence-2",
+            "result_asset_id": second_result,
+            "generation_id": second_generation,
+            "decision": "adjust",
+            "note": "包装文字变形",
+            "learning_action": "suggest",
+        }
+        second = self.client.post(
+            f"/api/jobs/{second_job['id']}/reviews", json=second_payload
+        )
+        replay = self.client.post(
+            f"/api/jobs/{second_job['id']}/reviews", json=second_payload
+        )
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(first.json()["review"]["learning_receipt"]["status"], "accumulating")
+        receipt = second.json()["review"]["learning_receipt"]
+        self.assertEqual(receipt["status"], "pending")
+        self.assertEqual(receipt["independent_sessions"], 2)
+        self.assertEqual(receipt["threshold"], 2)
+        self.assertTrue(receipt["suggestion_id"])
+        self.assertEqual(
+            replay.json()["review"]["learning_receipt"]["suggestion_id"],
+            receipt["suggestion_id"],
+        )
+        self.assertEqual(self.ledger.stats()["counts"]["feedback"], 2)
+        self.assertEqual(self.ledger.stats()["counts"]["result_reviews"], 2)
+        self.assertEqual(self.ledger.stats()["pending_memory"], 1)
+        pending = self.client.get("/api/memory/suggestions?status=pending")
+        self.assertEqual(pending.status_code, 200, pending.text)
+        suggestion = pending.json()[0]
+        self.assertEqual(suggestion["id"], receipt["suggestion_id"])
+        self.assertEqual(
+            {source["job_id"] for source in suggestion["source_results"]},
+            {first_job["id"], second_job["id"]},
+        )
+        self.assertEqual(
+            {source["result_asset_id"] for source in suggestion["source_results"]},
+            {first_result, second_result},
+        )
+        self.assertTrue(all(source["review_id"] for source in suggestion["source_results"]))
+        self.assertTrue(all("path" not in source for source in suggestion["source_results"]))
+        direct = self.client.get(
+            f"/api/memory/suggestions/{receipt['suggestion_id']}"
+        )
+        self.assertEqual(direct.status_code, 200, direct.text)
+        self.assertEqual(direct.json()["source_results"], suggestion["source_results"])
 
 
 if __name__ == "__main__":

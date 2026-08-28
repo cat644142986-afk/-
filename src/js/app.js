@@ -1,21 +1,43 @@
 import * as API from './api.js';
 import {
   collectResultItems,
+  comparisonPresentation,
   createSubmissionSnapshot,
   itemCompletionProgress,
   jobCompletionProgress,
   jobLifecycleActions,
   jobsRenderSignature,
+  knowledgeBundleFromEvidence,
   multiFileOutputPlan,
+  normalizeFeedbackSignal,
   processResultItems,
   queueCompletionProgress,
   selectionAfterImport,
+  selectionForRestoredResult,
   submissionFingerprint,
 } from './workspace-state.js';
-import { createAssetManagerController } from './studio-assets.js';
+import { memoryProjectionState } from './memory-projection.js';
+import {
+  backendDecisionForSignal,
+  comparisonTargetForItems,
+  feedbackReceiptCopy,
+  normalizeCompareState,
+  normalizeReviewReasonCodes,
+  reviewReasonLabel,
+  reviewReasonOptions,
+  reviewStateForResult,
+} from './result-review.js';
+import {
+  completionRequestKey,
+  locateResultVersion,
+  selectRestorableResult,
+} from './workspace-lifecycle.js';
+import { boundedAssetRenderList, createAssetManagerController } from './studio-assets.js';
 import { JOB_STATUS, MODE_CONFIG, MODE_IDS, PAGE_CONFIG, STAGE_IDS } from './studio-config.js';
 import {
+  boundedJobsForDisplay,
   jobFilterCounts,
+  jobItemsForDisplay,
   jobsForFilter,
   jobSourceIds,
   jobWorkspaceSnapshot,
@@ -23,13 +45,16 @@ import {
 import { createSettingsController } from './studio-settings.js';
 import { createWorkflowDockController } from './studio-shell.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
+import { statusPanelHtml } from './status-view.js';
 
 const MODE_STATE_KEY = 'pa-workspace-ui-v2';
 const PENDING_SUBMISSION_KEY = 'pa-pending-job-v1';
+const PENDING_REVIEW_KEY = 'pa-pending-result-reviews-v1';
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 let modalReturnFocus = null;
 let drawerReturnFocus = null;
+let workspaceStatusTimer = null;
 
 const state = createStudioState(MODE_IDS);
 const workflowDock = createWorkflowDockController();
@@ -53,6 +78,7 @@ const assetManager = createAssetManagerController({
   loadWorkspace,
   syncLegacySelection,
   renderQueue,
+  toggleAssetSelection,
   toast,
   openDrawer,
 });
@@ -128,6 +154,54 @@ function persistWorkspaceState() {
   } catch (_) { /* local preferences are best effort */ }
 }
 
+function restorePendingReviewRequests() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PENDING_REVIEW_KEY) || '{}');
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+      state.pendingReviewRequests = saved;
+    }
+  } catch (_) { /* obsolete retry data must not block startup */ }
+}
+
+function persistPendingReviewRequests() {
+  try {
+    const keys = Object.keys(state.pendingReviewRequests || {});
+    if (keys.length) localStorage.setItem(PENDING_REVIEW_KEY, JSON.stringify(state.pendingReviewRequests));
+    else localStorage.removeItem(PENDING_REVIEW_KEY);
+  } catch (_) { /* in-memory retry protection remains available */ }
+}
+
+function reviewRequestId(resultAssetId, payload) {
+  const key = String(resultAssetId || '');
+  const fingerprint = JSON.stringify({
+    generation_id: payload.generation_id || null,
+    decision: payload.decision,
+    reason_codes: payload.reason_codes || [],
+    note: payload.note || '',
+    learning_action: payload.learning_action || 'none',
+  });
+  const existing = state.pendingReviewRequests[key];
+  if (existing?.fingerprint === fingerprint && existing?.requestId) return existing.requestId;
+  const requestId = createClientRequestId();
+  state.pendingReviewRequests[key] = { fingerprint, requestId };
+  persistPendingReviewRequests();
+  return requestId;
+}
+
+function clearPendingReviewRequest(resultAssetId, requestId) {
+  const key = String(resultAssetId || '');
+  if (state.pendingReviewRequests[key]?.requestId !== requestId) return;
+  delete state.pendingReviewRequests[key];
+  persistPendingReviewRequests();
+}
+
+function discardPendingReviewRequest(resultAssetId) {
+  const key = String(resultAssetId || '');
+  if (!state.pendingReviewRequests[key]) return;
+  delete state.pendingReviewRequests[key];
+  persistPendingReviewRequests();
+}
+
 function restoreWorkspaceState() {
   try {
     const saved = JSON.parse(localStorage.getItem(MODE_STATE_KEY) || '{}');
@@ -148,6 +222,26 @@ function formatApiError(error, fallback = '本地服务暂不可用') {
   return message.slice(0, 280);
 }
 
+function setWorkspaceSyncState(kind = '', options = {}) {
+  const host = $('#workspace-sync-state');
+  if (!host) return;
+  if (workspaceStatusTimer) window.clearTimeout(workspaceStatusTimer);
+  workspaceStatusTimer = null;
+  if (!kind) {
+    host.hidden = true;
+    host.replaceChildren();
+    delete host.dataset.kind;
+    return;
+  }
+  host.dataset.kind = kind;
+  host.innerHTML = statusPanelHtml(kind, { ...options, compact: true, inline: true });
+  host.hidden = false;
+  const autoHide = Number(options.autoHide || 0);
+  if (autoHide > 0) workspaceStatusTimer = window.setTimeout(() => {
+    if (host.dataset.kind === kind) setWorkspaceSyncState();
+  }, autoHide);
+}
+
 function captureModeSnapshot(mode = state.currentMode) {
   if (!MODE_CONFIG[mode] || !$('#brief-input')) return;
   const previous = state.modeSnapshots[mode] || {};
@@ -155,6 +249,8 @@ function captureModeSnapshot(mode = state.currentMode) {
     brief: $('#brief-input').value,
     model: $('#param-model').value,
     angle: $('#param-angle').value,
+    output_ratio: $('#param-output-ratio').value,
+    output_resolution: $('#param-output-resolution').value,
     fidelity: Number($('#param-fidelity').value),
     batch: Number($('#param-batch').value),
     platter: getPlatter(),
@@ -185,9 +281,16 @@ function modeBrief(mode) {
     platform: 'ecommerce',
     output_kind: MODE_CONFIG[mode].outputKind,
     angle: snapshot.angle || 'auto',
+    output_ratio: snapshot.output_ratio || 'original',
+    output_resolution: snapshot.output_resolution || '2k',
     platter: snapshot.platter || 'auto',
     fidelity: Number(snapshot.fidelity ?? 40),
     intent_locks: snapshot.intent_locks || {},
+    output_spec: {
+      ratio: snapshot.output_ratio || 'original',
+      resolution: snapshot.output_resolution || '2k',
+      format: mode === 'cutout-batch' ? 'transparent PNG' : 'JPG+transparent PNG',
+    },
   };
 }
 
@@ -227,15 +330,32 @@ async function flushWorkspaceDraft(mode = state.currentMode, silent = false) {
     const draft = response?.draft || response;
     state.workspaceDrafts[mode] = draft;
     state.workspaceRevisions[mode] = Number(draft?.revision || state.workspaceRevisions[mode]);
+    if (state.draftConflictModes.delete(mode) && mode === state.currentMode) {
+      setWorkspaceSyncState('recovered', {
+        title: '修改已安全合并',
+        detail: `已保存为 revision ${state.workspaceRevisions[mode]}，本次内容没有丢失。`,
+        autoHide: 5200,
+      });
+    }
     return draft;
   } catch (error) {
     if (Number(error?.status) === 409 && error?.detail?.current) {
       const current = error.detail.current;
       state.workspaceDrafts[mode] = current;
       state.workspaceRevisions[mode] = Number(current.revision || 1);
+      state.draftConflictModes.add(mode);
+      if (mode === state.currentMode) setWorkspaceSyncState('conflict', {
+        title: '检测到另一处更新',
+        detail: `已读取 revision ${state.workspaceRevisions[mode]}，正在合并本次修改。`,
+      });
       state.draftSaveQueued.add(mode);
-    } else if (!silent) {
-      toast(`草稿保存失败：${formatApiError(error, '工作区暂不可写')}`, 'error');
+    } else {
+      if (mode === state.currentMode) setWorkspaceSyncState('error', {
+        title: '本次修改尚未保存',
+        detail: formatApiError(error, '工作区暂不可写'),
+        action: { label: '重新保存', attribute: 'data-workspace-status-action', value: 'retry-save' },
+      });
+      if (!silent) toast(`草稿保存失败：${formatApiError(error, '工作区暂不可写')}`, 'error');
     }
     return null;
   } finally {
@@ -244,6 +364,22 @@ async function flushWorkspaceDraft(mode = state.currentMode, silent = false) {
       scheduleWorkspaceDraftSave(mode, 0);
     }
   }
+}
+
+async function settleWorkspaceDraft(mode = state.currentMode) {
+  for (let pass = 0; pass < 4; pass += 1) {
+    if (state.draftSaveTimers.has(mode) || state.draftSaveQueued.has(mode)) {
+      await flushWorkspaceDraft(mode, true);
+    }
+    const deadline = performance.now() + 5000;
+    while (state.draftSavesInFlight.has(mode) && performance.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 25));
+    }
+    if (!state.draftSavesInFlight.has(mode)
+      && !state.draftSaveTimers.has(mode)
+      && !state.draftSaveQueued.has(mode)) return true;
+  }
+  return false;
 }
 
 function hydrateWorkspace(mode, payload) {
@@ -263,6 +399,9 @@ function hydrateWorkspace(mode, payload) {
       ? (state.modeSnapshots[mode]?.ui_state?.folder_batch || null)
       : null;
     state.assetsByCollection[collection] = assets;
+    if (mode === state.currentMode) {
+      state.resultReviews = Array.isArray(payload?.recent_reviews) ? payload.recent_reviews : [];
+    }
     if (MODE_CONFIG[state.currentMode]?.collection === collection) state.assets = assets;
     state.workspaceLoaded.add(mode);
     state.restoredModes.add(mode);
@@ -274,6 +413,7 @@ function hydrateWorkspace(mode, payload) {
 async function loadWorkspace(mode = state.currentMode, silent = false) {
   if (!MODE_CONFIG[mode]) return false;
   const requestVersion = ++state.workspaceRequestVersions[mode];
+  const wasLoaded = state.workspaceLoaded.has(mode);
   try {
     const payload = await API.getWorkspace(mode, { timeoutMs: 12000 });
     if (requestVersion !== state.workspaceRequestVersions[mode]) return null;
@@ -297,17 +437,59 @@ async function loadWorkspace(mode = state.currentMode, silent = false) {
       }
       if (mode === state.currentMode) {
         const activeJob = payload.active_jobs?.[0] || null;
-        state.currentTaskId = draftActiveJobId(mode) || activeJob?.id || state.currentTaskId;
-        await restoreWorkspaceResult(mode, payload);
+        state.currentTaskId = draftActiveJobId(mode) || activeJob?.id || '';
+        state.currentSessionId = activeJob?.session_id || '';
+        const restored = await restoreWorkspaceResult(mode, payload);
+        if (!restored) clearVisibleResultContext(activeJob);
+        const restoredContent = Boolean(
+          (payload.draft?.selected_asset_ids || []).length
+          || payload.draft?.active_job_id
+          || payload.draft?.current_result_asset_id
+          || activeJob,
+        );
+        if (!wasLoaded && restoredContent) setWorkspaceSyncState('recovered', {
+          title: '上次工作现场已恢复',
+          detail: restored ? '素材、参数、任务与当前结果均已恢复。' : '素材、参数与任务进度均已恢复。',
+          autoHide: 5200,
+        });
+        else if ($('#workspace-sync-state')?.dataset.kind === 'offline') setWorkspaceSyncState('recovered', {
+          title: '连接已恢复',
+          detail: '工作区与本地账本已重新同步。',
+          autoHide: 4200,
+        });
       }
     }
     return true;
   } catch (error) {
     if (requestVersion !== state.workspaceRequestVersions[mode]) return null;
     if (mode === state.currentMode) state.assetsAvailable = false;
+    if (mode === state.currentMode) setWorkspaceSyncState('offline', {
+      title: '当前工作区暂时离线',
+      detail: '素材与当前选择仍在本机；恢复连接后可继续。',
+      action: { label: '重试连接', attribute: 'data-workspace-status-action', value: 'retry' },
+    });
     if (!silent) toast(`工作区读取失败：${formatApiError(error, '持久工作区接口不可用')}`, 'error', 6000);
     return false;
   }
+}
+
+function clearVisibleResultContext(activeJob = null) {
+  state.results = null;
+  state.compareData = null;
+  state.originalDataUrl = '';
+  state.currentGenerationId = '';
+  state.knowledgeBundle = null;
+  state.feedbackResultKey = '';
+  state.feedbackRecorded = false;
+  state.feedbackReceipt = '';
+  state.feedbackSuggestionId = '';
+  state.lastFeedbackSignal = '';
+  state.editingFeedbackResultKey = '';
+  state.viewerIndex = 0;
+  const nextStage = activeJob
+    ? 'processing'
+    : selectedAssetIds().length ? 'ready' : 'empty';
+  setStage(nextStage);
 }
 
 function draftActiveJobId(mode = state.currentMode) {
@@ -316,13 +498,17 @@ function draftActiveJobId(mode = state.currentMode) {
 
 async function restoreWorkspaceResult(mode, payload) {
   if (mode !== state.currentMode || !Array.isArray(payload?.jobs)) return false;
-  const preferredId = payload?.draft?.active_job_id || '';
   const preferredResultId = payload?.draft?.current_result_asset_id || '';
-  const job = payload.jobs.find((entry) => entry.id === preferredId && resultIdsForJob(entry).length)
-    || payload.jobs.find((entry) => preferredResultId && resultIdsForJob(entry).includes(preferredResultId))
-    || payload.jobs.find((entry) => resultIdsForJob(entry).length);
+  const job = selectRestorableResult(payload.jobs, payload?.draft || {});
   if (!job) return false;
   const resultIds = resultIdsForJob(job);
+  const adjustment = adjustmentLineage(job);
+  const ownVersion = Number(adjustment?.version || 0);
+  const generationByResult = new Map(
+    (job.items || []).flatMap((jobItem) => (
+      (jobItem.result_asset_ids || []).map((assetId) => [String(assetId), jobItem.generation_id || ''])
+    )),
+  );
   const recentById = new Map((payload.recent_results || []).map((asset) => [asset.id, asset]));
   const assets = resultIds.map((assetId, index) => {
     const asset = recentById.get(assetId) || {};
@@ -334,11 +520,50 @@ async function restoreWorkspaceResult(mode, payload) {
       thumbnail_url: asset.thumbnail_url || '',
       role: asset.role || (mode === 'cutout-batch' ? 'result_cutout' : 'result_main'),
       id: assetId,
+      generation_id: generationByResult.get(String(assetId)) || '',
+      job_id: job.id,
+      width: asset.width || null,
+      height: asset.height || null,
+      version_label: ownVersion ? `V${ownVersion}` : '',
     };
   });
+  const parentResultId = String(adjustment?.parent_result_asset_id || '');
+  if (parentResultId && !assets.some((asset) => asset.asset_id === parentResultId)) {
+    try {
+      const parentItem = await fetchResultItem(parentResultId, null, 0, {
+        job_id: String(adjustment?.parent_job_id || ''),
+        generation_id: String(adjustment?.parent_generation_id || ''),
+        version_label: `V${Math.max(1, ownVersion - 1)}`,
+        is_parent_version: true,
+      });
+      assets.unshift(parentItem);
+    } catch (_) { /* the new result remains recoverable even if its parent file moved */ }
+  }
   await hydrateAssetUrls(assets);
   assets.forEach((asset) => { asset.url = asset.content_url || asset.url || ''; });
-  const source = state.assets.find((asset) => asset.id === job.items?.[0]?.source_asset_id)
+  const rawJobSourceIds = (Array.isArray(job.snapshot?.source_asset_ids)
+    ? job.snapshot.source_asset_ids
+    : (job.items || []).map((item) => item.source_asset_id));
+  const jobSourceIds = selectionForRestoredResult(
+    [],
+    rawJobSourceIds,
+    state.assets.map((asset) => asset.id),
+    MODE_CONFIG[mode].maxFiles,
+  );
+  const restoredSelection = selectionForRestoredResult(
+    selectedAssetIds(mode),
+    rawJobSourceIds,
+    state.assets.map((asset) => asset.id),
+    MODE_CONFIG[mode].maxFiles,
+  );
+  if (!selectedAssetIds(mode).length && restoredSelection.length) {
+    state.modeSelections[mode] = restoredSelection;
+    syncLegacySelection();
+    renderFileMeta();
+    updateCtaState();
+  }
+  const source = findJobSourceAsset(rawJobSourceIds[0])
+    || state.assets.find((asset) => asset.id === jobSourceIds[0])
     || selectedAssets(mode)[0];
   state.originalDataUrl = assetUrl(source, 'content');
   state.currentTaskId = job.id;
@@ -349,9 +574,34 @@ async function restoreWorkspaceResult(mode, payload) {
     cutout: assets.filter((item) => item.role === 'result_cutout'),
   };
   state.resultTab = mode === 'cutout-batch' || !state.results.main.length ? 'cutout' : 'main';
-  state.viewerIndex = Math.max(0, resultIds.indexOf(preferredResultId));
+  const visibleItems = state.results[state.resultTab] || [];
+  const preferredIndex = visibleItems.findIndex((asset) => asset.asset_id === preferredResultId);
+  const ownIndex = visibleItems.findIndex((asset) => asset.job_id === job.id);
+  state.viewerIndex = Math.max(0, preferredIndex >= 0 ? preferredIndex : ownIndex);
+  state.currentGenerationId = visibleItems[state.viewerIndex]?.generation_id || state.currentGenerationId;
+  try {
+    const traceResponse = await API.getJobTraces(job.id);
+    applyTaskKnowledgeBundle(knowledgeBundleFromEvidence({
+      brief: job.snapshot?.brief || {},
+      traces: traceResponse?.traces || [],
+      generation: { knowledge_refs: job.snapshot?.knowledge_refs || [] },
+    }));
+  } catch (_) {
+    applyTaskKnowledgeBundle(knowledgeBundleFromEvidence({
+      brief: job.snapshot?.brief || {},
+      generation: { knowledge_refs: job.snapshot?.knowledge_refs || [] },
+    }));
+  }
   renderResults();
   setStage('success');
+  $('#summary-result').textContent = adjustment
+    ? `新版本 V${ownVersion} 已从任务账本恢复`
+    : `${assets.length} 个结果已从任务账本恢复`;
+  $('#summary-result-note').textContent = adjustment
+    ? '上一版本已并入版本对比；原任务、原图和反馈记录保持不变'
+    : (jobSourceIds.length
+      ? `${jobSourceIds.length} 张源图与当前结果已恢复，可继续调整或开始下一项`
+      : '结果已恢复；源素材已移出当前素材域，历史任务快照仍保留');
   return true;
 }
 
@@ -361,6 +611,8 @@ function restoreModeSnapshot(mode = state.currentMode) {
   $('#brief-input').value = snapshot.brief || '';
   if (snapshot.model && $(`#param-model option[value="${CSS.escape(snapshot.model)}"]`)) $('#param-model').value = snapshot.model;
   if (snapshot.angle && $(`#param-angle option[value="${CSS.escape(snapshot.angle)}"]`)) $('#param-angle').value = snapshot.angle;
+  if (snapshot.output_ratio && $(`#param-output-ratio option[value="${CSS.escape(snapshot.output_ratio)}"]`)) $('#param-output-ratio').value = snapshot.output_ratio;
+  if (snapshot.output_resolution && $(`#param-output-resolution option[value="${CSS.escape(snapshot.output_resolution)}"]`)) $('#param-output-resolution').value = snapshot.output_resolution;
   if (Number.isFinite(snapshot.fidelity)) $('#param-fidelity').value = String(snapshot.fidelity);
   if (Number.isFinite(snapshot.batch)) $('#param-batch').value = String(snapshot.batch);
   if (snapshot.platter) {
@@ -433,12 +685,36 @@ function setBackendStatus(status, text) {
   $('#conn-status').title = `后端状态：${text}`;
 }
 
+const bootStartedAt = performance.now();
+
+function setBootStatus(title, detail, stateName = 'loading') {
+  const shell = $('#boot-shell');
+  if (!shell || shell.hidden) return;
+  shell.dataset.state = stateName;
+  shell.setAttribute('aria-busy', stateName === 'loading' ? 'true' : 'false');
+  $('#boot-title').textContent = title;
+  $('#boot-detail').textContent = detail;
+  $('#boot-progress').hidden = stateName !== 'loading';
+  $('#boot-actions').hidden = stateName !== 'error';
+}
+
+function dismissBootShell() {
+  const shell = $('#boot-shell');
+  if (!shell || shell.hidden) return;
+  const delay = Math.max(0, 320 - (performance.now() - bootStartedAt));
+  window.setTimeout(() => {
+    shell.classList.add('is-leaving');
+    window.setTimeout(() => { shell.hidden = true; }, 190);
+  }, delay);
+}
+
 function setStage(stage) {
   if (!STAGE_IDS[stage]) return;
   state.stage = stage;
   $('#preview-card').dataset.stage = stage;
   Object.entries(STAGE_IDS).forEach(([name, id]) => { document.getElementById(id).hidden = name !== stage; });
   renderFileMeta();
+  updateCtaState();
 }
 
 function switchPage(page) {
@@ -494,6 +770,12 @@ function clearSession(keepMode = true) {
   state.resultTab = state.currentMode === 'cutout-batch' ? 'cutout' : 'main';
   state.viewerIndex = 0;
   state.knowledgeBundle = null;
+  state.feedbackResultKey = '';
+  state.feedbackRecorded = false;
+  state.feedbackSubmitting = false;
+  state.feedbackReceipt = '';
+  state.feedbackSuggestionId = '';
+  state.lastFeedbackSignal = '';
   state.folderBatches[state.currentMode] = null;
   $('#file-input').value = '';
   $('#folder-path').value = '';
@@ -501,6 +783,8 @@ function clearSession(keepMode = true) {
   $('#canvas-img-preview').removeAttribute('src');
   $('#summary-result').textContent = '等待选择任务素材';
   $('#summary-result-note').textContent = '共享素材和已有任务不会被清空';
+  $('#workspace-progress-percent').textContent = '0%';
+  $('#workspace-progress-bar').style.width = '0%';
   $('#knowledge-summary').textContent = '等待知识编译';
   renderKnowledge(null);
   state.modeSnapshots[state.currentMode] = null;
@@ -510,6 +794,54 @@ function clearSession(keepMode = true) {
   persistWorkspaceState();
   scheduleWorkspaceDraftSave(state.currentMode, 0);
   updateCtaState();
+}
+
+function applyCompletedWorkspaceDraft(mode, draft) {
+  const timer = state.draftSaveTimers.get(mode);
+  if (timer) window.clearTimeout(timer);
+  state.draftSaveTimers.delete(mode);
+  state.draftSaveQueued.delete(mode);
+  state.workspaceDrafts[mode] = draft;
+  state.workspaceRevisions[mode] = Number(draft?.revision || state.workspaceRevisions[mode]);
+  state.modeSelections[mode] = [];
+  state.folderBatches[mode] = null;
+  state.modeSnapshots[mode] = snapshotFromDraft(draft, state.modeSnapshots[mode] || {});
+  if (mode !== state.currentMode) return;
+
+  state.hydratingWorkspace = true;
+  try {
+    syncLegacySelection();
+    state.originalDataUrl = '';
+    state.results = null;
+    state.compareData = null;
+    state.currentTaskId = '';
+    state.currentSessionId = '';
+    state.currentGenerationId = '';
+    state.resultTab = mode === 'cutout-batch' ? 'cutout' : 'main';
+    state.viewerIndex = 0;
+    state.knowledgeBundle = null;
+    state.feedbackResultKey = '';
+    state.feedbackRecorded = false;
+    state.feedbackReceipt = '';
+    state.feedbackSuggestionId = '';
+    state.lastFeedbackSignal = '';
+    state.editingFeedbackResultKey = '';
+    $('#file-input').value = '';
+    $('#folder-path').value = '';
+    $('#canvas-img-preview').removeAttribute('src');
+    $('#summary-result').textContent = '等待选择任务素材';
+    $('#summary-result-note').textContent = '历史结果已保留；当前现场已安全完成';
+    $('#workspace-progress-percent').textContent = '0%';
+    $('#workspace-progress-bar').style.width = '0%';
+    $('#knowledge-summary').textContent = '等待知识编译';
+    restoreModeSnapshot(mode);
+    renderKnowledge(null);
+    renderQueue();
+    renderFolderSource();
+    updateCtaState();
+  } finally {
+    state.hydratingWorkspace = false;
+  }
 }
 
 function renderFolderSource() {
@@ -536,8 +868,15 @@ function renderFolderSource() {
 
 function switchMode(mode, preserveCurrent = true, loadDurable = true) {
   if (!MODE_CONFIG[mode]) return;
-  if (preserveCurrent && state.currentMode !== mode) captureModeSnapshot();
+  const changed = state.currentMode !== mode;
+  if (preserveCurrent && changed) captureModeSnapshot();
+  if (changed) setWorkspaceSyncState();
   state.currentMode = mode;
+  if (changed) {
+    state.currentTaskId = '';
+    state.currentSessionId = '';
+    clearVisibleResultContext();
+  }
   state.assets = state.assetsByCollection[MODE_CONFIG[mode].collection] || [];
   const config = MODE_CONFIG[mode];
   $$('.mode-button').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
@@ -557,6 +896,7 @@ function switchMode(mode, preserveCurrent = true, loadDurable = true) {
   renderFolderSource();
   $('#field-model').hidden = quickCutout;
   $('#field-composition').hidden = quickCutout;
+  $('#field-output-spec').hidden = quickCutout;
   $('#field-intent').hidden = quickCutout;
   $('#btn-knowledge-card').disabled = quickCutout;
   $('#btn-knowledge-card').title = quickCutout
@@ -624,17 +964,17 @@ function renderFileMeta() {
   const folderBatch = state.currentMode === 'multi-file'
     ? folderBatchForMode('multi-file', true)
     : null;
-  $('#asset-count').textContent = `${state.assets.length} 素材`;
+  $('#asset-count').textContent = `素材库 ${state.assets.length} 张`;
   $('#btn-replace').hidden = false;
   $('#btn-replace').disabled = state.importing;
   $('#btn-clear').hidden = count === 0;
   if (folderBatch) {
     const folderCount = Number(folderBatch.imported_count || folderBatch.asset_ids.length || 0);
-    $('#info-filename').textContent = `${folderCount} 张文件夹图片等待入队`;
-    $('#ready-count').textContent = `${folderCount} 个文件夹已就绪`;
+    $('#info-filename').textContent = `整夹导入 · ${folderCount} 张图片等待入队`;
+    $('#ready-count').textContent = `已选 ${folderCount} 张`;
   } else if (count) {
     $('#info-filename').textContent = count === 1 ? selection[0].name : `${count} 张源图已选中`;
-    $('#ready-count').textContent = `${count} 张素材已就绪`;
+    $('#ready-count').textContent = `已选 ${count} 张`;
   } else {
     $('#info-filename').textContent = '从素材工作台选择任务输入';
     $('#ready-count').textContent = '0 张已选';
@@ -652,7 +992,8 @@ function renderQueue() {
     return;
   }
   const selection = new Set(selectedAssetIds());
-  const items = state.assets.map((asset, index) => {
+  const renderedAssets = boundedAssetRenderList(state.assets, selection, 60);
+  const items = renderedAssets.map((asset, index) => {
     const selected = selection.has(asset.id);
     const dimensions = asset.width && asset.height ? `${asset.width}×${asset.height}` : '已持久化';
     return `<article class="queue-item asset-card ${selected ? 'selected' : ''}">
@@ -664,12 +1005,16 @@ function renderQueue() {
     </article>`;
   }).join('');
   queue.innerHTML = items;
+  if (renderedAssets.length < state.assets.length) {
+    queue.innerHTML += `<button class="queue-item queue-manage" type="button" id="btn-queue-manage"><span>+${state.assets.length - renderedAssets.length}</span><strong>管理全部素材</strong><small>搜索、排序或批量处理</small></button>`;
+  }
   if (state.currentMode !== 'single') {
     queue.innerHTML += '<button class="queue-item queue-add" type="button" id="btn-queue-add"><span>+</span><strong>添加图片</strong><small>继续导入本工作流素材</small></button>';
   }
   $$('[data-asset-id]', queue).forEach((button) => button.addEventListener('click', () => toggleAssetSelection(button.dataset.assetId)));
   $$('[data-remove-asset-id]', queue).forEach((button) => button.addEventListener('click', () => removeWorkspaceAsset(button.dataset.removeAssetId)));
   $('#btn-queue-add')?.addEventListener('click', () => $('#file-input').click());
+  $('#btn-queue-manage')?.addEventListener('click', () => assetManager.open());
   setStage('ready');
   renderFileMeta();
 }
@@ -845,7 +1190,11 @@ function buildBrief(mode = state.currentMode) {
     platter: getPlatter(),
     fidelity: Number($('#param-fidelity').value),
     intent_locks: getIntentLocks(),
-    output_spec: { ratio: '1:1', size: '2048x2048', format: mode === 'cutout-batch' ? 'transparent PNG' : 'JPG+transparent PNG' },
+    output_spec: {
+      ratio: mode === 'cutout-batch' ? 'source alpha bounds' : $('#param-output-ratio').value,
+      resolution: mode === 'cutout-batch' ? 'source' : $('#param-output-resolution').value,
+      format: mode === 'cutout-batch' ? 'transparent PNG' : 'JPG+transparent PNG',
+    },
   };
 }
 
@@ -882,6 +1231,13 @@ function scheduleKnowledgeCompile() {
   compileTimer = window.setTimeout(compileKnowledgePreview, 480);
 }
 
+function applyTaskKnowledgeBundle(bundle) {
+  window.clearTimeout(compileTimer);
+  state.knowledgeRequestVersion += 1;
+  state.knowledgeBundle = bundle;
+  renderKnowledge(bundle);
+}
+
 function renderKnowledge(bundle) {
   if (state.currentMode === 'cutout-batch') {
     renderCutoutCapability();
@@ -889,30 +1245,48 @@ function renderKnowledge(bundle) {
   }
   if (!bundle) {
     $('#knowledge-summary').textContent = '等待知识编译';
+    $('#knowledge-rule-count').textContent = '0 条规则';
+    $('#knowledge-rule-list').innerHTML = statusPanelHtml('empty', { title: '尚未编译执行规则', detail: '选择素材或输入创作目标后开始编译。', compact: true });
     $('#knowledge-source-count').textContent = '0 条来源';
-    $('#knowledge-source-list').innerHTML = '<div class="page-empty">尚未编译知识。</div>';
+    $('#knowledge-source-list').innerHTML = statusPanelHtml('empty', { title: '尚未编译知识', detail: '本次引用会在编译后列出。', compact: true });
     $('#knowledge-conflicts').innerHTML = '<div class="conflict-item ok"><span>✓</span><p>当前没有检测到规则冲突</p></div>';
     $('#intelligence-brief').textContent = '等待输入创作意图';
     $('#intelligence-context').textContent = '选择模式与素材后，系统会把目标编译成可检查的创作合同。';
     return;
   }
   const sources = bundle.sources || [];
-  const rules = (bundle.positive_rules || []).length + (bundle.negative_rules || []).length;
+  const positiveRules = bundle.positive_rules || [];
+  const negativeRules = bundle.negative_rules || [];
+  const intentLockRules = bundle.intent_lock_rules || [];
+  const ruleEntries = [
+    ...intentLockRules.map((item) => ({ kind: 'lock', label: '锁定', text: item?.text || item })),
+    ...positiveRules.map((item) => ({ kind: 'positive', label: '执行', text: item?.text || item })),
+    ...negativeRules.map((item) => ({ kind: 'negative', label: '避坑', text: item?.text || item })),
+  ].filter((item) => String(item.text || '').trim());
+  const rules = ruleEntries.length;
   $('#knowledge-summary').textContent = `${sources.length} 份知识 · ${rules} 条执行规则`;
+  $('#knowledge-rule-count').textContent = `${rules} 条规则`;
+  $('#knowledge-rule-list').innerHTML = rules ? ruleEntries.map((item) => `<div class="knowledge-rule-item is-${item.kind}"><span>${item.label}</span><p>${escapeHtml(item.text)}</p></div>`).join('') : statusPanelHtml('empty', { title: '没有额外执行规则', detail: '本次只采用基础安全约束。', compact: true });
   $('#knowledge-source-count').textContent = `${sources.length} 条来源`;
-  $('#knowledge-source-list').innerHTML = sources.length ? sources.map((source, index) => `<div class="source-item"><span>${String(index + 1).padStart(2, '0')}</span><div><strong>${escapeHtml(source.title || source.id || '设计规则')}</strong><small>${escapeHtml(source.relative_path || source.path || '')}</small></div></div>`).join('') : '<div class="page-empty">本次使用安全默认规则。</div>';
+  $('#knowledge-source-list').innerHTML = sources.length ? sources.map((source, index) => {
+    const title = typeof source === 'string' ? source : (source.title || source.id || '设计规则');
+    const path = typeof source === 'string' ? '' : (source.relative_path || source.path || '');
+    return `<div class="source-item"><span>${String(index + 1).padStart(2, '0')}</span><div><strong>${escapeHtml(title)}</strong><small>${escapeHtml(path)}</small></div></div>`;
+  }).join('') : statusPanelHtml('empty', { title: '使用安全默认规则', detail: '本次没有引用额外知识来源。', compact: true });
   const brief = bundle.creative_brief || {};
-  const memorySources = sources.filter((source) => source.relative_path === '记忆反馈/已批准');
+  const memorySources = sources.filter((source) => source?.relative_path === '记忆反馈/已批准');
   $('#intelligence-brief').textContent = brief.objective || '本次商业图片任务';
-  $('#intelligence-context').textContent = `${MODE_CONFIG[state.currentMode].label} · ${brief.output_kind || '商业输出'} · ${Object.values(brief.intent_locks || {}).filter(Boolean).length} 项意图锁定${memorySources.length ? ` · ${memorySources.length} 条已批准记忆反馈` : ''}`;
+  $('#intelligence-context').textContent = `${MODE_CONFIG[state.currentMode].label} · ${brief.output_kind || '商业输出'} · ${Object.values(brief.intent_locks || {}).filter(Boolean).length} 项意图锁定${memorySources.length ? ` · ${memorySources.length} 条已批准记忆反馈` : ''}${bundle.trace_bound ? ' · 已绑定该任务执行记录' : ''}`;
   const conflicts = bundle.conflicts || [];
   $('#knowledge-conflicts').innerHTML = conflicts.length ? conflicts.map((item) => `<div class="conflict-item"><span>!</span><p>${escapeHtml(item.message)}</p></div>`).join('') : '<div class="conflict-item ok"><span>✓</span><p>当前没有检测到规则冲突</p></div>';
 }
 
 function renderCutoutCapability() {
   $('#knowledge-summary').textContent = '本地分割 · 不读取文字描述';
+  $('#knowledge-rule-count').textContent = '0 条规则';
+  $('#knowledge-rule-list').innerHTML = statusPanelHtml('empty', { title: '没有文字执行规则', detail: '快速去背景只执行本地前景分割。', compact: true });
   $('#knowledge-source-count').textContent = '0 条执行知识';
-  $('#knowledge-source-list').innerHTML = '<div class="page-empty">快速去背景只执行本地前景分割。</div>';
+  $('#knowledge-source-list').innerHTML = statusPanelHtml('empty', { title: '不读取知识来源', detail: '此工作流只执行本地前景分割。', compact: true });
   $('#knowledge-conflicts').innerHTML = '<div class="conflict-item ok"><span>i</span><p>需要按名称或数量选物时，请等待“智能选物”工作流。</p></div>';
   $('#intelligence-brief').textContent = '当前能力：分离全部前景';
   $('#intelligence-context').textContent = '文字描述、物体数量和知识规则不会进入本次执行链。';
@@ -933,11 +1307,13 @@ function updateCtaState() {
   button.classList.toggle('loading', state.submitting);
   if (state.submitting) $('#generate-text').textContent = '正在加入后台任务';
   else if (!hasFiles) $('#generate-text').textContent = '选择图片开始';
+  else if (state.stage === 'success') $('#generate-text').textContent = '基于当前素材再生成';
   else $('#generate-text').textContent = MODE_CONFIG[state.currentMode].action;
   if (!hasFiles) $('#cta-hint').textContent = state.currentMode === 'cutout-batch'
     ? '从抠图素材中选择后可入队'
     : '从当前素材区选择后可入队';
   else if (!capacityOkay) $('#cta-hint').textContent = `${count} 张 × ${batch} 方案 = ${plan.total} 个输出；单批最多 ${plan.maxOutputs}，请改为每图 ${plan.maxVariations} 个`;
+  else if (state.stage === 'success') $('#cta-hint').textContent = '调整创作要求后可继续生成；当前结果不会被覆盖';
   else if (folderBatch) {
     const chunkSize = Math.max(1, Math.min(20, Math.floor(24 / Math.max(1, batch))));
     const partCount = Math.ceil(count / chunkSize);
@@ -953,6 +1329,16 @@ function updateQuickControls() {
   $('#quick-batch').textContent = state.currentMode === 'multi-file' ? `${$('#param-batch').value} / file` : $('#param-batch').value;
   $('#fid-val').textContent = `${$('#param-fidelity').value}%`;
   $('#batch-val').textContent = $('#param-batch').value;
+  const outputRatio = $('#param-output-ratio').value;
+  const outputResolution = $('#param-output-resolution').value;
+  $('#spec-ratio').textContent = outputRatio === 'original' ? '原图' : outputRatio;
+  $('#spec-resolution').textContent = outputResolution.toUpperCase();
+  const isGemini = $('#param-model').value.startsWith('gemini-');
+  $('#output-spec-note').textContent = outputRatio === 'original' && isGemini
+    ? '按每张源图选择最接近的模型原生比例；实际像素会写入结果记录。'
+    : outputRatio === 'original'
+      ? '按每张源图精确计算画布；实际回传像素会写入结果记录。'
+      : `${outputRatio} 画布与拍摄角度独立；实际回传像素会写入结果记录。`;
   captureModeSnapshot();
   persistWorkspaceState();
   updateCtaState();
@@ -973,6 +1359,8 @@ function captureSubmissionDraft() {
       platter: getPlatter(),
       fidelity: Number($('#param-fidelity').value),
       angle: $('#param-angle').value,
+      output_ratio: $('#param-output-ratio').value,
+      output_resolution: $('#param-output-resolution').value,
       refine: $('#param-refine').checked,
       output_root: String(state.settings?.output_root || state.settings?.output_dir || '').trim(),
       brief,
@@ -1135,6 +1523,40 @@ function resultIdsForJob(job) {
   return [...new Set((job?.items || []).flatMap((item) => Array.isArray(item.result_asset_ids) ? item.result_asset_ids : []))];
 }
 
+function adjustmentLineage(job) {
+  const adjustment = job?.parameters?.adjustment;
+  return adjustment && typeof adjustment === 'object' && !Array.isArray(adjustment)
+    ? adjustment
+    : null;
+}
+
+async function fetchResultItem(assetId, job, index = 0, overrides = {}) {
+  let asset = null;
+  try {
+    const response = await API.getAsset(assetId);
+    asset = response?.asset || response;
+  } catch (_) { /* the durable content URL remains usable */ }
+  const owner = (job?.items || []).find((jobItem) => (
+    (jobItem.result_asset_ids || []).map(String).includes(String(assetId))
+  ));
+  const contentUrl = await API.getAssetContentUrl(assetId);
+  return {
+    asset_id: assetId,
+    id: assetId,
+    name: asset?.name || `product-atelier-${index + 1}.${job?.mode === 'cutout-batch' ? 'png' : 'jpg'}`,
+    url: contentUrl,
+    content_url: contentUrl,
+    thumbnail_url: asset?.thumbnail_url || '',
+    role: asset?.role || (job?.mode === 'cutout-batch' ? 'result_cutout' : 'result_main'),
+    generation_id: overrides.generation_id || owner?.generation_id || '',
+    job_id: overrides.job_id || job?.id || '',
+    width: asset?.width || null,
+    height: asset?.height || null,
+    version_label: overrides.version_label || '',
+    is_parent_version: Boolean(overrides.is_parent_version),
+  };
+}
+
 function renderJobDockSummary() {
   const jobs = state.jobs;
   const ongoing = jobs.filter((job) => ['queued', 'running', 'paused', 'canceling', 'interrupted'].includes(job.status));
@@ -1232,12 +1654,13 @@ function renderJobRuntime() {
 const PERMANENT_JOB_ERRORS = new Set([
   'INVALID_SOURCE_IMAGE', 'UNSUPPORTED_JOB_MODE', 'INVALID_VARIATION_COUNT',
   'INVALID_PRODUCT_DETECTION', 'NO_PRODUCTS_DETECTED', 'TOO_MANY_PRODUCTS_DETECTED',
-  'INVALID_DELIVERY_PATH',
+  'INVALID_DELIVERY_PATH', 'INVALID_ADJUSTMENT_REFERENCE',
 ]);
 
 function jobFailureCopy(item) {
   const code = String(item?.error_code || '').trim();
   const raw = String(item?.error_message || item?.error || '').trim();
+  if (!code && !raw) return { code: '', permanent: false, message: '', raw: '' };
   const known = {
     PROCESS_RESTARTED: '应用曾在处理中断；该项目可以从安全检查点重新执行。',
     WORKER_INFRASTRUCTURE_FAILURE: '后台工作进程意外停止；素材和已成功结果仍然保留。',
@@ -1250,6 +1673,7 @@ function jobFailureCopy(item) {
     NO_PRODUCTS_DETECTED: '图片中没有识别到可拆分产品，请更换更清晰的合照。',
     TOO_MANY_PRODUCTS_DETECTED: '图片中的产品数量超过当前安全拆分上限，请分组后重新导入。',
     INVALID_DELIVERY_PATH: '整夹交付路径未通过安全检查，需要重新载入源文件夹。',
+    INVALID_ADJUSTMENT_REFERENCE: '上一版本结果已不可读取；原图和任务记录仍保留，需要从可用版本重新发起调整。',
     USER_CANCELED: '该项目已由你取消。',
     PROCESSOR_ERROR: '处理器未能完成该项目；可以单独重试，若再次失败请查看原始详情。',
   };
@@ -1343,15 +1767,29 @@ function renderJobs(force = false) {
   renderJobFilters();
   const list = $('#job-list');
   const view = captureJobListView(list);
-  const visibleJobs = jobsForFilter(state.jobs, state.jobFilter);
+  const filteredJobs = jobsForFilter(state.jobs, state.jobFilter);
+  const visibleJobs = boundedJobsForDisplay(filteredJobs, state.jobVisibleLimit);
   if (!state.jobsAvailable) {
-    list.innerHTML = `<div class="job-empty job-empty--error"><strong>持久任务接口暂不可用</strong><p>请确认后端已提供 /api/jobs；素材与当前选择不会被清空。</p><button class="secondary-button" type="button" data-job-action="refresh" ${jobActionDisabled('refresh') ? 'disabled aria-busy="true"' : ''}>重试连接</button></div>`;
+    list.innerHTML = statusPanelHtml('offline', {
+      title: '任务账本暂时离线',
+      detail: '素材与当前选择不会被清空；恢复连接后继续追踪。',
+      fill: true,
+      action: { label: '重试连接', attribute: 'data-job-action', value: 'refresh', disabled: jobActionDisabled('refresh'), busy: jobActionDisabled('refresh') },
+    });
   } else if (!state.jobs.length) {
-    list.innerHTML = '<div class="job-empty"><strong>还没有任务</strong><p>从素材工作台选择图片并入队后，进度会在此从后端恢复。</p></div>';
-  } else if (!visibleJobs.length) {
-    list.innerHTML = '<div class="job-empty"><strong>这个工作流还没有任务</strong><p>切换上方筛选，或回到工作台发起新任务。</p></div>';
+    list.innerHTML = statusPanelHtml('empty', { title: '还没有任务', detail: '从工作台选择图片并入队后，进度会在此持续保存。', fill: true });
+  } else if (!filteredJobs.length) {
+    list.innerHTML = statusPanelHtml('empty', { title: '这个工作流还没有任务', detail: '切换上方筛选，或回到工作台发起新任务。', fill: true });
   } else {
-    list.innerHTML = visibleJobs.map((job) => {
+    const partialJobs = visibleJobs.filter((job) => job.status === 'partial');
+    const renderedJobIds = new Set(visibleJobs.map((job) => String(job.id)));
+    const hiddenJobCount = filteredJobs.filter((job) => !renderedJobIds.has(String(job.id))).length;
+    const partialSummary = partialJobs.length ? statusPanelHtml('partial', {
+      title: `${partialJobs.length} 个任务部分完成`,
+      detail: '成功项目已锁定；打开对应任务，只重试失败项即可。',
+      compact: true,
+    }) : '';
+    list.innerHTML = partialSummary + visibleJobs.map((job) => {
       const status = JOB_STATUS[job.status] || { label: job.status || '未知', tone: 'unknown' };
       const progress = Math.round(jobProgress(job) * 100);
       const counts = jobCounts(job);
@@ -1361,16 +1799,18 @@ function renderJobs(force = false) {
       const canPause = lifecycleActions.includes('pause');
       const canResume = lifecycleActions.includes('resume');
       const canCancel = lifecycleActions.includes('cancel');
-      const visibleItems = (job.items || []).filter((item) => ['failed', 'interrupted', 'running'].includes(item.status)).slice(0, 5);
-      const items = visibleItems.map((item, index) => {
+      const itemsExpanded = state.expandedJobIds.has(job.id);
+      const visibleItems = jobItemsForDisplay(job, itemsExpanded, 5);
+      const items = visibleItems.map((item) => {
         const source = findJobSourceAsset(item.source_asset_id);
+        const sourceIndex = Math.max(0, (job.items || []).findIndex((candidate) => candidate.id === item.id));
         const itemStatus = JOB_STATUS[item.status] || { label: item.status || '未知', tone: 'unknown' };
         const itemProgress = Math.round(itemCompletionProgress(item) * 100);
         const failure = jobFailureCopy(item);
         const canRetryItem = ['failed', 'interrupted'].includes(item.status) && !failure.permanent;
         return `<li class="job-item job-item--${escapeHtml(itemStatus.tone)}">
-          <img src="${escapeHtml(assetUrl(source))}" alt="${escapeHtml(source?.name || `任务素材 ${index + 1}`)}" loading="lazy" />
-          <span class="job-item__copy"><strong>${escapeHtml(source?.name || `任务素材 ${index + 1}`)}</strong><span>${escapeHtml(itemStatus.label)} · 完成度 ${itemProgress}%${failure.permanent ? ' · 永久失败' : ''}</span>${failure.message ? `<small title="${escapeHtml(failure.raw || failure.message)}">${escapeHtml(failure.message)}</small>` : ''}</span>
+          <img src="${escapeHtml(assetUrl(source))}" alt="${escapeHtml(source?.name || `任务素材 ${sourceIndex + 1}`)}" loading="lazy" />
+          <span class="job-item__copy"><strong>${escapeHtml(source?.name || `任务素材 ${sourceIndex + 1}`)}</strong><span>${escapeHtml(itemStatus.label)} · 完成度 ${itemProgress}%${failure.permanent ? ' · 永久失败' : ''}</span>${failure.message ? `<small title="${escapeHtml(failure.raw || failure.message)}">${escapeHtml(failure.message)}</small>` : ''}</span>
           <span class="job-item__bar"><i style="width:${itemProgress}%"></i></span>
           ${canRetryItem ? `<button type="button" data-job-action="retry-item" data-job-id="${escapeHtml(job.id)}" data-item-id="${escapeHtml(item.id)}" ${jobActionDisabled('retry-item', job.id, item.id) ? 'disabled aria-busy="true"' : ''}>单独重试</button>` : ''}
         </li>`;
@@ -1389,7 +1829,8 @@ function renderJobs(force = false) {
         <div class="job-progress"><span><i style="width:${progress}%"></i></span><strong>${progress}%</strong></div>
         <div class="job-counts"><span>${counts.total} 项</span><span>${counts.completed} 成功</span><span>${counts.failed} 失败</span><span>${counts.canceled} 取消</span><span>成功率 ${counts.successRate === null ? '—' : `${counts.successRate}%`}</span><time>${escapeHtml(formatTime(job.updated_at || job.created_at))}</time></div>
         <p class="job-outcome"><i></i><span>${escapeHtml(outcome)}</span></p>
-        ${items ? `<ul class="job-items">${items}</ul>` : ''}
+        ${items ? `<ul class="job-items ${itemsExpanded ? 'is-expanded' : ''}">${items}</ul>` : ''}
+        ${(job.items || []).length > Math.max(5, visibleItems.length) || itemsExpanded ? `<button class="job-items-toggle" type="button" data-job-action="toggle-items" data-job-id="${escapeHtml(job.id)}" aria-expanded="${itemsExpanded}">${itemsExpanded ? '收起项目' : `查看全部 ${(job.items || []).length} 项`}</button>` : ''}
         <footer>
           ${hasResults ? `<button type="button" data-job-action="open-results" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-results', job.id) ? 'disabled aria-busy="true"' : ''}>打开结果</button>` : ''}
           ${!hasResults ? `<button type="button" data-job-action="open-workspace" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-workspace', job.id) ? 'disabled aria-busy="true"' : ''}>回到现场</button>` : ''}
@@ -1399,7 +1840,9 @@ function renderJobs(force = false) {
           ${canCancel ? `<button class="danger" type="button" data-job-action="cancel" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('cancel', job.id) ? 'disabled aria-busy="true"' : ''}>取消任务</button>` : ''}
         </footer>
       </article>`;
-    }).join('');
+    }).join('') + (hiddenJobCount
+      ? `<button class="job-list-more" type="button" data-job-action="show-more-jobs">再显示 ${Math.min(12, hiddenJobCount)} 个任务 <small>剩余 ${hiddenJobCount} 个</small></button>`
+      : '');
   }
   $$('[data-job-action]', list).forEach((button) => button.addEventListener('click', () => handleJobAction(button)));
   state.jobsRenderSignature = signature;
@@ -1462,6 +1905,11 @@ function startJobPolling() {
   if (state.jobPollTimer) window.clearTimeout(state.jobPollTimer);
   const tick = async () => {
     const ok = await loadJobs(true);
+    if (ok === false) {
+      setBackendStatus('connecting', '重连中');
+      const recovered = await connectBackend();
+      if (recovered) return;
+    }
     const hasActive = state.jobs.some((job) => (
       ['queued', 'running', 'canceling', 'interrupted'].includes(job.status)
       || (job.status === 'paused' && (job.items || []).some((item) => item.status === 'running'))
@@ -1475,6 +1923,17 @@ async function handleJobAction(button) {
   const action = button.dataset.jobAction;
   const jobId = button.dataset.jobId;
   const itemId = button.dataset.itemId || '';
+  if (action === 'toggle-items') {
+    if (state.expandedJobIds.has(jobId)) state.expandedJobIds.delete(jobId);
+    else state.expandedJobIds.add(jobId);
+    renderJobs(true);
+    return;
+  }
+  if (action === 'show-more-jobs') {
+    state.jobVisibleLimit += 12;
+    renderJobs(true);
+    return;
+  }
   const actionKey = jobActionKey(action, jobId, itemId);
   const isMutation = MUTATING_JOB_ACTIONS.has(action);
   if (jobActionDisabled(action, jobId, itemId)) return;
@@ -1564,42 +2023,72 @@ async function openJobResults(jobId) {
   const job = response?.job || response;
   const resultIds = resultIdsForJob(job);
   if (!resultIds.length) throw new Error('该任务还没有可打开的结果');
-  const items = await Promise.all(resultIds.map(async (assetId, index) => {
-    let asset = null;
-    try { asset = await API.getAsset(assetId); } catch (_) { /* content URL remains useful */ }
-    return {
-      asset_id: assetId,
-      name: asset?.name || `product-atelier-${index + 1}.${job.mode === 'cutout-batch' ? 'png' : 'jpg'}`,
-      url: await API.getAssetContentUrl(assetId),
-      role: asset?.role || (job.mode === 'cutout-batch' ? 'result_cutout' : 'result_main'),
-    };
-  }));
+  const adjustment = adjustmentLineage(job);
+  const ownVersion = Number(adjustment?.version || 0);
+  const parentResultId = String(adjustment?.parent_result_asset_id || '');
+  const [ownItems, parentItem, traceResponse, reviewResponse, parentReviewResponse] = await Promise.all([
+    Promise.all(resultIds.map((assetId, index) => fetchResultItem(assetId, job, index, {
+      job_id: job.id,
+      version_label: ownVersion ? `V${ownVersion}` : '',
+    }))),
+    parentResultId
+      ? fetchResultItem(parentResultId, null, 0, {
+        job_id: String(adjustment?.parent_job_id || ''),
+        generation_id: String(adjustment?.parent_generation_id || ''),
+        version_label: `V${Math.max(1, ownVersion - 1)}`,
+        is_parent_version: true,
+      }).catch(() => null)
+      : Promise.resolve(null),
+    API.getJobTraces(job.id).catch(() => ({ traces: [] })),
+    API.getJobReviews(job.id).catch(() => ({ reviews: [] })),
+    adjustment?.parent_job_id
+      ? API.getJobReviews(adjustment.parent_job_id).catch(() => ({ reviews: [] }))
+      : Promise.resolve({ reviews: [] }),
+  ]);
+  const items = parentItem ? [parentItem, ...ownItems] : ownItems;
   await openJobWorkspace(job, false);
   const source = findJobSourceAsset(job.items?.[0]?.source_asset_id);
   state.originalDataUrl = assetUrl(source, 'content');
   state.currentTaskId = job.id;
   state.currentSessionId = job.session_id || '';
-  state.currentGenerationId = job.items?.[0]?.generation_id || '';
+  state.currentGenerationId = ownItems[0]?.generation_id || job.items?.[0]?.generation_id || '';
+  state.resultReviews = [...new Map([
+    ...(Array.isArray(parentReviewResponse?.reviews) ? parentReviewResponse.reviews : []),
+    ...(Array.isArray(reviewResponse?.reviews) ? reviewResponse.reviews : []),
+  ].map((review) => [review.id, review])).values()];
+  applyTaskKnowledgeBundle(knowledgeBundleFromEvidence({
+    brief: job.snapshot?.brief || {},
+    traces: traceResponse?.traces || [],
+    generation: { knowledge_refs: job.snapshot?.knowledge_refs || [] },
+  }));
   state.results = {
     main: items.filter((item) => item.role !== 'result_cutout'),
     cutout: items.filter((item) => item.role === 'result_cutout'),
   };
   state.resultTab = job.mode === 'cutout-batch' || !state.results.main.length ? 'cutout' : 'main';
-  state.viewerIndex = 0;
+  const selectedItems = getResultItems(state.resultTab);
+  state.viewerIndex = Math.max(0, selectedItems.findIndex((item) => item.job_id === job.id));
+  const selectedItem = selectedItems[state.viewerIndex] || ownItems[0] || items[0];
+  state.currentGenerationId = selectedItem?.generation_id || state.currentGenerationId;
   const modeSnapshot = state.modeSnapshots[job.mode] || {};
   state.modeSnapshots[job.mode] = {
     ...modeSnapshot,
     active_job_id: job.id,
     current_generation_id: state.currentGenerationId || null,
-    current_result_asset_id: items[0]?.asset_id || null,
+    current_result_asset_id: selectedItem?.asset_id || null,
   };
   scheduleWorkspaceDraftSave(job.mode, 0);
+  await settleWorkspaceDraft(job.mode);
   renderResults();
   setStage('success');
   switchPage('process');
   closeDrawer('jobs');
-  $('#summary-result').textContent = `${items.length} 个结果已从任务账本恢复`;
-  $('#summary-result-note').textContent = '可先检查成功项，再在后台任务中重试失败项';
+  $('#summary-result').textContent = adjustment
+    ? `新版本 V${ownVersion} 已从任务账本恢复`
+    : `${items.length} 个结果已从任务账本恢复`;
+  $('#summary-result-note').textContent = adjustment
+    ? '上一版本已并入版本对比；原任务、原图和反馈记录保持不变'
+    : '可先检查成功项，再在后台任务中重试失败项';
 }
 
 function getResultItems(tab = state.resultTab) {
@@ -1610,11 +2099,88 @@ function getAllResultItems() {
   return collectResultItems(state.results);
 }
 
+function selectResultVersion(index, tab = state.resultTab) {
+  const items = getResultItems(tab);
+  if (!items.length) return;
+  state.resultTab = tab;
+  state.viewerIndex = Math.max(0, Math.min(Number(index) || 0, items.length - 1));
+  const item = items[state.viewerIndex];
+  const snapshot = state.modeSnapshots[state.currentMode] || {};
+  state.currentGenerationId = item.generation_id || state.currentGenerationId || '';
+  state.modeSnapshots[state.currentMode] = {
+    ...snapshot,
+    active_job_id: state.currentTaskId || snapshot.active_job_id || null,
+    current_generation_id: state.currentGenerationId || null,
+    current_result_asset_id: item.asset_id || null,
+  };
+  scheduleWorkspaceDraftSave(state.currentMode);
+  renderResults();
+}
+
 function resultDataUrl(item, tab = state.resultTab) {
   if (!item) return '';
   if (item.data && String(item.data).startsWith('data:')) return item.data;
   if (item.data) return API.b64ToDataURL(item.data, tab === 'cutout' ? 'image/png' : 'image/jpeg');
   return item.content_url || item.url || '';
+}
+
+function activeFeedbackResultKey(item) {
+  return [
+    item?.job_id || state.currentTaskId || 'session',
+    item?.generation_id || state.currentGenerationId || 'generation',
+    item?.asset_id || item?.name || state.viewerIndex,
+  ].join(':');
+}
+
+function renderFeedbackState() {
+  const entry = $('#feedback-entry');
+  const receipt = $('#feedback-receipt');
+  const detail = $('#feedback-detail');
+  if (!entry || !receipt || !detail) return;
+  entry.hidden = state.feedbackRecorded;
+  receipt.hidden = !state.feedbackRecorded;
+  detail.hidden = state.feedbackRecorded || !['rejected', 'note'].includes(state.lastFeedbackSignal);
+  $('#feedback-receipt-copy').textContent = state.feedbackReceipt || '已记录为下一版证据';
+  const suggestionButton = $('#btn-feedback-suggestion');
+  suggestionButton.hidden = !state.feedbackRecorded || !state.feedbackSuggestionId;
+  suggestionButton.dataset.suggestionId = state.feedbackSuggestionId || '';
+  ['#btn-adopt', '#btn-reject', '#btn-feedback'].forEach((selector) => {
+    const button = $(selector);
+    button.disabled = state.feedbackSubmitting;
+    button.setAttribute('aria-busy', String(state.feedbackSubmitting));
+  });
+  ['#btn-review-adjust', '#btn-review-record', '#btn-review-suggest'].forEach((selector) => {
+    const button = $(selector);
+    if (!button) return;
+    button.disabled = state.feedbackSubmitting;
+    button.setAttribute('aria-busy', String(state.feedbackSubmitting));
+  });
+  $('#btn-feedback').textContent = state.feedbackSubmitting ? '记录中…' : '发送';
+}
+
+function prepareFeedbackForResult(item) {
+  const key = activeFeedbackResultKey(item);
+  const durable = reviewStateForResult(state.resultReviews, item?.asset_id || '');
+  if (state.feedbackResultKey !== key) {
+    state.feedbackResultKey = key;
+    state.feedbackSubmitting = false;
+    if (state.editingFeedbackResultKey !== key) state.editingFeedbackResultKey = '';
+    $('#feedback-input').value = '';
+  }
+  const editing = state.editingFeedbackResultKey === key;
+  state.feedbackRecorded = durable.reviewed && !editing;
+  state.feedbackReceipt = durable.reviewed ? feedbackReceiptCopy(durable.receipt) : '';
+  state.feedbackSuggestionId = durable.reviewed ? durable.receipt.suggestionId : '';
+  if (durable.reviewed && !editing) {
+    discardPendingReviewRequest(item?.asset_id || '');
+    const decision = String(durable.decision || '');
+    state.lastFeedbackSignal = decision === 'reject'
+      ? 'rejected'
+      : decision === 'adopt' ? 'adopted' : 'adjusted';
+  } else if (!state.lastFeedbackSignal) {
+    state.lastFeedbackSignal = 'note';
+  }
+  renderFeedbackState();
 }
 
 function renderResults() {
@@ -1631,13 +2197,24 @@ function renderResults() {
   }
   state.viewerIndex = Math.max(0, Math.min(state.viewerIndex, items.length - 1));
   const item = items[state.viewerIndex];
+  prepareFeedbackForResult(item);
   const src = resultDataUrl(item);
-  $('#viewer-main-img').src = src;
-  $('#viewer-main-img').onclick = () => openModal(src);
+  const viewerImage = $('#viewer-main-img');
+  const showDimensions = () => {
+    const width = Number(item.width || viewerImage.naturalWidth || 0);
+    const height = Number(item.height || viewerImage.naturalHeight || 0);
+    $('#result-dimensions').textContent = width && height ? `${width} × ${height} px` : '像素待读取';
+  };
+  viewerImage.onload = showDimensions;
+  viewerImage.src = src;
+  viewerImage.onclick = () => openModal(src);
+  if (viewerImage.complete) showDimensions();
   $('#viewer-nav').hidden = items.length < 2;
   $('#viewer-counter').textContent = `${state.viewerIndex + 1} / ${items.length}`;
   $('#viewer-thumbs').innerHTML = items.map((entry, index) => `<button class="viewer-thumb ${index === state.viewerIndex ? 'active' : ''}" type="button" data-index="${index}"><img src="${resultDataUrl(entry)}" alt="结果 ${index + 1}" /></button>`).join('');
-  $$('.viewer-thumb').forEach((button) => button.addEventListener('click', () => { state.viewerIndex = Number(button.dataset.index); renderResults(); }));
+  $$('.viewer-thumb').forEach((button) => button.addEventListener('click', () => {
+    selectResultVersion(Number(button.dataset.index));
+  }));
   if (state.originalDataUrl && src) state.compareData = { original: state.originalDataUrl, result: src };
 }
 
@@ -1678,20 +2255,199 @@ async function saveCurrentResults() {
   else toast(`导出失败：${String(failures[0]?.error || '未知错误')}`, 'error', 6000);
 }
 
-async function recordFeedback(signal, reason = '') {
-  if (!state.currentSessionId) { toast('当前没有可反馈的创作会话', 'error'); return false; }
+async function recordFeedback(signal, reason = '', learningAction = 'record', reasonCodes = []) {
+  const item = getResultItems()[state.viewerIndex];
+  const reviewJobId = item?.job_id || state.currentTaskId;
+  if (!reviewJobId || !item?.asset_id) { toast('当前没有可评审的结果版本', 'error'); return false; }
+  if (state.feedbackSubmitting) return false;
+  const normalizedSignal = normalizeFeedbackSignal(signal);
+  const decision = backendDecisionForSignal(normalizedSignal);
+  const normalizedReasons = normalizeReviewReasonCodes(normalizedSignal, reasonCodes);
+  const reviewNote = String(reason || '').trim()
+    || normalizedReasons.map((code) => reviewReasonLabel(code)).join('、');
+  state.feedbackSubmitting = true;
+  renderFeedbackState();
+  const reviewPayload = {
+    result_asset_id: item.asset_id,
+    generation_id: item.generation_id || state.currentGenerationId || null,
+    decision,
+    reason_codes: normalizedReasons,
+    note: reviewNote,
+    learning_action: learningAction,
+  };
+  const requestId = reviewRequestId(item.asset_id, reviewPayload);
   try {
-    await API.recordFeedback(state.currentSessionId, {
-      signal,
-      generation_id: state.currentGenerationId || null,
-      reason,
-      scope: 'session',
-      structured: { mode: state.currentMode, result_tab: state.resultTab, result_index: state.viewerIndex, brief: $('#brief-input').value.trim() },
+    const response = await API.submitResultReview(reviewJobId, {
+      client_request_id: requestId,
+      ...reviewPayload,
     });
-    toast(signal === 'adopted' ? '已记录采用：这版会成为成功证据' : '反馈已进入本地学习证据', 'success');
+    const review = response?.review || response;
+    state.resultReviews = [...state.resultReviews, review];
+    state.editingFeedbackResultKey = '';
+    state.feedbackRecorded = true;
+    const durable = reviewStateForResult(
+      state.resultReviews,
+      item.asset_id,
+    );
+    state.feedbackReceipt = feedbackReceiptCopy(durable.receipt);
+    state.feedbackSuggestionId = durable.receipt.suggestionId;
+    state.lastFeedbackSignal = 'note';
+    clearPendingReviewRequest(item.asset_id, requestId);
+    toast(normalizedSignal === 'adopted' ? '已记录采用：这版会成为成功证据' : '结果评审和反馈证据已写入任务账本', 'success');
     $('#feedback-input').value = '';
     return true;
-  } catch (error) { toast(`反馈记录失败：${error}`, 'error'); return false; }
+  } catch (error) {
+    if (isDefinitiveJobRejection(error)) clearPendingReviewRequest(item.asset_id, requestId);
+    toast(`反馈记录失败：${error}`, 'error');
+    return false;
+  } finally {
+    state.feedbackSubmitting = false;
+    renderFeedbackState();
+  }
+}
+
+async function startImmediateAdjustment(reason, reasonCodes = []) {
+  const item = getResultItems()[state.viewerIndex];
+  const parentJobId = item?.job_id || state.currentTaskId;
+  if (!parentJobId || !item?.asset_id || item.role === 'result_cutout') {
+    toast('当前版本不是可定向修改的商业主图', 'error');
+    return false;
+  }
+  const note = String(reason || '').trim();
+  if (!note) {
+    toast('立即修改前，请写清楚这张图需要调整什么');
+    return false;
+  }
+  if (state.feedbackSubmitting) return false;
+  const reviewPayload = {
+    result_asset_id: item.asset_id,
+    generation_id: item.generation_id || state.currentGenerationId || null,
+    decision: 'adjust',
+    reason_codes: normalizeReviewReasonCodes('adjusted', reasonCodes),
+    note,
+    learning_action: 'regenerate',
+  };
+  const requestId = reviewRequestId(item.asset_id, reviewPayload);
+  state.feedbackSubmitting = true;
+  renderFeedbackState();
+  try {
+    const response = await API.adjustResult(parentJobId, {
+      client_request_id: requestId,
+      result_asset_id: item.asset_id,
+      generation_id: reviewPayload.generation_id,
+      reason_codes: reviewPayload.reason_codes.length ? reviewPayload.reason_codes : ['adjusted'],
+      note,
+    });
+    const review = response?.review;
+    if (review) state.resultReviews = [...state.resultReviews, review];
+    const job = response?.job || null;
+    if (!job?.id) throw new Error('派生任务未返回可追踪编号');
+    clearPendingReviewRequest(item.asset_id, requestId);
+    state.currentTaskId = job.id;
+    state.currentSessionId = job.session_id || '';
+    state.currentGenerationId = job.items?.[0]?.generation_id || '';
+    const modeSnapshot = state.modeSnapshots[job.mode] || {};
+    state.modeSnapshots[job.mode] = {
+      ...modeSnapshot,
+      active_job_id: job.id,
+      current_generation_id: state.currentGenerationId || null,
+      current_result_asset_id: null,
+    };
+    if (state.workspaceDrafts[job.mode]) {
+      state.workspaceDrafts[job.mode] = {
+        ...state.workspaceDrafts[job.mode],
+        active_job_id: job.id,
+        current_generation_id: state.currentGenerationId || null,
+        current_result_asset_id: null,
+      };
+    }
+    scheduleWorkspaceDraftSave(job.mode, 0);
+    setStage('processing');
+    switchPage('process');
+    $('#summary-result').textContent = `新版本 V${response?.lineage?.version || 2} 已入队`;
+    $('#summary-result-note').textContent = '仅执行本次调整，原图、上一版本与反馈记录均不会被覆盖';
+    $('#review-reason-input').value = '';
+    $('#btn-review-adjust').hidden = true;
+    state.reviewDecision = '';
+    await loadJobs(true);
+    openDrawer('jobs');
+    toast(response.created === false ? '调整任务已在后台继续' : '已从本张结果派生独立调整任务', 'success');
+    return true;
+  } catch (error) {
+    if (isDefinitiveJobRejection(error)) clearPendingReviewRequest(item.asset_id, requestId);
+    toast(`立即修改失败：${formatApiError(error, '无法建立调整任务')}`, 'error', 6500);
+    return false;
+  } finally {
+    state.feedbackSubmitting = false;
+    renderFeedbackState();
+  }
+}
+
+async function completeCurrentWorkspace() {
+  const item = getResultItems()[state.viewerIndex];
+  if (!state.currentTaskId || !item?.asset_id) {
+    toast('当前没有可完成的结果现场', 'error');
+    return false;
+  }
+  if (state.workspaceCompletionInFlight) return false;
+  const mode = state.currentMode;
+  const candidateKey = completionRequestKey(mode, state.currentTaskId, item.asset_id);
+  if (state.workspaceCompletionRequest?.candidateKey !== candidateKey) {
+    state.workspaceCompletionRequest = {
+      candidateKey,
+      requestId: createClientRequestId(),
+    };
+  }
+  const button = $('#btn-result-next');
+  const previousLabel = button.textContent;
+  state.workspaceCompletionInFlight = true;
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.textContent = '正在完成现场…';
+  try {
+    const settled = await settleWorkspaceDraft(mode);
+    if (!settled) throw new Error('当前草稿仍在保存，请稍后重试');
+    const payload = {
+      expected_revision: state.workspaceRevisions[mode],
+      client_request_id: state.workspaceCompletionRequest.requestId,
+      job_id: state.currentTaskId,
+      result_asset_id: item.asset_id,
+    };
+    let response;
+    try {
+      response = await API.completeWorkspace(mode, payload);
+    } catch (error) {
+      const current = error?.detail?.current;
+      if (Number(error?.status) !== 409
+        || error?.detail?.code !== 'DRAFT_REVISION_CONFLICT'
+        || String(current?.active_job_id || '') !== state.currentTaskId) throw error;
+      state.workspaceDrafts[mode] = current;
+      state.workspaceRevisions[mode] = Number(current.revision || state.workspaceRevisions[mode]);
+      response = await API.completeWorkspace(mode, {
+        ...payload,
+        expected_revision: state.workspaceRevisions[mode],
+      });
+    }
+    applyCompletedWorkspaceDraft(mode, response?.draft || response);
+    state.workspaceCompletionRequest = null;
+    switchPage('process');
+    toast('当前现场已完成；结果和反馈仍保留在任务账本', 'success', 4200);
+    window.setTimeout(() => $('#file-queue [data-asset-id]')?.focus(), 0);
+    return true;
+  } catch (error) {
+    toast(
+      `完成现场失败：${formatApiError(error, '本地账本暂不可写')}`,
+      'error',
+      7000,
+      { label: '重试', onClick: completeCurrentWorkspace },
+    );
+    return false;
+  } finally {
+    state.workspaceCompletionInFlight = false;
+    button.disabled = false;
+    button.setAttribute('aria-busy', 'false');
+    button.textContent = previousLabel;
+  }
 }
 
 function openDrawer(name) {
@@ -1736,55 +2492,255 @@ function closeModal() {
   modalReturnFocus = null;
 }
 
-function renderCompare() {
-  const has = Boolean(state.compareData?.original && state.compareData?.result);
-  $('#compare-empty').hidden = has;
-  $('#compare-view').hidden = !has;
-  const rail = $('#review-version-rail');
-  const entries = [
-    ...(state.results?.main || []).map((item, index) => ({ item, index, tab: 'main' })),
-    ...(state.results?.cutout || []).map((item, index) => ({ item, index, tab: 'cutout' })),
-  ];
-  rail.innerHTML = entries.length ? `${entries.map((entry, order) => {
-    const selected = entry.tab === state.resultTab && entry.index === state.viewerIndex;
-    return `<button class="review-version ${selected ? 'is-selected' : ''}" type="button" data-review-tab="${entry.tab}" data-review-index="${entry.index}"><img src="${escapeHtml(resultDataUrl(entry.item, entry.tab))}" alt="结果版本 ${order + 1}" /><strong>版本 ${order + 1}</strong><small>${selected ? '当前' : '查看'}</small></button>`;
-  }).join('')}<button class="review-version" type="button" data-review-source><span class="session-card__color" aria-hidden="true"></span><strong>原图</strong><small>来源</small></button>` : '<div class="page-empty">等待结果版本</div>';
-  $$('[data-review-tab]', rail).forEach((button) => button.addEventListener('click', () => {
-    state.resultTab = button.dataset.reviewTab;
-    state.viewerIndex = Number(button.dataset.reviewIndex || 0);
-    renderResults();
-    renderCompare();
-  }));
-  $('[data-review-source]', rail)?.addEventListener('click', () => {
-    setComparePosition(97);
-    toast('已将对比滑块移到原图侧');
-  });
-  if (!has) return;
-  $('#compare-img-original').src = state.compareData.original;
-  $('#compare-img-result').src = state.compareData.result;
-  setComparePosition(50);
+function compareStateForMode(mode = state.currentMode) {
+  return normalizeCompareState(
+    state.modeSnapshots[mode]?.compare_state
+      || state.workspaceDrafts[mode]?.compare_state
+      || {},
+  );
 }
 
-function setComparePosition(percent) {
+function updateCompareState(patch, persist = true) {
+  const mode = state.currentMode;
+  const snapshot = state.modeSnapshots[mode]
+    || snapshotFromDraft(state.workspaceDrafts[mode] || {}, {});
+  const next = normalizeCompareState({
+    ...compareStateForMode(mode),
+    ...(patch || {}),
+  });
+  state.modeSnapshots[mode] = { ...snapshot, compare_state: next };
+  if (persist) scheduleWorkspaceDraftSave(mode);
+  return next;
+}
+
+function resultReviewEntries() {
+  return [
+    ...(state.results?.main || []).map((item, index) => ({ item, index, tab: 'main' })),
+    ...(state.results?.cutout || []).map((item, index) => ({ item, index, tab: 'cutout' })),
+  ].map((entry, order) => ({
+    ...entry,
+    label: entry.item.version_label || `结果 ${order + 1}`,
+  }));
+}
+
+function activeResultEntry(entries = resultReviewEntries()) {
+  return entries.find((entry) => (
+    entry.tab === state.resultTab && entry.index === state.viewerIndex
+  )) || null;
+}
+
+function clearReviewForm() {
+  state.reviewDecision = '';
+  state.reviewReasonCodes = new Set();
+  $('#review-reason-input').value = '';
+  $('#review-reason').hidden = true;
+  $('#btn-review-adjust').hidden = true;
+  $$('[data-review-decision]').forEach((button) => button.classList.remove('is-selected'));
+}
+
+function renderReviewReasonTags() {
+  const wrap = $('#review-reason-tags');
+  const options = reviewReasonOptions(state.reviewDecision);
+  wrap.innerHTML = options.map((option) => {
+    const selected = state.reviewReasonCodes.has(option.code);
+    return `<button type="button" data-review-reason="${escapeHtml(option.code)}" aria-pressed="${selected}">${escapeHtml(option.label)}</button>`;
+  }).join('');
+  $$('[data-review-reason]', wrap).forEach((button) => button.addEventListener('click', () => {
+    const code = String(button.dataset.reviewReason || '');
+    if (state.reviewReasonCodes.has(code)) state.reviewReasonCodes.delete(code);
+    else state.reviewReasonCodes.add(code);
+    button.setAttribute('aria-pressed', String(state.reviewReasonCodes.has(code)));
+  }));
+}
+
+function activateReviewDecision(decision, { reasonCodes = [], note = '' } = {}) {
+  const normalized = String(decision || '');
+  state.reviewDecision = normalized;
+  state.reviewReasonCodes = new Set(normalizeReviewReasonCodes(normalized, reasonCodes));
+  $$('[data-review-decision]').forEach((button) => {
+    button.classList.toggle('is-selected', button.dataset.reviewDecision === normalized);
+  });
+  $('#review-reason').hidden = !normalized;
+  $('#btn-review-adjust').hidden = normalized !== 'adjusted';
+  $('#review-reason-input').value = String(note || '');
+  renderReviewReasonTags();
+}
+
+function renderReviewPanel(item) {
+  const durable = reviewStateForResult(state.resultReviews, item?.asset_id || '');
+  const key = activeFeedbackResultKey(item);
+  if (state.reviewFormResultKey !== key) {
+    clearReviewForm();
+    state.reviewFormResultKey = key;
+  }
+  const editing = state.editingFeedbackResultKey === key;
+  const summary = $('#review-summary');
+  const options = $('#review-options');
+  if (durable.reviewed && !editing) {
+    const decisionCopy = {
+      adopt: '已确认可以直接使用',
+      adjust: '已记录需要调整',
+      reject: '已记录整体方向不对',
+    }[durable.decision] || '本版本已完成评审';
+    summary.hidden = false;
+    options.hidden = true;
+    $('#review-reason').hidden = true;
+    $('#review-summary-title').textContent = decisionCopy;
+    $('#review-summary-copy').textContent = feedbackReceiptCopy(durable.receipt);
+    const codes = Array.isArray(durable.review?.reason_codes) ? durable.review.reason_codes : [];
+    $('#review-summary-tags').innerHTML = codes
+      .map((code) => `<span>${escapeHtml(reviewReasonLabel(code))}</span>`)
+      .join('');
+    const suggestion = $('#btn-review-summary-suggestion');
+    suggestion.hidden = !durable.receipt.suggestionId;
+    suggestion.dataset.suggestionId = durable.receipt.suggestionId || '';
+    clearReviewForm();
+  } else {
+    summary.hidden = true;
+    options.hidden = false;
+    if (editing && durable.reviewed && !state.reviewDecision) {
+      const signal = durable.decision === 'adopt'
+        ? 'adopted' : durable.decision === 'reject' ? 'rejected' : 'adjusted';
+      activateReviewDecision(signal, {
+        reasonCodes: durable.review?.reason_codes || [],
+        note: durable.review?.note || '',
+      });
+    }
+  }
+}
+
+function renderCompare() {
+  const rail = $('#review-version-rail');
+  const entries = resultReviewEntries();
+  const active = activeResultEntry(entries);
+  rail.innerHTML = entries.length ? entries.map((entry) => {
+    const selected = entry === active;
+    const status = selected ? 'A · 当前' : (entry.item.is_parent_version ? '上一版' : '可对比');
+    return `<button class="review-version ${selected ? 'is-selected' : ''}" type="button" data-review-tab="${entry.tab}" data-review-index="${entry.index}" aria-pressed="${selected}"><img src="${escapeHtml(resultDataUrl(entry.item, entry.tab))}" alt="${escapeHtml(entry.label)}" /><strong>${escapeHtml(entry.label)}</strong><small>${status}</small></button>`;
+  }).join('') : statusPanelHtml('empty', { title: '等待结果版本', detail: '生成完成后可在这里选择 A。', compact: true });
+  $$('[data-review-tab]', rail).forEach((button) => button.addEventListener('click', () => {
+    state.editingFeedbackResultKey = '';
+    selectResultVersion(Number(button.dataset.reviewIndex || 0), button.dataset.reviewTab);
+    state.reviewReasonCodes = new Set();
+    state.reviewDecision = '';
+    renderCompare();
+  }));
+
+  const currentCompare = compareStateForMode();
+  const activeItem = active?.item || null;
+  const otherItems = entries.map((entry) => entry.item);
+  let referenceItem = comparisonTargetForItems(
+    otherItems,
+    activeItem?.asset_id,
+    currentCompare.secondary_result_asset_id,
+  );
+  if (!state.originalDataUrl && !referenceItem) {
+    referenceItem = otherItems.find((item) => String(item.asset_id) !== String(activeItem?.asset_id)) || null;
+  }
+  const referenceUrl = referenceItem
+    ? resultDataUrl(referenceItem, entries.find((entry) => entry.item === referenceItem)?.tab)
+    : state.originalDataUrl;
+  const activeUrl = activeItem ? resultDataUrl(activeItem, active.tab) : '';
+  const has = Boolean(referenceUrl && activeUrl);
+  state.compareData = has ? { original: referenceUrl, result: activeUrl } : null;
+
+  const target = $('#compare-target');
+  const targetOptions = [
+    ...(state.originalDataUrl ? [{ value: 'source', label: '原图' }] : []),
+    ...entries.filter((entry) => entry !== active).map((entry) => ({
+      value: entry.item.asset_id,
+      label: entry.label,
+    })),
+  ];
+  target.innerHTML = targetOptions.map((option) => (
+    `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`
+  )).join('');
+  target.disabled = targetOptions.length < 2;
+  target.value = referenceItem?.asset_id || 'source';
+  $('.review-compare-toolbar').hidden = !has;
+  $('#compare-empty').hidden = has;
+  $('#compare-view').hidden = !has;
+  $('#review-guide').hidden = !has || currentCompare.guide_dismissed;
+  if (!has) {
+    $('#compare-view').classList.remove('is-side-by-side', 'is-zoomed', 'is-panning');
+    $('#compare-slider').hidden = false;
+    $('#compare-mode-note').hidden = true;
+    renderReviewPanel(activeItem);
+    return;
+  }
+
+  const original = $('#compare-img-original');
+  const result = $('#compare-img-result');
+  const activeLabel = active?.label || '当前版本';
+  const referenceLabel = referenceItem
+    ? (entries.find((entry) => entry.item === referenceItem)?.label || '另一版本')
+    : '原图';
+  $('#compare-label-before').textContent = `B · ${referenceLabel}`;
+  $('#compare-label-after').textContent = `A · ${activeLabel}`;
+  original.alt = `对比对象 B：${referenceLabel}`;
+  result.alt = `当前版本 A：${activeLabel}`;
+  const sync = () => syncComparePresentation(original, result);
+  original.onload = sync;
+  result.onload = sync;
+  original.src = referenceUrl;
+  result.src = activeUrl;
+  if (original.complete && result.complete) sync();
+  setComparePosition(currentCompare.divider, false);
+  setCompareTransform(currentCompare, false);
+  renderReviewPanel(activeItem);
+}
+
+function syncComparePresentation(original, result) {
+  if (!original?.naturalWidth || !result?.naturalWidth) return;
+  const presentation = comparisonPresentation(
+    { width: original.naturalWidth, height: original.naturalHeight },
+    { width: result.naturalWidth, height: result.naturalHeight },
+  );
+  const sideBySide = presentation === 'side-by-side';
+  $('#compare-view').classList.toggle('is-side-by-side', sideBySide);
+  $('#compare-slider').hidden = sideBySide;
+  $('#compare-mode-note').hidden = !sideBySide;
+  $('#compare-view').dataset.presentation = presentation;
+}
+
+function setComparePosition(percent, persist = true) {
   const value = Math.max(3, Math.min(97, percent));
   const view = $('#compare-view');
   view.style.setProperty('--compare-slide', `${value}%`);
   $('#compare-slider').setAttribute('aria-valuenow', String(Math.round(value)));
+  if (persist) updateCompareState({ divider: value });
+}
+
+function setCompareTransform(compareState, persist = true) {
+  const normalized = normalizeCompareState(compareState);
+  const view = $('#compare-view');
+  view.style.setProperty('--compare-zoom', String(normalized.zoom));
+  view.style.setProperty('--compare-pan-x', `${normalized.pan_x}%`);
+  view.style.setProperty('--compare-pan-y', `${normalized.pan_y}%`);
+  view.classList.toggle('is-zoomed', normalized.zoom > 1);
+  $('#compare-zoom-value').textContent = `${Math.round(normalized.zoom * 100)}%`;
+  if (persist) updateCompareState(normalized);
 }
 
 function setupCompare() {
   const view = $('#compare-view');
   const slider = $('#compare-slider');
-  let dragging = false;
-  const move = (clientX) => {
+  let sliderDragging = false;
+  let panDrag = null;
+  const moveSlider = (clientX) => {
+    if (view.classList.contains('is-side-by-side')) return;
     const rect = view.getBoundingClientRect();
     if (rect.width) setComparePosition(((clientX - rect.left) / rect.width) * 100);
   };
-  slider.addEventListener('pointerdown', (event) => { dragging = true; slider.setPointerCapture(event.pointerId); move(event.clientX); });
-  slider.addEventListener('pointermove', (event) => { if (dragging) move(event.clientX); });
-  slider.addEventListener('pointerup', () => { dragging = false; });
-  view.addEventListener('click', (event) => move(event.clientX));
+  slider.addEventListener('pointerdown', (event) => {
+    sliderDragging = true;
+    slider.setPointerCapture(event.pointerId);
+    moveSlider(event.clientX);
+  });
+  slider.addEventListener('pointermove', (event) => { if (sliderDragging) moveSlider(event.clientX); });
+  slider.addEventListener('pointerup', () => { sliderDragging = false; });
   slider.addEventListener('keydown', (event) => {
+    if (view.classList.contains('is-side-by-side')) return;
     const current = Number(slider.getAttribute('aria-valuenow') || 50);
     const delta = event.shiftKey ? 10 : 2;
     if (event.key === 'ArrowLeft') { event.preventDefault(); setComparePosition(current - delta); }
@@ -1792,6 +2748,43 @@ function setupCompare() {
     if (event.key === 'Home') { event.preventDefault(); setComparePosition(3); }
     if (event.key === 'End') { event.preventDefault(); setComparePosition(97); }
   });
+  view.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('#compare-slider') || compareStateForMode().zoom <= 1) return;
+    const current = compareStateForMode();
+    panDrag = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      panX: current.pan_x,
+      panY: current.pan_y,
+      active: false,
+    };
+    view.setPointerCapture(event.pointerId);
+  });
+  view.addEventListener('pointermove', (event) => {
+    if (!panDrag || panDrag.pointerId !== event.pointerId) return;
+    const rect = view.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const deltaX = event.clientX - panDrag.x;
+    const deltaY = event.clientY - panDrag.y;
+    if (!panDrag.active && Math.hypot(deltaX, deltaY) < 4) return;
+    if (!panDrag.active) {
+      panDrag.active = true;
+      view.classList.add('is-panning');
+    }
+    setCompareTransform({
+      ...compareStateForMode(),
+      pan_x: panDrag.panX + (deltaX / rect.width) * 100,
+      pan_y: panDrag.panY + (deltaY / rect.height) * 100,
+    });
+  });
+  const endPan = (event) => {
+    if (!panDrag || panDrag.pointerId !== event.pointerId) return;
+    panDrag = null;
+    view.classList.remove('is-panning');
+  };
+  view.addEventListener('pointerup', endPan);
+  view.addEventListener('pointercancel', endPan);
 }
 
 function formatTime(value) {
@@ -1831,12 +2824,10 @@ async function openSessionFromHistory(sessionId) {
     const generations = session.generations || [];
     const generation = generations[generations.length - 1];
     state.currentSessionId = session.id || '';
-    state.knowledgeBundle = {
-      creative_brief: session.brief || {},
-      sources: generation?.knowledge_refs || [],
-      positive_rules: [], negative_rules: [], conflicts: [],
-    };
-    renderKnowledge(state.knowledgeBundle);
+    applyTaskKnowledgeBundle(knowledgeBundleFromEvidence({
+      brief: session.brief || {},
+      generation,
+    }));
     openDrawer('intelligence');
     toast('这条旧会话没有任务快照，已打开可追溯证据');
   } catch (error) {
@@ -1884,7 +2875,7 @@ function renderSessionsDashboard() {
   toggle.textContent = state.sessionShowAll ? '收起列表' : `查看全部 ${sessions.length} 个`;
   toggle.setAttribute('aria-expanded', String(state.sessionShowAll));
   if (!sessions.length) {
-    grid.innerHTML = '<div class="page-empty">这个项目还没有创作现场。完成第一项任务后，会话会自动出现在这里。</div>';
+    grid.innerHTML = statusPanelHtml('empty', { title: '还没有创作现场', detail: '完成第一项任务后，现场会自动保存在这里。', fill: true });
     return;
   }
   const visibleSessions = state.sessionShowAll ? sessions : sessions.slice(0, 6);
@@ -1900,7 +2891,7 @@ function renderSessionsDashboard() {
 
 async function loadSessions() {
   const grid = $('#history-grid');
-  grid.innerHTML = '<div class="page-empty">正在读取本地创作账本…</div>';
+  grid.innerHTML = statusPanelHtml('loading', { title: '正在读取创作账本', detail: '正在恢复最近项目与任务现场。', fill: true });
   try {
     const [sessions, suggestions] = await Promise.all([
       API.getSessions(60),
@@ -1916,7 +2907,13 @@ async function loadSessions() {
     projectFilter.value = state.sessionProjectFilter;
     renderSessionsDashboard();
   } catch (error) {
-    grid.innerHTML = `<div class="page-empty">读取失败：${escapeHtml(formatApiError(error, '本地创作账本暂不可用'))}</div>`;
+    grid.innerHTML = statusPanelHtml('offline', {
+      title: '创作账本暂时离线',
+      detail: formatApiError(error, '本地创作账本暂不可用'),
+      fill: true,
+      action: { label: '重新读取', attribute: 'data-history-status-action', value: 'retry' },
+    });
+    $('[data-history-status-action="retry"]', grid)?.addEventListener('click', loadSessions);
   }
 }
 
@@ -1951,6 +2948,13 @@ function renderMemoryProjection(ledger, suggestions, knowledgeStatus) {
   const documents = Number(knowledgeStatus?.document_count || 0);
   const knowledgeRules = Number(knowledgeStatus?.rule_count || 0);
   const bundle = state.knowledgeBundle || {};
+  const currentItem = getResultItems()[state.viewerIndex] || null;
+  const currentProjection = memoryProjectionState({
+    currentTaskId: state.currentTaskId,
+    knowledgeBundle: bundle,
+    reviews: state.resultReviews,
+    resultAssetId: currentItem?.asset_id || '',
+  });
   const sources = Array.isArray(bundle.sources) ? bundle.sources : [];
   const executionRules = (Array.isArray(bundle.positive_rules) ? bundle.positive_rules.length : 0)
     + (Array.isArray(bundle.negative_rules) ? bundle.negative_rules.length : 0);
@@ -1966,22 +2970,45 @@ function renderMemoryProjection(ledger, suggestions, knowledgeStatus) {
   $('#memory-session-count').textContent = sessions;
   $('#memory-feedback-count').textContent = feedback;
   $('#memory-pending-count').textContent = pending;
+  const pendingNode = $('[data-memory-node="待审核建议"]');
+  pendingNode?.classList.toggle('memory-dna-node--pending', pending > 0);
   $('#memory-rule-count').textContent = knowledgeStatus?.available === false
     ? '主库暂不可用'
     : `${documents} 份文档 · ${knowledgeRules} 条规则`;
   $('#memory-core-summary').textContent = `${documents} 份正式知识 · ${sessions} 个现场`;
-  $('#memory-trace-intent').textContent = intent || '当前任务尚未输入创作目标';
-  $('#memory-trace-knowledge').textContent = sources.length
-    ? memorySources.length
-      ? `本次引用 ${sources.length} 份依据，其中 ${memorySources.length} 条是你已批准的反馈`
-      : `本次引用 ${sources.length} 份正式知识`
-    : '当前任务尚未编译知识来源';
-  $('#memory-trace-rules').textContent = executionRules
-    ? `已应用 ${executionRules} 条可检查执行规则：${appliedRuleTexts.slice(0, 3).join('；')}${appliedRuleTexts.length > 3 ? '…' : ''}`
-    : '只采用已批准规则，不使用待审核建议';
-  $('#memory-trace-feedback').textContent = feedback
-    ? `已有 ${feedback} 条反馈证据；新建议仍需确认`
-    : '确认终稿后才形成待审核建议';
+  $('#memory-trace-title').textContent = currentProjection.title;
+  $('#btn-open-memory-trace').disabled = !currentProjection.hasTask;
+  $('#memory-trace-intent').textContent = currentProjection.hasTask
+    ? intent || '当前任务尚未输入创作目标'
+    : '当前未选择任务；全局现场数量不会被伪装成当前步骤';
+  $('#memory-trace-knowledge').textContent = currentProjection.hasTask
+    ? sources.length
+      ? memorySources.length
+        ? `本次引用 ${sources.length} 份依据，其中 ${memorySources.length} 条是你已批准的反馈`
+        : `本次引用 ${sources.length} 份正式知识`
+      : '当前任务尚未编译知识来源'
+    : `${documents} 份正式知识可用；选择任务后显示实际引用`;
+  $('#memory-trace-rules').textContent = currentProjection.hasTask
+    ? executionRules
+      ? `已应用 ${executionRules} 条可检查执行规则：${appliedRuleTexts.slice(0, 3).join('；')}${appliedRuleTexts.length > 3 ? '…' : ''}`
+      : '只采用已批准规则，不使用待审核建议'
+    : '未选择任务，不展示最后一次前端知识包';
+  $('#memory-trace-feedback-title').textContent = currentProjection.hasTask
+    ? currentProjection.title
+    : '当前未选择任务';
+  $('#memory-trace-feedback').textContent = currentProjection.detail;
+
+  const traceSteps = $$('#memory-trace li');
+  if (!currentProjection.hasTask) {
+    traceSteps.forEach((step) => step.classList.remove('is-complete', 'is-current'));
+  } else {
+    const done = [Boolean(intent), sources.length > 0, executionRules > 0, currentProjection.reviewed];
+    const currentIndex = done.findIndex((value) => !value);
+    traceSteps.forEach((step, index) => {
+      step.classList.toggle('is-complete', done[index]);
+      step.classList.toggle('is-current', currentIndex === index);
+    });
+  }
 
   const details = {
     设计判断: `${documents} 份正式知识、${sessions} 个创作现场和 ${feedback} 条反馈共同构成当前投影。`,
@@ -1994,24 +3021,83 @@ function renderMemoryProjection(ledger, suggestions, knowledgeStatus) {
   selectMemoryNode($('.memory-dna-node.is-selected') || $('[data-memory-node]'));
 }
 
-async function loadMemory() {
+async function openMemorySourceResult(source, button) {
+  if (!source?.job_id || !source?.result_asset_id || button?.disabled) return;
+  if (button) {
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+  }
   try {
-    await API.synthesizeMemory().catch(() => null);
-    const [ledger, suggestions, knowledgeStatus] = await Promise.all([
+    await openJobResults(source.job_id);
+    const location = locateResultVersion(state.results, source.result_asset_id);
+    if (!location) throw new Error('来源结果版本已不在该任务中');
+    selectResultVersion(location.index, location.tab);
+    await settleWorkspaceDraft(state.currentMode);
+    toast('已打开形成这条建议的精确结果版本', 'success');
+    window.setTimeout(() => $('#btn-open-compare')?.focus(), 0);
+  } catch (error) {
+    toast(`无法打开来源结果：${formatApiError(error, '历史任务暂不可用')}`, 'error', 6000);
+    if (button) {
+      button.disabled = false;
+      button.setAttribute('aria-busy', 'false');
+    }
+  }
+}
+
+function openMemorySuggestion(suggestionId) {
+  const target = String(suggestionId || '').trim();
+  if (!target) return;
+  state.memoryTargetSuggestionId = target;
+  switchPage('memory');
+}
+
+async function loadMemory(targetSuggestionId = state.memoryTargetSuggestionId) {
+  const list = $('#memory-list');
+  list.innerHTML = statusPanelHtml('loading', { title: '正在读取审核队列', detail: '正在核对反馈证据与待审核建议。', fill: true });
+  try {
+    const targetId = String(targetSuggestionId || '').trim();
+    const [ledger, pendingSuggestions, knowledgeStatus] = await Promise.all([
       API.getLedgerStatus(),
       API.getMemorySuggestions('pending'),
       API.getKnowledgeStatus().catch(() => state.knowledgeStatus || {}),
     ]);
+    const suggestions = [...pendingSuggestions];
+    if (targetId && !suggestions.some((item) => String(item.id) === targetId)) {
+      const target = await API.getMemorySuggestion(targetId).catch(() => null);
+      if (target) suggestions.unshift(target);
+    }
     state.knowledgeStatus = knowledgeStatus;
-    renderMemoryProjection(ledger, suggestions, knowledgeStatus);
-    const list = $('#memory-list');
-    if (!suggestions.length) { list.innerHTML = '<div class="page-empty">暂无待审核偏好。继续使用后，重复模式会在这里出现。</div>'; return; }
+    renderMemoryProjection(ledger, pendingSuggestions, knowledgeStatus);
+    if (!suggestions.length) {
+      state.memoryTargetSuggestionId = '';
+      list.innerHTML = statusPanelHtml('empty', { title: '暂无待审核偏好', detail: '继续完成结果评审后，重复模式会在这里出现。', fill: true });
+      return;
+    }
+    const statusCopy = {
+      pending: '待审核',
+      approved: '已采用',
+      rejected: '已拒绝',
+      dismissed: '已停用',
+    };
     list.innerHTML = suggestions.map((item) => {
       const proposed = item.proposed_value || {};
       const evidenceCount = Number(proposed.distinct_sessions || (item.evidence || []).length || 0);
       const contradictionCount = Number(proposed.contradiction_count || 0);
-      return `<article class="memory-item" data-id="${escapeHtml(item.id)}"><div class="memory-item__copy"><div class="memory-item__meta"><span>${escapeHtml(item.scope_type || 'designer')} · ${escapeHtml(item.category || 'general')}</span><strong>${Math.round(Number(item.confidence || 0) * 100)}%</strong></div><h3>${escapeHtml(proposed.label || item.rule_key || '新偏好建议')}</h3><p>${escapeHtml(proposed.directive || JSON.stringify(proposed))}</p><small>${evidenceCount} 个独立会话支持${contradictionCount ? ` · ${contradictionCount} 条反例` : ' · 暂无反例'}</small></div><div class="memory-actions"><button type="button" data-review="approved">采用</button><button type="button" data-review="rejected">拒绝</button></div></article>`;
+      const sources = Array.isArray(item.source_results) ? item.source_results : [];
+      const sourceButtons = sources.length
+        ? `<div class="memory-source-list" aria-label="建议来源结果">${sources.map((source, index) => `<button type="button" data-memory-source data-job-id="${escapeHtml(source.job_id)}" data-result-id="${escapeHtml(source.result_asset_id)}" title="${escapeHtml(source.reason || '查看来源结果')}">${escapeHtml(MODE_CONFIG[source.mode]?.label || '来源结果')} ${index + 1}</button>`).join('')}</div>`
+        : '<small>此建议来自旧会话证据，尚无结果级跳转游标。</small>';
+      const reviewActions = item.status === 'pending'
+        ? '<div class="memory-actions"><button type="button" data-review="approved">采用</button><button type="button" data-review="rejected">拒绝</button></div>'
+        : `<div class="memory-actions"><span>${escapeHtml(statusCopy[item.status] || item.status || '已处理')}</span></div>`;
+      return `<article class="memory-item ${String(item.id) === targetId ? 'is-target' : ''}" data-id="${escapeHtml(item.id)}" tabindex="-1"><div class="memory-item__copy"><div class="memory-item__meta"><span>${escapeHtml(item.scope_type || 'designer')} · ${escapeHtml(item.category || 'general')} · ${escapeHtml(statusCopy[item.status] || item.status || '待审核')}</span><strong>${Math.round(Number(item.confidence || 0) * 100)}%</strong></div><h3>${escapeHtml(proposed.label || item.rule_key || '新偏好建议')}</h3><p>${escapeHtml(proposed.directive || JSON.stringify(proposed))}</p><small>${evidenceCount} 个独立会话支持${contradictionCount ? ` · ${contradictionCount} 条反例` : ' · 暂无反例'}</small>${sourceButtons}</div>${reviewActions}</article>`;
     }).join('');
+    $$('[data-memory-source]', list).forEach((button) => button.addEventListener('click', () => {
+      openMemorySourceResult({
+        job_id: button.dataset.jobId,
+        result_asset_id: button.dataset.resultId,
+      }, button);
+    }));
     $$('[data-review]', list).forEach((button) => button.addEventListener('click', async () => {
       const item = button.closest('.memory-item');
       try {
@@ -2022,7 +3108,23 @@ async function loadMemory() {
       }
       catch (error) { toast(`审核失败：${error}`, 'error'); }
     }));
-  } catch (error) { $('#memory-list').innerHTML = `<div class="page-empty">读取失败：${escapeHtml(error)}</div>`; }
+    state.memoryTargetSuggestionId = '';
+    if (targetId) {
+      window.setTimeout(() => {
+        const target = $(`.memory-item[data-id="${CSS.escape(targetId)}"]`, list);
+        target?.scrollIntoView({ block: 'nearest', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+        target?.focus({ preventScroll: true });
+      }, 0);
+    }
+  } catch (error) {
+    list.innerHTML = statusPanelHtml('offline', {
+      title: '审核队列暂时离线',
+      detail: formatApiError(error, '反馈证据与待审核建议暂不可用'),
+      fill: true,
+      action: { label: '重新读取', attribute: 'data-memory-status-action', value: 'retry' },
+    });
+    $('[data-memory-status-action="retry"]', list)?.addEventListener('click', () => loadMemory());
+  }
 }
 
 function bindEvents() {
@@ -2045,6 +3147,8 @@ function bindEvents() {
   $('#brief-input').addEventListener('input', scheduleKnowledgeCompile);
   $('#param-model').addEventListener('change', updateQuickControls);
   $('#param-angle').addEventListener('change', updateQuickControls);
+  $('#param-output-ratio').addEventListener('change', updateQuickControls);
+  $('#param-output-resolution').addEventListener('change', updateQuickControls);
   $('#param-fidelity').addEventListener('input', updateQuickControls);
   $('#param-batch').addEventListener('input', updateQuickControls);
   $$('input[name="platter"]').forEach((radio) => radio.addEventListener('change', updateQuickControls));
@@ -2065,47 +3169,136 @@ function bindEvents() {
   });
   $$('[data-job-filter]').forEach((button) => button.addEventListener('click', () => {
     state.jobFilter = button.dataset.jobFilter || 'all';
+    state.jobVisibleLimit = 12;
     renderJobs(true);
   }));
   $('#btn-knowledge-card').addEventListener('click', () => openDrawer('intelligence'));
   $$('[data-close-drawer]').forEach((button) => button.addEventListener('click', () => closeDrawer(button.dataset.closeDrawer)));
-  $$('.result-tab').forEach((button) => button.addEventListener('click', () => { state.resultTab = button.dataset.rtab; state.viewerIndex = 0; renderResults(); }));
-  $('#viewer-prev').addEventListener('click', () => { const items = getResultItems(); if (items.length) { state.viewerIndex = (state.viewerIndex - 1 + items.length) % items.length; renderResults(); } });
-  $('#viewer-next').addEventListener('click', () => { const items = getResultItems(); if (items.length) { state.viewerIndex = (state.viewerIndex + 1) % items.length; renderResults(); } });
+  $$('.result-tab').forEach((button) => button.addEventListener('click', () => {
+    selectResultVersion(0, button.dataset.rtab);
+  }));
+  $('#viewer-prev').addEventListener('click', () => {
+    const items = getResultItems();
+    if (items.length) selectResultVersion((state.viewerIndex - 1 + items.length) % items.length);
+  });
+  $('#viewer-next').addEventListener('click', () => {
+    const items = getResultItems();
+    if (items.length) selectResultVersion((state.viewerIndex + 1) % items.length);
+  });
   $('#btn-open-compare').addEventListener('click', () => { renderCompare(); switchPage('compare'); });
   $('#btn-compare-back').addEventListener('click', () => switchPage('process'));
   $('#btn-review-why').addEventListener('click', () => openDrawer('intelligence'));
+  $('#compare-target').addEventListener('change', (event) => {
+    const value = String(event.target.value || 'source');
+    updateCompareState({ secondary_result_asset_id: value === 'source' ? '' : value });
+    renderCompare();
+  });
+  $('#btn-compare-zoom-out').addEventListener('click', () => {
+    const current = compareStateForMode();
+    const zoom = Math.max(1, Math.round((current.zoom - 0.25) * 100) / 100);
+    setCompareTransform({
+      ...current,
+      zoom,
+      pan_x: zoom === 1 ? 0 : current.pan_x,
+      pan_y: zoom === 1 ? 0 : current.pan_y,
+    });
+  });
+  $('#btn-compare-zoom-in').addEventListener('click', () => {
+    const current = compareStateForMode();
+    setCompareTransform({ ...current, zoom: Math.min(4, Math.round((current.zoom + 0.25) * 100) / 100) });
+  });
+  $('#btn-compare-reset').addEventListener('click', () => {
+    const reset = updateCompareState({ divider: 50, zoom: 1, pan_x: 0, pan_y: 0 });
+    setComparePosition(reset.divider, false);
+    setCompareTransform(reset, false);
+    toast('对比位置与缩放已复位');
+  });
+  $('#btn-compare-help').addEventListener('click', () => { $('#review-guide').hidden = false; });
+  $('#btn-review-guide-done').addEventListener('click', () => {
+    updateCompareState({ guide_dismissed: true });
+    $('#review-guide').hidden = true;
+    $('#review-version-rail [aria-pressed="true"]')?.focus();
+  });
+  $('#btn-review-edit').addEventListener('click', () => {
+    const item = getResultItems()[state.viewerIndex];
+    state.editingFeedbackResultKey = activeFeedbackResultKey(item);
+    state.reviewDecision = '';
+    renderCompare();
+    $('#review-options [data-review-decision]')?.focus();
+  });
+  $('#btn-review-summary-suggestion').addEventListener('click', (event) => {
+    openMemorySuggestion(event.currentTarget.dataset.suggestionId || '');
+  });
   $$('[data-review-decision]').forEach((button) => button.addEventListener('click', () => {
-    state.reviewDecision = button.dataset.reviewDecision || '';
-    $$('[data-review-decision]').forEach((item) => item.classList.toggle('is-selected', item === button));
-    $('#review-reason').hidden = false;
-    $('#review-reason-input').focus();
+    activateReviewDecision(button.dataset.reviewDecision || '');
+    $('#review-reason-tags button')?.focus();
   }));
+  $('#btn-review-adjust').addEventListener('click', async () => {
+    if (state.reviewDecision !== 'adjusted') { toast('请先选择“需要小幅调整”'); return; }
+    await startImmediateAdjustment(
+      $('#review-reason-input').value.trim(),
+      [...state.reviewReasonCodes],
+    );
+  });
   $('#btn-review-record').addEventListener('click', async () => {
     if (!state.reviewDecision) { toast('请先选择一个结果判断'); return; }
     const reason = $('#review-reason-input').value.trim();
-    const saved = await recordFeedback(state.reviewDecision, reason);
-    if (saved) $('#review-reason-input').value = '';
+    const saved = await recordFeedback(
+      state.reviewDecision,
+      reason,
+      'record',
+      [...state.reviewReasonCodes],
+    );
+    if (saved) {
+      clearReviewForm();
+      switchPage('process');
+      renderResults();
+    }
   });
   $('#btn-review-suggest').addEventListener('click', async () => {
     if (!state.reviewDecision) { toast('请先选择一个结果判断'); return; }
     const reason = $('#review-reason-input').value.trim();
-    if (!reason) { toast('形成知识建议前，请先写下具体判断依据'); return; }
-    const saved = await recordFeedback(state.reviewDecision, reason);
+    if (!reason && !state.reviewReasonCodes.size) { toast('形成知识建议前，请选择原因或写下具体判断依据'); return; }
+    const saved = await recordFeedback(
+      state.reviewDecision,
+      reason,
+      'suggest',
+      [...state.reviewReasonCodes],
+    );
     if (!saved) return;
-    await API.synthesizeMemory().catch(() => null);
-    $('#review-reason-input').value = '';
-    toast('已形成待审核建议；批准前不会影响未来生成', 'success', 5200);
+    clearReviewForm();
+    switchPage('process');
+    renderResults();
   });
   $('#btn-save-all').addEventListener('click', saveCurrentResults);
-  $('#btn-adopt').addEventListener('click', () => { state.lastFeedbackSignal = 'adopted'; recordFeedback('adopted', $('#feedback-input').value.trim()); });
-  $('#btn-reject').addEventListener('click', () => { state.lastFeedbackSignal = 'rejected'; $('#feedback-input').focus(); toast('请说出具体原因，它会成为下一版证据'); });
+  $('#btn-adopt').addEventListener('click', async () => {
+    state.lastFeedbackSignal = 'adopted';
+    await recordFeedback('adopted', $('#feedback-input').value.trim());
+  });
+  $('#btn-reject').addEventListener('click', () => {
+    state.lastFeedbackSignal = 'rejected';
+    renderFeedbackState();
+    $('#feedback-input').focus();
+    toast('请说出具体原因，它会成为下一版证据');
+  });
   $('#btn-feedback').addEventListener('click', async () => {
     const reason = $('#feedback-input').value.trim();
     if (!reason) { toast('请先写下具体判断'); return; }
     const ok = await recordFeedback(state.lastFeedbackSignal === 'rejected' ? 'rejected' : 'note', reason);
     if (ok) state.lastFeedbackSignal = 'note';
   });
+  $('#btn-feedback-edit').addEventListener('click', () => {
+    state.editingFeedbackResultKey = state.feedbackResultKey;
+    state.feedbackRecorded = false;
+    state.feedbackReceipt = '';
+    state.lastFeedbackSignal = 'note';
+    renderFeedbackState();
+    $('#feedback-input').focus();
+  });
+  $('#btn-feedback-suggestion').addEventListener('click', () => {
+    openMemorySuggestion(state.feedbackSuggestionId || $('#btn-feedback-suggestion').dataset.suggestionId);
+  });
+  $('#btn-result-next').addEventListener('click', completeCurrentWorkspace);
   $('#btn-refresh-history').addEventListener('click', loadSessions);
   $('#history-project-filter').addEventListener('change', (event) => {
     state.sessionProjectFilter = event.target.value || 'all';
@@ -2116,7 +3309,18 @@ function bindEvents() {
     state.sessionShowAll = !state.sessionShowAll;
     renderSessionsDashboard();
   });
-  $('#btn-refresh-memory').addEventListener('click', loadMemory);
+  $('#btn-refresh-memory').addEventListener('click', () => loadMemory());
+  $('#workspace-sync-state').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-workspace-status-action="retry"]');
+    const saveButton = event.target.closest('[data-workspace-status-action="retry-save"]');
+    const target = button || saveButton;
+    if (!target || target.disabled) return;
+    target.disabled = true;
+    target.setAttribute('aria-busy', 'true');
+    if (saveButton) flushWorkspaceDraft(state.currentMode, false);
+    else if (state.backendReady) loadWorkspace(state.currentMode, false);
+    else connectBackend();
+  });
   $('#btn-replay-memory').addEventListener('click', replayMemoryMotion);
   $$('[data-memory-node]').forEach((node) => node.addEventListener('click', () => selectMemoryNode(node)));
   $('#btn-open-memory-evidence').addEventListener('click', () => openDrawer('intelligence'));
@@ -2167,37 +3371,66 @@ function bindEvents() {
 }
 
 async function connectBackend() {
+  if (state.backendConnecting) return false;
+  state.backendConnecting = true;
   setBackendStatus('connecting', '连接中');
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const health = await API.checkHealth();
-    if (health.ok) {
-      setBackendStatus('connected', '已连接');
-      try { const status = await API.getKnowledgeStatus(); settingsController.renderKnowledgeStatus(status); } catch (_) { /* keep app usable */ }
-      await Promise.all([loadAssets(false), loadJobs(true)]);
-      startJobPolling();
-      return;
+  setBootStatus('正在启动本地服务', '界面已经就绪，正在连接任务与素材账本…');
+  API.reportStartupMilestone('backend-connecting');
+  const deadline = performance.now() + 45000;
+  try {
+    while (performance.now() < deadline) {
+      const health = await API.checkHealth();
+      if (health.ok) {
+        setBootStatus('正在恢复工作现场', '同步素材、任务和上次保存的创作状态…');
+        try { const status = await API.getKnowledgeStatus(); settingsController.renderKnowledgeStatus(status); } catch (_) { /* keep app usable */ }
+        const [assetsLoaded, jobsLoaded] = await Promise.all([loadAssets(false), loadJobs(true)]);
+        if (assetsLoaded !== true || jobsLoaded !== true) {
+          setBackendStatus('connecting', '重连中');
+          continue;
+        }
+        setBackendStatus('connected', '已连接');
+        API.reportStartupMilestone('backend-ready');
+        startJobPolling();
+        API.reportStartupMilestone('workspace-ready');
+        setBootStatus('工作台已就绪', '可以继续上次任务或开始新的创作。', 'ready');
+        dismissBootShell();
+        return true;
+      }
+      const remaining = deadline - performance.now();
+      if (remaining > 0) await new Promise((resolve) => window.setTimeout(resolve, Math.min(700, remaining)));
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 700));
+    setBackendStatus('disconnected', '未连接');
+    state.assetsAvailable = false;
+    state.jobsAvailable = false;
+    renderJobs();
+    updateCtaState();
+    API.reportStartupMilestone('backend-unavailable');
+    setBootStatus('本地服务暂未就绪', '可以重试连接，或先进入界面检查设置。', 'error');
+    toast('本地服务尚未就绪，可以重试连接', 'error');
+    return false;
+  } finally {
+    state.backendConnecting = false;
   }
-  setBackendStatus('disconnected', '未连接');
-  state.assetsAvailable = false;
-  state.jobsAvailable = false;
-  renderJobs();
-  updateCtaState();
-  toast('本地服务尚未就绪，稍后可重试', 'error');
 }
 
 async function init() {
+  API.reportStartupMilestone('dom-ready');
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+    API.reportStartupMilestone('first-paint');
+  }));
   setupTheme();
   bindEvents();
   workflowDock.sync();
   setupCompare();
   restoreWorkspaceState();
   restorePendingSubmission();
+  restorePendingReviewRequests();
   switchMode(state.currentMode, false);
   setStage('empty');
   renderJobs();
   updateQuickControls();
+  $('#boot-retry')?.addEventListener('click', () => connectBackend());
+  $('#boot-enter')?.addEventListener('click', dismissBootShell);
   connectBackend();
   settingsController.load();
 }

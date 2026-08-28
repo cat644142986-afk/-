@@ -107,6 +107,7 @@ class DurableJobApiTests(unittest.TestCase):
         self.ai_lock = threading.Lock()
         self.fail_prompt_once = ""
         self.failed_prompt = False
+        self.force_square_output = False
         self.ai_started: threading.Event | None = None
         self.ai_release: threading.Event | None = None
         self.remove_calls = 0
@@ -160,6 +161,7 @@ class DurableJobApiTests(unittest.TestCase):
         stage="?",
         tid_ref="?",
         on_submitted=None,
+        output_spec=None,
     ):
         del negative_prompt, size, tid_ref
         prompt_text = str(prompt)
@@ -180,6 +182,15 @@ class DurableJobApiTests(unittest.TestCase):
             on_submitted(f"offline-{stage}-{len(self.ai_calls)}")
         if should_fail:
             raise JobExecutionError("OFFLINE_INJECTED_FAILURE", "injected offline failure")
+        if output_spec and output_spec.get("strict_aspect"):
+            if self.force_square_output:
+                return Image.new("RGB", (240, 240), (80, 140, 210))
+            ratio = float(output_spec.get("effective_ratio_value") or 1.0)
+            if ratio >= 1:
+                result_size = (max(1, round(240 * ratio)), 240)
+            else:
+                result_size = (240, max(1, round(240 / ratio)))
+            return Image.new("RGB", result_size, (80, 140, 210))
         if isinstance(ref_img, Image.Image):
             return ref_img.convert("RGB").copy()
         return Image.new("RGB", (28, 20), (80, 140, 210))
@@ -314,6 +325,77 @@ class DurableJobApiTests(unittest.TestCase):
                 and len(item["output"]["result_asset_ids"]) == 4
                 for item in trace_items
             ))
+            self.network_request.assert_not_called()
+
+    def test_explicit_output_spec_survives_job_snapshot_and_both_cloud_stages(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "portrait-spec.png", (90, 150, 210))
+            created = self.create_job(
+                client,
+                {
+                    "mode": "single",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "batch": 1,
+                        "product_name": "竖版商品",
+                        "model": "gpt-image-2",
+                        "output_ratio": "9:16",
+                        "output_resolution": "4k",
+                    },
+                    "client_request_id": "explicit-output-spec",
+                },
+            )
+            final = self.wait_for_job(created["job"]["id"])
+
+            self.assertEqual(final["status"], "completed")
+            self.assertEqual(final["parameters"]["output_ratio"], "9:16")
+            self.assertEqual(final["parameters"]["output_resolution"], "4k")
+            self.assertTrue(final["parameters"]["output_spec_explicit"])
+            traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
+            output_spec = next(item for item in traces if item["stage"] == "output.spec")
+            self.assertEqual(output_spec["output"]["effective_ratio"], "9:16")
+            self.assertEqual(output_spec["output"]["provider_params"]["size"], "2160x3840")
+            provider_results = [
+                item for item in traces if item["stage"].startswith("provider.image.")
+            ]
+            self.assertEqual(len(provider_results), 2)
+            self.assertTrue(all(item["output"]["aspect_matches"] for item in provider_results))
+            main_asset = next(
+                server.LEDGER.get_asset(asset_id)
+                for asset_id in final["items"][0]["result_asset_ids"]
+                if server.LEDGER.get_asset(asset_id)["role"] == "result_main"
+            )
+            self.assertAlmostEqual(main_asset["width"] / main_asset["height"], 9 / 16, delta=0.01)
+            self.network_request.assert_not_called()
+
+    def test_wrong_provider_aspect_stops_before_paid_refine_stage(self) -> None:
+        self.force_square_output = True
+        with self.live_client() as client:
+            source = self.import_asset(client, "wrong-aspect.png", (210, 120, 70))
+            created = self.create_job(
+                client,
+                {
+                    "mode": "single",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "batch": 1,
+                        "product_name": "横版商品",
+                        "output_ratio": "16:9",
+                        "output_resolution": "4k",
+                    },
+                    "client_request_id": "wrong-provider-aspect",
+                    "max_attempts": 1,
+                },
+            )
+            final = self.wait_for_job(created["job"]["id"])
+
+            self.assertEqual(final["status"], "failed")
+            self.assertEqual(final["items"][0]["error_code"], "OUTPUT_ASPECT_MISMATCH")
+            self.assertEqual(len(self.ai_calls), 1)
+            traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
+            failed = next(item for item in traces if item["stage"] == "provider.image.1-1")
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["output"]["actual_ratio"], "1:1")
             self.network_request.assert_not_called()
 
     def test_output_root_is_frozen_per_job_and_old_results_remain_readable(self) -> None:
@@ -850,6 +932,91 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertEqual(final["status"], "completed")
             self.assertEqual(final["items"][0]["source_asset_id"], source["id"])
             self.assert_result_lineage(restarted_client, final, {source["id"]: 2})
+            self.network_request.assert_not_called()
+
+    def test_immediate_adjustment_creates_one_pass_immutable_result_version(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "adjust-source.png", (180, 70, 40))
+            parent_created = self.create_job(client, {
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "parameters": {
+                    "batch": 1,
+                    "product_name": "测试商品",
+                    "model": "gpt-image-2",
+                    "output_ratio": "original",
+                    "output_resolution": "2k",
+                },
+                "client_request_id": "adjust-parent-job",
+            })
+            parent = self.wait_for_job(parent_created["job"]["id"])
+            parent_item = parent["items"][0]
+            parent_main = next(
+                asset_id for asset_id in parent_item["result_asset_ids"]
+                if self.ledger.get_asset(asset_id)["role"] == "result_main"
+            )
+            parent_result_ids = list(parent_item["result_asset_ids"])
+            payload = {
+                "client_request_id": "adjust-result-request-1",
+                "result_asset_id": parent_main,
+                "generation_id": parent_item["generation_id"],
+                "reason_codes": ["包装文字"],
+                "note": "只修复包装正面的文字边缘，其他内容保持不变",
+            }
+
+            submitted = client.post(
+                f"/api/jobs/{parent['id']}/adjustments", json=payload
+            )
+            self.assertEqual(submitted.status_code, 200, submitted.text)
+            body = submitted.json()
+            self.assertTrue(body["created"])
+            self.assertEqual(body["lineage"]["version"], 2)
+            derived_id = body["job"]["id"]
+            derived = self.wait_for_job(derived_id)
+
+            replay = client.post(
+                f"/api/jobs/{parent['id']}/adjustments", json=payload
+            )
+            self.assertEqual(replay.status_code, 200, replay.text)
+            self.assertFalse(replay.json()["created"])
+            self.assertEqual(replay.json()["job"]["id"], derived_id)
+
+            self.assertEqual(derived["status"], "completed")
+            self.assertEqual(derived["title"], "结果调整 · V2")
+            self.assertEqual(derived["parameters"]["batch"], 1)
+            self.assertEqual(derived["parameters"]["variations"], 1)
+            self.assertEqual(derived["parameters"]["output_ratio"], "original")
+            self.assertNotIn("folder_delivery", derived["parameters"])
+            self.assertEqual(
+                derived["parameters"]["adjustment"]["parent_result_asset_id"],
+                parent_main,
+            )
+            self.assertEqual(len(derived["items"]), 1)
+            self.assertEqual(len(derived["items"][0]["result_asset_ids"]), 1)
+            adjusted_asset = self.ledger.get_asset(
+                derived["items"][0]["result_asset_ids"][0]
+            )
+            self.assertEqual(adjusted_asset["role"], "result_main")
+            self.assertEqual(adjusted_asset["parent_asset_id"], parent_main)
+            generation = self.ledger.get_generation(
+                derived["items"][0]["generation_id"]
+            )
+            self.assertEqual(
+                generation["parent_generation_id"], parent_item["generation_id"]
+            )
+            self.assertEqual(
+                self.ledger.get_job(parent["id"])["items"][0]["result_asset_ids"],
+                parent_result_ids,
+            )
+            self.assertEqual(len(self.ai_calls), 3)
+            self.assertIn("只修复包装正面的文字边缘", self.ai_calls[-1])
+            self.assertEqual(self.remove_calls, 1)
+            reviews = client.get(f"/api/jobs/{parent['id']}/reviews").json()["reviews"]
+            self.assertEqual(len(reviews), 1)
+            self.assertEqual(reviews[0]["derived_job_id"], derived_id)
+            self.assertEqual(
+                reviews[0]["learning_receipt"]["status"], "adjustment_completed"
+            )
             self.network_request.assert_not_called()
 
     def test_legacy_upload_routes_persist_inputs_and_never_spawn_daemon_threads(self) -> None:

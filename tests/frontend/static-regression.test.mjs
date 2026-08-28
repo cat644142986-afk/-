@@ -64,6 +64,12 @@ test('asset management exposes discoverable safe removal, undo, recycle, restore
   assert.match(assets, /removeAssetFromCollectionSelections/);
   assert.match(assets, /api\.restoreAssetToCollection/);
   assert.match(assets, /api\.getAssetReferences/);
+  assert.match(assets, /filterAndSortAssets/);
+  assert.match(assets, /visibleLimit \+= ASSET_PAGE_SIZE/);
+  assert.match(assets, /api\.reorderCollectionAssets/);
+  assert.match(assets, /api\.purgeAsset/);
+  assert.match(html, /id="asset-manager-search"/);
+  assert.match(html, /id="asset-bulk-action"/);
   assert.match(assets, /label: '撤销'/);
   assert.match(css, /\.drawer--assets/);
 });
@@ -169,7 +175,7 @@ test('unsupported Folder action is absent and export handles all result roles in
   assert.match(css, /\.result-actions \{[^}]*repeat\(2,1fr\)/);
 });
 
-test('production shell lands the extended-workflow experience frame with exact native and component radii', () => {
+test('production shell uses DWM system corners without a hard-clipped resize region', () => {
   assert.doesNotMatch(html, /class="rail-button"[^>]*data-page="compare"/);
   assert.match(html, /id="btn-open-compare"/);
   assert.doesNotMatch(html, /class="studio-meta-grid"/);
@@ -184,8 +190,9 @@ test('production shell lands the extended-workflow experience frame with exact n
   assert.match(mainRust, /DWMWA_WINDOW_CORNER_PREFERENCE/);
   assert.match(mainRust, /DWMWA_BORDER_COLOR/);
   assert.match(mainRust, /let border_color = 0xFFFF_FFFEu32/);
-  assert.match(mainRust, /WINDOW_CORNER_RADIUS_LOGICAL: f64 = 36\.0/);
-  assert.match(mainRust, /CreateRoundRectRgn/);
+  assert.match(mainRust, /DWMWCP_ROUND/);
+  assert.doesNotMatch(mainRust, /WINDOW_CORNER_RADIUS_LOGICAL/);
+  assert.doesNotMatch(mainRust, /CreateRoundRectRgn/);
   assert.match(mainRust, /SetWindowRgn/);
   assert.match(tauriConfig, /"shadow": false/);
   assert.match(tauriConfig, /"backgroundColor": "#F4F1EB"/);
@@ -200,6 +207,38 @@ test('production shell lands the extended-workflow experience frame with exact n
   assert.match(css, /\.canvas-empty::before, \.canvas-empty::after \{ display: none; \}/);
 });
 
+test('desktop startup paints an embedded shell before waiting for the sidecar', () => {
+  assert.match(html, /id="boot-shell"[^>]*aria-busy="true"/);
+  assert.match(html, /id="boot-retry"/);
+  assert.match(app, /reportStartupMilestone\('first-paint'\)/);
+  assert.match(app, /const deadline = performance\.now\(\) \+ 45000/);
+  const setupIndex = mainRust.indexOf('.setup(move |app|');
+  const spawnIndex = mainRust.indexOf('std::thread::spawn', setupIndex);
+  const waitIndex = mainRust.indexOf('wait_for_server(port, 45)', spawnIndex);
+  assert.ok(setupIndex >= 0 && spawnIndex > setupIndex && waitIndex > spawnIndex);
+});
+
+test('desktop detects an exited sidecar and reconnects through a single native restart gate', () => {
+  assert.match(mainRust, /sidecar_starting: AtomicBool/);
+  assert.match(mainRust, /fn ensure_python_sidecar\(/);
+  assert.match(mainRust, /child\.try_wait\(\)/);
+  assert.match(mainRust, /compare_exchange\(false, true/);
+  assert.match(mainRust, /get_api_port, ensure_python_sidecar, report_startup_milestone/);
+  assert.match(api, /invoke\('ensure_python_sidecar'\)/);
+  assert.match(api, /API_BASE = 'http:\/\/127\.0\.0\.1:' \+ port/);
+  assert.match(app, /setBackendStatus\('connecting', '重连中'\)/);
+  assert.match(app, /const recovered = await connectBackend\(\)/);
+  assert.match(app, /assetsLoaded !== true \|\| jobsLoaded !== true/);
+});
+
+test('workspace completion refreshes one stale revision without changing the idempotency key', () => {
+  assert.match(app, /async function completeCurrentWorkspace\(\)/);
+  assert.match(app, /error\?\.detail\?\.code !== 'DRAFT_REVISION_CONFLICT'/);
+  assert.match(app, /state\.workspaceRevisions\[mode\] = Number\(current\.revision/);
+  assert.match(app, /response = await API\.completeWorkspace\(mode, \{[\s\S]*?\.\.\.payload,[\s\S]*?expected_revision: state\.workspaceRevisions\[mode\]/);
+  assert.match(app, /requestId: createClientRequestId\(\)/);
+});
+
 test('growth page projects real knowledge, evidence, review, and motion without demo business content', () => {
   assert.match(html, /id="memory-dna-map"/);
   assert.match(html, /id="memory-rule-count"/);
@@ -210,6 +249,11 @@ test('growth page projects real knowledge, evidence, review, and motion without 
   assert.match(app, /API\.getKnowledgeStatus\(\)/);
   assert.match(app, /function replayMemoryMotion\(\)/);
   assert.match(app, /未批准前不参与未来生成/);
+  assert.match(html, /id="btn-feedback-suggestion"[^>]*hidden/);
+  assert.match(api, /export async function getMemorySuggestion\(id\)/);
+  assert.match(app, /function openMemorySuggestion\(suggestionId\)/);
+  assert.match(app, /data-memory-source/);
+  assert.match(app, /locateResultVersion\(state\.results, source\.result_asset_id\)/);
   assert.match(css, /@keyframes memoryDrawLine/);
   assert.match(css, /@keyframes memoryNodeReveal/);
   assert.match(css, /@keyframes memoryTraceReveal/);
@@ -248,6 +292,9 @@ test('production sessions, task center, and result review use the approved infor
   assert.match(html, /id="job-runtime"/);
   assert.match(html, /class="review-workspace"/);
   assert.match(html, /data-review-decision="adopted"/);
+  assert.match(html, /id="compare-target"/);
+  assert.match(html, /id="review-reason-tags"/);
+  assert.match(html, /id="review-guide"/);
   assert.match(app, /function renderSessionsDashboard\(\)/);
   assert.match(app, /async function openSessionFromHistory\(sessionId\)/);
   assert.match(app, /function jobFailureCopy\(item\)/);
@@ -276,10 +323,10 @@ test('result, settings, memory, and job controls keep readable core copy', () =>
   assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.settings-layout \{[^}]*overflow-y: auto/);
 });
 
-test('workspace restores its latest result and exposes recoverable asset removal', () => {
+test('workspace restores only an explicit durable result cursor and exposes recoverable asset removal', () => {
   assert.match(app, /await restoreWorkspaceResult\(mode, payload\)/);
-  assert.match(app, /payload\.jobs\.find\(\(entry\) => entry\.id === preferredId/);
-  assert.match(app, /current_result_asset_id: items\[0\]\?\.asset_id \|\| null/);
+  assert.match(app, /selectRestorableResult\(payload\.jobs, payload\?\.draft \|\| \{\}\)/);
+  assert.match(app, /current_result_asset_id: selectedItem\?\.asset_id \|\| null/);
   assert.match(api, /export async function removeAssetFromCollection\(collection, assetId\)/);
   assert.match(app, /data-remove-asset-id=/);
   assert.match(assets, /await api\.removeAssetFromCollection\(targetCollection, assetId\)/);
@@ -297,6 +344,40 @@ test('quick cutout does not pretend to understand a semantic brief or knowledge 
   assert.match(app, /本地分割 · 不读取文字描述/);
   assert.match(app, /else \{[\s\S]*?state\.knowledgeBundle = null;[\s\S]*?renderKnowledge\(null\);/);
   assert.match(app, /if \(!bundle\) \{[\s\S]*?knowledge-summary'\)\.textContent = '等待知识编译'/);
+});
+
+test('output canvas ratio and resolution are real durable controls instead of static square copy', () => {
+  assert.match(html, /id="param-output-ratio"[\s\S]*?value="original" selected/);
+  assert.match(html, /id="param-output-resolution"[\s\S]*?value="4k"/);
+  assert.match(html, /id="result-dimensions"/);
+  assert.doesNotMatch(html, /<small>SIZE<\/small><strong>2048²<\/strong>/);
+  assert.match(app, /output_ratio: \$\('#param-output-ratio'\)\.value/);
+  assert.match(app, /output_resolution: \$\('#param-output-resolution'\)\.value/);
+  assert.match(app, /snapshot\.output_ratio/);
+  assert.match(studioState, /output_ratio: parameters\.output_ratio/);
+  assert.match(jobs, /output_resolution: parameters\.output_resolution/);
+  assert.match(app, /actual回传像素|实际回传像素/);
+});
+
+test('result adjustment is a durable derived version instead of overwriting the reviewed image', () => {
+  assert.match(html, /id="btn-review-adjust"[^>]*hidden>立即修改本张/);
+  assert.match(api, /export async function adjustResult\(jobId, payload\)/);
+  assert.match(app, /async function startImmediateAdjustment\(reason, reasonCodes = \[\]\)/);
+  assert.match(app, /API\.adjustResult\(parentJobId/);
+  assert.match(app, /parent_result_asset_id/);
+  assert.match(app, /上一版本已并入版本对比/);
+  assert.match(css, /\.review-reason \.review-adjust-button/);
+});
+
+test('result review persists A/B target, divider, zoom, pan, and first-use guidance', () => {
+  assert.match(app, /function updateCompareState\(patch, persist = true\)/);
+  assert.match(app, /secondary_result_asset_id/);
+  assert.match(app, /guide_dismissed/);
+  assert.match(app, /pan_x/);
+  assert.match(app, /setCompareTransform/);
+  assert.match(app, /scheduleWorkspaceDraftSave\(mode\)/);
+  assert.match(css, /--compare-zoom/);
+  assert.match(css, /\.review-guide/);
 });
 
 test('real workflow controls share the dark production dock without stretching empty space', () => {
@@ -322,5 +403,6 @@ test('rendering a workspace queue must commit items before appending the add slo
   // uploaded assets never render (no preview thumbnails) and the add-slot accumulates.
   assert.match(app, /queue\.innerHTML = items;/);
   assert.match(app, /queue\.innerHTML = items;[\s\S]*?queue\.innerHTML \+= '<button class="queue-item queue-add"/);
-  assert.match(app, /const items = state\.assets\.map[\s\S]*?\.join\(''\);/);
+  assert.match(app, /const renderedAssets = boundedAssetRenderList\(state\.assets, selection, 60\);/);
+  assert.match(app, /const items = renderedAssets\.map[\s\S]*?\.join\(''\);/);
 });

@@ -3,15 +3,19 @@ import assert from 'node:assert/strict';
 
 import {
   collectResultItems,
+  comparisonPresentation,
   createSubmissionSnapshot,
   itemCompletionProgress,
   jobCompletionProgress,
   jobLifecycleActions,
   jobsRenderSignature,
+  knowledgeBundleFromEvidence,
   multiFileOutputPlan,
+  normalizeFeedbackSignal,
   processResultItems,
   queueCompletionProgress,
   selectionAfterImport,
+  selectionForRestoredResult,
   submissionFingerprint,
 } from '../../src/js/workspace-state.js';
 
@@ -46,6 +50,17 @@ test('import selection is applied to the initiating mode and preserves determini
   assert.deepEqual(
     selectionAfterImport(['old-selection'], ['new-source', 'extra'], { multiple: false, maxFiles: 1 }),
     ['new-source'],
+  );
+});
+
+test('restored results recover active source selection without replacing a newer draft choice', () => {
+  assert.deepEqual(
+    selectionForRestoredResult([], ['source-a', 'source-missing'], ['source-a'], 20),
+    ['source-a'],
+  );
+  assert.deepEqual(
+    selectionForRestoredResult(['new-draft'], ['old-source'], ['new-draft', 'old-source'], 20),
+    ['new-draft'],
   );
 });
 
@@ -143,4 +158,47 @@ test('partial result export collects both roles and continues after an individua
   assert.deepEqual(outcome.succeeded, [main, last]);
   assert.equal(outcome.failed.length, 1);
   assert.equal(outcome.failed[0].item, broken);
+});
+
+test('result review decisions normalize to backend-supported feedback signals', () => {
+  assert.equal(normalizeFeedbackSignal('adjust'), 'adjusted');
+  assert.equal(normalizeFeedbackSignal('adjusted'), 'adjusted');
+  assert.equal(normalizeFeedbackSignal('adopt'), 'adopted');
+  assert.equal(normalizeFeedbackSignal('rejected'), 'rejected');
+  assert.equal(normalizeFeedbackSignal('unexpected-value'), 'note');
+});
+
+test('completed jobs restore exact task-bound rules instead of recompiling live knowledge', () => {
+  const bundle = knowledgeBundleFromEvidence({
+    brief: { objective: '做一张白底主图' },
+    traces: [{
+      stage: 'prompt.primary',
+      compiled_prompt: '基础提示。不可破坏约束（最高优先级）：保持包装文字；保持产品数量。知识库设计约束：阴影克制；已批准记忆反馈：保留杯身',
+      user_input: { brief: { objective: '保留玻璃杯身' } },
+      applied_knowledge: [
+        { kind: 'intent_lock', text: '保持包装文字' },
+        { kind: 'positive_rule', text: '阴影克制', source: { id: 'K-1', title: '食品主图规则' } },
+        { kind: 'negative_rule', text: '不要改变品牌色' },
+        { kind: 'source', source: { id: 'K-1', title: '食品主图规则' } },
+      ],
+    }],
+  });
+  assert.equal(bundle.trace_bound, true);
+  assert.equal(bundle.creative_brief.objective, '保留玻璃杯身');
+  assert.deepEqual(bundle.intent_lock_rules, ['保持包装文字', '保持产品数量']);
+  assert.deepEqual(bundle.positive_rules.map((rule) => rule.text), ['阴影克制', '已批准记忆反馈：保留杯身']);
+  assert.deepEqual(bundle.negative_rules.map((rule) => rule.text), ['不要改变品牌色']);
+  assert.equal(bundle.sources[0].id, 'K-1');
+});
+
+test('image comparison switches to honest side-by-side mode when aspect ratios differ', () => {
+  assert.equal(
+    comparisonPresentation({ width: 1200, height: 1200 }, { width: 2048, height: 2048 }),
+    'overlay',
+  );
+  assert.equal(
+    comparisonPresentation({ width: 900, height: 1400 }, { width: 2048, height: 2048 }),
+    'side-by-side',
+  );
+  assert.equal(comparisonPresentation({}, {}), 'overlay');
 });

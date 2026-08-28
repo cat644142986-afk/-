@@ -11,6 +11,12 @@ if (-not $PortableDir) {
 }
 $PortableDir = [System.IO.Path]::GetFullPath($PortableDir)
 $AppExe = [System.IO.Path]::GetFullPath((Join-Path $PortableDir "Product Atelier.exe"))
+if (-not (Test-Path -LiteralPath $AppExe -PathType Leaf)) {
+    # `tauri build --no-bundle` keeps Cargo's binary name, while the assembled
+    # portable directory uses the product name. Accept both so the same smoke
+    # gate can verify a candidate before it is promoted.
+    $AppExe = [System.IO.Path]::GetFullPath((Join-Path $PortableDir "product-atelier.exe"))
+}
 $SidecarExe = [System.IO.Path]::GetFullPath((Join-Path $PortableDir "python-server\python-server.exe"))
 $ManifestPath = Join-Path $PortableDir "python-server\sidecar-manifest.json"
 

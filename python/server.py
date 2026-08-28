@@ -28,6 +28,7 @@ try:
         DraftRevisionConflictError,
         IdempotencyConflictError,
         InvalidStatusTransitionError,
+        idempotent_id,
     )
     from job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
@@ -48,6 +49,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         DraftRevisionConflictError,
         IdempotencyConflictError,
         InvalidStatusTransitionError,
+        idempotent_id,
     )
     from python.job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from python.knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
@@ -135,7 +137,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-24.1"
+SIDECAR_CONTRACT_VERSION = "2026-08-27.2"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -190,6 +192,155 @@ ANGLE_PROMPT = {
     "30side": "30度斜侧角度(dramatic 3/4 view)，突出产品立体感和层次",
     "90top": "90度正俯视角度(flat lay top-down view)，适合平铺展示",
 }
+
+OUTPUT_RATIO_VALUES = frozenset({
+    "original", "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9",
+})
+OUTPUT_RESOLUTION_VALUES = frozenset({"2k", "4k"})
+OUTPUT_RATIO_NUMBERS = {
+    "1:1": 1.0,
+    "2:3": 2 / 3,
+    "3:2": 3 / 2,
+    "3:4": 3 / 4,
+    "4:3": 4 / 3,
+    "4:5": 4 / 5,
+    "5:4": 5 / 4,
+    "9:16": 9 / 16,
+    "16:9": 16 / 9,
+}
+GEMINI_IMAGE_RATIOS = {
+    **OUTPUT_RATIO_NUMBERS,
+    "21:9": 21 / 9,
+    "1:4": 1 / 4,
+    "4:1": 4.0,
+    "1:8": 1 / 8,
+    "8:1": 8.0,
+}
+GPT_IMAGE_SIZE_PRESETS = {
+    "2k": {
+        "1:1": "2048x2048", "2:3": "2048x3072", "3:2": "3072x2048",
+        "3:4": "1920x2560", "4:3": "2560x1920", "4:5": "2048x2560",
+        "5:4": "2560x2048", "9:16": "1440x2560", "16:9": "2560x1440",
+    },
+    "4k": {
+        "1:1": "2880x2880", "2:3": "2304x3456", "3:2": "3456x2304",
+        "3:4": "2400x3200", "4:3": "3200x2400", "4:5": "2560x3200",
+        "5:4": "3200x2560", "9:16": "2160x3840", "16:9": "3840x2160",
+    },
+}
+
+
+def _nearest_ratio_name(value: float, ratios: dict[str, float]) -> str:
+    safe_value = max(float(value), 1e-9)
+    return min(ratios, key=lambda name: abs(math.log(safe_value / ratios[name])))
+
+
+def _ratio_name_from_dimensions(width: int, height: int) -> str:
+    divisor = math.gcd(max(1, int(width)), max(1, int(height)))
+    return f"{max(1, int(width)) // divisor}:{max(1, int(height)) // divisor}"
+
+
+def _aligned_gpt_size(ratio: float, resolution: str) -> str:
+    """Build a provider-valid custom size while preserving the source ratio.
+
+    GPT Image 2 accepts custom dimensions aligned to 16 pixels, a 1:3..3:1
+    ratio and at most 8,294,400 pixels.  Named ratios use the provider's
+    published presets; this helper exists for the user's exact source ratio.
+    """
+    bounded_ratio = max(1 / 3, min(float(ratio), 3.0))
+    target_pixels = 8_294_400 if resolution == "4k" else 4_194_304
+    side_limit = 3840 if resolution == "4k" else 3072
+    width = math.sqrt(target_pixels * bounded_ratio)
+    height = math.sqrt(target_pixels / bounded_ratio)
+    scale = min(1.0, side_limit / max(width, height))
+    width = max(16, int(round(width * scale / 16)) * 16)
+    height = max(16, int(round(height * scale / 16)) * 16)
+    while width * height > 8_294_400:
+        if width >= height:
+            width -= 16
+        else:
+            height -= 16
+    return f"{width}x{height}"
+
+
+def resolve_output_spec(
+    model: str,
+    requested_ratio: str,
+    requested_resolution: str,
+    source_size: tuple[int, int],
+    *,
+    explicit: bool = True,
+) -> dict[str, Any]:
+    """Resolve semantic UI choices into a model-specific provider contract."""
+    ratio_name = str(requested_ratio or "1:1").strip().lower()
+    resolution = str(requested_resolution or "2k").strip().lower()
+    if ratio_name not in OUTPUT_RATIO_VALUES:
+        raise JobExecutionError("INVALID_OUTPUT_RATIO", "不支持的输出比例，请重新选择")
+    if resolution not in OUTPUT_RESOLUTION_VALUES:
+        raise JobExecutionError("INVALID_OUTPUT_RESOLUTION", "不支持的清晰度档位，请重新选择")
+    width, height = (int(source_size[0]), int(source_size[1]))
+    if width <= 0 or height <= 0:
+        raise JobExecutionError("INVALID_SOURCE_IMAGE", "无法读取源图宽高，不能计算输出比例")
+
+    source_ratio = width / height
+    model_key = str(model or "").strip()
+    is_gpt_image_2 = model_key.startswith("gpt-image-2") or model_key == "tt-image-2"
+    is_gemini_image = model_key.startswith("gemini-") and "image" in model_key
+
+    if ratio_name == "original":
+        desired_ratio = source_ratio
+        desired_label = _ratio_name_from_dimensions(width, height)
+    else:
+        desired_ratio = OUTPUT_RATIO_NUMBERS[ratio_name]
+        desired_label = ratio_name
+
+    if is_gemini_image:
+        effective_ratio = _nearest_ratio_name(desired_ratio, GEMINI_IMAGE_RATIOS)
+        provider_params = {
+            "aspectRatio": effective_ratio,
+            "imageSize": resolution.upper(),
+        }
+        provider_family = "gemini-image"
+        provider_size = resolution.upper()
+    elif is_gpt_image_2:
+        if ratio_name == "original":
+            provider_size = _aligned_gpt_size(desired_ratio, resolution)
+            size_width, size_height = (int(part) for part in provider_size.split("x", 1))
+            effective_ratio = _ratio_name_from_dimensions(size_width, size_height)
+        else:
+            effective_ratio = ratio_name
+            provider_size = GPT_IMAGE_SIZE_PRESETS[resolution][ratio_name]
+        provider_params = {"size": provider_size, "quality": "high"}
+        provider_family = "gpt-image-2"
+    else:
+        # Compatibility fallback for non-production/fixture adapters. Production
+        # UI exposes only the two capability-checked families above.
+        effective_ratio = _nearest_ratio_name(desired_ratio, OUTPUT_RATIO_NUMBERS)
+        provider_size = GPT_IMAGE_SIZE_PRESETS[resolution][effective_ratio]
+        provider_params = {"size": provider_size}
+        provider_family = "generic-image"
+
+    effective_value = (
+        GEMINI_IMAGE_RATIOS.get(effective_ratio)
+        or OUTPUT_RATIO_NUMBERS.get(effective_ratio)
+    )
+    if effective_value is None:
+        size_width, size_height = (int(part) for part in provider_size.split("x", 1))
+        effective_value = size_width / size_height
+    return {
+        "requested_ratio": ratio_name,
+        "requested_resolution": resolution,
+        "source_width": width,
+        "source_height": height,
+        "source_ratio": _ratio_name_from_dimensions(width, height),
+        "desired_ratio": desired_label,
+        "effective_ratio": effective_ratio,
+        "effective_ratio_value": float(effective_value),
+        "provider_family": provider_family,
+        "provider_params": provider_params,
+        "provider_size": provider_size,
+        "strict_aspect": bool(explicit),
+    }
 
 
 def _image_size_from_bytes(data):
@@ -823,6 +974,16 @@ def build_stage2_prompt(product_name, platter_mode="auto", product_type="food", 
             f"提升色彩饱和度和对比度至商业级标准，修复任何变形或不自然的部分，补全缺失的产品细节和边缘，"
             f"确保产品完整不被裁切，边缘清晰干净，白底纯白无杂色无灰斑，最终呈现超高清商业影棚级电商主图效果")
 
+
+def build_adjustment_prompt(instruction):
+    return (
+        "对这张已经生成的电商成品图做一次定向局部修改。"
+        "必须保持未被用户点名的主体形态、数量、包装、文字、构图、视角、背景、光影、"
+        "色彩关系和画布比例不变；不要重新设计整张图，不要增加无关元素。"
+        f"本次唯一调整要求：{str(instruction).strip()}。"
+        "修改后仍需保持商业成品清晰度、自然边缘和真实材质，原图中正确的部分全部保留。"
+    )
+
 def build_multi_stage1_prompt(product_name, product_type="food", completeness="complete", platter_mode="auto", angle="auto"):
     angle_desc = ANGLE_PROMPT.get(angle, ANGLE_PROMPT["auto"])
     if angle == "auto":
@@ -837,11 +998,32 @@ def build_multi_stage1_prompt(product_name, product_type="food", completeness="c
             f"顶部柔光加双侧补光，{plate}，{complete_hint}产品居中，占据画面70%面积，细节清晰锐利，"
             f"材质质感真实，色彩准确饱和，高端产品摄影，8K画质")
 
-def submit_generate(prompt, model_key, ref_data_url=None, size="2048x2048", negative_prompt=None):
-    params = {"prompt": prompt, "imageSize": size}
-    if negative_prompt: params["negative_prompt"] = negative_prompt
-    if ref_data_url: params["image"] = ref_data_url
-    resp = api_request("POST", "/v1/media/generate", body={"model": model_key, "params": params}, timeout=300)
+def submit_generate(
+    prompt,
+    model_key,
+    ref_data_url=None,
+    size="2048x2048",
+    negative_prompt=None,
+    output_spec=None,
+):
+    spec = dict(output_spec or {})
+    params = dict(spec.get("provider_params") or {})
+    if not params:
+        # Preserve compatibility for legacy callers, but use the current GPT
+        # parameter name instead of the obsolete universal imageSize field.
+        params["size"] = size
+    if negative_prompt:
+        params["negative_prompt"] = negative_prompt
+    if ref_data_url:
+        # Current LK media contracts use an array for references even when only
+        # one image is supplied. A singular `image` can be silently ignored.
+        params["images"] = [ref_data_url]
+    resp = api_request(
+        "POST",
+        "/v1/media/generate",
+        body={"model": model_key, "prompt": prompt, "params": params},
+        timeout=300,
+    )
     if resp.get("code") != 200: raise RuntimeError(f"API error: {resp.get('msg', resp)}")
     return str(resp["data"]["task_id"])
 
@@ -871,10 +1053,18 @@ def ai_i2i(
     stage="?",
     tid_ref="?",
     on_submitted=None,
+    output_spec=None,
 ):
     ref_url = image_to_data_url(ref_img)
     log_msg(tid_ref, f"[S{stage}] 提交生成 ({model_key})...")
-    tid = submit_generate(prompt, model_key, ref_url, size=size, negative_prompt=negative_prompt)
+    tid = submit_generate(
+        prompt,
+        model_key,
+        ref_url,
+        size=size,
+        negative_prompt=negative_prompt,
+        output_spec=output_spec,
+    )
     if on_submitted is not None:
         on_submitted(tid)
     log_msg(tid_ref, f"[S{stage}] 任务ID: {tid}")
@@ -1409,6 +1599,16 @@ class WorkflowDraftRequest(BaseModel):
         extra = "forbid"
 
 
+class WorkflowCompletionRequest(BaseModel):
+    expected_revision: int
+    client_request_id: str
+    job_id: str
+    result_asset_id: str
+
+    class Config:
+        extra = "forbid"
+
+
 class CollectionOrderRequest(BaseModel):
     asset_ids: list[str]
 
@@ -1444,6 +1644,17 @@ class ResultReviewRequest(BaseModel):
     reason_codes: list[str] = Field(default_factory=list)
     note: str = ""
     learning_action: str = "none"
+
+    class Config:
+        extra = "forbid"
+
+
+class ResultAdjustmentRequest(BaseModel):
+    client_request_id: str
+    result_asset_id: str
+    generation_id: Optional[str] = None
+    reason_codes: list[str] = Field(default_factory=list)
+    note: str
 
     class Config:
         extra = "forbid"
@@ -1610,6 +1821,155 @@ def _workspace_recent_results(jobs: list[dict], limit: int = 20) -> list[dict]:
     return results
 
 
+def _active_memory_engine() -> MemoryEngine:
+    return MEMORY if MEMORY.ledger is LEDGER else MemoryEngine(LEDGER)
+
+
+def _review_feedback_id(review_id: str) -> str:
+    return idempotent_id("fb", f"result-review:{review_id}")
+
+
+def _enrich_result_reviews(reviews: list[dict]) -> list[dict]:
+    if not reviews:
+        return []
+    feedback_rows = LEDGER.list_feedback(limit=2000)
+    feedback_by_id = {str(item["id"]): item for item in feedback_rows}
+    suggestions = []
+    for status in ("pending", "approved", "rejected", "dismissed"):
+        suggestions.extend(LEDGER.list_memory_suggestions(status=status, limit=200))
+    adjustment_jobs = {}
+    if any(str(review.get("learning_action") or "") == "regenerate" for review in reviews):
+        for job in LEDGER.list_jobs(limit=500):
+            adjustment = (
+                job.get("parameters", {}).get("adjustment")
+                if isinstance(job.get("parameters"), dict)
+                else None
+            )
+            if isinstance(adjustment, dict) and adjustment.get("review_id"):
+                adjustment_jobs[str(adjustment["review_id"])] = job
+    memory = _active_memory_engine()
+    enriched = []
+    for raw in reviews:
+        review = dict(raw)
+        action = str(review.get("learning_action") or "none")
+        feedback = feedback_by_id.get(_review_feedback_id(str(review.get("id") or "")))
+        if action in {"record", "suggest"}:
+            receipt = memory.learning_receipt(
+                feedback,
+                feedback_rows=feedback_rows,
+                suggestions=suggestions,
+            )
+            if feedback is None:
+                receipt = {**receipt, "status": "evidence_missing", "next_action": "retry"}
+        elif action == "regenerate":
+            derived_job = adjustment_jobs.get(str(review.get("id") or ""))
+            derived_status = str((derived_job or {}).get("status") or "")
+            receipt_status = {
+                "queued": "adjustment_queued",
+                "running": "adjustment_running",
+                "paused": "adjustment_queued",
+                "canceling": "adjustment_running",
+                "interrupted": "adjustment_failed",
+                "completed": "adjustment_completed",
+                "partial": "adjustment_partial",
+                "failed": "adjustment_failed",
+                "canceled": "adjustment_failed",
+            }.get(derived_status, "regenerate_deferred")
+            receipt = {
+                "status": receipt_status,
+                "extracted_rule": False,
+                "independent_sessions": 0,
+                "threshold": 0,
+                "suggestion_id": "",
+                "suggestion_status": "",
+                "next_action": "open_derived_job" if derived_job else "retry",
+            }
+            review["derived_job_id"] = str((derived_job or {}).get("id") or "")
+            review["derived_job_status"] = derived_status
+        else:
+            receipt = memory.learning_receipt(None)
+        review["feedback_id"] = str(feedback.get("id") or "") if feedback else ""
+        review["learning_receipt"] = receipt
+        review["suggestion_id"] = str(receipt.get("suggestion_id") or "")
+        enriched.append(review)
+    return enriched
+
+
+def _enrich_memory_suggestions(suggestions: list[dict]) -> list[dict]:
+    """Attach result-level evidence cursors without exposing local file paths."""
+    if not suggestions:
+        return []
+    feedback_by_id = {
+        str(item.get("id") or ""): item for item in LEDGER.list_feedback(limit=2000)
+    }
+    jobs: dict[str, dict | None] = {}
+    enriched = []
+    for raw in suggestions:
+        suggestion = dict(raw)
+        source_results = []
+        seen = set()
+        for evidence in suggestion.get("evidence") or []:
+            if not isinstance(evidence, dict):
+                continue
+            feedback_id = str(evidence.get("feedback_id") or "")
+            feedback = feedback_by_id.get(feedback_id) or {}
+            structured = (
+                feedback.get("structured")
+                if isinstance(feedback.get("structured"), dict)
+                else {}
+            )
+            job_id = str(evidence.get("job_id") or structured.get("job_id") or "")
+            result_asset_id = str(
+                evidence.get("result_asset_id")
+                or structured.get("result_asset_id")
+                or feedback.get("asset_id")
+                or ""
+            )
+            if not job_id or not result_asset_id:
+                continue
+            key = (job_id, result_asset_id, feedback_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            if job_id not in jobs:
+                try:
+                    jobs[job_id] = LEDGER.get_job(job_id, include_attempts=False)
+                except KeyError:
+                    jobs[job_id] = None
+            job = jobs[job_id]
+            if job is None:
+                continue
+            source_results.append({
+                "feedback_id": feedback_id,
+                "review_id": str(
+                    evidence.get("review_id") or structured.get("review_id") or ""
+                ),
+                "session_id": str(
+                    evidence.get("session_id")
+                    or feedback.get("session_id")
+                    or job.get("session_id")
+                    or ""
+                ),
+                "job_id": job_id,
+                "generation_id": str(
+                    evidence.get("generation_id")
+                    or feedback.get("generation_id")
+                    or ""
+                ),
+                "result_asset_id": result_asset_id,
+                "mode": str(evidence.get("mode") or job.get("mode") or ""),
+                "job_title": str(job.get("title") or job.get("mode") or ""),
+                "signal": str(evidence.get("signal") or feedback.get("signal") or ""),
+                "reason": str(evidence.get("reason") or feedback.get("reason") or ""),
+                "created_at": str(
+                    evidence.get("created_at") or feedback.get("created_at") or ""
+                ),
+            })
+        suggestion["source_results"] = source_results
+        enriched.append(suggestion)
+    return enriched
+
+
 @app.get("/api/workspaces/{mode}")
 async def get_workflow_workspace(mode: str, asset_limit: int = 200, job_limit: int = 20):
     try:
@@ -1633,7 +1993,7 @@ async def get_workflow_workspace(mode: str, asset_limit: int = 200, job_limit: i
                 if job.get("status") not in {"completed", "failed", "canceled"}
             ],
             "recent_results": _workspace_recent_results(jobs),
-            "recent_reviews": recent_reviews[:50],
+            "recent_reviews": _enrich_result_reviews(recent_reviews[:50]),
         }
     except ValueError as exc:
         raise HTTPException(
@@ -1678,6 +2038,42 @@ async def save_workflow_workspace_draft(mode: str, request: WorkflowDraftRequest
         raise HTTPException(
             status_code=400,
             detail={"code": "INVALID_DRAFT", "message": str(exc)},
+        )
+
+
+@app.post("/api/workspaces/{mode}/complete")
+async def complete_workflow_workspace(mode: str, request: WorkflowCompletionRequest):
+    try:
+        return LEDGER.complete_workflow(
+            mode,
+            expected_revision=request.expected_revision,
+            client_request_id=request.client_request_id,
+            job_id=request.job_id,
+            result_asset_id=request.result_asset_id,
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)},
+        )
+    except DraftRevisionConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DRAFT_REVISION_CONFLICT",
+                "message": str(exc),
+                "current": LEDGER.get_workflow_draft(mode),
+            },
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "COMPLETION_REFERENCE_NOT_FOUND", "message": str(exc)},
+        )
+    except (sqlite3.IntegrityError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_COMPLETION", "message": str(exc)},
         )
 
 
@@ -1749,6 +2145,7 @@ def _normalize_folder_delivery(value: Any) -> dict[str, Any] | None:
 
 def _normalize_job_parameters(mode: str, parameters: dict) -> dict:
     normalized = dict(parameters or {})
+    output_spec_explicit = "output_ratio" in normalized or "output_resolution" in normalized
     requested_output = str(normalized.get("output_root") or _RUNTIME_OUTPUT_ROOT).strip()
     output_root = _validate_output_root(requested_output, test_write=True)
     configured_roots = _configured_output_roots()
@@ -1770,6 +2167,19 @@ def _normalize_job_parameters(mode: str, parameters: dict) -> dict:
         normalized["model"] = default_model
     elif not str(normalized.get("model") or "").strip():
         normalized["model"] = default_model
+    if mode == "cutout-batch":
+        normalized.pop("output_ratio", None)
+        normalized.pop("output_resolution", None)
+    else:
+        output_ratio = str(normalized.get("output_ratio") or "1:1").strip().lower()
+        output_resolution = str(normalized.get("output_resolution") or "2k").strip().lower()
+        if output_ratio not in OUTPUT_RATIO_VALUES:
+            raise ValueError("output_ratio is not supported")
+        if output_resolution not in OUTPUT_RESOLUTION_VALUES:
+            raise ValueError("output_resolution is not supported")
+        normalized["output_ratio"] = output_ratio
+        normalized["output_resolution"] = output_resolution
+        normalized["output_spec_explicit"] = bool(output_spec_explicit)
     folder_delivery = _normalize_folder_delivery(normalized.get("folder_delivery"))
     if folder_delivery is not None:
         if mode != "multi-file":
@@ -1960,7 +2370,7 @@ async def create_job_trace(job_id: str, request: ExecutionTraceRequest):
 async def list_job_reviews(job_id: str, limit: int = 200):
     try:
         LEDGER.get_job(job_id, include_attempts=False)
-        reviews = LEDGER.list_result_reviews(job_id, limit)
+        reviews = _enrich_result_reviews(LEDGER.list_result_reviews(job_id, limit))
         return {"reviews": reviews, "count": len(reviews)}
     except KeyError as exc:
         raise HTTPException(
@@ -1983,7 +2393,32 @@ async def create_job_review(job_id: str, request: ResultReviewRequest):
             note=request.note,
             learning_action=request.learning_action,
         )
-        return {"review": review}
+        if request.learning_action in {"record", "suggest"}:
+            job = LEDGER.get_job(job_id, include_attempts=False)
+            signal = {
+                "adopt": "adopted",
+                "adjust": "adjusted",
+                "reject": "rejected",
+            }[request.decision]
+            LEDGER.add_feedback(
+                str(job["session_id"]),
+                signal,
+                generation_id=request.generation_id,
+                asset_id=request.result_asset_id,
+                reason=request.note,
+                structured={
+                    "review_id": review["id"],
+                    "job_id": job_id,
+                    "mode": job["mode"],
+                    "result_asset_id": request.result_asset_id,
+                    "reason_codes": request.reason_codes,
+                },
+                scope="result",
+                feedback_id=_review_feedback_id(review["id"]),
+            )
+            if request.learning_action == "suggest":
+                _active_memory_engine().synthesize()
+        return {"review": _enrich_result_reviews([review])[0]}
     except IdempotencyConflictError as exc:
         raise HTTPException(
             status_code=409,
@@ -1998,6 +2433,147 @@ async def create_job_review(job_id: str, request: ResultReviewRequest):
         raise HTTPException(
             status_code=400,
             detail={"code": "INVALID_REVIEW", "message": str(exc)},
+        )
+
+
+def _job_result_owner(job: dict, result_asset_id: str, generation_id: str = "") -> dict:
+    target = str(result_asset_id or "").strip()
+    requested_generation = str(generation_id or "").strip()
+    for item in job.get("items") or []:
+        if target not in {str(asset_id) for asset_id in item.get("result_asset_ids") or []}:
+            continue
+        if requested_generation and str(item.get("generation_id") or "") != requested_generation:
+            raise ValueError("result does not belong to the requested generation")
+        return item
+    raise ValueError("result does not belong to the requested job")
+
+
+@app.post("/api/jobs/{job_id}/adjustments")
+async def create_result_adjustment(job_id: str, request: ResultAdjustmentRequest):
+    """Create one immutable, single-pass edit derived from an existing main result."""
+    try:
+        refresh_runtime_config()
+        request_id = str(request.client_request_id or "").strip()
+        note = str(request.note or "").strip()
+        if not request_id or len(request_id) > 180:
+            raise ValueError("client_request_id is required and must be at most 180 characters")
+        if not note:
+            raise ValueError("an immediate adjustment requires a concrete instruction")
+        if len(note) > 1200:
+            raise ValueError("adjustment instruction is too long")
+
+        parent_job = LEDGER.get_job(job_id, include_attempts=False)
+        owner = _job_result_owner(
+            parent_job,
+            request.result_asset_id,
+            str(request.generation_id or ""),
+        )
+        parent_generation_id = str(owner.get("generation_id") or "")
+        if not parent_generation_id:
+            raise ValueError("result generation lineage is unavailable")
+        LEDGER.get_generation(parent_generation_id)
+        parent_asset = LEDGER.get_asset(str(request.result_asset_id))
+        if str(parent_asset.get("role") or "") != "result_main":
+            raise ValueError("only a commercial main result can be adjusted immediately")
+        _resolve_result_asset_path(parent_asset)
+
+        review_request_id = f"adjust-review:{request_id}"
+        review = LEDGER.submit_result_review(
+            review_request_id,
+            job_id=job_id,
+            generation_id=parent_generation_id,
+            result_asset_id=str(request.result_asset_id),
+            decision="adjust",
+            reason_codes=request.reason_codes or ["adjusted"],
+            note=note,
+            learning_action="regenerate",
+        )
+
+        snapshot_parameters = (
+            parent_job.get("snapshot", {}).get("parameters")
+            if isinstance(parent_job.get("snapshot"), dict)
+            else None
+        )
+        parameters = dict(
+            snapshot_parameters
+            if isinstance(snapshot_parameters, dict)
+            else parent_job.get("parameters") or {}
+        )
+        previous_adjustment = (
+            parameters.get("adjustment")
+            if isinstance(parameters.get("adjustment"), dict)
+            else {}
+        )
+        try:
+            version = max(2, int(previous_adjustment.get("version", 1)) + 1)
+        except (TypeError, ValueError):
+            version = 2
+        root_job_id = str(previous_adjustment.get("root_job_id") or job_id)
+        parameters.pop("folder_delivery", None)
+        parameters["batch"] = 1
+        parameters["variations"] = 1
+        parameters["output_ratio"] = "original"
+        parameters["output_resolution"] = str(
+            parameters.get("output_resolution") or "2k"
+        ).lower()
+        parameters["adjustment"] = {
+            "version": version,
+            "root_job_id": root_job_id,
+            "parent_job_id": job_id,
+            "parent_generation_id": parent_generation_id,
+            "parent_result_asset_id": str(request.result_asset_id),
+            "review_id": str(review["id"]),
+            "instruction": note,
+        }
+        mode = str(parent_job.get("mode") or "")
+        parameters = _normalize_job_parameters(mode, parameters)
+        source_asset_ids = [str(owner.get("source_asset_id") or "")]
+        _validate_job_request(mode, source_asset_ids, parameters)
+        derived_job, created = LEDGER.create_job(
+            mode,
+            source_asset_ids,
+            engine_key=_engine_key_for_mode(mode),
+            parameters=parameters,
+            idempotency_key=f"adjustment:{request_id}",
+            requested_concurrency=1,
+            max_attempts=2,
+            title=f"结果调整 · V{version}",
+        )
+        _wake_job_engine()
+        enriched_review = _enrich_result_reviews([review])[0]
+        return {
+            "review": enriched_review,
+            "job": derived_job,
+            "created": created,
+            "lineage": {
+                "root_job_id": root_job_id,
+                "parent_job_id": job_id,
+                "parent_generation_id": parent_generation_id,
+                "parent_result_asset_id": str(request.result_asset_id),
+                "version": version,
+            },
+        }
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "RESULT_NOT_FOUND", "message": str(exc)},
+        )
+    except AssetStoreError as exc:
+        raise_asset_http_error(exc)
+    except OutputRootError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "message": exc.message},
+        )
+    except (sqlite3.IntegrityError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_ADJUSTMENT", "message": str(exc)},
         )
 
 
@@ -2246,7 +2822,19 @@ async def record_creation_feedback(session_id: str, data: dict):
 
 @app.get("/api/memory/suggestions")
 async def list_memory_suggestions(status: str = "pending", limit: int = 50):
-    return LEDGER.list_memory_suggestions(status=status, limit=limit)
+    return _enrich_memory_suggestions(
+        LEDGER.list_memory_suggestions(status=status, limit=limit)
+    )
+
+
+@app.get("/api/memory/suggestions/{suggestion_id}")
+async def get_memory_suggestion(suggestion_id: str):
+    try:
+        return _enrich_memory_suggestions(
+            [LEDGER.get_memory_suggestion(suggestion_id)]
+        )[0]
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.post("/api/memory/synthesize")
@@ -2841,7 +3429,9 @@ def _record_execution_trace_safe(
         return None
 
 
-def _record_job_prompt(trace, prompt, negative_prompt, stage, knowledge_refs):
+def _record_job_prompt(trace, prompt, negative_prompt, stage, knowledge_bundle):
+    knowledge_refs = list((knowledge_bundle or {}).get("sources") or [])
+    applied_evidence = KnowledgeCompiler.execution_evidence(knowledge_bundle)
     generation_id = trace["generation_id"]
     changes = {"status": "running"}
     if stage == "primary":
@@ -2867,7 +3457,7 @@ def _record_job_prompt(trace, prompt, negative_prompt, stage, knowledge_refs):
         f"prompt.{stage}",
         "completed",
         compiled_prompt=prompt,
-        applied_knowledge=knowledge_refs or [],
+        applied_knowledge=applied_evidence,
         parameters={
             **dict(trace.get("parameters") or {}),
             "negative_prompt": negative_prompt,
@@ -3112,6 +3702,15 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, o
                     "output_count": len(committed_asset_ids),
                     "output_root": str(output_root),
                     "delivery_files": [entry["relative_path"] for entry in delivered],
+                    "actual_files": [
+                        {
+                            "name": entry.get("name"),
+                            "role": entry.get("role"),
+                            "width": entry.get("width"),
+                            "height": entry.get("height"),
+                        }
+                        for entry in published
+                    ],
                 },
             )
             return {
@@ -3134,7 +3733,34 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, o
     )
 
 
-def _cloud_job_call(ctx, prompt, reference, model, *, negative_prompt, stage):
+def _output_measurement(image: Image.Image, output_spec: dict[str, Any]) -> dict[str, Any]:
+    width, height = image.size
+    actual_ratio = width / max(1, height)
+    expected_ratio = max(float(output_spec.get("effective_ratio_value") or 1.0), 1e-9)
+    ratio_error = abs(math.log(max(actual_ratio, 1e-9) / expected_ratio))
+    return {
+        "actual_width": width,
+        "actual_height": height,
+        "actual_ratio": _ratio_name_from_dimensions(width, height),
+        "actual_megapixels": round((width * height) / 1_000_000, 3),
+        "effective_ratio": output_spec.get("effective_ratio"),
+        "requested_resolution": output_spec.get("requested_resolution"),
+        "aspect_matches": ratio_error <= math.log(1.04),
+        "aspect_error_percent": round((math.exp(ratio_error) - 1) * 100, 2),
+    }
+
+
+def _cloud_job_call(
+    ctx,
+    prompt,
+    reference,
+    model,
+    *,
+    negative_prompt,
+    stage,
+    output_spec,
+    trace,
+):
     remote_tasks = list(dict(ctx.metadata).get("remote_tasks", []))
 
     def remember_remote(task_id):
@@ -3149,15 +3775,58 @@ def _cloud_job_call(ctx, prompt, reference, model, *, negative_prompt, stage):
             raise
 
     with ctx.resource("cloud-image"):
-        return ai_i2i(
+        generated = ai_i2i(
             prompt,
             reference,
             model,
             negative_prompt=negative_prompt,
+            size=str(output_spec.get("provider_size") or "2048x2048"),
             stage=stage,
             tid_ref=str(ctx.job_id),
             on_submitted=remember_remote,
+            output_spec=output_spec,
         )
+    measurement = _output_measurement(generated, output_spec)
+    trace_stage = f"provider.image.{stage}"
+    if output_spec.get("strict_aspect") and not measurement["aspect_matches"]:
+        _record_execution_trace_safe(
+            trace,
+            trace_stage,
+            "failed",
+            parameters={
+                "model": model,
+                "requested_ratio": output_spec.get("requested_ratio"),
+                "effective_ratio": output_spec.get("effective_ratio"),
+                "requested_resolution": output_spec.get("requested_resolution"),
+                "provider_params": output_spec.get("provider_params"),
+            },
+            output=measurement,
+            error_code="OUTPUT_ASPECT_MISMATCH",
+            error_message="供应商返回比例与本次有效规格不一致",
+        )
+        raise JobExecutionError(
+            "OUTPUT_ASPECT_MISMATCH",
+            (
+                f"供应商返回 {measurement['actual_width']}×{measurement['actual_height']}，"
+                f"与本次有效比例 {output_spec.get('effective_ratio')} 不一致；"
+                "已停止后续精修，避免继续消耗额度"
+            ),
+            metadata={**measurement, "output_spec": dict(output_spec)},
+        )
+    _record_execution_trace_safe(
+        trace,
+        trace_stage,
+        "completed",
+        parameters={
+            "model": model,
+            "requested_ratio": output_spec.get("requested_ratio"),
+            "effective_ratio": output_spec.get("effective_ratio"),
+            "requested_resolution": output_spec.get("requested_resolution"),
+            "provider_params": output_spec.get("provider_params"),
+        },
+        output=measurement,
+    )
+    return generated
 
 
 def _approved_memory_rules(context: dict | None = None) -> list[dict]:
@@ -3213,6 +3882,30 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
     platter = str(params.get("platter") or "auto")
     fidelity = max(0, min(int(params.get("fidelity", 40)), 100))
     angle = str(params.get("angle") or "auto")
+    output_spec = resolve_output_spec(
+        model,
+        str(params.get("output_ratio") or "1:1"),
+        str(params.get("output_resolution") or "2k"),
+        image.size,
+        explicit=bool(params.get("output_spec_explicit", False)),
+    )
+    _record_execution_trace_safe(
+        trace,
+        "output.spec",
+        "completed",
+        parameters={
+            "requested_ratio": output_spec["requested_ratio"],
+            "requested_resolution": output_spec["requested_resolution"],
+            "source_width": output_spec["source_width"],
+            "source_height": output_spec["source_height"],
+        },
+        output={
+            "desired_ratio": output_spec["desired_ratio"],
+            "effective_ratio": output_spec["effective_ratio"],
+            "provider_family": output_spec["provider_family"],
+            "provider_params": output_spec["provider_params"],
+        },
+    )
     product_name = str(params.get("product_name") or "").strip()
     product_type = "food"
     if mode == "multi-file" and not product_name:
@@ -3267,7 +3960,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
         )
         prompt_stage = "primary" if index == 0 else f"primary-variation-{index + 1}"
         _record_job_prompt(
-            trace, stage1["prompt"], stage1["negative_prompt"], prompt_stage, stage1["sources"]
+            trace, stage1["prompt"], stage1["negative_prompt"], prompt_stage, stage1
         )
         generated = _cloud_job_call(
             ctx,
@@ -3276,6 +3969,8 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             model,
             negative_prompt=stage1["negative_prompt"],
             stage=f"1-{index + 1}",
+            output_spec=output_spec,
+            trace=trace,
         )
         ctx.progress(0.05 + per * index + per * 0.36, {"phase": "cloud-refine", "variation": index + 1})
         stage2 = KNOWLEDGE.enrich_prompt(
@@ -3288,7 +3983,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             stage2["prompt"],
             stage2["negative_prompt"],
             f"refine-{index + 1}",
-            stage2["sources"],
+            stage2,
         )
         generated = _cloud_job_call(
             ctx,
@@ -3297,6 +3992,8 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             model,
             negative_prompt=stage2["negative_prompt"],
             stage=f"2-{index + 1}",
+            output_spec=output_spec,
+            trace=trace,
         )
         main_image = post_process_enhance(generated)
         outputs.append(_stage_output(
@@ -3308,7 +4005,116 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
         outputs.append(_stage_output(
             cutout, stage_dir, f"{index + 1:02d}_cutout.png", "result_cutout"
         ))
-    return outputs, {"product_name": product_name, "variation_count": batch}
+    return outputs, {
+        "product_name": product_name,
+        "variation_count": batch,
+        "output_spec": output_spec,
+        "actual_main_dimensions": [
+            {"width": output["width"], "height": output["height"]}
+            for output in outputs if output["role"] == "result_main"
+        ],
+    }
+
+
+def _execute_adjustment_job(ctx, source_asset, image, stage_dir, trace):
+    params = dict(ctx.job.get("parameters") or {})
+    adjustment = (
+        params.get("adjustment")
+        if isinstance(params.get("adjustment"), dict)
+        else {}
+    )
+    instruction = str(adjustment.get("instruction") or "").strip()
+    parent_result_asset_id = str(
+        adjustment.get("parent_result_asset_id") or ""
+    ).strip()
+    if not instruction or not parent_result_asset_id:
+        raise JobExecutionError(
+            "INVALID_ADJUSTMENT_REFERENCE",
+            "调整任务缺少上一版本或具体修改要求",
+        )
+    model = str(params.get("model") or "gpt-image-2")
+    fidelity = max(0, min(int(params.get("fidelity", 40)), 100))
+    output_spec = resolve_output_spec(
+        model,
+        "original",
+        str(params.get("output_resolution") or "2k"),
+        image.size,
+        explicit=True,
+    )
+    _record_execution_trace_safe(
+        trace,
+        "output.spec",
+        "completed",
+        parameters={
+            "requested_ratio": "original",
+            "requested_resolution": output_spec["requested_resolution"],
+            "source_width": output_spec["source_width"],
+            "source_height": output_spec["source_height"],
+        },
+        output={
+            "desired_ratio": output_spec["desired_ratio"],
+            "effective_ratio": output_spec["effective_ratio"],
+            "provider_family": output_spec["provider_family"],
+            "provider_params": output_spec["provider_params"],
+        },
+    )
+    knowledge_context = _job_knowledge_context(
+        trace,
+        mode=str(ctx.job.get("mode") or "single"),
+        category=str(trace.get("category") or "general"),
+        output_kind="result-adjustment",
+        product_name=str(params.get("product_name") or "产品"),
+    )
+    negative = (
+        NEG_BASE
+        + ",重构整张画面,改变未提及内容,改变产品数量,改变包装文字,改变画布比例"
+    )
+    prompt_bundle = KNOWLEDGE.enrich_prompt(
+        make_prompt(build_adjustment_prompt(instruction), fidelity),
+        negative,
+        knowledge_context,
+    )
+    _record_job_prompt(
+        trace,
+        prompt_bundle["prompt"],
+        prompt_bundle["negative_prompt"],
+        "primary",
+        prompt_bundle,
+    )
+    ctx.progress(0.08, {"phase": "cloud-adjustment", "version": adjustment.get("version")})
+    generated = _cloud_job_call(
+        ctx,
+        prompt_bundle["prompt"],
+        image,
+        model,
+        negative_prompt=prompt_bundle["negative_prompt"],
+        stage="adjustment-1",
+        output_spec=output_spec,
+        trace=trace,
+    )
+    ctx.progress(0.9, {"phase": "publishing-adjustment"})
+    output = _stage_output(generated, stage_dir, "01_adjusted_main.jpg", "result_main")
+    output["parent_asset_id"] = parent_result_asset_id
+    output["metadata"] = {
+        "adjustment": {
+            "version": adjustment.get("version"),
+            "root_job_id": adjustment.get("root_job_id"),
+            "parent_job_id": adjustment.get("parent_job_id"),
+            "parent_generation_id": adjustment.get("parent_generation_id"),
+            "parent_result_asset_id": parent_result_asset_id,
+            "review_id": adjustment.get("review_id"),
+        }
+    }
+    return [output], {
+        "operation": "result-adjustment",
+        "version": adjustment.get("version"),
+        "parent_result_asset_id": parent_result_asset_id,
+        "paid_image_stages": 1,
+        "output_spec": output_spec,
+        "actual_main_dimensions": [
+            {"width": output["width"], "height": output["height"]}
+        ],
+    }
 
 
 def _validated_group_products(detection):
@@ -3425,6 +4231,7 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
 
     width, height = image.size
     outputs = []
+    output_specs = []
     per = 0.92 / len(products)
     for index, product in enumerate(products):
         name = str(product.get("name") or f"产品{index + 1}")
@@ -3441,6 +4248,31 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             else "remove"
         )
         cropped = crop_product(image, bbox, width, height, pad_pct=0.20 if cutoff else 0.12)
+        output_spec = resolve_output_spec(
+            model,
+            str(params.get("output_ratio") or "1:1"),
+            str(params.get("output_resolution") or "2k"),
+            cropped.size,
+            explicit=bool(params.get("output_spec_explicit", False)),
+        )
+        output_specs.append({"product_index": index + 1, "product_name": name, **output_spec})
+        _record_execution_trace_safe(
+            trace,
+            f"output.spec.product-{index + 1}",
+            "completed",
+            parameters={
+                "requested_ratio": output_spec["requested_ratio"],
+                "requested_resolution": output_spec["requested_resolution"],
+                "source_width": output_spec["source_width"],
+                "source_height": output_spec["source_height"],
+            },
+            output={
+                "desired_ratio": output_spec["desired_ratio"],
+                "effective_ratio": output_spec["effective_ratio"],
+                "provider_family": output_spec["provider_family"],
+                "provider_params": output_spec["provider_params"],
+            },
+        )
         negative = build_negative(platter)
         knowledge_context = _job_knowledge_context(
             trace,
@@ -3468,7 +4300,7 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             stage1["prompt"],
             stage1["negative_prompt"],
             "primary" if index == 0 else f"product-{index + 1}-primary",
-            stage1["sources"],
+            stage1,
         )
         generated = _cloud_job_call(
             ctx,
@@ -3477,6 +4309,8 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             model,
             negative_prompt=stage1["negative_prompt"],
             stage=f"1-{index + 1}",
+            output_spec=output_spec,
+            trace=trace,
         )
         if do_refine:
             ctx.progress(0.05 + index * per + per * 0.38, {"phase": "cloud-refine", "product": index + 1})
@@ -3490,7 +4324,7 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
                 stage2["prompt"],
                 stage2["negative_prompt"],
                 f"product-{index + 1}-refine",
-                stage2["sources"],
+                stage2,
             )
             generated = _cloud_job_call(
                 ctx,
@@ -3499,6 +4333,8 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
                 model,
                 negative_prompt=stage2["negative_prompt"],
                 stage=f"2-{index + 1}",
+                output_spec=output_spec,
+                trace=trace,
             )
         main_image = post_process_enhance(generated)
         safe_name = safe_stem(name, f"product-{index + 1}")
@@ -3511,7 +4347,15 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
         outputs.append(_stage_output(
             cutout, stage_dir, f"{index + 1:02d}_{safe_name}_cutout.png", "result_cutout"
         ))
-    return outputs, {"detected_products": len(products), "refined": do_refine}
+    return outputs, {
+        "detected_products": len(products),
+        "refined": do_refine,
+        "output_specs": output_specs,
+        "actual_main_dimensions": [
+            {"width": output["width"], "height": output["height"]}
+            for output in outputs if output["role"] == "result_main"
+        ],
+    }
 
 
 def _execute_cutout_job(ctx, image, stage_dir, trace):
@@ -3563,7 +4407,44 @@ def execute_job_workflow(ctx):
     stage_dir = _attempt_directory(ctx)
     try:
         mode = str(ctx.job["mode"])
-        if mode in {"single", "multi-file"}:
+        parameters = dict(ctx.job.get("parameters") or {})
+        adjustment = (
+            parameters.get("adjustment")
+            if isinstance(parameters.get("adjustment"), dict)
+            else {}
+        )
+        if adjustment:
+            try:
+                reference_asset = LEDGER.get_asset(
+                    str(adjustment.get("parent_result_asset_id") or "")
+                )
+                reference_path = _resolve_result_asset_path(reference_asset)
+                with Image.open(reference_path) as opened:
+                    reference_image = opened.copy()
+            except (AssetStoreError, KeyError, OSError, ValueError) as exc:
+                raise JobExecutionError(
+                    "INVALID_ADJUSTMENT_REFERENCE",
+                    "上一版本结果已不可读取，未发起新的付费处理",
+                ) from exc
+            _record_execution_trace_safe(
+                trace,
+                "adjustment.reference",
+                "completed",
+                parameters={
+                    "parent_job_id": adjustment.get("parent_job_id"),
+                    "parent_generation_id": adjustment.get("parent_generation_id"),
+                },
+                output={
+                    "parent_result_asset_id": reference_asset.get("id"),
+                    "width": reference_image.width,
+                    "height": reference_image.height,
+                    "version": adjustment.get("version"),
+                },
+            )
+            outputs, metadata = _execute_adjustment_job(
+                ctx, source_asset, reference_image, stage_dir, trace
+            )
+        elif mode in {"single", "multi-file"}:
             outputs, metadata = _execute_single_job(ctx, source_asset, image, stage_dir, trace)
         elif mode == "group-split":
             outputs, metadata = _execute_group_job(ctx, source_asset, image, stage_dir, trace)

@@ -21,6 +21,32 @@ export function jobFilterCounts(jobs) {
   return counts;
 }
 
+export function boundedJobsForDisplay(jobs, limit = 12) {
+  const all = Array.from(jobs || []);
+  const visible = all.slice(0, Math.max(1, Number(limit) || 12));
+  const included = new Set(visible.map((job) => String(job?.id || '')));
+  const activeStatuses = new Set(['queued', 'running', 'paused', 'canceling', 'interrupted']);
+  all.forEach((job) => {
+    const jobId = String(job?.id || '');
+    if (jobId && activeStatuses.has(job?.status) && !included.has(jobId)) {
+      visible.push(job);
+      included.add(jobId);
+    }
+  });
+  return visible;
+}
+
+export function jobItemsForDisplay(job, expanded = false, limit = 5) {
+  const items = Array.from(job?.items || []);
+  if (expanded) return items;
+  const important = items.filter((item) => ['failed', 'interrupted', 'running'].includes(item?.status));
+  if (!['queued', 'running', 'paused', 'canceling', 'interrupted'].includes(job?.status)) {
+    return important.slice(0, Math.max(1, Number(limit) || 5));
+  }
+  const queued = items.filter((item) => item?.status === 'queued');
+  return [...important, ...queued].slice(0, Math.max(1, Number(limit) || 5));
+}
+
 export function jobSourceIds(jobs, limit = 120) {
   const maximum = Math.max(0, Number(limit) || 0);
   if (maximum === 0) return [];
@@ -62,6 +88,10 @@ export function jobWorkspaceSnapshot(job, fallback = {}) {
     brief: brief.user_request || brief.objective || brief.goal || fallback.brief || '',
     model: parameters.model || fallback.model || 'gpt-image-2',
     angle: parameters.angle || fallback.angle || 'auto',
+    // Historical jobs were created with the hard-coded square provider size.
+    // Preserve that immutable meaning when their snapshot predates this field.
+    output_ratio: parameters.output_ratio || fallback.output_ratio || '1:1',
+    output_resolution: parameters.output_resolution || fallback.output_resolution || '2k',
     fidelity: Number(parameters.fidelity ?? fallback.fidelity ?? 40),
     batch: Number(parameters.variations ?? parameters.batch ?? fallback.batch ?? 1),
     platter: parameters.platter || fallback.platter || 'auto',

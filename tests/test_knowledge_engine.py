@@ -74,6 +74,31 @@ class KnowledgeMemoryContractTests(unittest.TestCase):
                 1,
             )
 
+    def test_execution_evidence_freezes_exact_rules_and_sources(self) -> None:
+        bundle = {
+            "intent_lock_rules": ["保持包装文字"],
+            "positive_rules": [{
+                "text": "保留玻璃杯身",
+                "source": {"id": "memory:cup", "title": "已批准反馈"},
+            }],
+            "negative_rules": [{"text": "不要使用冷蓝色"}],
+            "sources": [{"id": "K-1", "title": "食品主图规则"}],
+        }
+        evidence = KnowledgeCompiler.execution_evidence(bundle)
+        self.assertIn({"kind": "intent_lock", "text": "保持包装文字"}, evidence)
+        self.assertTrue(any(
+            item["kind"] == "positive_rule" and item["text"] == "保留玻璃杯身"
+            for item in evidence
+        ))
+        self.assertTrue(any(
+            item["kind"] == "negative_rule" and item["text"] == "不要使用冷蓝色"
+            for item in evidence
+        ))
+        self.assertTrue(any(
+            item["kind"] == "source" and item["source"]["id"] == "K-1"
+            for item in evidence
+        ))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

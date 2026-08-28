@@ -149,10 +149,20 @@ class MemoryEngine:
             evidence = []
             for entry in support_entries[:8]:
                 feedback = entry["feedback"]
+                structured = (
+                    feedback.get("structured")
+                    if isinstance(feedback.get("structured"), dict)
+                    else {}
+                )
                 evidence.append({
                     "feedback_id": feedback["id"],
                     "session_id": feedback["session_id"],
                     "generation_id": feedback.get("generation_id"),
+                    "job_id": structured.get("job_id"),
+                    "review_id": structured.get("review_id"),
+                    "result_asset_id": (
+                        structured.get("result_asset_id") or feedback.get("asset_id")
+                    ),
                     "signal": feedback.get("signal"),
                     "reason": feedback.get("reason"),
                     "mode": feedback.get("mode"),
@@ -188,4 +198,106 @@ class MemoryEngine:
             "groups_considered": len(grouped),
             "pending_suggestions": len(suggestions),
             "suggestions": suggestions,
+        }
+
+    def learning_receipt(
+        self,
+        feedback: dict[str, Any] | None,
+        *,
+        feedback_rows: list[dict[str, Any]] | None = None,
+        suggestions: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Describe the durable learning outcome for one piece of feedback."""
+        if not feedback:
+            return {
+                "status": "reviewed",
+                "extracted_rule": False,
+                "independent_sessions": 0,
+                "threshold": 0,
+                "suggestion_id": "",
+                "suggestion_status": "",
+                "next_action": "none",
+            }
+        claims = self._claims(feedback)
+        if not claims:
+            return {
+                "status": "no_rule_extracted",
+                "extracted_rule": False,
+                "independent_sessions": 1,
+                "threshold": 0,
+                "suggestion_id": "",
+                "suggestion_status": "",
+                "next_action": "add_specific_reason",
+            }
+
+        rows = list(feedback_rows) if feedback_rows is not None else self.ledger.list_feedback(limit=2000)
+        if suggestions is None:
+            suggestions = []
+            for status in ("pending", "approved", "rejected", "dismissed"):
+                suggestions.extend(self.ledger.list_memory_suggestions(status=status, limit=200))
+        target_scope = self._scope(feedback)
+        feedback_id = str(feedback.get("id") or "")
+        candidates: list[dict[str, Any]] = []
+        for claim in claims:
+            matching_sessions: set[str] = set()
+            contradiction_count = 0
+            for row in rows:
+                if self._scope(row) != target_scope:
+                    continue
+                row_claims = self._claims(row)
+                same_rule = [entry for entry in row_claims if entry["rule_key"] == claim["rule_key"]]
+                if any(_value_key(entry["value"]) == _value_key(claim["value"]) for entry in same_rule):
+                    matching_sessions.add(str(row.get("session_id") or ""))
+                elif same_rule:
+                    contradiction_count += 1
+            threshold = int(claim.get("min_support", 2))
+            related_suggestion = next((
+                suggestion for suggestion in suggestions
+                if str(suggestion.get("scope_type") or "") == target_scope[0]
+                and str(suggestion.get("scope_id") or "") == target_scope[1]
+                and str(suggestion.get("category") or "") == target_scope[2]
+                and str(suggestion.get("rule_key") or "") == claim["rule_key"]
+                and any(
+                    str(item.get("feedback_id") or "") == feedback_id
+                    for item in suggestion.get("evidence") or []
+                    if isinstance(item, dict)
+                )
+            ), None)
+            candidates.append({
+                "claim": claim,
+                "independent_sessions": len(matching_sessions),
+                "threshold": threshold,
+                "contradiction_count": contradiction_count,
+                "suggestion": related_suggestion,
+            })
+        best = max(
+            candidates,
+            key=lambda entry: (
+                bool(entry["suggestion"]),
+                min(entry["independent_sessions"] / max(entry["threshold"], 1), 1),
+                entry["independent_sessions"],
+            ),
+        )
+        suggestion = best["suggestion"]
+        if suggestion:
+            status = str(suggestion.get("status") or "pending")
+            next_action = "review_suggestion" if status == "pending" else "none"
+        elif best["independent_sessions"] < best["threshold"]:
+            status = "accumulating"
+            next_action = "collect_independent_evidence"
+        elif best["contradiction_count"]:
+            status = "conflicting_evidence"
+            next_action = "review_conflict"
+        else:
+            status = "ready_to_suggest"
+            next_action = "form_suggestion"
+        return {
+            "status": status,
+            "extracted_rule": True,
+            "rule_key": best["claim"]["rule_key"],
+            "independent_sessions": best["independent_sessions"],
+            "threshold": best["threshold"],
+            "suggestion_id": str(suggestion.get("id") or "") if suggestion else "",
+            "suggestion_status": str(suggestion.get("status") or "") if suggestion else "",
+            "next_action": next_action,
         }
