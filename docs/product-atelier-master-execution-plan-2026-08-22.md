@@ -7,6 +7,12 @@
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
 > 本文定位：Product Atelier 后续开发的唯一主路线图；专项文档补充细节，但不得与本文冲突。
 
+### 跨电脑与平台执行边界（2026-08-28）
+
+- macOS 零文件接续脚本、依赖安装、分支同步和离线验证入口已固化在 `tools/bootstrap-macos.sh`，操作说明见 `docs/macos-zero-state-handoff-2026-08-28.md`；另一台电脑不需要接收当前 Windows 电脑的本地文件。
+- GitHub `origin` 的 `codex/master-roadmap-phase-0-1` 是当前有效跨电脑事实源。源码、锁文件、测试、计划和交接文档必须进入 Git；Key、用户图片、SQLite、日志、构建产物和本机备份不得进入 Git。
+- Mac 可以实现和验证跨平台源码，但 Windows 正式便携版仍必须由 Windows 完成 PyInstaller sidecar、EXE/NSIS、`tools/dev.ps1`、DWM/DPI、快捷方式和覆盖升级门禁。macOS 通过不能关闭 Windows 发布游标，Mac 产生的候选提交统一标记“待 Windows 正式门禁”。
+
 ## 实施进度
 
 | 阶段 | 状态 | 固化证据 |

@@ -44,6 +44,16 @@
 
 ## 环境依赖
 
+### macOS 零文件接续开发
+
+苹果电脑无需从 Windows 手工传文件。在“终端”粘贴下面一行，会从 GitHub 获取指定续作分支、安装开发依赖并运行离线门禁：
+
+```bash
+/bin/bash -c "$(curl -fsSL 'https://raw.githubusercontent.com/cat644142986-afk/-/refs/heads/codex/master-roadmap-phase-0-1/tools/bootstrap-macos.sh')"
+```
+
+完整边界见 `docs/macos-zero-state-handoff-2026-08-28.md`。macOS 可继续跨平台源码和测试，但不能替代 Windows EXE、NSIS、DWM/DPI 与正式便携版发布验收。
+
 ### 构建环境
 - **Node.js** v20+ (`C:\Program Files\nodejs`)
 - **Rust** 1.97+ with **x86_64-pc-windows-gnu** toolchain (`%USERPROFILE%\.cargo`)

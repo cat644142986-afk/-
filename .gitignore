@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+.venv/
 
 # Build outputs
 dist/
@@ -22,6 +23,7 @@ python/__pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
+.macos-bootstrap-state
 
 # IDE
 .idea/
