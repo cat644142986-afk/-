@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-08-28<br>
-> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 已有“输出规格”“立即修改本张”“50/200 素材”“批量任务大数据态”“完整 Result Review”五个检查点进入正式便携版，Phase 6 已闭环；统一状态组件及“候选先验收、备份后提升、失败可恢复”发布链已完成源码与跨平台门禁，当前为前端 `87/87`、Python `146/146`、Vite 与 host Rust 全绿；尚未执行 Windows EXE/sidecar/NTFS/快捷方式正式验收，不得称为已提升正式便携版<br>
+> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 与 Phase 6 已闭环；“统一状态与冲突恢复”已于 Windows 以提交 `9eb71a8c50e6f916954d1871c40ba39a6312ae3b` 完成 PyInstaller sidecar、候选/正式双 smoke、外部备份、NTFS 事务提升、DWM/DPI、桌面快捷方式与 NSIS 隔离安装门禁。当前全量门禁为前端 `89/89`、Python 148 项（147 通过、1 个平台预期跳过）、Vite 与 Rust 全绿；下一执行游标是 Phase 7A 语义选物，AI Agent 方案继续暂缓<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -25,9 +25,9 @@
 | Phase 5 素材管理与 Task Dock | 素材与批量任务大数据检查点均已进入正式版 | 素材搜索、多维排序、40 张分段渲染、主画布 60 张上限、任务选入、批量移出/恢复、持久手动顺序、保护期倒计时、引用解释与二次确认永久清理均已通过；任务中心 12 条分段、活跃任务保底可见、20 项展开、逐项失败原因与只重试失败项也已通过；比例/2K/4K 已贯通 UI、快照、供应商适配、trace 与实际像素 |
 | Phase 6 Result Review 与情境对比 | **已完成并进入正式便携版** | 原子“开始下一项”、显式结果游标、结果级 review/feedback、持久学习回执、V1→V2 不可变调整、结构化原因标签、原图/版本 A/B、同步缩放/平移、对比位置与首次引导持久恢复均已通过 |
 | Phase 7 智能选物与模型质量 | 当前双模型输出规格适配完成，完整评测未开始 | GPT Image 2 与 Gemini 3.1 Flash 的真实比例/分辨率参数和错误比例熔断已进入正式版；语义选物、蒙版确认及付费质量/速度基线仍未完成 |
-| Phase 8 可解释成长系统 | Growth 核心投影与双向追溯已进入候选 | 全局/当前任务投影、0 待审核中性态、五类状态测试，以及“结果 → 建议 → 来源结果”的精确游标恢复均通过浏览器和打包数据验收 |
+| Phase 8 可解释成长系统 | Growth 核心投影、双向追溯和统一状态已进入正式便携版 | 全局/当前任务投影、0 待审核中性态、五类状态测试、“结果 → 建议 → 来源结果”的精确游标恢复，以及七类统一状态与 revision 冲突可见恢复均通过浏览器、打包数据和正式便携门禁 |
 | Phase 9 主题、无障碍与性能 | 未开始 | 等 Phase 6–8 状态契约稳定后实施 |
-| Phase 10 正式发布与灾备 | 首个正式便携检查点完成，最终发布门禁持续执行 | 正式 EXE、sidecar、manifest、桌面快捷方式和回滚备份已验证；后续阶段仍须继续执行升级与灾备门禁 |
+| Phase 10 正式发布与灾备 | 可恢复发布链和当前正式检查点已完成，后续检查点继续复用 | 正式 EXE、sidecar、manifest、外部完整备份、事务证据、桌面快捷方式、DWM/DPI 与 NSIS 隔离安装均已验证；NSIS 尚未代码签名，不作为对外公开分发包 |
 
 ## 2026-08-26 实机反馈校准与续作断点
 
@@ -505,7 +505,7 @@ R5 输出比例/像素规格正确性（已进入正式版）
 - 正式便携版当前为 1 个应用进程 + 1 个 sidecar，健康端口 `53249`；桌面快捷方式目标和工作目录继续指向 `D:\ProductAtelier-Desktop\release\ProductAtelier-Portable`。
 - 上一正式版本已完整备份到 `D:\ProductAtelier-Backups\release-before-result-review-20260828-092033`（3799 个文件，377433206 bytes）；用户正式账本、配置和历史任务未被隔离测试数据覆盖。
 
-### 2026-08-28 “统一状态与冲突恢复”源码检查点（待提升正式便携版）
+### 2026-08-28 “统一状态与冲突恢复”正式便携检查点
 
 **已落地**
 
@@ -514,14 +514,29 @@ R5 输出比例/像素规格正确性（已进入正式版）
 3. 草稿 revision 409 不再静默处理：界面先显示“检测到另一处更新”，读取最新 revision 后自动合并本次修改，保存成功再显示“修改已安全合并”；普通保存失败显示“本次修改尚未保存”并可重新保存。
 4. 工作区断线、恢复上次现场和重新连接均有短暂但可读的上下文状态；状态出现时暂时收起次要进度/元信息，避免 160px 工作区条在窄屏被挤压。
 
-**已通过、尚未执行的门禁**
+**门禁、事务与正式制品**
 
-- Python `146/146`、前端 `87/87`、`npm run build`、`cargo check --locked --features custom-protocol` 与 `git diff --check` 全绿；其中发布事务专项 `31/31` 覆盖候选组包、完整备份、排他锁、目录树哈希、中断续恢、证据重放、失败回滚、旧调用者身份与路径逃逸拒绝。
-- Windows 发布入口已收口到 `tools/dev.ps1`：只构建 `src-tauri/bin` sidecar，在 `build/portable-candidate-current` 通过两道 smoke 后才完整备份旧正式目录，以 transaction ID 提升、正式目录再 smoke，成功 finalize 后才更新快捷方式；`-Quick` / `-SkipSidecar` 不允许进入正式提升。
-- PyInstaller 发布依赖已独立锁定在 `python/requirements-build.txt`；`build-python.bat`、`build-portable.bat` 和 `build-installer.bat` 不再绕过 manifest 与 custom-protocol 门禁。NSIS 仍需 Windows 安装态 smoke，不因脚本收口而自动关闭。
-- 隔离浏览器使用 `build/ui-status-fixture-20260828` 验证：空任务、空历史、空审核队列；外部把草稿从 revision 1 更新到 2 后，前端捕获冲突并把用户修改保存到 revision 3；第二轮状态序列为约 355ms 显示“修改已安全合并”、约 5.5s 自动收起。
-- 关闭隔离 sidecar 后任务中心显示 `role=alert / aria-live=assertive` 的“任务账本暂时离线”和“重试连接”；恢复 sidecar 后自动回到“还没有任务”，全程无横向溢出。未调用生图接口或消耗额度。
-- **仍需在 Windows 电脑下一轮首先执行**：核对用户数据备份后，运行新 `tools/dev.ps1` 的 PowerShell 5、PyInstaller sidecar、NTFS 锁/目录换位、candidate/formal 双 smoke 与 custom-protocol release 门禁，再实机验证 960×600、亮/暗主题、离线/重连、revision 冲突，更新 EXE/sidecar/manifest/source fingerprint、备份、promotion evidence 与桌面快捷方式证据；完成前不得把本检查点称为正式发布。
+- 提交 `9eb71a8c50e6f916954d1871c40ba39a6312ae3b` 在 Windows 完整执行 `tools/dev.ps1`：PyInstaller `6.22.2` / hooks `2026.7`、Python 148 项（147 通过、1 个平台预期跳过）、前端 `89/89`、Vite production build、Rust custom-protocol check/release、candidate/formal 两轮 `Test-Portable.ps1` 与 `Test-Portable-App.ps1` 全绿。
+- 发布链只构建 `src-tauri/bin` sidecar，在 `build/portable-candidate-current` 双 smoke 后才备份和提升；正式目录双 smoke 通过后事务 `aca596a42c4849afadaed4dca8704bac` 已 `finalized`，`build/portable-promotion-transaction.json` 已清除。正式树为 1745 个文件、270 个目录、375481721 bytes，tree SHA-256 `F4181478B368D466819432B94F6C893CBB995632A869812A43C115C9653A3BC4`。
+- 正式 EXE SHA-256 `FFCE84EC4A0B84798371ACDA1C147B88CAF01ACC1A5EDEFCCD0B2536F4FFF9D6`；sidecar SHA-256 `6E57B211524539E4734D53DB5866174C44648280154FA989FA103E3DE4B360DA`；manifest SHA-256 `32AF9473E6586691D8BD7554C77254BAA652C5FC0B0A68BC3C7F2A8EF99AF248`；source fingerprint `96717BCDE605BF3AF6CCC8000510B285C50D89C571F9D2E8B08181C784AB29F7`；contract `2026-08-27.2`、schema v3。
+- 上一正式目录完整备份到 `D:\ProductAtelier-Backups\release-before-20260828-175633-9eb71a8c50e6`；promotion evidence 为同名前缀的 `-promotion-evidence.json`，SHA-256 `35FDD4AC7510BB38C3FA27BC1234B6C1C83AB9D9A353F76020C4B123EC68C3A8`。发布测试使用隔离账本，没有读取 Key、覆盖用户数据或调用付费生图。
+- 桌面快捷方式 `C:\Users\64414\Desktop\Product Atelier.lnk` 的目标和工作目录均为 `D:\ProductAtelier-Desktop\release\ProductAtelier-Portable`；原子替换改为显式备份、写后验证、失败恢复旧快捷方式，本轮正式 finalize 已实际走通且无警告。
+- 最终正式 EXE 在当前主屏 150%（144 DPI）与副屏 100%（96 DPI）往返实测：DWM corner preference 为 2、window region 为 0，1920×1200 ↔ 1280×800 物理尺寸正确，最小化/恢复、最大化/恢复全部通过；两档截图目视无台阶锯齿、白边或桌面漏底。
+- 最终 150% 隔离启动 10/10：窗口可见 32.147–38.560ms，首帧 449–495ms、均值 469.7ms，工作区 1175–1538ms、均值 1364.9ms；另录 5 秒/300 帧启动视频，黑帧 0、最大黑色像素比例 `0.000022`。视频按 60fps 编码，实际采集吞吐 15.353fps，不能误写为真实 60fps 抓取。
+- NSIS `Product Atelier_1.0.0_x64-setup.exe` 为 107250296 bytes，SHA-256 `5750C444E6F4FC85BCCA2FA5C393BC2DA02E25B5E4E3A04DE664CD78B8647EEF`；已在仓库 `build` 下隔离静默安装并通过应用/sidecar/动态端口/manifest/账本 smoke，随后完整卸载并恢复正式桌面入口。安装包当前 `NotSigned`，补代码签名前只作为内部候选，不宣布为公开分发版。
+- 隔离浏览器既有证据继续有效：revision 1→2 冲突被自动合并到 revision 3并显示“修改已安全合并”；关闭 sidecar 后显示 assertive 离线态，恢复后自动回到空任务，全程无横向溢出、未调用生图接口。
+
+**下一执行游标**
+
+```text
+R6 / Phase 7A 语义选物抠图（先做离线能力契约、蒙版确认和失败回退）
+  → 真实模型候选小样评测（任何付费调用前先确认预算）
+  → R7 / Phase 7B 固定样本质量、速度与每张可采用成本基线
+  → Phase 9 主题、无障碍与性能
+  → 每个可发布检查点继续复用当前 Phase 10 事务门禁
+```
+
+DeepSeek Harness / AI Agent 仍按用户决定暂缓，不得插队到当前游标。
 
 ## 0. 这次要把什么做成
 
@@ -553,7 +568,7 @@ Product Atelier 不是一个“上传图片—选择模型—下载结果”的�
 - “对比”已从一级导航移除并保留为结果上下文动作；Phase 6 的 A/B 对象选择、首次引导、原因标签和评审恢复均已完成。
 - 快速抠图已明确只做全部前景分离并隐藏无效输入；语义选物、数量约束、蒙版确认与模型评测仍属于 Phase 7。
 - 反馈与 trace 已写入账本；完整 Result Review 现在展示具体版本、原因标签、即时动作、学习回执与知识建议入口。
-- 主界面已完成第一轮信息减法、融合左栏、单舞台与 960×600 控制抽屉；Windows 物理/逻辑坐标契约和 DWM 圆角策略已修复，100/125/150% 真实屏幕与多显示器验收尚未收口。
+- 主界面已完成第一轮信息减法、融合左栏、单舞台与 960×600 控制抽屉；Windows 物理/逻辑坐标契约和 DWM 圆角策略已修复，100/125/150/175/200% 历史五档以及当前正式包 150%↔100% 多显示器验收均已收口。
 - `app.js` 已抽出配置、纯状态、响应式 shell、settings/knowledge connection 与素材管理控制器，但 workspace/jobs/review/knowledge 业务职责仍需继续拆分。
 - 发布链已具备 sidecar 清单和真实健康检查；任何 API 契约变更后仍必须重建便携包，不能只复制旧可执行文件。
 
@@ -913,7 +928,7 @@ DIY 外观要求：
 - Studio 核心中文已使用 10/12/13px 分级 token，深色知识卡按内容高度呈现，不再靠巨型空卡或极小操作文字制造视觉效果。
 - Task Dock 已提供五类全局筛选、跨素材域缩略图读取与“回到现场”；恢复依据任务提交时的不可变快照，不会被后来编辑的草稿污染。
 - 10 张抠图、20 张多文件和 1 张单产品已通过离线并发与重开账本门禁；实机发现并修复旧 12 张截断，多文件现支持 20 张源图，同时保持单批最多 24 个生成输出的前后端一致保护。
-- 尚未完成：`app.js` 全业务职责拆分和统一状态组件；Tauri 100/125/150/175/200% 与多显示器壳层、真实结果以及 50/200 素材和大任务数据态排版均已完成实机或隔离验收。详见 Phase 4 与 2026-08-27 各正式检查点。
+- 尚未完成：`app.js` 全业务职责拆分；统一状态组件、Tauri 100/125/150/175/200% 与多显示器壳层、真实结果以及 50/200 素材和大任务数据态排版均已完成实机或隔离验收。详见 Phase 4 与 2026-08-27～28 各正式检查点。
 
 ### 阶段 5：素材管理、模式上下文与 Task Dock（P0，预计 6–10 小时）
 
@@ -1179,7 +1194,7 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 从 Phase 4 剩余门禁开始，不重复 Phase 0–3，也不退回历史 `vXX-fixes.css` 补丁路线。
-4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态和完整 Result Review 均已进入正式版；统一状态组件已通过源码与隔离浏览器验收，下一步先完成它的备份、便携门禁和正式发布，不要重复实现。
+4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review 以及统一状态与冲突恢复均已进入正式便携版；下一步从 R6 / Phase 7A 语义选物开始，不要重复实现或重复发布这些检查点。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 

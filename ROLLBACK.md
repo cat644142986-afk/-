@@ -171,3 +171,26 @@ $tx | Select-Object phase, git_commit, transaction_id, portable_dir, backup_dir
   ```
 
 恢复器只会移动固定项目路径与该 transaction ID 派生的目录；如果 formal、previous、backup 或 recovery 出现未知文件树哈希，它会保留现场并拒绝删除。此时不要强制清理，应保留 transaction、`release\` 和对应备份后再审计。这套目录事务不操作 `%APPDATA%\ProductAtelier` 的账本、Key、素材或生成结果。
+
+## 2026-08-28 “统一状态与冲突恢复”正式便携检查点
+
+- 正式源码提交：`9eb71a8c50e6f916954d1871c40ba39a6312ae3b`
+- Git 标签：`checkpoint-2026-08-28-unified-status-recovery-portable`
+- 正式目录：`D:\ProductAtelier-Desktop\release\ProductAtelier-Portable`
+- 正式 EXE SHA-256：`FFCE84EC4A0B84798371ACDA1C147B88CAF01ACC1A5EDEFCCD0B2536F4FFF9D6`
+- sidecar SHA-256：`6E57B211524539E4734D53DB5866174C44648280154FA989FA103E3DE4B360DA`
+- manifest SHA-256：`32AF9473E6586691D8BD7554C77254BAA652C5FC0B0A68BC3C7F2A8EF99AF248`
+- 正式目录 tree SHA-256：`F4181478B368D466819432B94F6C893CBB995632A869812A43C115C9653A3BC4`
+- 已 finalized 事务：`aca596a42c4849afadaed4dca8704bac`
+- 上一正式目录完整备份：`D:\ProductAtelier-Backups\release-before-20260828-175633-9eb71a8c50e6`
+- promotion evidence SHA-256：`35FDD4AC7510BB38C3FA27BC1234B6C1C83AB9D9A353F76020C4B123EC68C3A8`
+
+该事务已完成 finalize，活动 transaction 文件已经清除；不要尝试伪造 transaction ID 调用 rollback。若只需回看本检查点源码，创建独立分支：
+
+```powershell
+git -C D:\ProductAtelier-Desktop switch -c restore/unified-status-recovery checkpoint-2026-08-28-unified-status-recovery-portable
+```
+
+若未来正式包需要降级，应先退出正式 EXE 与其 `python-server.exe`，保留当前正式目录和 `%APPDATA%\ProductAtelier` 的新副本，再从目标 Git 检查点重新构建候选并走完整 `tools/dev.ps1` 发布事务；不要把上方备份直接覆盖到运行中的正式目录。上方备份保存的是前一正式包，用户账本、Key、素材与成品不在该目录事务内。
+
+同提交 NSIS 安装候选 SHA-256 为 `5750C444E6F4FC85BCCA2FA5C393BC2DA02E25B5E4E3A04DE664CD78B8647EEF`，已通过隔离安装 smoke，但尚未 Authenticode 签名；对外分发前应先签名并重新记录哈希，不能把未签名文件当最终公开发布物。
