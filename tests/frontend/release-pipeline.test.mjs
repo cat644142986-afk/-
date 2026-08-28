@@ -73,3 +73,14 @@ test('all Windows entry points use the manifest-producing release chain', () => 
   assert.match(buildRequirements, /^pyinstaller==6\.22\.2$/m);
   assert.match(buildRequirements, /^pyinstaller-hooks-contrib==2026\.7$/m);
 });
+
+test('Windows build-tool verification uses a file entry point instead of fragile python -c quoting', () => {
+  const release = read('tools/dev.ps1');
+  const verifier = read('tools/verify_build_requirements.py');
+
+  assert.match(release, /verify_build_requirements\.py/);
+  assert.doesNotMatch(release, /python\.exe\s+-c\s+\$versionCheck/);
+  assert.match(verifier, /"pyinstaller": "6\.22\.2"/);
+  assert.match(verifier, /"pyinstaller-hooks-contrib": "2026\.7"/);
+  assert.match(verifier, /raise SystemExit\(main\(\)\)/);
+});

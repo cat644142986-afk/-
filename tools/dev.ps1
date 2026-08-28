@@ -181,16 +181,7 @@ try {
     Write-Host "  Build commit: $BuildHead" -ForegroundColor Green
 
     Write-Host "[2/11] Verifying pinned Windows build tools..." -ForegroundColor Yellow
-    $versionCheck = @'
-from importlib.metadata import version
-expected = {"pyinstaller": "6.22.2", "pyinstaller-hooks-contrib": "2026.7"}
-actual = {name: version(name) for name in expected}
-missing = [f"{name}={actual[name]} (expected {wanted})" for name, wanted in expected.items() if actual[name] != wanted]
-if missing:
-    raise SystemExit("; ".join(missing))
-print(", ".join(f"{name}={actual[name]}" for name in expected))
-'@
-    & python.exe -c $versionCheck
+    & python.exe (Join-Path $PSScriptRoot "verify_build_requirements.py")
     if ($LASTEXITCODE -ne 0) {
         throw "Pinned PyInstaller tools are unavailable. Run: python -m pip install -r python\requirements-build.txt"
     }
