@@ -42,8 +42,17 @@ $BuildRequirements = Join-Path $ProjectRoot "python\requirements-build.txt"
 $ReleaseLockPath = Join-Path $ProjectRoot "build\portable-release.lock"
 
 function Invoke-GitCapture([string[]]$Arguments) {
-    $output = @(& git.exe -C $ProjectRoot @Arguments 2>&1)
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell converts redirected native stderr into ErrorRecord
+        # objects. Keep it capturable so the real process exit code decides the
+        # result instead of $ErrorActionPreference="Stop" aborting this helper.
+        $ErrorActionPreference = "Continue"
+        $output = @(& git.exe -C $ProjectRoot @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($exitCode -ne 0) {
         throw "Git command failed (git $($Arguments -join ' ')): $($output -join ' ')"
     }
@@ -52,10 +61,30 @@ function Invoke-GitCapture([string[]]$Arguments) {
 
 function Assert-ReleaseSourceState([switch]$FetchOrigin) {
     if ($FetchOrigin) {
-        $fetchOutput = @(& git.exe -C $ProjectRoot fetch origin 2>&1)
-        $fetchExitCode = $LASTEXITCODE
-        foreach ($line in $fetchOutput) { Write-Host $line }
-        if ($fetchExitCode -ne 0) { throw "Could not fetch the GitHub origin." }
+        $fetchSucceeded = $false
+        $lastFetchOutput = @()
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $previousErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = "Continue"
+                $lastFetchOutput = @(& git.exe -C $ProjectRoot fetch origin 2>&1)
+                $fetchExitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $previousErrorActionPreference
+            }
+            foreach ($line in $lastFetchOutput) { Write-Host $line }
+            if ($fetchExitCode -eq 0) {
+                $fetchSucceeded = $true
+                break
+            }
+            if ($attempt -lt 3) {
+                Write-Warning "GitHub fetch attempt $attempt failed; retrying without changing release state."
+                Start-Sleep -Seconds (2 * $attempt)
+            }
+        }
+        if (-not $fetchSucceeded) {
+            throw "Could not fetch the GitHub origin after 3 attempts: $($lastFetchOutput -join ' ')"
+        }
     }
 
     $branch = Invoke-GitCapture -Arguments @("branch", "--show-current")

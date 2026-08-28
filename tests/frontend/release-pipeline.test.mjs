@@ -84,3 +84,15 @@ test('Windows build-tool verification uses a file entry point instead of fragile
   assert.match(verifier, /"pyinstaller-hooks-contrib": "2026\.7"/);
   assert.match(verifier, /raise SystemExit\(main\(\)\)/);
 });
+
+test('GitHub identity checks tolerate transient TLS failures without weakening release identity', () => {
+  const release = read('tools/dev.ps1');
+
+  assert.match(release, /for \(\$attempt = 1; \$attempt -le 3; \$attempt\+\+\)/);
+  assert.match(release, /fetch attempt \$attempt failed; retrying/);
+  assert.match(release, /Could not fetch the GitHub origin after 3 attempts/);
+  assert.match(release, /\$ErrorActionPreference = "Continue"/);
+  assert.match(release, /\$ErrorActionPreference = \$previousErrorActionPreference/);
+  assert.match(release, /Local HEAD does not match the GitHub upstream/);
+  assert.match(release, /Formal release requires a clean worktree/);
+});
