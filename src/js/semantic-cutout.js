@@ -119,3 +119,26 @@ export function semanticCutoutStageCopy(stage) {
     edge: '边缘精修失败，请改用快速去背景或重新框选',
   }[stage] || '智能选物暂时无法继续，请检查目标确认状态';
 }
+
+export function semanticGroundingPresentation(rawPreview = {}) {
+  const grounding = rawPreview?.grounding || {};
+  const status = String(rawPreview?.candidate_status || grounding?.status || 'unavailable');
+  const fallback = {
+    candidates: '本地模型已给出候选，请逐个检查；确认前不会开始抠图',
+    low_confidence: '候选置信度不足，请修正选区或补充框选',
+    no_match: '没有找到可靠候选，请手动框选目标',
+    unavailable: '当前未配置本地目标定位模型，请手动框选',
+    failed: '本地自动定位失败，请手动框选；当前图片仍可继续处理',
+    manual_regions: '请检查手动选区后确认',
+  }[status] || '请检查目标选区后确认';
+  const tone = {
+    candidates: 'candidate',
+    low_confidence: 'warning',
+    failed: 'error',
+  }[status] || 'manual';
+  return {
+    status,
+    tone,
+    message: String(rawPreview?.message || grounding?.message || fallback),
+  };
+}

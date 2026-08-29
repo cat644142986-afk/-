@@ -224,6 +224,7 @@
         <div class="semantic-canvas-wrap"><canvas id="semantic-selection-canvas" width="960" height="640" aria-label="目标框选画布；可拖动框选，也可使用右侧坐标输入"></canvas><span class="semantic-canvas-hint">拖动鼠标框选目标；每个框只包住一个物体并留少量边距</span></div>
         <aside class="semantic-region-panel" aria-label="已框选目标">
           <div class="semantic-region-progress"><strong id="semantic-region-count">0 / 1</strong><span>已框选</span></div>
+          <p class="semantic-grounding-status" id="semantic-grounding-status" role="status" aria-live="polite">正在检查本地候选能力</p>
           <div class="semantic-region-actions"><button id="semantic-add-full" type="button">添加全图范围</button><button id="semantic-undo" type="button">撤销</button><button id="semantic-clear" type="button">清空</button></div>
           <div class="semantic-region-list" id="semantic-region-list"></div>
           <p class="semantic-region-error" id="semantic-region-error" role="alert" hidden></p>

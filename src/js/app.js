@@ -51,6 +51,7 @@ import {
   semanticCutoutPayload,
   semanticCutoutReadiness,
   semanticCutoutStageCopy,
+  semanticGroundingPresentation,
   updateSemanticCutoutState,
 } from './semantic-cutout.js';
 
@@ -69,6 +70,11 @@ const semanticCanvasState = {
   query: '',
   targetCount: 1,
   regions: [],
+  groundingStatus: 'unavailable',
+  groundingTone: 'manual',
+  groundingMessage: '请手动框选目标',
+  manualRevision: 0,
+  previewRevision: 0,
   dragStart: null,
   dragCurrent: null,
 };
@@ -2678,6 +2684,9 @@ function drawSemanticCanvas() {
 function renderSemanticRegions() {
   const list = $('#semantic-region-list');
   const count = semanticCanvasState.regions.length;
+  const groundingStatus = $('#semantic-grounding-status');
+  groundingStatus.dataset.tone = semanticCanvasState.groundingTone;
+  groundingStatus.textContent = semanticCanvasState.groundingMessage;
   $('#semantic-region-count').textContent = `${count} / ${semanticCanvasState.targetCount}`;
   $('#semantic-selection-summary').textContent = `要保留 ${semanticCanvasState.targetCount} 个“${semanticCanvasState.query}”`;
   if (!count) {
@@ -2686,7 +2695,7 @@ function renderSemanticRegions() {
     const coordinateLabels = ['X', 'Y', '宽', '高'];
     list.innerHTML = semanticCanvasState.regions.map((region, index) => `
       <section class="semantic-region-item">
-        <div class="semantic-region-item__head"><strong>目标 ${index + 1} · ${escapeHtml(semanticCanvasState.query)}</strong><button type="button" data-remove-semantic-region="${index}" aria-label="移除目标 ${index + 1}">移除</button></div>
+        <div class="semantic-region-item__head"><div><strong>目标 ${index + 1} · ${escapeHtml(semanticCanvasState.query)}</strong><small>${region.origin === 'automatic' ? `自动候选 · ${Math.round(Number(region.confidence || 0) * 100)}%` : '人工选区'}</small></div><button type="button" data-remove-semantic-region="${index}" aria-label="移除目标 ${index + 1}">移除</button></div>
         <div class="semantic-region-coordinates">
           ${region.bbox.map((value, coordinate) => `<label>${coordinateLabels[coordinate]} %<input type="number" min="0" max="100" step="0.1" value="${Number((value * 100).toFixed(1))}" data-semantic-region-index="${index}" data-semantic-coordinate="${coordinate}" /></label>`).join('')}
         </div>
@@ -2720,12 +2729,17 @@ function addSemanticRegion(bbox) {
   semanticCanvasState.regions.push({
     id: `target-${semanticCanvasState.regions.length + 1}`,
     label: semanticCanvasState.query,
+    origin: 'manual',
     bbox: normalized,
   });
+  semanticCanvasState.groundingStatus = 'manual_regions';
+  semanticCanvasState.groundingTone = 'manual';
+  semanticCanvasState.groundingMessage = '已进入人工修正；请检查所有选区后确认';
+  semanticCanvasState.manualRevision += 1;
   renderSemanticRegions();
 }
 
-function updateSemanticRegionCoordinate(input) {
+function updateSemanticRegionCoordinate(input, render = true) {
   const index = Number(input.dataset.semanticRegionIndex);
   const coordinate = Number(input.dataset.semanticCoordinate);
   const region = semanticCanvasState.regions[index];
@@ -2737,7 +2751,20 @@ function updateSemanticRegionCoordinate(input) {
   if (coordinate === 2) next[2] = Math.max(.01, Math.min(next[2], 1 - next[0]));
   if (coordinate === 3) next[3] = Math.max(.01, Math.min(next[3], 1 - next[1]));
   region.bbox = next.map((value) => Number(value.toFixed(6)));
-  renderSemanticRegions();
+  region.origin = 'manual';
+  delete region.confidence;
+  semanticCanvasState.groundingStatus = 'manual_regions';
+  semanticCanvasState.groundingTone = 'manual';
+  semanticCanvasState.groundingMessage = '已修改自动候选；请检查所有选区后确认';
+  semanticCanvasState.manualRevision += 1;
+  if (render) {
+    renderSemanticRegions();
+  } else {
+    const groundingStatus = $('#semantic-grounding-status');
+    groundingStatus.dataset.tone = semanticCanvasState.groundingTone;
+    groundingStatus.textContent = semanticCanvasState.groundingMessage;
+    drawSemanticCanvas();
+  }
 }
 
 function loadSemanticCanvasImage(url) {
@@ -2775,31 +2802,73 @@ async function openSemanticSelection() {
   semanticReturnFocus = document.activeElement;
   button.disabled = true;
   button.setAttribute('aria-busy', 'true');
+  const previewRevision = semanticCanvasState.previewRevision + 1;
+  semanticCanvasState.previewRevision = previewRevision;
+  semanticCanvasState.assetId = asset.id;
+  semanticCanvasState.query = selection.query;
+  semanticCanvasState.targetCount = selection.target_count;
+  const restoredRegions = (
+    selection.status === 'confirmed'
+    && Boolean(selection.digest)
+    && selection.source_asset_id === asset.id
+    && selection.target_count === semanticCanvasState.targetCount
+    && selection.regions.length === selection.target_count
+  );
+  semanticCanvasState.regions = restoredRegions
+    ? selection.regions.map((region) => ({ ...region, origin: 'manual', bbox: [...region.bbox] }))
+    : [];
+  semanticCanvasState.manualRevision = 0;
+  semanticCanvasState.groundingStatus = restoredRegions ? 'manual_regions' : 'loading';
+  semanticCanvasState.groundingTone = 'manual';
+  semanticCanvasState.groundingMessage = restoredRegions
+    ? '已恢复上次确认选区；可直接复核或继续修改'
+    : '正在运行本地目标定位；无需等待，可直接手动框选';
+  semanticCanvasState.dragStart = null;
+  semanticCanvasState.dragCurrent = null;
+  $('#semantic-selection-modal').hidden = false;
   try {
+    await loadSemanticCanvasImage(assetUrl(asset, 'content'));
+    renderSemanticRegions();
+    $('#semantic-selection-close').focus();
     const preview = await API.previewSemanticCutout({
       asset_id: asset.id,
       query: selection.query,
       target_count: selection.target_count,
-      regions: [],
+      regions: restoredRegions ? selection.regions : [],
     });
-    semanticCanvasState.assetId = asset.id;
-    semanticCanvasState.query = preview.preview.query;
-    semanticCanvasState.targetCount = preview.preview.target_count;
-    semanticCanvasState.regions = (
-      selection.source_asset_id === asset.id
-      && selection.query === preview.preview.query
-      && selection.target_count === preview.preview.target_count
-    ) ? selection.regions.map((region) => ({ ...region, bbox: [...region.bbox] })) : [];
-    semanticCanvasState.dragStart = null;
-    semanticCanvasState.dragCurrent = null;
-    $('#semantic-selection-modal').hidden = false;
-    await loadSemanticCanvasImage(assetUrl(asset, 'content'));
+    if (
+      semanticCanvasState.previewRevision !== previewRevision
+      || $('#semantic-selection-modal').hidden
+    ) return;
+    const presentation = semanticGroundingPresentation(preview.preview);
+    if (!restoredRegions && semanticCanvasState.manualRevision === 0) {
+      semanticCanvasState.query = preview.preview.query;
+      semanticCanvasState.targetCount = preview.preview.target_count;
+      semanticCanvasState.regions = Array.from(preview.preview.regions || [], (region) => ({
+        ...region,
+        bbox: [...region.bbox],
+      }));
+      semanticCanvasState.groundingStatus = presentation.status;
+      semanticCanvasState.groundingTone = presentation.tone;
+      semanticCanvasState.groundingMessage = presentation.message;
+    } else if (!restoredRegions) {
+      semanticCanvasState.groundingStatus = 'manual_regions';
+      semanticCanvasState.groundingTone = 'manual';
+      semanticCanvasState.groundingMessage = '自动定位已完成，已保留你刚才的手动修改';
+    }
     renderSemanticRegions();
-    $('#semantic-selection-close').focus();
   } catch (error) {
+    if (
+      semanticCanvasState.previewRevision !== previewRevision
+      || $('#semantic-selection-modal').hidden
+    ) return;
     const stage = error?.detail?.stage;
-    toast(stage ? semanticCutoutStageCopy(stage) : formatApiError(error, '目标确认暂不可用'), 'error', 5200);
-    closeSemanticSelection();
+    semanticCanvasState.groundingStatus = 'failed';
+    semanticCanvasState.groundingTone = 'error';
+    semanticCanvasState.groundingMessage = stage
+      ? semanticCutoutStageCopy(stage)
+      : `${formatApiError(error, '自动定位暂不可用')}；仍可手动框选`;
+    renderSemanticRegions();
   } finally {
     button.removeAttribute('aria-busy');
     renderCutoutControls();
@@ -2815,6 +2884,7 @@ function closeSemanticSelection(restoreFocus = true) {
     return;
   }
   modal.hidden = true;
+  semanticCanvasState.previewRevision += 1;
   semanticCanvasState.image = null;
   semanticCanvasState.dragStart = null;
   semanticCanvasState.dragCurrent = null;
@@ -3513,10 +3583,18 @@ function bindEvents() {
   $('#semantic-add-full').addEventListener('click', () => addSemanticRegion([0, 0, 1, 1]));
   $('#semantic-undo').addEventListener('click', () => {
     semanticCanvasState.regions.pop();
+    semanticCanvasState.groundingStatus = 'manual_regions';
+    semanticCanvasState.groundingTone = 'manual';
+    semanticCanvasState.groundingMessage = '已撤销一个选区；请补充并检查后确认';
+    semanticCanvasState.manualRevision += 1;
     renderSemanticRegions();
   });
   $('#semantic-clear').addEventListener('click', () => {
     semanticCanvasState.regions = [];
+    semanticCanvasState.groundingStatus = 'manual_regions';
+    semanticCanvasState.groundingTone = 'manual';
+    semanticCanvasState.groundingMessage = '已清空候选，请重新手动框选目标';
+    semanticCanvasState.manualRevision += 1;
     renderSemanticRegions();
   });
   $('#semantic-region-list').addEventListener('click', (event) => {
@@ -3524,11 +3602,19 @@ function bindEvents() {
     if (!button) return;
     semanticCanvasState.regions.splice(Number(button.dataset.removeSemanticRegion), 1);
     semanticCanvasState.regions.forEach((region, index) => { region.id = `target-${index + 1}`; });
+    semanticCanvasState.groundingStatus = 'manual_regions';
+    semanticCanvasState.groundingTone = 'manual';
+    semanticCanvasState.groundingMessage = '已移除一个候选；请补充并检查后确认';
+    semanticCanvasState.manualRevision += 1;
     renderSemanticRegions();
   });
   $('#semantic-region-list').addEventListener('change', (event) => {
     const input = event.target.closest('[data-semantic-region-index]');
     if (input) updateSemanticRegionCoordinate(input);
+  });
+  $('#semantic-region-list').addEventListener('input', (event) => {
+    const input = event.target.closest('[data-semantic-region-index]');
+    if (input) updateSemanticRegionCoordinate(input, false);
   });
   const semanticCanvas = $('#semantic-selection-canvas');
   semanticCanvas.addEventListener('pointerdown', (event) => {
@@ -3538,6 +3624,10 @@ function bindEvents() {
       return;
     }
     semanticCanvas.setPointerCapture(event.pointerId);
+    semanticCanvasState.manualRevision += 1;
+    semanticCanvasState.groundingStatus = 'manual_regions';
+    semanticCanvasState.groundingTone = 'manual';
+    semanticCanvasState.groundingMessage = '正在手动框选；自动结果不会覆盖你的修改';
     semanticCanvasState.dragStart = semanticCanvasPoint(event);
     semanticCanvasState.dragCurrent = semanticCanvasState.dragStart;
     drawSemanticCanvas();

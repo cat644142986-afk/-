@@ -5,6 +5,7 @@ import {
   createSemanticCutoutState,
   semanticCutoutPayload,
   semanticCutoutReadiness,
+  semanticGroundingPresentation,
   updateSemanticCutoutState,
 } from '../../src/js/semantic-cutout.js';
 
@@ -106,4 +107,24 @@ test('confirmed semantic selection compiles to a per-source immutable job plan',
       },
     },
   });
+});
+
+test('automatic candidate states always explain confirmation or manual recovery', () => {
+  assert.deepEqual(semanticGroundingPresentation({
+    candidate_status: 'candidates',
+    message: '本地模型找到 2 个候选，请逐个检查后确认',
+  }), {
+    status: 'candidates',
+    tone: 'candidate',
+    message: '本地模型找到 2 个候选，请逐个检查后确认',
+  });
+  const low = semanticGroundingPresentation({ candidate_status: 'low_confidence' });
+  assert.equal(low.tone, 'warning');
+  assert.match(low.message, /修正选区|补充框选/);
+  const failed = semanticGroundingPresentation({ candidate_status: 'failed' });
+  assert.equal(failed.tone, 'error');
+  assert.match(failed.message, /手动框选/);
+  const unavailable = semanticGroundingPresentation({ candidate_status: 'unavailable' });
+  assert.equal(unavailable.tone, 'manual');
+  assert.match(unavailable.message, /手动框选/);
 });

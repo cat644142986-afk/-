@@ -210,3 +210,20 @@ git -C D:\ProductAtelier-Desktop switch -c restore/semantic-cutout-confirmation 
 ```
 
 如果未来已经用新 sidecar 创建 `cutout_selection.strategy=semantic` 的排队或暂停任务，回退到旧 sidecar 前必须先让这些任务完成或明确取消，并保留账本副本。旧 sidecar 不认识确认摘要与区域合同，不能让它接管未完成的语义任务，否则可能按旧“全部前景”语义执行。当前本轮只在隔离数据目录验收，正式用户账本尚未写入这种任务。
+
+## 2026-08-29 自动定位合同源码检查点
+
+- Git 标签：`checkpoint-2026-08-29-semantic-grounding-contract-source`
+- 性质：源码、固定程序合同和离线门禁检查点；不是新的正式 EXE、sidecar、NSIS、模型包或桌面快捷方式发布。
+- sidecar 源码合同：`2026-08-29.1`
+- 数据库 schema：仍为 v3；没有迁移、删除或覆盖用户账本。
+- 模型边界：Git 不含权重；没有下载或运行真实 grounding 模型；正式 PyInstaller sidecar 继续排除 `torch / transformers / tokenizers`。
+- 上一个已验证正式发布仍是 `checkpoint-2026-08-28-unified-status-recovery-portable`。
+
+只回看本次源码时创建独立分支：
+
+```powershell
+git -C D:\ProductAtelier-Desktop switch -c restore/semantic-grounding-contract checkpoint-2026-08-29-semantic-grounding-contract-source
+```
+
+本次新增的 preview 候选字段对旧前端不是破坏性数据库变更，但旧 sidecar 不具备候选状态和晚到结果保护。回退前仍应完成或取消新版本创建的语义任务、保留账本副本，并确保 `PRODUCT_ATELIER_GROUNDING_MODEL_PATH` 不会误指向已移动或不完整的模型目录。模型权重在正式发布事务之外，不得通过覆盖正式便携目录的方式“回滚”。

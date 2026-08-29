@@ -850,6 +850,151 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertEqual(self.ai_mock.call_count, 0)
             self.network_request.assert_not_called()
 
+    def test_semantic_cutout_preview_exposes_editable_candidates_but_never_confirms_them(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "candidate-burgers.png", (210, 80, 35))
+            grounding = {
+                "status": "candidates",
+                "adapter_id": "fixture-grounding",
+                "available": True,
+                "attempted": True,
+                "candidates": [
+                    {
+                        "id": "candidate-1",
+                        "label": "burger",
+                        "bbox": [0.05, 0.1, 0.35, 0.7],
+                        "origin": "automatic",
+                        "confidence": 0.88,
+                    },
+                    {
+                        "id": "candidate-2",
+                        "label": "burger",
+                        "bbox": [0.55, 0.12, 0.35, 0.68],
+                        "origin": "automatic",
+                        "confidence": 0.81,
+                    },
+                ],
+                "confidence_threshold": 0.4,
+                "elapsed_ms": 18.2,
+                "reason": "",
+                "message": "本地模型找到 2 个候选，请逐个检查后确认",
+            }
+            with mock.patch.object(
+                server,
+                "ground_semantic_candidates",
+                return_value=grounding,
+            ) as ground_mock:
+                preview = client.post(
+                    "/api/semantic-cutout/preview",
+                    json={
+                        "asset_id": source["id"],
+                        "query": "汉堡",
+                        "target_count": 2,
+                        "regions": [],
+                    },
+                )
+
+            self.assertEqual(preview.status_code, 200, preview.text)
+            payload = preview.json()["preview"]
+            self.assertEqual(payload["status"], "needs_confirmation")
+            self.assertEqual(payload["candidate_status"], "candidates")
+            self.assertTrue(payload["automatic_grounding_available"])
+            self.assertTrue(payload["requires_confirmation"])
+            self.assertEqual(payload["regions"], grounding["candidates"])
+            ground_mock.assert_called_once()
+
+            rejected = client.post(
+                "/api/jobs",
+                json={
+                    "mode": "cutout-batch",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "cutout_selection": {
+                            "strategy": "semantic",
+                            "query": "汉堡",
+                            "target_count": 2,
+                            "sources": {},
+                        }
+                    },
+                    "client_request_id": "automatic-candidates-not-confirmed",
+                },
+            )
+            self.assertEqual(rejected.status_code, 400, rejected.text)
+            self.assertEqual(
+                rejected.json()["detail"]["code"],
+                "SEMANTIC_CONFIRMATION_REQUIRED",
+            )
+            self.network_request.assert_not_called()
+
+    def test_semantic_cutout_low_confidence_keeps_manual_confirmation_recovery(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "weak-candidate.png", (180, 100, 40))
+            with mock.patch.object(
+                server,
+                "ground_semantic_candidates",
+                return_value={
+                    "status": "low_confidence",
+                    "adapter_id": "fixture-grounding",
+                    "available": True,
+                    "attempted": True,
+                    "candidates": [{
+                        "id": "candidate-1",
+                        "label": "burger",
+                        "bbox": [0.1, 0.1, 0.5, 0.7],
+                        "origin": "automatic",
+                        "confidence": 0.31,
+                    }],
+                    "confidence_threshold": 0.4,
+                    "elapsed_ms": 20.1,
+                    "reason": "",
+                    "message": "本地模型只找到 1 个低置信候选，请修正选区或补充框选",
+                },
+            ):
+                preview = client.post(
+                    "/api/semantic-cutout/preview",
+                    json={
+                        "asset_id": source["id"],
+                        "query": "汉堡",
+                        "target_count": 2,
+                        "regions": [],
+                    },
+                )
+            payload = preview.json()["preview"]
+            self.assertEqual(payload["status"], "needs_confirmation")
+            self.assertEqual(payload["candidate_status"], "low_confidence")
+            self.assertEqual(len(payload["regions"]), 1)
+            self.assertIn("补充框选", payload["message"])
+            self.network_request.assert_not_called()
+
+    def test_semantic_cutout_restored_regions_skip_optional_model_inference(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "restored-region.png", (120, 90, 40))
+            with mock.patch.object(
+                server,
+                "ground_semantic_candidates",
+                side_effect=AssertionError("restored manual regions must not invoke grounding"),
+            ) as ground_mock:
+                preview = client.post(
+                    "/api/semantic-cutout/preview",
+                    json={
+                        "asset_id": source["id"],
+                        "query": "包装盒",
+                        "target_count": 1,
+                        "regions": [{
+                            "id": "target-1",
+                            "label": "包装盒",
+                            "bbox": [0.1, 0.1, 0.8, 0.8],
+                        }],
+                    },
+                )
+            self.assertEqual(preview.status_code, 200, preview.text)
+            payload = preview.json()["preview"]
+            self.assertEqual(payload["candidate_status"], "manual_regions")
+            self.assertFalse(payload["automatic_grounding_available"])
+            self.assertEqual(payload["status"], "needs_confirmation")
+            ground_mock.assert_not_called()
+            self.network_request.assert_not_called()
+
     def test_multi_file_partial_failure_retry_only_failed_item_then_completes(self) -> None:
         self.fail_prompt_once = "fail-source"
         with self.live_client() as client:

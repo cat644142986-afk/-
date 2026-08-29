@@ -1,0 +1,176 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "product-atelier-semantic-grounding-contract-v1",
+  "corpus_kind": "procedural-contract",
+  "review": "source-controlled",
+  "description": "不含用户图片的离线几何与失败恢复合同；用于验证适配器、指标和界面回退，不代表真实电商照片质量。",
+  "limitations": [
+    "程序绘制图只验证合同与评测器，不能替代真实照片模型质量结论",
+    "真实质量语料必须另行记录来源、许可、SHA-256 和人工标注审核"
+  ],
+  "required_coverage": [
+    "food",
+    "multiple-similar",
+    "packaging",
+    "transparent",
+    "hair-fine-lines",
+    "shadow",
+    "occlusion",
+    "no-match"
+  ],
+  "gates": {
+    "iou_threshold": 0.5,
+    "min_recall": 0.75,
+    "min_precision": 0.75,
+    "min_exact_count_accuracy": 0.75,
+    "min_no_match_accuracy": 1.0,
+    "min_recovery_rate": 1.0
+  },
+  "cases": [
+    {
+      "id": "food-two-burgers",
+      "tags": ["food", "multiple-similar", "shadow"],
+      "query": "汉堡",
+      "model_query_hint": "burger",
+      "target_count": 2,
+      "canvas": [320, 220],
+      "background": "#f5efe5",
+      "shapes": [
+        {"kind": "ellipse", "box": [26, 142, 130, 182], "fill": "#cfc2af"},
+        {"kind": "ellipse", "box": [28, 58, 128, 154], "fill": "#d98b2b", "outline": "#6f3d1f", "width": 4},
+        {"kind": "rectangle", "box": [38, 93, 118, 115], "fill": "#4f8c46"},
+        {"kind": "ellipse", "box": [180, 142, 294, 184], "fill": "#cfc2af"},
+        {"kind": "ellipse", "box": [184, 58, 292, 154], "fill": "#d98b2b", "outline": "#6f3d1f", "width": 4},
+        {"kind": "rectangle", "box": [196, 93, 280, 115], "fill": "#4f8c46"},
+        {"kind": "rectangle", "box": [142, 78, 166, 158], "fill": "#6ca9c9", "outline": "#32637a", "width": 3}
+      ],
+      "expected": [
+        {"label": "汉堡", "bbox": [0.075, 0.25, 0.34, 0.46]},
+        {"label": "汉堡", "bbox": [0.56, 0.25, 0.37, 0.47]}
+      ]
+    },
+    {
+      "id": "multiple-similar-packages",
+      "tags": ["multiple-similar", "packaging"],
+      "query": "红色包装盒",
+      "model_query_hint": "red package box",
+      "target_count": 2,
+      "canvas": [320, 220],
+      "background": "#f1eee8",
+      "shapes": [
+        {"kind": "rectangle", "box": [28, 40, 112, 184], "fill": "#c84c3f", "outline": "#71312b", "width": 4},
+        {"kind": "text", "at": [49, 104], "text": "PA", "fill": "#fff5df"},
+        {"kind": "rectangle", "box": [124, 40, 208, 184], "fill": "#c84c3f", "outline": "#71312b", "width": 4},
+        {"kind": "text", "at": [145, 104], "text": "PA", "fill": "#fff5df"},
+        {"kind": "rectangle", "box": [222, 58, 294, 184], "fill": "#4d7899", "outline": "#29485f", "width": 4}
+      ],
+      "expected": [
+        {"label": "红色包装盒", "bbox": [0.075, 0.16, 0.29, 0.70]},
+        {"label": "红色包装盒", "bbox": [0.375, 0.16, 0.29, 0.70]}
+      ]
+    },
+    {
+      "id": "package-small-text",
+      "tags": ["packaging"],
+      "query": "咖啡包装袋",
+      "model_query_hint": "coffee package",
+      "target_count": 1,
+      "canvas": [320, 220],
+      "background": "#eee8dd",
+      "shapes": [
+        {"kind": "polygon", "points": [[84, 32], [236, 32], [254, 190], [66, 190]], "fill": "#cab08b", "outline": "#5f4b36", "width": 4},
+        {"kind": "ellipse", "box": [124, 76, 196, 148], "fill": "#563b28"},
+        {"kind": "text", "at": [137, 102], "text": "COFFEE", "fill": "#f7dfb5"}
+      ],
+      "expected": [
+        {"label": "咖啡包装袋", "bbox": [0.20, 0.13, 0.61, 0.76]}
+      ]
+    },
+    {
+      "id": "transparent-container",
+      "tags": ["transparent"],
+      "query": "透明玻璃杯",
+      "model_query_hint": "transparent glass",
+      "target_count": 1,
+      "canvas": [320, 220],
+      "background": "#dfeaf0",
+      "shapes": [
+        {"kind": "rectangle", "box": [108, 38, 212, 188], "fill": "#c4e5ed66", "outline": "#5d8791", "width": 5},
+        {"kind": "line", "points": [[116, 142], [204, 142]], "fill": "#73b5c7", "width": 5}
+      ],
+      "expected": [
+        {"label": "透明玻璃杯", "bbox": [0.325, 0.15, 0.35, 0.73]}
+      ]
+    },
+    {
+      "id": "hair-fine-lines",
+      "tags": ["hair-fine-lines"],
+      "query": "假发",
+      "model_query_hint": "wig",
+      "target_count": 1,
+      "canvas": [320, 220],
+      "background": "#f2e7dc",
+      "shapes": [
+        {"kind": "ellipse", "box": [108, 42, 212, 160], "fill": "#d8aa82", "outline": "#7a4e34", "width": 3},
+        {"kind": "line", "points": [[118, 54], [78, 188]], "fill": "#3c2a22", "width": 5},
+        {"kind": "line", "points": [[132, 42], [108, 194]], "fill": "#3c2a22", "width": 4},
+        {"kind": "line", "points": [[154, 38], [150, 198]], "fill": "#3c2a22", "width": 4},
+        {"kind": "line", "points": [[178, 42], [194, 194]], "fill": "#3c2a22", "width": 4},
+        {"kind": "line", "points": [[202, 54], [238, 188]], "fill": "#3c2a22", "width": 5}
+      ],
+      "expected": [
+        {"label": "假发", "bbox": [0.23, 0.15, 0.54, 0.77]}
+      ]
+    },
+    {
+      "id": "shadow-separation",
+      "tags": ["shadow", "packaging"],
+      "query": "瓶子",
+      "model_query_hint": "bottle",
+      "target_count": 1,
+      "canvas": [320, 220],
+      "background": "#f6f2e9",
+      "shapes": [
+        {"kind": "ellipse", "box": [120, 174, 246, 206], "fill": "#c5bbb0"},
+        {"kind": "rectangle", "box": [130, 54, 198, 184], "fill": "#6e9b74", "outline": "#36543b", "width": 4},
+        {"kind": "rectangle", "box": [148, 28, 180, 62], "fill": "#6e9b74", "outline": "#36543b", "width": 4}
+      ],
+      "expected": [
+        {"label": "瓶子", "bbox": [0.39, 0.11, 0.24, 0.75]}
+      ]
+    },
+    {
+      "id": "occluded-apples",
+      "tags": ["occlusion", "multiple-similar", "food"],
+      "query": "苹果",
+      "model_query_hint": "apple",
+      "target_count": 2,
+      "canvas": [320, 220],
+      "background": "#ede8dc",
+      "shapes": [
+        {"kind": "ellipse", "box": [76, 54, 190, 180], "fill": "#c94235", "outline": "#6f2c27", "width": 3},
+        {"kind": "ellipse", "box": [142, 60, 256, 186], "fill": "#d7573e", "outline": "#6f2c27", "width": 3},
+        {"kind": "line", "points": [[132, 58], [142, 32]], "fill": "#4a562d", "width": 5},
+        {"kind": "line", "points": [[198, 64], [210, 36]], "fill": "#4a562d", "width": 5}
+      ],
+      "expected": [
+        {"label": "苹果", "bbox": [0.23, 0.23, 0.38, 0.61]},
+        {"label": "苹果", "bbox": [0.43, 0.25, 0.39, 0.61]}
+      ]
+    },
+    {
+      "id": "no-match-burger",
+      "tags": ["no-match", "packaging"],
+      "query": "汉堡",
+      "model_query_hint": "burger",
+      "target_count": 1,
+      "canvas": [320, 220],
+      "background": "#f2eee6",
+      "shapes": [
+        {"kind": "rectangle", "box": [76, 54, 144, 184], "fill": "#6b8ea6", "outline": "#38586c", "width": 4},
+        {"kind": "rectangle", "box": [176, 42, 248, 184], "fill": "#c16b52", "outline": "#743d30", "width": 4}
+      ],
+      "expected": []
+    }
+  ]
+}

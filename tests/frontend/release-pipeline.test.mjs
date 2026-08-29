@@ -36,6 +36,7 @@ test('formal portable promotion is candidate-first and rollback-capable', () => 
 
 test('sidecar build cannot overwrite the formal portable release', () => {
   const script = read('tools/Build-Sidecar.ps1');
+  const spec = read('python-server.spec');
 
   assert.doesNotMatch(script, /DeployPortable/);
   assert.doesNotMatch(script, /release\\ProductAtelier-Portable/);
@@ -47,6 +48,10 @@ test('sidecar build cannot overwrite the formal portable release', () => {
   assert.match(script, /FileAttributes\]::ReparsePoint/);
   assert.match(script, /sidecarBuildLockOwned/);
   assert.match(script, /rev-parse --verify HEAD/);
+  assert.match(spec, /'torch'/);
+  assert.match(spec, /'transformers'/);
+  assert.match(spec, /'tokenizers'/);
+  assert.doesNotMatch(spec, /collect_data_files\('transformers'\)/);
 });
 
 test('portable smoke binds runtime identity to the candidate artifacts', () => {

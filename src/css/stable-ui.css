@@ -731,17 +731,23 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .semantic-canvas-wrap { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; overflow: hidden; border-radius: 17px; background: #171a1e; }
 .semantic-canvas-wrap canvas { display: block; max-width: 100%; max-height: 100%; background: #fff; cursor: crosshair; touch-action: none; }
 .semantic-canvas-hint { position: absolute; right: 10px; bottom: 10px; left: 10px; padding: 7px 9px; border-radius: 9px; background: rgba(20,23,27,.72); color: rgba(255,255,255,.82); font-size: var(--type-caption); text-align: center; pointer-events: none; backdrop-filter: blur(8px); }
-.semantic-region-panel { display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; min-height: 0; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 17px; background: var(--paper); }
+.semantic-region-panel { display: grid; grid-template-rows: auto auto auto minmax(0,1fr) auto; min-height: 0; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 17px; background: var(--paper); }
 .semantic-region-progress { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .semantic-region-progress strong { color: var(--coral); font-size: 18px; font-variant-numeric: tabular-nums; }
 .semantic-region-progress span { color: var(--ink-3); font-size: var(--type-caption); }
+.semantic-grounding-status { margin: 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper-soft); color: var(--ink-2); font-size: var(--type-caption); line-height: 1.45; }
+.semantic-grounding-status[data-tone="candidate"] { border-color: rgba(37,165,85,.24); background: rgba(37,165,85,.07); }
+.semantic-grounding-status[data-tone="warning"] { border-color: rgba(201,139,0,.28); background: rgba(255,211,81,.11); }
+.semantic-grounding-status[data-tone="error"] { border-color: rgba(255,95,87,.24); background: rgba(255,95,87,.07); }
 .semantic-region-actions { display: grid; grid-template-columns: 1fr auto auto; gap: 5px; }
 .semantic-region-actions button { min-height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper-soft); color: var(--ink-2); font-size: var(--type-caption); }
 .semantic-region-list { display: grid; align-content: start; gap: 8px; min-height: 0; overflow: auto; padding-right: 2px; scrollbar-width: thin; }
 .semantic-region-empty { padding: 16px 8px; color: var(--ink-3); font-size: var(--type-caption); line-height: 1.6; text-align: center; }
 .semantic-region-item { display: grid; gap: 7px; padding: 9px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-soft); }
 .semantic-region-item__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.semantic-region-item__head > div { display: grid; gap: 2px; min-width: 0; }
 .semantic-region-item__head strong { font-size: var(--type-caption); }
+.semantic-region-item__head small { color: var(--ink-3); font-size: var(--type-micro); }
 .semantic-region-item__head button { min-width: 27px; min-height: 27px; border-radius: 8px; background: transparent; color: var(--red); font-size: var(--type-caption); }
 .semantic-region-coordinates { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 4px; }
 .semantic-region-coordinates label { display: grid; gap: 2px; color: var(--ink-3); font-size: 8px; }

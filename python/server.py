@@ -41,6 +41,7 @@ try:
         normalize_regions,
         validate_selection_sources,
     )
+    from semantic_grounding import ground_semantic_candidates
     from storage_paths import (
         OutputRootError,
         canonicalize_output_root,
@@ -70,6 +71,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         normalize_regions,
         validate_selection_sources,
     )
+    from python.semantic_grounding import ground_semantic_candidates
     from python.storage_paths import (
         OutputRootError,
         canonicalize_output_root,
@@ -153,7 +155,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-28.1"
+SIDECAR_CONTRACT_VERSION = "2026-08-29.1"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -2145,21 +2147,45 @@ async def preview_semantic_cutout(request: SemanticCutoutRequest):
                     "message": "源图片无法读取，请重新导入",
                 },
             ) from exc
+    grounding = {
+        "status": "manual_regions",
+        "adapter_id": "manual-box",
+        "available": False,
+        "attempted": False,
+        "candidates": [],
+        "confidence_threshold": 0.0,
+        "elapsed_ms": 0.0,
+        "reason": "user_regions",
+        "message": "请检查框选目标后确认",
+    }
+    if not regions:
+        grounding = await run_in_threadpool(
+            ground_semantic_candidates,
+            path,
+            normalized["query"],
+            normalized["target_count"],
+        )
+        regions = list(grounding.get("candidates") or [])
+    candidate_status = str(grounding.get("status") or "unavailable")
+    needs_confirmation = bool(regions)
     return {
         "preview": {
-            "status": "needs_confirmation" if regions else "needs_manual_grounding",
+            "status": "needs_confirmation" if needs_confirmation else "needs_manual_grounding",
             "source_asset_id": str(asset["id"]),
             "query": normalized["query"],
             "target_count": normalized["target_count"],
             "regions": regions,
             "source": {"width": width, "height": height},
-            "automatic_grounding_available": False,
+            "automatic_grounding_available": bool(grounding.get("available")),
+            "grounding": grounding,
             "fallback": "manual-box",
-            "message": (
+            "message": str(grounding.get("message") or (
                 "请检查框选目标后确认"
-                if regions
-                else "当前离线版本不会假装识别名称；请在原图上框选目标"
-            ),
+                if needs_confirmation
+                else "请在原图上框选目标"
+            )),
+            "requires_confirmation": True,
+            "candidate_status": candidate_status,
         }
     }
 

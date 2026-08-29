@@ -355,6 +355,7 @@ test('semantic cutout requires visible name, count, region confirmation, and kee
   assert.match(html, /id="semantic-count"[^>]*min="1"[^>]*max="8"/);
   assert.match(html, /id="semantic-selection-modal"[^>]*role="dialog"[^>]*aria-modal="true"/);
   assert.match(html, /id="semantic-region-list"/);
+  assert.match(html, /id="semantic-grounding-status"[^>]*role="status"/);
   assert.match(html, /id="semantic-add-full"/);
   assert.match(app, /API\.previewSemanticCutout/);
   assert.match(app, /API\.confirmSemanticCutout/);
@@ -362,6 +363,9 @@ test('semantic cutout requires visible name, count, region confirmation, and kee
   assert.match(api, /export async function previewSemanticCutout/);
   assert.match(api, /export async function confirmSemanticCutout/);
   assert.match(css, /\.semantic-region-coordinates/);
+  assert.match(app, /正在运行本地目标定位；无需等待，可直接手动框选/);
+  assert.match(app, /自动结果不会覆盖你的修改/);
+  assert.match(app, /semantic-region-list'\)\.addEventListener\('input'/);
 });
 
 test('output canvas ratio and resolution are real durable controls instead of static square copy', () => {
