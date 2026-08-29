@@ -157,7 +157,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-29.2"
+SIDECAR_CONTRACT_VERSION = "2026-08-30.1"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -2156,6 +2156,7 @@ async def preview_semantic_cutout(request: SemanticCutoutRequest):
         "available": False,
         "attempted": False,
         "candidates": [],
+        "review_candidates": [],
         "confidence_threshold": 0.0,
         "elapsed_ms": 0.0,
         "reason": "user_regions",
@@ -2182,23 +2183,33 @@ async def preview_semantic_cutout(request: SemanticCutoutRequest):
                 "available": False,
                 "attempted": False,
                 "candidates": [],
+                "review_candidates": [],
                 "confidence_threshold": 0.0,
                 "elapsed_ms": 0.0,
                 "reason": query_mapping["status"],
                 "message": query_mapping["message"],
             }
         regions = list(grounding.get("candidates") or [])
+    suggested_regions = list(grounding.get("review_candidates") or [])
     candidate_status = str(grounding.get("status") or "unavailable")
     needs_confirmation = bool(regions)
+    needs_review = bool(suggested_regions)
     return {
         "preview": {
-            "status": "needs_confirmation" if needs_confirmation else "needs_manual_grounding",
+            "status": (
+                "needs_confirmation"
+                if needs_confirmation
+                else "needs_review"
+                if needs_review
+                else "needs_manual_grounding"
+            ),
             "source_asset_id": str(asset["id"]),
             "query": normalized["query"],
             "model_query": query_mapping["model_query"],
             "query_mapping": query_mapping,
             "target_count": normalized["target_count"],
             "regions": regions,
+            "suggested_regions": suggested_regions,
             "source": {"width": width, "height": height},
             "automatic_grounding_available": bool(grounding.get("available")),
             "grounding": grounding,

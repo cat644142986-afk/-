@@ -77,6 +77,25 @@ class SemanticCutoutContractTests(unittest.TestCase):
             normalize_cutout_selection(stale)
         self.assertEqual(mismatch.exception.code, "SEMANTIC_CONFIRMATION_STALE")
 
+    def test_explicitly_adopted_review_candidate_remains_auditable(self) -> None:
+        selection = build_confirmed_selection(
+            source_asset_id="asset-1",
+            query="红酒杯",
+            model_query="wine glass",
+            target_count=1,
+            regions=[{
+                "id": "candidate-1",
+                "label": "wine glass",
+                "bbox": [0.1, 0.1, 0.5, 0.8],
+                "origin": "automatic-review",
+                "confidence": 0.72,
+            }],
+        )
+        source = selection["sources"]["asset-1"]
+        self.assertEqual(source["method"], "model-assisted-confirmed")
+        self.assertEqual(source["regions"][0]["origin"], "automatic-review")
+        self.assertEqual(normalize_cutout_selection(selection), selection)
+
     def test_confirmed_regions_keep_only_selected_alpha_area(self) -> None:
         source = Image.new("RGBA", (100, 80), (220, 80, 40, 255))
         result = apply_confirmed_regions(

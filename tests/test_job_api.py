@@ -1025,6 +1025,51 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertIn("停止自动预填", payload["message"])
             self.network_request.assert_not_called()
 
+    def test_semantic_cutout_review_suggestions_require_explicit_adoption(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "review-candidate.png", (180, 100, 40))
+            suggestion = {
+                "id": "candidate-1",
+                "label": "burger",
+                "bbox": [0.1, 0.1, 0.7, 0.7],
+                "origin": "automatic-review",
+                "confidence": 0.66,
+            }
+            with mock.patch.object(
+                server,
+                "ground_semantic_candidates",
+                return_value={
+                    "status": "low_confidence",
+                    "adapter_id": "fixture-grounding",
+                    "available": True,
+                    "attempted": True,
+                    "candidates": [],
+                    "review_candidates": [suggestion],
+                    "review_candidate_count": 1,
+                    "weak_candidate_count": 0,
+                    "confidence_threshold": 0.75,
+                    "review_confidence_threshold": 0.6,
+                    "elapsed_ms": 20.1,
+                    "reason": "",
+                    "message": "找到 1 个待确认建议，尚未自动选中；请逐个采用或手动框选",
+                },
+            ):
+                preview = client.post(
+                    "/api/semantic-cutout/preview",
+                    json={
+                        "asset_id": source["id"],
+                        "query": "汉堡",
+                        "target_count": 1,
+                        "regions": [],
+                    },
+                )
+            payload = preview.json()["preview"]
+            self.assertEqual(payload["status"], "needs_review")
+            self.assertEqual(payload["regions"], [])
+            self.assertEqual(payload["suggested_regions"], [suggestion])
+            self.assertTrue(payload["requires_confirmation"])
+            self.network_request.assert_not_called()
+
     def test_semantic_cutout_restored_regions_skip_optional_model_inference(self) -> None:
         with self.live_client() as client:
             source = self.import_asset(client, "restored-region.png", (120, 90, 40))

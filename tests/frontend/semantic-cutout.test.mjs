@@ -165,3 +165,20 @@ test('automatic candidate states always explain confirmation or manual recovery'
   assert.equal(unmapped.tone, 'manual');
   assert.match(unmapped.message, /英文识别词|手动框选/);
 });
+
+test('an adopted review suggestion keeps its lower-trust origin in the durable draft', () => {
+  const state = createSemanticCutoutState({
+    strategy: 'semantic',
+    query: '红酒杯',
+    target_count: 1,
+    regions: [{
+      id: 'candidate-1',
+      label: 'wine glass',
+      bbox: [0.1, 0.1, 0.5, 0.8],
+      origin: 'automatic-review',
+      confidence: 0.72,
+    }],
+  });
+  assert.equal(state.regions[0].origin, 'automatic-review');
+  assert.equal(state.regions[0].confidence, 0.72);
+});

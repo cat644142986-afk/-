@@ -28,6 +28,19 @@ class SemanticQueryTests(unittest.TestCase):
         self.assertEqual(result["model_query"], "red package box")
         self.assertEqual(result["source_terms"], ["红色", "包装盒"])
 
+    def test_extended_photo_gate_terms_are_exact_and_auditable(self) -> None:
+        expected = {
+            "红酒杯": "wine glass",
+            "牙刷": "toothbrush",
+            "剪刀": "scissors",
+            "泰迪熊": "teddy bear",
+        }
+        for query, model_query in expected.items():
+            with self.subTest(query=query):
+                result = resolve_semantic_query(query)
+                self.assertEqual(result["status"], "mapped_exact")
+                self.assertEqual(result["model_query"], model_query)
+
     def test_english_input_and_user_override_are_supported(self) -> None:
         direct = resolve_semantic_query("Water Bottle")
         self.assertEqual(direct["status"], "direct_english")

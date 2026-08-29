@@ -114,13 +114,15 @@ def normalize_regions(regions: Any, query: str) -> list[dict[str, Any]]:
                 f"第 {index + 1} 个选区太小，请扩大后重试",
                 stage="selection",
             )
+        raw_origin = str(region.get("origin") or "")
+        origin = raw_origin if raw_origin in {"automatic", "automatic-review"} else "manual"
         normalized_region = {
             "id": str(region.get("id") or f"target-{index + 1}")[:80],
             "label": str(region.get("label") or query).strip()[:80] or query,
             "bbox": [round(value, 6) for value in (x, y, width, height)],
-            "origin": "automatic" if region.get("origin") == "automatic" else "manual",
+            "origin": origin,
         }
-        if normalized_region["origin"] == "automatic":
+        if normalized_region["origin"] in {"automatic", "automatic-review"}:
             try:
                 confidence = float(region.get("confidence", 0))
             except (TypeError, ValueError):
@@ -176,12 +178,15 @@ def build_confirmed_selection(
             f"要求保留 {count} 个目标，但当前确认了 {len(normalized_regions)} 个",
             stage="selection",
         )
-    automatic_count = sum(region.get("origin") == "automatic" for region in normalized_regions)
+    trusted_count = sum(region.get("origin") == "automatic" for region in normalized_regions)
+    review_count = sum(
+        region.get("origin") == "automatic-review" for region in normalized_regions
+    )
     method = (
         "model-candidate-confirmed"
-        if automatic_count == len(normalized_regions)
+        if trusted_count == len(normalized_regions)
         else "model-assisted-confirmed"
-        if automatic_count
+        if trusted_count or review_count
         else "manual-box"
     )
     source_plan = {

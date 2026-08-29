@@ -1,0 +1,1501 @@
+{
+  "oi-wine-glass-clean": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "wine glass",
+        "bbox": [
+          0.178336,
+          0.176998,
+          0.149313,
+          0.646907
+        ],
+        "origin": "automatic",
+        "confidence": 0.7233
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 27304.68,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "红酒杯",
+      "model_query": "wine glass",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "红酒杯"
+      ],
+      "message": "已将“红酒杯”映射为“wine glass”进行本地定位"
+    }
+  },
+  "oi-cake-single": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "cake",
+        "bbox": [
+          0.066426,
+          0.085384,
+          0.904856,
+          0.801199
+        ],
+        "origin": "automatic",
+        "confidence": 0.8506
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 397.68,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "蛋糕",
+      "model_query": "cake",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "蛋糕"
+      ],
+      "message": "已将“蛋糕”映射为“cake”进行本地定位"
+    }
+  },
+  "oi-glass-bottles-two": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "glass bottle",
+        "bbox": [
+          0.002312,
+          0.430381,
+          0.994804,
+          0.565197
+        ],
+        "origin": "automatic",
+        "confidence": 0.769
+      },
+      {
+        "id": "candidate-2",
+        "label": "glass bottle",
+        "bbox": [
+          0.001315,
+          0.000422,
+          0.954927,
+          0.441059
+        ],
+        "origin": "automatic",
+        "confidence": 0.6453
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 399.78,
+    "reason": "",
+    "message": "本地模型找到 2 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "玻璃瓶",
+      "model_query": "glass bottle",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "玻璃瓶"
+      ],
+      "message": "已将“玻璃瓶”映射为“glass bottle”进行本地定位"
+    }
+  },
+  "oi-mobile-phone-handheld": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "smartphone",
+        "bbox": [
+          0.307465,
+          0.064547,
+          0.382507,
+          0.870403
+        ],
+        "origin": "automatic",
+        "confidence": 0.8919
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 397.2,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "手机",
+      "model_query": "smartphone",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "手机"
+      ],
+      "message": "已将“手机”映射为“smartphone”进行本地定位"
+    }
+  },
+  "oi-watch-studio": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "watch",
+        "bbox": [
+          0.131209,
+          0.116447,
+          0.724353,
+          0.754086
+        ],
+        "origin": "automatic",
+        "confidence": 0.8676
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 356.0,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "手表",
+      "model_query": "watch",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "手表"
+      ],
+      "message": "已将“手表”映射为“watch”进行本地定位"
+    }
+  },
+  "oi-bread-three-packaged": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "bread",
+        "bbox": [
+          0.432407,
+          0.512519,
+          0.527634,
+          0.432661
+        ],
+        "origin": "automatic",
+        "confidence": 0.7543
+      },
+      {
+        "id": "candidate-2",
+        "label": "bread",
+        "bbox": [
+          0.000933,
+          0.490898,
+          0.468298,
+          0.495647
+        ],
+        "origin": "automatic",
+        "confidence": 0.7318
+      },
+      {
+        "id": "candidate-3",
+        "label": "bread",
+        "bbox": [
+          0.102493,
+          0.000337,
+          0.807512,
+          0.464373
+        ],
+        "origin": "automatic",
+        "confidence": 0.4603
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 388.54,
+    "reason": "",
+    "message": "本地模型找到 3 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "面包",
+      "model_query": "bread",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "面包"
+      ],
+      "message": "已将“面包”映射为“bread”进行本地定位"
+    }
+  },
+  "oi-teddy-bear-occluded": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "teddy bear",
+        "bbox": [
+          0.162893,
+          0.212099,
+          0.606104,
+          0.71513
+        ],
+        "origin": "automatic",
+        "confidence": 0.93
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 379.99,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "泰迪熊",
+      "model_query": "teddy bear",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "泰迪熊"
+      ],
+      "message": "已将“泰迪熊”映射为“teddy bear”进行本地定位"
+    }
+  },
+  "oi-apples-two-occluded": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "apple",
+        "bbox": [
+          0.382456,
+          0.465484,
+          0.315927,
+          0.483763
+        ],
+        "origin": "automatic",
+        "confidence": 0.8631
+      },
+      {
+        "id": "candidate-2",
+        "label": "apple",
+        "bbox": [
+          0.242828,
+          0.096467,
+          0.300292,
+          0.452634
+        ],
+        "origin": "automatic",
+        "confidence": 0.8436
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 415.62,
+    "reason": "",
+    "message": "本地模型找到 2 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "苹果",
+      "model_query": "apple",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "苹果"
+      ],
+      "message": "已将“苹果”映射为“apple”进行本地定位"
+    }
+  },
+  "oi-tin-can-single": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "beverage",
+        "bbox": [
+          0.209203,
+          0.076837,
+          0.608064,
+          0.829879
+        ],
+        "origin": "automatic",
+        "confidence": 0.9112
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 412.91,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "易拉罐",
+      "model_query": "beverage can",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "易拉罐"
+      ],
+      "message": "已将“易拉罐”映射为“beverage can”进行本地定位"
+    }
+  },
+  "oi-bottle-small-complex": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "bottle",
+        "bbox": [
+          6.7e-05,
+          0.061865,
+          0.22378,
+          0.887512
+        ],
+        "origin": "automatic",
+        "confidence": 0.871
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 312.85,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "瓶子",
+      "model_query": "bottle",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "瓶子"
+      ],
+      "message": "已将“瓶子”映射为“bottle”进行本地定位"
+    }
+  },
+  "oi-bread-two-kitchen": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-2",
+        "label": "bread",
+        "bbox": [
+          0.190488,
+          0.509671,
+          0.557271,
+          0.303238
+        ],
+        "origin": "automatic",
+        "confidence": 0.6901
+      },
+      {
+        "id": "candidate-1",
+        "label": "bread",
+        "bbox": [
+          0.266681,
+          0.235286,
+          0.439418,
+          0.235062
+        ],
+        "origin": "automatic",
+        "confidence": 0.6822
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 382.66,
+    "reason": "",
+    "message": "本地模型找到 2 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "面包",
+      "model_query": "bread",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "面包"
+      ],
+      "message": "已将“面包”映射为“bread”进行本地定位"
+    }
+  },
+  "oi-box-single": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "box",
+        "bbox": [
+          0.059157,
+          0.056401,
+          0.899365,
+          0.941644
+        ],
+        "origin": "automatic",
+        "confidence": 0.8142
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 659.48,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "盒子",
+      "model_query": "box",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "盒子"
+      ],
+      "message": "已将“盒子”映射为“box”进行本地定位"
+    }
+  },
+  "oi-apple-single": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "apple",
+        "bbox": [
+          0.127868,
+          0.101098,
+          0.731754,
+          0.755641
+        ],
+        "origin": "automatic",
+        "confidence": 0.9411
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 507.38,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "苹果",
+      "model_query": "apple",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "苹果"
+      ],
+      "message": "已将“苹果”映射为“apple”进行本地定位"
+    }
+  },
+  "oi-mobile-phones-two": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-2",
+        "label": "smartphone",
+        "bbox": [
+          0.549923,
+          0.237556,
+          0.298438,
+          0.706665
+        ],
+        "origin": "automatic",
+        "confidence": 0.8227
+      },
+      {
+        "id": "candidate-1",
+        "label": "smartphone",
+        "bbox": [
+          0.145554,
+          0.219327,
+          0.322093,
+          0.727724
+        ],
+        "origin": "automatic",
+        "confidence": 0.8128
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 737.88,
+    "reason": "",
+    "message": "本地模型找到 2 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "手机",
+      "model_query": "smartphone",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "手机"
+      ],
+      "message": "已将“手机”映射为“smartphone”进行本地定位"
+    }
+  },
+  "oi-vases-two-occluded": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "vase",
+        "bbox": [
+          0.050141,
+          0.229652,
+          0.583216,
+          0.568555
+        ],
+        "origin": "automatic",
+        "confidence": 0.5335
+      },
+      {
+        "id": "candidate-2",
+        "label": "vase",
+        "bbox": [
+          0.469418,
+          0.130106,
+          0.469475,
+          0.434798
+        ],
+        "origin": "automatic",
+        "confidence": 0.4298
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 707.01,
+    "reason": "",
+    "message": "本地模型找到 2 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "花瓶",
+      "model_query": "vase",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "花瓶"
+      ],
+      "message": "已将“花瓶”映射为“vase”进行本地定位"
+    }
+  },
+  "oi-backpack-single": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "backpack",
+        "bbox": [
+          0.259549,
+          0.186553,
+          0.506465,
+          0.800091
+        ],
+        "origin": "automatic",
+        "confidence": 0.4358
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 676.79,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "双肩包",
+      "model_query": "backpack",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "双肩包"
+      ],
+      "message": "已将“双肩包”映射为“backpack”进行本地定位"
+    }
+  },
+  "oi-cookie-single": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "cookie",
+        "bbox": [
+          0.18957,
+          0.17982,
+          0.709096,
+          0.625034
+        ],
+        "origin": "automatic",
+        "confidence": 0.6588
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 699.15,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "饼干",
+      "model_query": "cookie",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "饼干"
+      ],
+      "message": "已将“饼干”映射为“cookie”进行本地定位"
+    }
+  },
+  "oi-perfume-single": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "perfume bottle",
+        "bbox": [
+          0.229168,
+          0.021175,
+          0.605122,
+          0.919432
+        ],
+        "origin": "automatic",
+        "confidence": 0.8924
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 768.46,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "香水",
+      "model_query": "perfume bottle",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "香水"
+      ],
+      "message": "已将“香水”映射为“perfume bottle”进行本地定位"
+    }
+  },
+  "oi-wine-glasses-two": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "wine glass",
+        "bbox": [
+          0.036399,
+          0.070242,
+          0.372251,
+          0.892728
+        ],
+        "origin": "automatic",
+        "confidence": 0.7309
+      },
+      {
+        "id": "candidate-2",
+        "label": "wine glass",
+        "bbox": [
+          0.215467,
+          0.038594,
+          0.333198,
+          0.768382
+        ],
+        "origin": "automatic",
+        "confidence": 0.7016
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 532.72,
+    "reason": "",
+    "message": "本地模型找到 2 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "红酒杯",
+      "model_query": "wine glass",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "红酒杯"
+      ],
+      "message": "已将“红酒杯”映射为“wine glass”进行本地定位"
+    }
+  },
+  "oi-handbag-occluded": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "handbag",
+        "bbox": [
+          0.291804,
+          0.137742,
+          0.669779,
+          0.475726
+        ],
+        "origin": "automatic",
+        "confidence": 0.6215
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 662.94,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "手提包",
+      "model_query": "handbag",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "手提包"
+      ],
+      "message": "已将“手提包”映射为“handbag”进行本地定位"
+    }
+  },
+  "oi-cookies-three-occluded": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-3",
+        "label": "cookie",
+        "bbox": [
+          0.467574,
+          0.082264,
+          0.531026,
+          0.671529
+        ],
+        "origin": "automatic",
+        "confidence": 0.7405
+      },
+      {
+        "id": "candidate-1",
+        "label": "cookie",
+        "bbox": [
+          0.063771,
+          0.0,
+          0.562882,
+          0.313437
+        ],
+        "origin": "automatic",
+        "confidence": 0.7368
+      },
+      {
+        "id": "candidate-2",
+        "label": "cookie",
+        "bbox": [
+          0.000606,
+          0.249343,
+          0.511261,
+          0.748553
+        ],
+        "origin": "automatic",
+        "confidence": 0.7357
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 690.96,
+    "reason": "",
+    "message": "本地模型找到 3 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "饼干",
+      "model_query": "cookie",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "饼干"
+      ],
+      "message": "已将“饼干”映射为“cookie”进行本地定位"
+    }
+  },
+  "oi-cosmetic-pencil": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "cosmetic product",
+        "bbox": [
+          0.043508,
+          0.332371,
+          0.879322,
+          0.394218
+        ],
+        "origin": "automatic",
+        "confidence": 0.8543
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 945.9,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "化妆品",
+      "model_query": "cosmetic product",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "化妆品"
+      ],
+      "message": "已将“化妆品”映射为“cosmetic product”进行本地定位"
+    }
+  },
+  "oi-boxes-two-occluded": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "box",
+        "bbox": [
+          0.059488,
+          0.492278,
+          0.803097,
+          0.473354
+        ],
+        "origin": "automatic",
+        "confidence": 0.6259
+      },
+      {
+        "id": "candidate-2",
+        "label": "box",
+        "bbox": [
+          0.117844,
+          0.057513,
+          0.814453,
+          0.530155
+        ],
+        "origin": "automatic",
+        "confidence": 0.6176
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 787.17,
+    "reason": "",
+    "message": "本地模型找到 2 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "盒子",
+      "model_query": "box",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "盒子"
+      ],
+      "message": "已将“盒子”映射为“box”进行本地定位"
+    }
+  },
+  "oi-perfume-three-complex": {
+    "status": "low_confidence",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "perfume bottle",
+        "bbox": [
+          0.515901,
+          0.111584,
+          0.163858,
+          0.717634
+        ],
+        "origin": "automatic",
+        "confidence": 0.6545
+      },
+      {
+        "id": "candidate-2",
+        "label": "perfume bottle",
+        "bbox": [
+          0.352498,
+          0.086712,
+          0.153669,
+          0.729608
+        ],
+        "origin": "automatic",
+        "confidence": 0.6407
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 580.74,
+    "reason": "",
+    "message": "本地模型只找到 2 个可靠候选，其余低置信结果未自动预填；请补充框选",
+    "query_mapping": {
+      "original_query": "香水",
+      "model_query": "perfume bottle",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "香水"
+      ],
+      "message": "已将“香水”映射为“perfume bottle”进行本地定位"
+    }
+  },
+  "oi-scissors-single": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "scissors",
+        "bbox": [
+          0.194115,
+          0.714534,
+          0.522089,
+          0.188052
+        ],
+        "origin": "automatic",
+        "confidence": 0.8383
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 976.92,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "剪刀",
+      "model_query": "scissors",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "剪刀"
+      ],
+      "message": "已将“剪刀”映射为“scissors”进行本地定位"
+    }
+  },
+  "oi-teddy-bears-two": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "teddy bear",
+        "bbox": [
+          0.61729,
+          0.139534,
+          0.29651,
+          0.396211
+        ],
+        "origin": "automatic",
+        "confidence": 0.8513
+      },
+      {
+        "id": "candidate-2",
+        "label": "teddy bear",
+        "bbox": [
+          0.259784,
+          0.069889,
+          0.33882,
+          0.399474
+        ],
+        "origin": "automatic",
+        "confidence": 0.8299
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 699.16,
+    "reason": "",
+    "message": "本地模型找到 2 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "泰迪熊",
+      "model_query": "teddy bear",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "泰迪熊"
+      ],
+      "message": "已将“泰迪熊”映射为“teddy bear”进行本地定位"
+    }
+  },
+  "oi-tin-cans-two": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "beverage",
+        "bbox": [
+          0.04088,
+          0.023121,
+          0.408291,
+          0.728113
+        ],
+        "origin": "automatic",
+        "confidence": 0.7238
+      },
+      {
+        "id": "candidate-2",
+        "label": "beverage",
+        "bbox": [
+          0.501477,
+          0.094868,
+          0.343828,
+          0.730515
+        ],
+        "origin": "automatic",
+        "confidence": 0.6718
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 734.85,
+    "reason": "",
+    "message": "本地模型找到 2 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "易拉罐",
+      "model_query": "beverage can",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "易拉罐"
+      ],
+      "message": "已将“易拉罐”映射为“beverage can”进行本地定位"
+    }
+  },
+  "oi-toothbrushes-two-occluded": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-2",
+        "label": "toothbrush",
+        "bbox": [
+          0.67649,
+          0.155308,
+          0.151188,
+          0.34069
+        ],
+        "origin": "automatic",
+        "confidence": 0.797
+      },
+      {
+        "id": "candidate-1",
+        "label": "toothbrush",
+        "bbox": [
+          0.477434,
+          0.191879,
+          0.124786,
+          0.309212
+        ],
+        "origin": "automatic",
+        "confidence": 0.7935
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 691.59,
+    "reason": "",
+    "message": "本地模型找到 2 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "牙刷",
+      "model_query": "toothbrush",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "牙刷"
+      ],
+      "message": "已将“牙刷”映射为“toothbrush”进行本地定位"
+    }
+  },
+  "oi-cosmetics-two": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "cosmetic product",
+        "bbox": [
+          0.477268,
+          0.140199,
+          0.319205,
+          0.718037
+        ],
+        "origin": "automatic",
+        "confidence": 0.7967
+      },
+      {
+        "id": "candidate-2",
+        "label": "cosmetic product",
+        "bbox": [
+          0.169508,
+          0.123517,
+          0.312283,
+          0.716798
+        ],
+        "origin": "automatic",
+        "confidence": 0.7899
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 707.86,
+    "reason": "",
+    "message": "本地模型找到 2 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "化妆品",
+      "model_query": "cosmetic product",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "化妆品"
+      ],
+      "message": "已将“化妆品”映射为“cosmetic product”进行本地定位"
+    }
+  },
+  "oi-bananas-three-occluded": {
+    "status": "low_confidence",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "banana",
+        "bbox": [
+          0.056698,
+          0.036409,
+          0.896328,
+          0.926568
+        ],
+        "origin": "automatic",
+        "confidence": 0.5807
+      },
+      {
+        "id": "candidate-2",
+        "label": "banana",
+        "bbox": [
+          0.056355,
+          0.424304,
+          0.290386,
+          0.275283
+        ],
+        "origin": "automatic",
+        "confidence": 0.4068
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 655.67,
+    "reason": "",
+    "message": "本地模型只找到 2 个可靠候选，其余低置信结果未自动预填；请补充框选",
+    "query_mapping": {
+      "original_query": "香蕉",
+      "model_query": "banana",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "香蕉"
+      ],
+      "message": "已将“香蕉”映射为“banana”进行本地定位"
+    }
+  },
+  "oi-no-bottle-on-wine-glass": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "bottle",
+        "bbox": [
+          0.665277,
+          0.459471,
+          0.20649,
+          0.363275
+        ],
+        "origin": "automatic",
+        "confidence": 0.5781
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 785.93,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "瓶子",
+      "model_query": "bottle",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "瓶子"
+      ],
+      "message": "已将“瓶子”映射为“bottle”进行本地定位"
+    }
+  },
+  "oi-no-cake-on-bread": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-2",
+        "label": "cake",
+        "bbox": [
+          0.433058,
+          0.512542,
+          0.53354,
+          0.434632
+        ],
+        "origin": "automatic",
+        "confidence": 0.7077
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 884.88,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "蛋糕",
+      "model_query": "cake",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "蛋糕"
+      ],
+      "message": "已将“蛋糕”映射为“cake”进行本地定位"
+    }
+  },
+  "oi-no-glasses-on-handbag": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "eyeglasses",
+        "bbox": [
+          0.054133,
+          0.137336,
+          0.904789,
+          0.595929
+        ],
+        "origin": "automatic",
+        "confidence": 0.669
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 586.6,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "眼镜",
+      "model_query": "eyeglasses",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "眼镜"
+      ],
+      "message": "已将“眼镜”映射为“eyeglasses”进行本地定位"
+    }
+  },
+  "oi-no-bottle-on-tin-cans": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "bottle",
+        "bbox": [
+          0.041494,
+          0.024317,
+          0.407055,
+          0.725167
+        ],
+        "origin": "automatic",
+        "confidence": 0.742
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 650.99,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "瓶子",
+      "model_query": "bottle",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "瓶子"
+      ],
+      "message": "已将“瓶子”映射为“bottle”进行本地定位"
+    }
+  },
+  "oi-no-bottle-on-toothbrushes": {
+    "status": "candidates",
+    "adapter_id": "transformers-grounding-dino-local",
+    "available": true,
+    "attempted": true,
+    "candidates": [
+      {
+        "id": "candidate-1",
+        "label": "bottle",
+        "bbox": [
+          0.599144,
+          0.201285,
+          0.124842,
+          0.301784
+        ],
+        "origin": "automatic",
+        "confidence": 0.5122
+      }
+    ],
+    "weak_candidate_count": 0,
+    "confidence_threshold": 0.4,
+    "elapsed_ms": 624.25,
+    "reason": "",
+    "message": "本地模型找到 1 个候选，请逐个检查后确认",
+    "query_mapping": {
+      "original_query": "瓶子",
+      "model_query": "bottle",
+      "status": "mapped_exact",
+      "mapped": true,
+      "editable": true,
+      "source": "offline-commerce-lexicon-v1",
+      "source_terms": [
+        "瓶子"
+      ],
+      "message": "已将“瓶子”映射为“bottle”进行本地定位"
+    }
+  }
+}

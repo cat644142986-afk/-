@@ -78,6 +78,8 @@ def _run_metadata(
     resolve_query: bool,
     runtime: dict,
     torch_module: object | None,
+    confidence_threshold: float,
+    low_confidence_threshold: float,
 ) -> dict:
     latencies = [
         max(0.0, float(item.get("elapsed_ms") or 0.0))
@@ -98,6 +100,8 @@ def _run_metadata(
     return {
         "query_field": query_field,
         "offline_query_resolution": resolve_query,
+        "confidence_threshold": confidence_threshold,
+        "low_confidence_threshold": low_confidence_threshold,
         "model_path": str(os.environ.get("PRODUCT_ATELIER_GROUNDING_MODEL_PATH", "")),
         "cold_first_case_ms": round(latencies[0], 2) if latencies else 0.0,
         "hot_mean_ms": round(mean(hot), 2) if hot else 0.0,
@@ -114,7 +118,24 @@ def _emit(payload: dict, output: Path | None) -> None:
     print(rendered)
 
 
-def _photo_path(manifest: dict, case: dict) -> Path:
+def _write_json(payload: dict, output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _photo_path(
+    manifest: dict,
+    case: dict,
+    image_root: Path | None = None,
+) -> Path:
+    if manifest["corpus_kind"] == "licensed-photo-downloadable":
+        if image_root is None:
+            raise ValueError("downloadable photo corpus requires an image root")
+        image = manifest["images"][case["image_id"]]
+        return image_root / image["path"]
     return Path(manifest["manifest_path"]).parent / case["image"]["path"]
 
 
@@ -125,6 +146,14 @@ def main() -> int:
         description="Validate Product Atelier's offline semantic-grounding contract or score predictions.",
     )
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument(
+        "--image-root",
+        type=Path,
+        help=(
+            "Downloaded image root for licensed-photo-downloadable corpora. "
+            "Defaults to build/eval-corpora/<corpus_id>."
+        ),
+    )
     parser.add_argument(
         "--predictions",
         type=Path,
@@ -152,11 +181,31 @@ def main() -> int:
         help="Resolve the selected query through the same offline Chinese-to-model-query contract as the app.",
     )
     parser.add_argument("--output", type=Path, help="Optionally write the JSON report.")
+    parser.add_argument(
+        "--predictions-output",
+        type=Path,
+        help="Optionally preserve local prediction candidates and confidences for calibration.",
+    )
+    parser.add_argument("--confidence-threshold", type=float, default=0.75)
+    parser.add_argument("--low-confidence-threshold", type=float, default=0.40)
     args = parser.parse_args()
     if args.predictions and args.run_local:
         parser.error("--predictions and --run-local are mutually exclusive")
+    if not 0 <= args.low_confidence_threshold <= args.confidence_threshold <= 1:
+        parser.error("confidence thresholds must satisfy 0 <= low <= confident <= 1")
 
     manifest = load_grounding_manifest(args.manifest)
+    image_root = args.image_root
+    if manifest["corpus_kind"] == "licensed-photo-downloadable":
+        image_root = image_root or (
+            PROJECT_ROOT / "build" / "eval-corpora" / str(manifest["corpus_id"])
+        )
+        if args.run_local:
+            manifest = load_grounding_manifest(
+                args.manifest,
+                image_root=image_root,
+                require_images=True,
+            )
     if args.render_dir:
         if manifest["corpus_kind"] != "procedural-contract":
             parser.error("--render-dir only supports the procedural contract corpus")
@@ -174,7 +223,7 @@ def main() -> int:
                     image_path = fixture_root / f"{case['id']}.png"
                     render_semantic_fixture(case).save(image_path)
                 else:
-                    image_path = _photo_path(manifest, case)
+                    image_path = _photo_path(manifest, case, image_root)
                 query = str(case[args.query_field])
                 mapping = resolve_semantic_query(query) if args.resolve_query else None
                 model_query = str(mapping["model_query"]) if mapping else query
@@ -193,9 +242,13 @@ def main() -> int:
                     model_query,
                     case["target_count"],
                     adapter=adapter,
+                    confidence_threshold=args.confidence_threshold,
+                    low_confidence_threshold=args.low_confidence_threshold,
                 )
                 if mapping:
                     predictions[case["id"]]["query_mapping"] = mapping
+        if args.predictions_output:
+            _write_json(predictions, args.predictions_output)
         report = evaluate_grounding_predictions(manifest, predictions)
         report["adapter_id"] = getattr(adapter, "adapter_id", "unknown")
         report["run"] = _run_metadata(
@@ -204,6 +257,8 @@ def main() -> int:
             resolve_query=args.resolve_query,
             runtime=runtime,
             torch_module=torch_module,
+            confidence_threshold=args.confidence_threshold,
+            low_confidence_threshold=args.low_confidence_threshold,
         )
         _emit(report, args.output)
         return 0 if report["passed"] else 1

@@ -13,6 +13,7 @@ from PIL import Image
 
 GROUNDING_MODEL_PATH_ENV = "PRODUCT_ATELIER_GROUNDING_MODEL_PATH"
 DEFAULT_CONFIDENCE_THRESHOLD = 0.75
+DEFAULT_REVIEW_CONFIDENCE_THRESHOLD = 0.60
 DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.40
 DEFAULT_TEXT_THRESHOLD = 0.30
 
@@ -264,6 +265,7 @@ def ground_semantic_candidates(
     *,
     adapter: GroundingAdapter | None = None,
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    review_confidence_threshold: float = DEFAULT_REVIEW_CONFIDENCE_THRESHOLD,
     low_confidence_threshold: float = DEFAULT_LOW_CONFIDENCE_THRESHOLD,
     text_threshold: float = DEFAULT_TEXT_THRESHOLD,
 ) -> dict[str, Any]:
@@ -325,17 +327,29 @@ def ground_semantic_candidates(
         candidate for candidate in ranked_candidates
         if candidate["confidence"] >= confidence_threshold
     ]
+    review_candidates = [
+        {**candidate, "origin": "automatic-review"}
+        for candidate in ranked_candidates
+        if review_confidence_threshold <= candidate["confidence"] < confidence_threshold
+    ]
     if len(confident) >= int(target_count):
         status = "candidates"
         candidates = confident[: int(target_count)]
+        review_candidates = []
         message = f"本地模型找到 {len(candidates)} 个候选，请逐个检查后确认"
-    elif confident:
+    elif confident or review_candidates:
         status = "low_confidence"
         candidates = confident
-        message = (
-            f"本地模型只找到 {len(candidates)} 个可靠候选，"
-            "其余低置信结果未自动预填；请补充框选"
-        )
+        if candidates:
+            message = (
+                f"找到 {len(candidates)} 个可靠候选和 {len(review_candidates)} 个待确认建议；"
+                "橙色建议不会自动选中，请逐个采用或手动框选"
+            )
+        else:
+            message = (
+                f"找到 {len(review_candidates)} 个待确认建议，尚未自动选中；"
+                "请逐个采用或手动框选"
+            )
     elif ranked_candidates:
         status = "low_confidence"
         candidates = []
@@ -350,7 +364,13 @@ def ground_semantic_candidates(
         "available": True,
         "attempted": True,
         "candidates": candidates,
-        "weak_candidate_count": max(0, len(ranked_candidates) - len(confident)),
+        "review_candidates": review_candidates,
+        "review_confidence_threshold": review_confidence_threshold,
+        "review_candidate_count": len(review_candidates),
+        "weak_candidate_count": max(
+            0,
+            len(ranked_candidates) - len(confident) - len(review_candidates),
+        ),
         "confidence_threshold": confidence_threshold,
         "elapsed_ms": elapsed_ms,
         "reason": "",

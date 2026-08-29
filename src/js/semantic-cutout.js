@@ -14,13 +14,15 @@ function normalizeRegion(region, index, query) {
   const y = clamp(raw[1], 0, 1);
   const width = clamp(raw[2], 0, 1 - x);
   const height = clamp(raw[3], 0, 1 - y);
+  const rawOrigin = String(region?.origin || '');
+  const origin = ['automatic', 'automatic-review'].includes(rawOrigin) ? rawOrigin : 'manual';
   const normalized = {
     id: String(region?.id || `target-${index + 1}`),
     label: String(region?.label || query || `目标 ${index + 1}`).trim(),
     bbox: [x, y, width, height].map((value) => Number(value.toFixed(6))),
-    origin: region?.origin === 'automatic' ? 'automatic' : 'manual',
+    origin,
   };
-  if (normalized.origin === 'automatic') {
+  if (['automatic', 'automatic-review'].includes(normalized.origin)) {
     normalized.confidence = Number(clamp(region?.confidence, 0, 1).toFixed(4));
   }
   return normalized;

@@ -222,6 +222,23 @@ class SemanticGroundingContractTests(unittest.TestCase):
         self.assertEqual(result["weak_candidate_count"], 1)
         self.assertIn("停止自动预填", result["message"])
 
+    def test_review_tier_is_visible_but_never_auto_selected(self) -> None:
+        adapter = FakeGroundingAdapter([
+            {"bbox_xyxy": [20, 10, 80, 70], "confidence": 0.66, "label": "burger"},
+        ])
+        result = ground_semantic_candidates(
+            self.image_path,
+            "汉堡",
+            2,
+            adapter=adapter,
+        )
+        self.assertEqual(result["status"], "low_confidence")
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["review_candidate_count"], 1)
+        self.assertEqual(result["weak_candidate_count"], 0)
+        self.assertEqual(result["review_candidates"][0]["origin"], "automatic-review")
+        self.assertIn("尚未自动选中", result["message"])
+
     def test_no_match_and_runtime_failure_both_preserve_manual_recovery(self) -> None:
         no_match = ground_semantic_candidates(
             self.image_path,

@@ -749,6 +749,8 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .semantic-region-list { display: grid; align-content: start; gap: 8px; min-height: 0; overflow: auto; padding-right: 2px; scrollbar-width: thin; }
 .semantic-region-empty { padding: 16px 8px; color: var(--ink-3); font-size: var(--type-caption); line-height: 1.6; text-align: center; }
 .semantic-region-item { display: grid; gap: 7px; padding: 9px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-soft); }
+.semantic-region-item.is-suggestion { border-color: rgba(201,139,0,.32); background: rgba(255,211,81,.1); }
+.semantic-region-item.is-suggestion .semantic-region-item__head button { color: #8c6200; background: rgba(255,211,81,.2); }
 .semantic-region-item__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .semantic-region-item__head > div { display: grid; gap: 2px; min-width: 0; }
 .semantic-region-item__head strong { font-size: var(--type-caption); }

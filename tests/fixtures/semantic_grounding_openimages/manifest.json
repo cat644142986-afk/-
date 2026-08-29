@@ -1,0 +1,1953 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "product-atelier-open-images-v7-validation-v1",
+  "corpus_kind": "licensed-photo-downloadable",
+  "review": "official-validation-boxes-negative-labels-and-visual-selection",
+  "description": "Open Images V7 validation 扩展集：30 张许可元数据锁定的真实照片、30 个存在目标查询和 5 个官方负标签查询。图片按需下载，不随 Git 再分发。",
+  "limitations": [
+    "这是 30 张照片/35 查询的回归门禁，不足以单独证明生产质量",
+    "Open Images 官方提示图片许可状态仍应逐张核验；本清单锁定了每张图的作者、来源页和 CC BY 2.0 元数据",
+    "官方标注是目标框而不是透明蒙版；hair-fine-lines 标签只覆盖选物/框定位难度，不代表毛发边缘抠图已经验收",
+    "同一原图中的未标注类别不能视为不存在；no-match 只采用 validation 中 confidence=0 的人工负标签"
+  ],
+  "required_coverage": [
+    "food",
+    "multiple-similar",
+    "packaging",
+    "transparent",
+    "hair-fine-lines",
+    "shadow",
+    "occlusion",
+    "complex-background",
+    "small-object",
+    "no-match",
+    "hard-negative"
+  ],
+  "gates": {
+    "iou_threshold": 0.5,
+    "min_recall": 0.8,
+    "min_precision": 0.85,
+    "min_exact_count_accuracy": 0.75,
+    "min_no_match_accuracy": 1.0,
+    "min_recovery_rate": 1.0
+  },
+  "sources": {
+    "dataset_page": "https://storage.googleapis.com/openimages/web/factsfigures_v7.html",
+    "download_page": "https://storage.googleapis.com/openimages/web/download_v7.html",
+    "annotations_license": "CC BY 4.0",
+    "images_listed_license": "CC BY 2.0",
+    "files": {
+      "boxes": {
+        "url": "https://storage.googleapis.com/openimages/v5/validation-annotations-bbox.csv",
+        "md5": "c5e8200df129ea6867e913e8b21fcab9",
+        "bytes": 25105048
+      },
+      "image_labels": {
+        "url": "https://storage.googleapis.com/openimages/v5/validation-annotations-human-imagelabels-boxable.csv",
+        "md5": "2e129f40a209e65dfe4342ed0e7bd5f2",
+        "bytes": 10649275
+      },
+      "image_metadata": {
+        "url": "https://storage.googleapis.com/openimages/2018_04/validation/validation-images-with-rotation.csv",
+        "md5": "643a54e43b0bab8acce8817b4a569780",
+        "bytes": 15245485
+      }
+    }
+  },
+  "selection_sha256": "7c5b2069581e95c0567f7f15f9a26a628fadab3cd31e8594e0be33108aba450d",
+  "images": {
+    "01d160559286c930": {
+      "path": "validation/01d160559286c930.jpg",
+      "bytes": 145902,
+      "sha256": "a76609a18b42f2edd51eace8ee9e3d29ce17590314b190f7ded9ac835bffe5ba",
+      "canvas": [
+        1024,
+        682
+      ],
+      "source_page": "https://www.flickr.com/photos/moritzbarcelona/9501631298",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/01d160559286c930.jpg",
+      "original_url": "https://farm1.staticflickr.com/5476/9501631298_d1ece3f980_o.jpg",
+      "author": "Moritz Barcelona",
+      "author_profile": "https://www.flickr.com/people/moritzbarcelona/",
+      "title": "Copes i gots Moritz",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "020ec13b99e2bf0c": {
+      "path": "validation/020ec13b99e2bf0c.jpg",
+      "bytes": 298222,
+      "sha256": "5e5307c695d8a96a1cf9039d7bbd63f4675427f6e09317c30715ae8cd066622b",
+      "canvas": [
+        1024,
+        768
+      ],
+      "source_page": "https://www.flickr.com/photos/claudia_midori/3099288480",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/020ec13b99e2bf0c.jpg",
+      "original_url": "https://c5.staticflickr.com/4/3218/3099288480_8cc04bf666_o.jpg",
+      "author": "Claudia_midori",
+      "author_profile": "https://www.flickr.com/people/claudia_midori/",
+      "title": "Cheesecake de doce de leite",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "031244297d177089": {
+      "path": "validation/031244297d177089.jpg",
+      "bytes": 248276,
+      "sha256": "3e78412217c503a546aeb41d05f12886d48606914dd553bb6644297f1031f96e",
+      "canvas": [
+        1024,
+        679
+      ],
+      "source_page": "https://www.flickr.com/photos/bokchoi-snowpea/4685520190",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/031244297d177089.jpg",
+      "original_url": "https://c2.staticflickr.com/5/4051/4685520190_97ac0a9776_o.jpg",
+      "author": "snowpea&amp;bokchoi",
+      "author_profile": "https://www.flickr.com/people/bokchoi-snowpea/",
+      "title": "Alcohol for the Bisque",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "043f3655deab6e7c": {
+      "path": "validation/043f3655deab6e7c.jpg",
+      "bytes": 91991,
+      "sha256": "15f0597b1f7e41a40b2b3016bc87cc82f9f05f26de4b406e9f7a6606a3f3ec01",
+      "canvas": [
+        1024,
+        681
+      ],
+      "source_page": "https://www.flickr.com/photos/carbonnyc/4581311847",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/043f3655deab6e7c.jpg",
+      "original_url": "https://c5.staticflickr.com/5/4029/4581311847_312c285de6_o.jpg",
+      "author": "David Goehring",
+      "author_profile": "https://www.flickr.com/people/carbonnyc/",
+      "title": "Doodle Jumper",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "04b6da79fa910ec4": {
+      "path": "validation/04b6da79fa910ec4.jpg",
+      "bytes": 197797,
+      "sha256": "d3dd899a28ddac5393fdaedb20fbe07026b85449f6dbb64bacfc759bf5d538a0",
+      "canvas": [
+        900,
+        1024
+      ],
+      "source_page": "https://www.flickr.com/photos/70857601@N00/8932679903",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/04b6da79fa910ec4.jpg",
+      "original_url": "https://farm5.staticflickr.com/2833/8932679903_5d0b5ced97_o.jpg",
+      "author": "Ami  Mor",
+      "author_profile": "https://www.flickr.com/people/70857601@N00/",
+      "title": "Cartier Grand Complication Skeleton pocket watch SIHH 2012",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "05d75289b426c14a": {
+      "path": "validation/05d75289b426c14a.jpg",
+      "bytes": 820951,
+      "sha256": "22a5eb0f9323f6eae75b6105d77459824b5cb7e94f1d2014650a77d23e427358",
+      "canvas": [
+        768,
+        1024
+      ],
+      "source_page": "https://www.flickr.com/photos/camay/13419209953",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/05d75289b426c14a.jpg",
+      "original_url": "https://c3.staticflickr.com/4/3821/13419209953_8a35aef8b7_o.jpg",
+      "author": "camay",
+      "author_profile": "https://www.flickr.com/people/camay/",
+      "title": "20140317_144537",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "0709eb8e8c2d19fa": {
+      "path": "validation/0709eb8e8c2d19fa.jpg",
+      "bytes": 194235,
+      "sha256": "0c2ad7051e680186759c1bc494a98301bc0d7b4cc568d458606d13a8a3e3a314",
+      "canvas": [
+        768,
+        1024
+      ],
+      "source_page": "https://www.flickr.com/photos/penreyes/2953486347",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/0709eb8e8c2d19fa.jpg",
+      "original_url": "https://c3.staticflickr.com/4/3294/2953486347_efe307bfba_o.jpg",
+      "author": "penreyes",
+      "author_profile": "https://www.flickr.com/people/penreyes/",
+      "title": "bandagedbear",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "078821d86db99fc9": {
+      "path": "validation/078821d86db99fc9.jpg",
+      "bytes": 333549,
+      "sha256": "6c83db71cd99f14713b71e7f9ba1877447e52dea559266c7f300430dc30b58ec",
+      "canvas": [
+        1024,
+        683
+      ],
+      "source_page": "https://www.flickr.com/photos/matleenalaakso/8154112499",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/078821d86db99fc9.jpg",
+      "original_url": "https://c2.staticflickr.com/8/7261/8154112499_cd0d5a31d0_o.jpg",
+      "author": "Matleena Laakso",
+      "author_profile": "https://www.flickr.com/people/matleenalaakso/",
+      "title": "Omenapuu Åkerö",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "0804e479f3848a5a": {
+      "path": "validation/0804e479f3848a5a.jpg",
+      "bytes": 46639,
+      "sha256": "f4bf4d8f64f9f931cc302c55fdc9c8fa838147815dd7b22192060180beadb1f5",
+      "canvas": [
+        723,
+        1024
+      ],
+      "source_page": "https://www.flickr.com/photos/jelene/2635952138",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/0804e479f3848a5a.jpg",
+      "original_url": "https://c3.staticflickr.com/4/3106/2635952138_f6dcba7da9_o.jpg",
+      "author": "Jelene Morris",
+      "author_profile": "https://www.flickr.com/people/jelene/",
+      "title": "Ethiopian coke?",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "0acfa779589204bf": {
+      "path": "validation/0acfa779589204bf.jpg",
+      "bytes": 78055,
+      "sha256": "864506e75fa353880da56be310813f2cc8d6cf3df75f4913456eac44d7cfb99a",
+      "canvas": [
+        768,
+        768
+      ],
+      "source_page": "https://www.flickr.com/photos/rowdykittens/8334654948",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/0acfa779589204bf.jpg",
+      "original_url": "https://c8.staticflickr.com/9/8503/8334654948_587b540fdd_o.jpg",
+      "author": "Tammy Strobel",
+      "author_profile": "https://www.flickr.com/people/rowdykittens/",
+      "title": "Date night with @loganenator!",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "0bf5bd613d68bd40": {
+      "path": "validation/0bf5bd613d68bd40.jpg",
+      "bytes": 191122,
+      "sha256": "e193ff8b2701f3da213666e124215604d09c3a315442caeefdc1a66bc2d90b47",
+      "canvas": [
+        1024,
+        768
+      ],
+      "source_page": "https://www.flickr.com/photos/afroswede/3158221",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/0bf5bd613d68bd40.jpg",
+      "original_url": "https://farm1.staticflickr.com/3/3158221_c1caa747d0_o.jpg",
+      "author": "Kurt Nordstrom",
+      "author_profile": "https://www.flickr.com/people/afroswede/",
+      "title": "Challah Bread",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "0c9c9ebe5c9aff0b": {
+      "path": "validation/0c9c9ebe5c9aff0b.jpg",
+      "bytes": 52861,
+      "sha256": "0d0a7f6d69c0474b423f760355c8d339d4d71cc149e3ff8dd47f0b2de1b3749f",
+      "canvas": [
+        1024,
+        576
+      ],
+      "source_page": "https://www.flickr.com/photos/maurina/3567256638",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/0c9c9ebe5c9aff0b.jpg",
+      "original_url": "https://c4.staticflickr.com/4/3630/3567256638_1a735809f5_o.jpg",
+      "author": "Maurina Rara",
+      "author_profile": "https://www.flickr.com/people/maurina/",
+      "title": "DSC00010",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "105433f9d808d18e": {
+      "path": "validation/105433f9d808d18e.jpg",
+      "bytes": 70076,
+      "sha256": "6bd624bcc24634d60fd4a48158ba23f9da704d226959f5c6f9596569b2197b12",
+      "canvas": [
+        1024,
+        1024
+      ],
+      "source_page": "https://www.flickr.com/photos/pancakeplan/5880502739",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/105433f9d808d18e.jpg",
+      "original_url": "https://c7.staticflickr.com/7/6010/5880502739_f266613b73_o.jpg",
+      "author": "nachans",
+      "author_profile": "https://www.flickr.com/people/pancakeplan/",
+      "title": "0133",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "12e529ac3ceecdb3": {
+      "path": "validation/12e529ac3ceecdb3.jpg",
+      "bytes": 81489,
+      "sha256": "4e4c3d47f72636a21ffefc0ccce39955b0136757f77e0f6f450281024ce189ca",
+      "canvas": [
+        1024,
+        768
+      ],
+      "source_page": "https://www.flickr.com/photos/coolmikeol/5344733213",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/12e529ac3ceecdb3.jpg",
+      "original_url": "https://farm4.staticflickr.com/5289/5344733213_6f2ec31240_o.jpg",
+      "author": "Michael Ocampo",
+      "author_profile": "https://www.flickr.com/people/coolmikeol/",
+      "title": "Apple iPod Touch 4th Generation",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "13dcbd465645c47f": {
+      "path": "validation/13dcbd465645c47f.jpg",
+      "bytes": 374221,
+      "sha256": "9b264964dac472380843e31e0e248e3180e2ba8076abcf0bd5f7dc145ba11651",
+      "canvas": [
+        1024,
+        768
+      ],
+      "source_page": "https://www.flickr.com/photos/96587401@N00/301105832",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/13dcbd465645c47f.jpg",
+      "original_url": "https://c8.staticflickr.com/1/117/301105832_486ce5bad3_o.jpg",
+      "author": "cschaebe",
+      "author_profile": "https://www.flickr.com/people/96587401@N00/",
+      "title": "fall 06 076",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "159c27c3fcf6e267": {
+      "path": "validation/159c27c3fcf6e267.jpg",
+      "bytes": 93000,
+      "sha256": "f4efee9b80f90d5042bcf0ec53d250d28ef10c8c7f844099cc3842bb2b4fb154",
+      "canvas": [
+        1024,
+        1024
+      ],
+      "source_page": "https://www.flickr.com/photos/k9d/7154587237",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/159c27c3fcf6e267.jpg",
+      "original_url": "https://farm8.staticflickr.com/7102/7154587237_bab66c3082_o.jpg",
+      "author": "j bizzie",
+      "author_profile": "https://www.flickr.com/people/k9d/",
+      "title": "luggage advice?! want a rollable carry on. Gravis Jetway looked best after quick research. I keep my gear in a separate padded bag.",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "15d6850f3461f9e8": {
+      "path": "validation/15d6850f3461f9e8.jpg",
+      "bytes": 160560,
+      "sha256": "ee0296b244b7cf68263b8a5726c8a10404fc603784a7ac6df76add2520515543",
+      "canvas": [
+        1024,
+        768
+      ],
+      "source_page": "https://www.flickr.com/photos/bonjourmeeshell/2625841151/",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/15d6850f3461f9e8.jpg",
+      "original_url": "https://c1.staticflickr.com/4/3154/2625841151_e27b8f689b_o.jpg",
+      "author": "paper balloon",
+      "author_profile": "https://www.flickr.com/people/bonjourmeeshell/",
+      "title": "Macaron First Try",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "16407cf2533cf584": {
+      "path": "validation/16407cf2533cf584.jpg",
+      "bytes": 132367,
+      "sha256": "569396900a0b3ca646d81387745f76745f91bb1f8e9db8323e8d54417ee54e7f",
+      "canvas": [
+        683,
+        1024
+      ],
+      "source_page": "https://www.flickr.com/photos/bigburpsx3/4348296854",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/16407cf2533cf584.jpg",
+      "original_url": "https://farm5.staticflickr.com/2734/4348296854_49bbd24dc7_o.jpg",
+      "author": "Andy Nguyen",
+      "author_profile": "https://www.flickr.com/people/bigburpsx3/",
+      "title": "cK",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "1a04c113301b09f8": {
+      "path": "validation/1a04c113301b09f8.jpg",
+      "bytes": 95297,
+      "sha256": "2d21e27164c4bd65ba9a2fdd5ab346329f3c894825044ef1d2c0637e8a878378",
+      "canvas": [
+        1024,
+        1024
+      ],
+      "source_page": "https://www.flickr.com/photos/jennmae/5278920808",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/1a04c113301b09f8.jpg",
+      "original_url": "https://c1.staticflickr.com/6/5049/5278920808_0bf2d15a23_o.jpg",
+      "author": "Jenn Lowther",
+      "author_profile": "https://www.flickr.com/people/jennmae/",
+      "title": "Why yes I think I will. Cc @shannonrich",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "209782692eed237b": {
+      "path": "validation/209782692eed237b.jpg",
+      "bytes": 329346,
+      "sha256": "e4948e025b276662837a27113caee730e4a522529bd06e37ec5252b24783beef",
+      "canvas": [
+        819,
+        1024
+      ],
+      "source_page": "https://www.flickr.com/photos/changemaker2011/5188683811",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/209782692eed237b.jpg",
+      "original_url": "https://c4.staticflickr.com/2/1297/5188683811_81f8f096c4_o.jpg",
+      "author": "changemaker.shop",
+      "author_profile": "https://www.flickr.com/people/changemaker2011/",
+      "title": "www.changemaker.ch ZIRKELTRAINING_Recycling-Taschen",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "231f72333ff304d2": {
+      "path": "validation/231f72333ff304d2.jpg",
+      "bytes": 193410,
+      "sha256": "14f72c9d32ed993cefa2512e93b0888aa5152bd37d1f3fd1c1b78440cd2f75e6",
+      "canvas": [
+        1024,
+        768
+      ],
+      "source_page": "https://www.flickr.com/photos/geowombats/89784165",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/231f72333ff304d2.jpg",
+      "original_url": "https://farm3.staticflickr.com/18/89784165_4f20d7eafe_o.jpg",
+      "author": "GeoWombats",
+      "author_profile": "https://www.flickr.com/people/geowombats/",
+      "title": "harcha",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "23e12b741c9cd993": {
+      "path": "validation/23e12b741c9cd993.jpg",
+      "bytes": 148709,
+      "sha256": "fc57b7ccc3270b7d1e812fe82890220052d03010fb03596e73aec17ff3473df2",
+      "canvas": [
+        1024,
+        683
+      ],
+      "source_page": "https://www.flickr.com/photos/sara_tae/9187206299",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/23e12b741c9cd993.jpg",
+      "original_url": "https://farm4.staticflickr.com/7331/9187206299_ae3e4937b5_o.jpg",
+      "author": "Sara Tae Yamazaki",
+      "author_profile": "https://www.flickr.com/people/sara_tae/",
+      "title": "Hashi",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "2bca762eac2f0975": {
+      "path": "validation/2bca762eac2f0975.jpg",
+      "bytes": 2141972,
+      "sha256": "b7b0902dc11c57da4eefb92b92e6286c26a1bafae4fd641dde240aa5d5c1ed88",
+      "canvas": [
+        719,
+        1024
+      ],
+      "source_page": "https://www.flickr.com/photos/pratpr/10184467014",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/2bca762eac2f0975.jpg",
+      "original_url": "https://farm6.staticflickr.com/8394/10184467014_fc0625c9c2_o.jpg",
+      "author": "Prat PR",
+      "author_profile": "https://www.flickr.com/people/pratpr/",
+      "title": "Förvaringsbox NOELLE - 1 för 149 SEK 2 för 229 SEK",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "300deb052677b547": {
+      "path": "validation/300deb052677b547.jpg",
+      "bytes": 183662,
+      "sha256": "f34238902a660744258538a2a32d8ab8078092bb303d6679215193418f756f81",
+      "canvas": [
+        1024,
+        838
+      ],
+      "source_page": "https://www.flickr.com/photos/martinb/48275209",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/300deb052677b547.jpg",
+      "original_url": "https://farm8.staticflickr.com/30/48275209_29af8e26a0_o.jpg",
+      "author": "Martin Burns",
+      "author_profile": "https://www.flickr.com/people/martinb/",
+      "title": "Vin Rouge/Vin Blanc?",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "310192cb7c99bd11": {
+      "path": "validation/310192cb7c99bd11.jpg",
+      "bytes": 271452,
+      "sha256": "72d4dcbf4ba6fc225190e94b298f915eade821e8b65787b95c3b024440250c24",
+      "canvas": [
+        1024,
+        687
+      ],
+      "source_page": "https://www.flickr.com/photos/amnestyinternationaltoronto/12555425074",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/310192cb7c99bd11.jpg",
+      "original_url": "https://farm2.staticflickr.com/5504/12555425074_79f41a7be9_o.jpg",
+      "author": "Amnesty International Toronto Organization",
+      "author_profile": "https://www.flickr.com/people/amnestyinternationaltoronto/",
+      "title": "Have a Heart",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "3a15c1f701512008": {
+      "path": "validation/3a15c1f701512008.jpg",
+      "bytes": 429408,
+      "sha256": "5f041977a56b9f972a76f7d71ad38ef4ebebf66ade48a414f27ffb9a260ce728",
+      "canvas": [
+        1024,
+        768
+      ],
+      "source_page": "https://www.flickr.com/photos/artempano56/5244576923",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/3a15c1f701512008.jpg",
+      "original_url": "https://c1.staticflickr.com/6/5130/5244576923_bc5aedff11_o.jpg",
+      "author": "artempano56",
+      "author_profile": "https://www.flickr.com/people/artempano56/",
+      "title": "Coisinhas de Laura",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "6e5d0aa967cd01b9": {
+      "path": "validation/6e5d0aa967cd01b9.jpg",
+      "bytes": 109723,
+      "sha256": "8513420a9ed2a30a5b46f576be8a6736da3b0fa11cf541bd584d6fefac15880e",
+      "canvas": [
+        1024,
+        768
+      ],
+      "source_page": "https://www.flickr.com/photos/globalx/203268672",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/6e5d0aa967cd01b9.jpg",
+      "original_url": "https://c2.staticflickr.com/1/61/203268672_07fec1a7fa_o.jpg",
+      "author": "Global X",
+      "author_profile": "https://www.flickr.com/people/globalx/",
+      "title": "Amitiés Franco-Américaines",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "a459749f4e5769bd": {
+      "path": "validation/a459749f4e5769bd.jpg",
+      "bytes": 61520,
+      "sha256": "2504f9968a93db6d6f1cd94bd02fe765359f8e71b963ba737e0ffec9f7142959",
+      "canvas": [
+        1024,
+        768
+      ],
+      "source_page": "https://www.flickr.com/photos/andnancysays/4359461891",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/a459749f4e5769bd.jpg",
+      "original_url": "https://c6.staticflickr.com/5/4009/4359461891_676806c61c_o.jpg",
+      "author": "Nancy Qian",
+      "author_profile": "https://www.flickr.com/people/andnancysays/",
+      "title": "Hello morning",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "a4ce8204dc010b24": {
+      "path": "validation/a4ce8204dc010b24.jpg",
+      "bytes": 381378,
+      "sha256": "949474bfaa72d9829a078f592ea3b1955900b51f8cdadae16f4d1e0e2aa98c2e",
+      "canvas": [
+        910,
+        1024
+      ],
+      "source_page": "https://www.flickr.com/photos/egonzalesmarquez/5830105328",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/a4ce8204dc010b24.jpg",
+      "original_url": "https://farm5.staticflickr.com/3228/5830105328_082ac754ab_o.jpg",
+      "author": "egonzalesmarquez",
+      "author_profile": "https://www.flickr.com/people/egonzalesmarquez/",
+      "title": "Icing Nail Polish",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    },
+    "f0f7bbb186ba2c15": {
+      "path": "validation/f0f7bbb186ba2c15.jpg",
+      "bytes": 57922,
+      "sha256": "d956610717d2e11b21a1a099e959a5d4684ea442c8d5d4b8cc7115a6e9ced7c6",
+      "canvas": [
+        1024,
+        768
+      ],
+      "source_page": "https://www.flickr.com/photos/kables/8776207",
+      "source_file": "https://open-images-dataset.s3.amazonaws.com/validation/f0f7bbb186ba2c15.jpg",
+      "original_url": "https://farm6.staticflickr.com/8/8776207_742745265c_o.jpg",
+      "author": "Kris",
+      "author_profile": "https://www.flickr.com/people/kables/",
+      "title": "Whatchoo Lookin' At, Banana?",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "retrieved": "2026-08-29"
+    }
+  },
+  "cases": [
+    {
+      "id": "oi-wine-glass-clean",
+      "image_id": "01d160559286c930",
+      "tags": [
+        "transparent",
+        "single-product",
+        "clean-background"
+      ],
+      "query": "红酒杯",
+      "model_query_hint": "wine glass",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        682
+      ],
+      "label_mid": "/m/09tvcd",
+      "expected": [
+        {
+          "label": "红酒杯",
+          "bbox": [
+            0.17231223,
+            0.17256637,
+            0.16347569,
+            0.65707963
+          ],
+          "source": "xclick",
+          "label_mid": "/m/09tvcd",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-cake-single",
+      "image_id": "020ec13b99e2bf0c",
+      "tags": [
+        "food",
+        "single-product",
+        "shadow",
+        "texture"
+      ],
+      "query": "蛋糕",
+      "model_query_hint": "cake",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/0fszt",
+      "expected": [
+        {
+          "label": "蛋糕",
+          "bbox": [
+            0.0640625,
+            0.08958333,
+            0.9078125,
+            0.79166667
+          ],
+          "source": "xclick",
+          "label_mid": "/m/0fszt",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-glass-bottles-two",
+      "image_id": "031244297d177089",
+      "tags": [
+        "packaging",
+        "transparent",
+        "multiple-similar"
+      ],
+      "query": "玻璃瓶",
+      "model_query_hint": "glass bottle",
+      "target_count": 2,
+      "canvas": [
+        1024,
+        679
+      ],
+      "label_mid": "/m/04dr76w",
+      "expected": [
+        {
+          "label": "玻璃瓶",
+          "bbox": [
+            0.0,
+            0.0,
+            0.95441175,
+            0.4390244
+          ],
+          "source": "xclick",
+          "label_mid": "/m/04dr76w",
+          "is_occluded": false,
+          "is_truncated": false
+        },
+        {
+          "label": "玻璃瓶",
+          "bbox": [
+            0.0,
+            0.4323725,
+            0.99852943,
+            0.5676275
+          ],
+          "source": "xclick",
+          "label_mid": "/m/04dr76w",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-mobile-phone-handheld",
+      "image_id": "043f3655deab6e7c",
+      "tags": [
+        "single-product",
+        "occlusion",
+        "complex-background"
+      ],
+      "query": "手机",
+      "model_query_hint": "smartphone",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        681
+      ],
+      "label_mid": "/m/050k8",
+      "expected": [
+        {
+          "label": "手机",
+          "bbox": [
+            0.30927834,
+            0.06430155,
+            0.37997056,
+            0.87583149
+          ],
+          "source": "xclick",
+          "label_mid": "/m/050k8",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-watch-studio",
+      "image_id": "04b6da79fa910ec4",
+      "tags": [
+        "single-product",
+        "shadow",
+        "hair-fine-lines"
+      ],
+      "query": "手表",
+      "model_query_hint": "watch",
+      "target_count": 1,
+      "canvas": [
+        900,
+        1024
+      ],
+      "label_mid": "/m/0gjkl",
+      "expected": [
+        {
+          "label": "手表",
+          "bbox": [
+            0.12716763,
+            0.11675127,
+            0.72639693,
+            0.75126903
+          ],
+          "source": "xclick",
+          "label_mid": "/m/0gjkl",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-bread-three-packaged",
+      "image_id": "05d75289b426c14a",
+      "tags": [
+        "food",
+        "packaging",
+        "multiple-similar",
+        "occlusion",
+        "complex-background"
+      ],
+      "query": "面包",
+      "model_query_hint": "bread",
+      "target_count": 3,
+      "canvas": [
+        768,
+        1024
+      ],
+      "label_mid": "/m/09728",
+      "expected": [
+        {
+          "label": "面包",
+          "bbox": [
+            0.0,
+            0.4921875,
+            0.4676409,
+            0.496875
+          ],
+          "source": "xclick",
+          "label_mid": "/m/09728",
+          "is_occluded": false,
+          "is_truncated": false
+        },
+        {
+          "label": "面包",
+          "bbox": [
+            0.1085595,
+            0.0,
+            0.7870564,
+            0.4671875
+          ],
+          "source": "xclick",
+          "label_mid": "/m/09728",
+          "is_occluded": true,
+          "is_truncated": false
+        },
+        {
+          "label": "面包",
+          "bbox": [
+            0.4321503,
+            0.5140625,
+            0.5427975,
+            0.4390625
+          ],
+          "source": "xclick",
+          "label_mid": "/m/09728",
+          "is_occluded": false,
+          "is_truncated": true
+        }
+      ]
+    },
+    {
+      "id": "oi-teddy-bear-occluded",
+      "image_id": "0709eb8e8c2d19fa",
+      "tags": [
+        "single-product",
+        "hair-fine-lines",
+        "occlusion",
+        "complex-background"
+      ],
+      "query": "泰迪熊",
+      "model_query_hint": "teddy bear",
+      "target_count": 1,
+      "canvas": [
+        768,
+        1024
+      ],
+      "label_mid": "/m/0kmg4",
+      "expected": [
+        {
+          "label": "泰迪熊",
+          "bbox": [
+            0.16458334,
+            0.2140625,
+            0.60208331,
+            0.7140625
+          ],
+          "source": "xclick",
+          "label_mid": "/m/0kmg4",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-apples-two-occluded",
+      "image_id": "078821d86db99fc9",
+      "tags": [
+        "food",
+        "multiple-similar",
+        "occlusion",
+        "complex-background"
+      ],
+      "query": "苹果",
+      "model_query_hint": "apple",
+      "target_count": 2,
+      "canvas": [
+        1024,
+        683
+      ],
+      "label_mid": "/m/014j1m",
+      "expected": [
+        {
+          "label": "苹果",
+          "bbox": [
+            0.24483776,
+            0.092920355,
+            0.29793514,
+            0.446902645
+          ],
+          "source": "xclick",
+          "label_mid": "/m/014j1m",
+          "is_occluded": true,
+          "is_truncated": false
+        },
+        {
+          "label": "苹果",
+          "bbox": [
+            0.38348082,
+            0.47566372,
+            0.31415928,
+            0.46681418
+          ],
+          "source": "xclick",
+          "label_mid": "/m/014j1m",
+          "is_occluded": true,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-tin-can-single",
+      "image_id": "0804e479f3848a5a",
+      "tags": [
+        "packaging",
+        "single-product",
+        "shadow"
+      ],
+      "query": "易拉罐",
+      "model_query_hint": "beverage can",
+      "target_count": 1,
+      "canvas": [
+        723,
+        1024
+      ],
+      "label_mid": "/m/02jnhm",
+      "expected": [
+        {
+          "label": "易拉罐",
+          "bbox": [
+            0.21290323,
+            0.06828528,
+            0.60215053,
+            0.83915026
+          ],
+          "source": "xclick",
+          "label_mid": "/m/02jnhm",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-bottle-small-complex",
+      "image_id": "0acfa779589204bf",
+      "tags": [
+        "packaging",
+        "single-product",
+        "small-object",
+        "complex-background"
+      ],
+      "query": "瓶子",
+      "model_query_hint": "bottle",
+      "target_count": 1,
+      "canvas": [
+        768,
+        768
+      ],
+      "label_mid": "/m/04dr76w",
+      "expected": [
+        {
+          "label": "瓶子",
+          "bbox": [
+            0.0,
+            0.066787004,
+            0.22202165,
+            0.880866396
+          ],
+          "source": "xclick",
+          "label_mid": "/m/04dr76w",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-bread-two-kitchen",
+      "image_id": "0bf5bd613d68bd40",
+      "tags": [
+        "food",
+        "multiple-similar",
+        "shadow",
+        "complex-background"
+      ],
+      "query": "面包",
+      "model_query_hint": "bread",
+      "target_count": 2,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/09728",
+      "expected": [
+        {
+          "label": "面包",
+          "bbox": [
+            0.190625,
+            0.4875,
+            0.5578125,
+            0.32291664
+          ],
+          "source": "xclick",
+          "label_mid": "/m/09728",
+          "is_occluded": false,
+          "is_truncated": false
+        },
+        {
+          "label": "面包",
+          "bbox": [
+            0.265625,
+            0.2375,
+            0.440625,
+            0.23333333
+          ],
+          "source": "xclick",
+          "label_mid": "/m/09728",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-box-single",
+      "image_id": "0c9c9ebe5c9aff0b",
+      "tags": [
+        "packaging",
+        "single-product",
+        "shadow"
+      ],
+      "query": "盒子",
+      "model_query_hint": "box",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        576
+      ],
+      "label_mid": "/m/025dyy",
+      "expected": [
+        {
+          "label": "盒子",
+          "bbox": [
+            0.0608931,
+            0.057831325,
+            0.89580514,
+            0.942168675
+          ],
+          "source": "xclick",
+          "label_mid": "/m/025dyy",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-apple-single",
+      "image_id": "105433f9d808d18e",
+      "tags": [
+        "food",
+        "single-product",
+        "shadow",
+        "texture"
+      ],
+      "query": "苹果",
+      "model_query_hint": "apple",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        1024
+      ],
+      "label_mid": "/m/014j1m",
+      "expected": [
+        {
+          "label": "苹果",
+          "bbox": [
+            0.12815884,
+            0.102888085,
+            0.73104696,
+            0.752707565
+          ],
+          "source": "xclick",
+          "label_mid": "/m/014j1m",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-mobile-phones-two",
+      "image_id": "12e529ac3ceecdb3",
+      "tags": [
+        "packaging",
+        "multiple-similar",
+        "complex-background"
+      ],
+      "query": "手机",
+      "model_query_hint": "smartphone",
+      "target_count": 2,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/050k8",
+      "expected": [
+        {
+          "label": "手机",
+          "bbox": [
+            0.1609375,
+            0.21875,
+            0.3046875,
+            0.7291667
+          ],
+          "source": "xclick",
+          "label_mid": "/m/050k8",
+          "is_occluded": false,
+          "is_truncated": false
+        },
+        {
+          "label": "手机",
+          "bbox": [
+            0.55,
+            0.2375,
+            0.3,
+            0.7083333
+          ],
+          "source": "xclick",
+          "label_mid": "/m/050k8",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ],
+      "ignored_annotations": {
+        "count": 3,
+        "reason": "Open Images group/depiction/inside boxes are outside the physical-product target contract"
+      }
+    },
+    {
+      "id": "oi-vases-two-occluded",
+      "image_id": "13dcbd465645c47f",
+      "tags": [
+        "multiple-similar",
+        "occlusion",
+        "hair-fine-lines",
+        "complex-background"
+      ],
+      "query": "花瓶",
+      "model_query_hint": "vase",
+      "target_count": 2,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/02s195",
+      "expected": [
+        {
+          "label": "花瓶",
+          "bbox": [
+            0.05,
+            0.23541667,
+            0.5796875,
+            0.55833333
+          ],
+          "source": "xclick",
+          "label_mid": "/m/02s195",
+          "is_occluded": false,
+          "is_truncated": false
+        },
+        {
+          "label": "花瓶",
+          "bbox": [
+            0.46875,
+            0.1375,
+            0.46875,
+            0.42291664
+          ],
+          "source": "xclick",
+          "label_mid": "/m/02s195",
+          "is_occluded": true,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-backpack-single",
+      "image_id": "159c27c3fcf6e267",
+      "tags": [
+        "single-product",
+        "clean-background",
+        "hair-fine-lines"
+      ],
+      "query": "双肩包",
+      "model_query_hint": "backpack",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        1024
+      ],
+      "label_mid": "/m/01940j",
+      "expected": [
+        {
+          "label": "双肩包",
+          "bbox": [
+            0.2599278,
+            0.009025271,
+            0.50541515,
+            0.976534329
+          ],
+          "source": "xclick",
+          "label_mid": "/m/01940j",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-cookie-single",
+      "image_id": "15d6850f3461f9e8",
+      "tags": [
+        "food",
+        "single-product",
+        "shadow",
+        "texture"
+      ],
+      "query": "饼干",
+      "model_query_hint": "cookie",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/021mn",
+      "expected": [
+        {
+          "label": "饼干",
+          "bbox": [
+            0.1890625,
+            0.18541667,
+            0.709375,
+            0.61458333
+          ],
+          "source": "xclick",
+          "label_mid": "/m/021mn",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-perfume-single",
+      "image_id": "16407cf2533cf584",
+      "tags": [
+        "packaging",
+        "single-product",
+        "clean-background"
+      ],
+      "query": "香水",
+      "model_query_hint": "perfume bottle",
+      "target_count": 1,
+      "canvas": [
+        683,
+        1024
+      ],
+      "label_mid": "/m/0p833",
+      "expected": [
+        {
+          "label": "香水",
+          "bbox": [
+            0.22345133,
+            0.020648967,
+            0.60840707,
+            0.920353993
+          ],
+          "source": "xclick",
+          "label_mid": "/m/0p833",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-wine-glasses-two",
+      "image_id": "1a04c113301b09f8",
+      "tags": [
+        "transparent",
+        "multiple-similar",
+        "occlusion",
+        "complex-background"
+      ],
+      "query": "红酒杯",
+      "model_query_hint": "wine glass",
+      "target_count": 2,
+      "canvas": [
+        1024,
+        1024
+      ],
+      "label_mid": "/m/09tvcd",
+      "expected": [
+        {
+          "label": "红酒杯",
+          "bbox": [
+            0.036101084,
+            0.07400722,
+            0.379061356,
+            0.88808668
+          ],
+          "source": "xclick",
+          "label_mid": "/m/09tvcd",
+          "is_occluded": false,
+          "is_truncated": false
+        },
+        {
+          "label": "红酒杯",
+          "bbox": [
+            0.21841155,
+            0.037906136,
+            0.32129965,
+            0.768953064
+          ],
+          "source": "xclick",
+          "label_mid": "/m/09tvcd",
+          "is_occluded": true,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-handbag-occluded",
+      "image_id": "209782692eed237b",
+      "tags": [
+        "single-product",
+        "occlusion",
+        "complex-background"
+      ],
+      "query": "手提包",
+      "model_query_hint": "handbag",
+      "target_count": 1,
+      "canvas": [
+        819,
+        1024
+      ],
+      "label_mid": "/m/080hkjn",
+      "expected": [
+        {
+          "label": "手提包",
+          "bbox": [
+            0.2929293,
+            0.13893376,
+            0.66868686,
+            0.47495964
+          ],
+          "source": "xclick",
+          "label_mid": "/m/080hkjn",
+          "is_occluded": true,
+          "is_truncated": false
+        }
+      ],
+      "ignored_annotations": {
+        "count": 1,
+        "reason": "Open Images group/depiction/inside boxes are outside the physical-product target contract"
+      }
+    },
+    {
+      "id": "oi-cookies-three-occluded",
+      "image_id": "231f72333ff304d2",
+      "tags": [
+        "food",
+        "multiple-similar",
+        "occlusion",
+        "texture"
+      ],
+      "query": "饼干",
+      "model_query_hint": "cookie",
+      "target_count": 3,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/021mn",
+      "expected": [
+        {
+          "label": "饼干",
+          "bbox": [
+            0.0,
+            0.24375,
+            0.5078125,
+            0.75416664
+          ],
+          "source": "xclick",
+          "label_mid": "/m/021mn",
+          "is_occluded": false,
+          "is_truncated": true
+        },
+        {
+          "label": "饼干",
+          "bbox": [
+            0.0625,
+            0.0,
+            0.5703125,
+            0.31041667
+          ],
+          "source": "xclick",
+          "label_mid": "/m/021mn",
+          "is_occluded": true,
+          "is_truncated": true
+        },
+        {
+          "label": "饼干",
+          "bbox": [
+            0.4625,
+            0.08541667,
+            0.5359375,
+            0.66458333
+          ],
+          "source": "xclick",
+          "label_mid": "/m/021mn",
+          "is_occluded": true,
+          "is_truncated": true
+        }
+      ]
+    },
+    {
+      "id": "oi-cosmetic-pencil",
+      "image_id": "23e12b741c9cd993",
+      "tags": [
+        "packaging",
+        "single-product",
+        "hair-fine-lines",
+        "clean-background"
+      ],
+      "query": "化妆品",
+      "model_query_hint": "cosmetic product",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        683
+      ],
+      "label_mid": "/m/014trl",
+      "expected": [
+        {
+          "label": "化妆品",
+          "bbox": [
+            0.072271384,
+            0.33849558,
+            0.846607646,
+            0.37831858
+          ],
+          "source": "xclick",
+          "label_mid": "/m/014trl",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-boxes-two-occluded",
+      "image_id": "2bca762eac2f0975",
+      "tags": [
+        "packaging",
+        "multiple-similar",
+        "occlusion"
+      ],
+      "query": "盒子",
+      "model_query_hint": "box",
+      "target_count": 2,
+      "canvas": [
+        719,
+        1024
+      ],
+      "label_mid": "/m/025dyy",
+      "expected": [
+        {
+          "label": "盒子",
+          "bbox": [
+            0.06681035,
+            0.50075644,
+            0.79094829,
+            0.46596066
+          ],
+          "source": "xclick",
+          "label_mid": "/m/025dyy",
+          "is_occluded": true,
+          "is_truncated": false
+        },
+        {
+          "label": "盒子",
+          "bbox": [
+            0.12284483,
+            0.06051437,
+            0.80818967,
+            0.53101363
+          ],
+          "source": "xclick",
+          "label_mid": "/m/025dyy",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-perfume-three-complex",
+      "image_id": "300deb052677b547",
+      "tags": [
+        "packaging",
+        "transparent",
+        "multiple-similar",
+        "occlusion",
+        "complex-background"
+      ],
+      "query": "香水",
+      "model_query_hint": "perfume bottle",
+      "target_count": 3,
+      "canvas": [
+        1024,
+        838
+      ],
+      "label_mid": "/m/0p833",
+      "expected": [
+        {
+          "label": "香水",
+          "bbox": [
+            0.35227272,
+            0.08680555,
+            0.15056822,
+            0.59027775
+          ],
+          "source": "xclick",
+          "label_mid": "/m/0p833",
+          "is_occluded": false,
+          "is_truncated": false
+        },
+        {
+          "label": "香水",
+          "bbox": [
+            0.48011363,
+            0.034722224,
+            0.13352277,
+            0.576388876
+          ],
+          "source": "xclick",
+          "label_mid": "/m/0p833",
+          "is_occluded": true,
+          "is_truncated": false
+        },
+        {
+          "label": "香水",
+          "bbox": [
+            0.51704544,
+            0.114583336,
+            0.16761362,
+            0.701388864
+          ],
+          "source": "xclick",
+          "label_mid": "/m/0p833",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-scissors-single",
+      "image_id": "310192cb7c99bd11",
+      "tags": [
+        "single-product",
+        "hair-fine-lines",
+        "complex-background"
+      ],
+      "query": "剪刀",
+      "model_query_hint": "scissors",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        687
+      ],
+      "label_mid": "/m/01lsmm",
+      "expected": [
+        {
+          "label": "剪刀",
+          "bbox": [
+            0.19526628,
+            0.71145374,
+            0.51923072,
+            0.18942731
+          ],
+          "source": "xclick",
+          "label_mid": "/m/01lsmm",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-teddy-bears-two",
+      "image_id": "3a15c1f701512008",
+      "tags": [
+        "multiple-similar",
+        "hair-fine-lines",
+        "complex-background"
+      ],
+      "query": "泰迪熊",
+      "model_query_hint": "teddy bear",
+      "target_count": 2,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/0kmg4",
+      "expected": [
+        {
+          "label": "泰迪熊",
+          "bbox": [
+            0.2609375,
+            0.07083333,
+            0.3375,
+            0.39583334
+          ],
+          "source": "xclick",
+          "label_mid": "/m/0kmg4",
+          "is_occluded": false,
+          "is_truncated": false
+        },
+        {
+          "label": "泰迪熊",
+          "bbox": [
+            0.6171875,
+            0.13958333,
+            0.2953125,
+            0.39583333
+          ],
+          "source": "xclick",
+          "label_mid": "/m/0kmg4",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-tin-cans-two",
+      "image_id": "6e5d0aa967cd01b9",
+      "tags": [
+        "packaging",
+        "multiple-similar",
+        "shadow",
+        "complex-background"
+      ],
+      "query": "易拉罐",
+      "model_query_hint": "beverage can",
+      "target_count": 2,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/02jnhm",
+      "expected": [
+        {
+          "label": "易拉罐",
+          "bbox": [
+            0.0421875,
+            0.025,
+            0.4046875,
+            0.72708336
+          ],
+          "source": "xclick",
+          "label_mid": "/m/02jnhm",
+          "is_occluded": false,
+          "is_truncated": false
+        },
+        {
+          "label": "易拉罐",
+          "bbox": [
+            0.5046875,
+            0.09791667,
+            0.3421875,
+            0.72916668
+          ],
+          "source": "xclick",
+          "label_mid": "/m/02jnhm",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-toothbrushes-two-occluded",
+      "image_id": "a459749f4e5769bd",
+      "tags": [
+        "multiple-similar",
+        "hair-fine-lines",
+        "occlusion",
+        "small-object",
+        "complex-background"
+      ],
+      "query": "牙刷",
+      "model_query_hint": "toothbrush",
+      "target_count": 2,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/012xff",
+      "expected": [
+        {
+          "label": "牙刷",
+          "bbox": [
+            0.478125,
+            0.19375,
+            0.1234375,
+            0.30833336
+          ],
+          "source": "xclick",
+          "label_mid": "/m/012xff",
+          "is_occluded": true,
+          "is_truncated": false
+        },
+        {
+          "label": "牙刷",
+          "bbox": [
+            0.675,
+            0.15625,
+            0.153125,
+            0.34166667
+          ],
+          "source": "xclick",
+          "label_mid": "/m/012xff",
+          "is_occluded": true,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-cosmetics-two",
+      "image_id": "a4ce8204dc010b24",
+      "tags": [
+        "packaging",
+        "multiple-similar",
+        "shadow"
+      ],
+      "query": "化妆品",
+      "model_query_hint": "cosmetic product",
+      "target_count": 2,
+      "canvas": [
+        910,
+        1024
+      ],
+      "label_mid": "/m/014trl",
+      "expected": [
+        {
+          "label": "化妆品",
+          "bbox": [
+            0.17049809,
+            0.1294719,
+            0.31417624,
+            0.7120954
+          ],
+          "source": "xclick",
+          "label_mid": "/m/014trl",
+          "is_occluded": false,
+          "is_truncated": false
+        },
+        {
+          "label": "化妆品",
+          "bbox": [
+            0.4827586,
+            0.14139694,
+            0.31226055,
+            0.71720612
+          ],
+          "source": "xclick",
+          "label_mid": "/m/014trl",
+          "is_occluded": false,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-bananas-three-occluded",
+      "image_id": "f0f7bbb186ba2c15",
+      "tags": [
+        "food",
+        "multiple-similar",
+        "occlusion",
+        "shadow"
+      ],
+      "query": "香蕉",
+      "model_query_hint": "banana",
+      "target_count": 3,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/09qck",
+      "expected": [
+        {
+          "label": "香蕉",
+          "bbox": [
+            0.0578125,
+            0.05,
+            0.33125,
+            0.6458333
+          ],
+          "source": "xclick",
+          "label_mid": "/m/09qck",
+          "is_occluded": true,
+          "is_truncated": false
+        },
+        {
+          "label": "香蕉",
+          "bbox": [
+            0.25625,
+            0.07083333,
+            0.3546875,
+            0.87499997
+          ],
+          "source": "xclick",
+          "label_mid": "/m/09qck",
+          "is_occluded": true,
+          "is_truncated": false
+        },
+        {
+          "label": "香蕉",
+          "bbox": [
+            0.4421875,
+            0.0625,
+            0.5125,
+            0.68541664
+          ],
+          "source": "xclick",
+          "label_mid": "/m/09qck",
+          "is_occluded": true,
+          "is_truncated": false
+        }
+      ]
+    },
+    {
+      "id": "oi-no-bottle-on-wine-glass",
+      "image_id": "01d160559286c930",
+      "tags": [
+        "no-match",
+        "transparent",
+        "hard-negative"
+      ],
+      "query": "瓶子",
+      "model_query_hint": "bottle",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        682
+      ],
+      "label_mid": "/m/04dr76w",
+      "expected": [],
+      "negative_label": {
+        "confidence": 0,
+        "source": "verification",
+        "label_mid": "/m/04dr76w"
+      }
+    },
+    {
+      "id": "oi-no-cake-on-bread",
+      "image_id": "05d75289b426c14a",
+      "tags": [
+        "no-match",
+        "food",
+        "hard-negative",
+        "complex-background"
+      ],
+      "query": "蛋糕",
+      "model_query_hint": "cake",
+      "target_count": 1,
+      "canvas": [
+        768,
+        1024
+      ],
+      "label_mid": "/m/0fszt",
+      "expected": [],
+      "negative_label": {
+        "confidence": 0,
+        "source": "verification",
+        "label_mid": "/m/0fszt"
+      }
+    },
+    {
+      "id": "oi-no-glasses-on-handbag",
+      "image_id": "209782692eed237b",
+      "tags": [
+        "no-match",
+        "hard-negative",
+        "complex-background"
+      ],
+      "query": "眼镜",
+      "model_query_hint": "eyeglasses",
+      "target_count": 1,
+      "canvas": [
+        819,
+        1024
+      ],
+      "label_mid": "/m/0jyfg",
+      "expected": [],
+      "negative_label": {
+        "confidence": 0,
+        "source": "verification",
+        "label_mid": "/m/0jyfg"
+      }
+    },
+    {
+      "id": "oi-no-bottle-on-tin-cans",
+      "image_id": "6e5d0aa967cd01b9",
+      "tags": [
+        "no-match",
+        "packaging",
+        "hard-negative"
+      ],
+      "query": "瓶子",
+      "model_query_hint": "bottle",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/04dr76w",
+      "expected": [],
+      "negative_label": {
+        "confidence": 0,
+        "source": "verification",
+        "label_mid": "/m/04dr76w"
+      }
+    },
+    {
+      "id": "oi-no-bottle-on-toothbrushes",
+      "image_id": "a459749f4e5769bd",
+      "tags": [
+        "no-match",
+        "hard-negative",
+        "small-object",
+        "complex-background"
+      ],
+      "query": "瓶子",
+      "model_query_hint": "bottle",
+      "target_count": 1,
+      "canvas": [
+        1024,
+        768
+      ],
+      "label_mid": "/m/04dr76w",
+      "expected": [],
+      "negative_label": {
+        "confidence": 0,
+        "source": "verification",
+        "label_mid": "/m/04dr76w"
+      }
+    }
+  ]
+}

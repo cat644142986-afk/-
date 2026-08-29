@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
 from pathlib import Path
 
 from python.semantic_grounding_eval import (
@@ -17,6 +18,12 @@ MANIFEST_PATH = (
 )
 PHOTO_MANIFEST_PATH = (
     Path(__file__).parent / "fixtures" / "semantic_grounding_photos" / "manifest.json"
+)
+OPEN_IMAGES_MANIFEST_PATH = (
+    Path(__file__).parent
+    / "fixtures"
+    / "semantic_grounding_openimages"
+    / "manifest.json"
 )
 
 
@@ -49,6 +56,35 @@ class SemanticGroundingEvaluationTests(unittest.TestCase):
                 self.assertTrue(image["source_page"].startswith("https://commons.wikimedia.org/"))
                 self.assertIn(image["license"], {"CC0", "CC BY-SA 4.0"})
                 self.assertEqual(len(image["sha256"]), 64)
+
+    def test_open_images_gate_locks_30_photos_35_queries_and_official_negatives(self) -> None:
+        manifest = load_grounding_manifest(OPEN_IMAGES_MANIFEST_PATH)
+        self.assertEqual(manifest["corpus_kind"], "licensed-photo-downloadable")
+        self.assertEqual(len(manifest["images"]), 30)
+        self.assertEqual(len(manifest["cases"]), 35)
+        positive = [case for case in manifest["cases"] if case["expected"]]
+        no_match = [case for case in manifest["cases"] if not case["expected"]]
+        self.assertEqual(len(positive), 30)
+        self.assertEqual(len(no_match), 5)
+        self.assertEqual(sum(len(case["expected"]) for case in positive), 49)
+        self.assertTrue(all(case.get("negative_label", {}).get("confidence") == 0 for case in no_match))
+        self.assertTrue(set(manifest["required_coverage"]).issubset(set(manifest["coverage"])))
+        for image in manifest["images"].values():
+            self.assertEqual(image["license"], "CC BY 2.0")
+            self.assertTrue(image["source_page"].startswith("https://www.flickr.com/"))
+            self.assertEqual(len(image["sha256"]), 64)
+
+    def test_downloadable_gate_requires_locked_pixels_only_for_local_inference(self) -> None:
+        load_grounding_manifest(OPEN_IMAGES_MANIFEST_PATH)
+        with self.assertRaisesRegex(ValueError, "requires image_root"):
+            load_grounding_manifest(OPEN_IMAGES_MANIFEST_PATH, require_images=True)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaisesRegex(ValueError, "missing or has the wrong size"):
+                load_grounding_manifest(
+                    OPEN_IMAGES_MANIFEST_PATH,
+                    image_root=Path(temp_dir),
+                    require_images=True,
+                )
 
     def test_iou_uses_normalized_xywh_boxes(self) -> None:
         self.assertAlmostEqual(box_iou([0.1, 0.1, 0.4, 0.4], [0.1, 0.1, 0.4, 0.4]), 1)
@@ -106,6 +142,24 @@ class SemanticGroundingEvaluationTests(unittest.TestCase):
         }]
         report = evaluate_grounding_predictions(self.manifest, predictions)
         self.assertEqual(report["metrics"]["no_match_accuracy"], 0)
+
+    def test_review_suggestions_improve_assisted_recall_without_counting_as_trusted(self) -> None:
+        predictions = {
+            item["id"]: {
+                "status": "no_match" if not item["expected"] else "low_confidence",
+                "candidates": [],
+                "review_candidates": [
+                    {"bbox": expected["bbox"], "confidence": 0.66}
+                    for expected in item["expected"]
+                ],
+                "elapsed_ms": 1,
+            }
+            for item in self.manifest["cases"]
+        }
+        report = evaluate_grounding_predictions(self.manifest, predictions)
+        self.assertEqual(report["metrics"]["recall"], 0)
+        self.assertEqual(report["metrics"]["review_assisted_recall"], 1)
+        self.assertGreater(report["metrics"]["review_candidate_count"], 0)
 
 
 if __name__ == "__main__":
