@@ -15,6 +15,9 @@ from python.semantic_grounding_eval import (
 MANIFEST_PATH = (
     Path(__file__).parent / "fixtures" / "semantic_grounding" / "manifest.json"
 )
+PHOTO_MANIFEST_PATH = (
+    Path(__file__).parent / "fixtures" / "semantic_grounding_photos" / "manifest.json"
+)
 
 
 class SemanticGroundingEvaluationTests(unittest.TestCase):
@@ -27,6 +30,7 @@ class SemanticGroundingEvaluationTests(unittest.TestCase):
         self.assertEqual(len(self.manifest["cases"]), 8)
         self.assertTrue(REQUIRED_COVERAGE.issubset(set(self.manifest["coverage"])))
         self.assertTrue(any("不能替代真实照片" in item for item in self.manifest["limitations"]))
+        self.assertTrue(all(case["model_query_hint"] for case in self.manifest["cases"]))
 
     def test_every_procedural_case_renders_offline_at_its_declared_size(self) -> None:
         for case in self.manifest["cases"]:
@@ -34,6 +38,17 @@ class SemanticGroundingEvaluationTests(unittest.TestCase):
                 image = render_semantic_fixture(case)
                 self.assertEqual(image.size, tuple(case["canvas"]))
                 self.assertEqual(image.mode, "RGB")
+
+    def test_licensed_photo_baseline_locks_source_license_hash_and_manual_boxes(self) -> None:
+        manifest = load_grounding_manifest(PHOTO_MANIFEST_PATH)
+        self.assertEqual(manifest["corpus_kind"], "licensed-photo-baseline")
+        self.assertEqual(len(manifest["cases"]), 4)
+        for case in manifest["cases"]:
+            with self.subTest(case=case["id"]):
+                image = case["image"]
+                self.assertTrue(image["source_page"].startswith("https://commons.wikimedia.org/"))
+                self.assertIn(image["license"], {"CC0", "CC BY-SA 4.0"})
+                self.assertEqual(len(image["sha256"]), 64)
 
     def test_iou_uses_normalized_xywh_boxes(self) -> None:
         self.assertAlmostEqual(box_iou([0.1, 0.1, 0.4, 0.4], [0.1, 0.1, 0.4, 0.4]), 1)

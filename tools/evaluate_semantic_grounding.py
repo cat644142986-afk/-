@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
+import math
+import os
+import platform
+from statistics import mean
 import sys
 import tempfile
 from pathlib import Path
@@ -27,6 +32,89 @@ DEFAULT_MANIFEST = (
 )
 
 
+def _percentile_95(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)]
+
+
+def _runtime_before() -> tuple[dict, object | None]:
+    runtime = {
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "packages": {},
+    }
+    for package in ("torch", "transformers", "huggingface-hub", "safetensors", "Pillow"):
+        try:
+            runtime["packages"][package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            runtime["packages"][package] = "missing"
+    try:
+        import torch
+    except ImportError:
+        runtime["cuda"] = {"available": False}
+        return runtime, None
+    available = bool(torch.cuda.is_available())
+    runtime["cuda"] = {
+        "available": available,
+        "device": torch.cuda.get_device_name(0) if available else None,
+        "total_vram_mb": round(
+            torch.cuda.get_device_properties(0).total_memory / 1024 / 1024,
+            2,
+        ) if available else 0,
+    }
+    if available:
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+    return runtime, torch
+
+
+def _run_metadata(
+    predictions: dict,
+    *,
+    query_field: str,
+    runtime: dict,
+    torch_module: object | None,
+) -> dict:
+    latencies = [
+        max(0.0, float(item.get("elapsed_ms") or 0.0))
+        for item in predictions.values()
+    ]
+    hot = latencies[1:]
+    cuda = runtime.get("cuda") or {}
+    if torch_module is not None and cuda.get("available"):
+        torch_module.cuda.synchronize()
+        cuda["peak_allocated_mb"] = round(
+            torch_module.cuda.max_memory_allocated() / 1024 / 1024,
+            2,
+        )
+        cuda["peak_reserved_mb"] = round(
+            torch_module.cuda.max_memory_reserved() / 1024 / 1024,
+            2,
+        )
+    return {
+        "query_field": query_field,
+        "model_path": str(os.environ.get("PRODUCT_ATELIER_GROUNDING_MODEL_PATH", "")),
+        "cold_first_case_ms": round(latencies[0], 2) if latencies else 0.0,
+        "hot_mean_ms": round(mean(hot), 2) if hot else 0.0,
+        "hot_p95_ms": round(_percentile_95(hot), 2),
+        "runtime": runtime,
+    }
+
+
+def _emit(payload: dict, output: Path | None) -> None:
+    rendered = json.dumps(payload, ensure_ascii=False, indent=2)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered + "\n", encoding="utf-8")
+    print(rendered)
+
+
+def _photo_path(manifest: dict, case: dict) -> Path:
+    return Path(manifest["manifest_path"]).parent / case["image"]["path"]
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -49,46 +137,65 @@ def main() -> int:
         type=Path,
         help="Optionally render the source-controlled procedural cases as PNG files.",
     )
+    parser.add_argument(
+        "--query-field",
+        choices=("query", "model_query_hint"),
+        default="query",
+        help="Choose the original Chinese request or the controlled English model hint.",
+    )
+    parser.add_argument("--output", type=Path, help="Optionally write the JSON report.")
     args = parser.parse_args()
     if args.predictions and args.run_local:
         parser.error("--predictions and --run-local are mutually exclusive")
 
     manifest = load_grounding_manifest(args.manifest)
     if args.render_dir:
+        if manifest["corpus_kind"] != "procedural-contract":
+            parser.error("--render-dir only supports the procedural contract corpus")
         args.render_dir.mkdir(parents=True, exist_ok=True)
         for case in manifest["cases"]:
             render_semantic_fixture(case).save(args.render_dir / f"{case['id']}.png")
     if args.run_local:
         adapter = grounding_adapter_from_environment()
         predictions = {}
+        runtime, torch_module = _runtime_before()
         with tempfile.TemporaryDirectory(prefix="product-atelier-grounding-") as temp_dir:
             fixture_root = Path(temp_dir)
             for case in manifest["cases"]:
-                image_path = fixture_root / f"{case['id']}.png"
-                render_semantic_fixture(case).save(image_path)
+                if manifest["corpus_kind"] == "procedural-contract":
+                    image_path = fixture_root / f"{case['id']}.png"
+                    render_semantic_fixture(case).save(image_path)
+                else:
+                    image_path = _photo_path(manifest, case)
                 predictions[case["id"]] = ground_semantic_candidates(
                     image_path,
-                    case["query"],
+                    case[args.query_field],
                     case["target_count"],
                     adapter=adapter,
                 )
         report = evaluate_grounding_predictions(manifest, predictions)
         report["adapter_id"] = getattr(adapter, "adapter_id", "unknown")
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        report["run"] = _run_metadata(
+            predictions,
+            query_field=args.query_field,
+            runtime=runtime,
+            torch_module=torch_module,
+        )
+        _emit(report, args.output)
         return 0 if report["passed"] else 1
     if not args.predictions:
-        print(json.dumps({
+        _emit({
             "status": "contract_valid",
             "corpus_id": manifest["corpus_id"],
             "corpus_kind": manifest["corpus_kind"],
             "case_count": len(manifest["cases"]),
             "coverage": manifest["coverage"],
             "limitations": manifest["limitations"],
-        }, ensure_ascii=False, indent=2))
+        }, args.output)
         return 0
     predictions = json.loads(args.predictions.read_text(encoding="utf-8"))
     report = evaluate_grounding_predictions(manifest, predictions)
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    _emit(report, args.output)
     return 0 if report["passed"] else 1
 
 

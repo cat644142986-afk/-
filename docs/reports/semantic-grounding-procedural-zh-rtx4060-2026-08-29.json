@@ -1,0 +1,170 @@
+{
+  "corpus_id": "product-atelier-semantic-grounding-contract-v1",
+  "corpus_kind": "procedural-contract",
+  "metrics": {
+    "case_count": 8,
+    "true_positive": 0,
+    "false_positive": 0,
+    "false_negative": 10,
+    "recall": 0.0,
+    "precision": 0.0,
+    "mean_matched_iou": 0.0,
+    "exact_count_accuracy": 0.125,
+    "no_match_accuracy": 0.0,
+    "recovery_rate": 0.0,
+    "mean_latency_ms": 1.45,
+    "p95_latency_ms": 1.68
+  },
+  "gates": {
+    "iou_threshold": 0.5,
+    "min_recall": 0.75,
+    "min_precision": 0.75,
+    "min_exact_count_accuracy": 0.75,
+    "min_no_match_accuracy": 1.0,
+    "min_recovery_rate": 1.0
+  },
+  "checks": {
+    "recall": false,
+    "precision": false,
+    "exact_count_accuracy": false,
+    "no_match_accuracy": false,
+    "recovery_rate": false
+  },
+  "passed": false,
+  "case_results": [
+    {
+      "id": "food-two-burgers",
+      "status": "unavailable",
+      "expected_count": 2,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 2,
+      "exact_count": false,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 1.64
+    },
+    {
+      "id": "multiple-similar-packages",
+      "status": "unavailable",
+      "expected_count": 2,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 2,
+      "exact_count": false,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 1.34
+    },
+    {
+      "id": "package-small-text",
+      "status": "unavailable",
+      "expected_count": 1,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact_count": false,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 1.24
+    },
+    {
+      "id": "transparent-container",
+      "status": "unavailable",
+      "expected_count": 1,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact_count": false,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 1.53
+    },
+    {
+      "id": "hair-fine-lines",
+      "status": "unavailable",
+      "expected_count": 1,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact_count": false,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 1.45
+    },
+    {
+      "id": "shadow-separation",
+      "status": "unavailable",
+      "expected_count": 1,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact_count": false,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 1.53
+    },
+    {
+      "id": "occluded-apples",
+      "status": "unavailable",
+      "expected_count": 2,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 2,
+      "exact_count": false,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 1.68
+    },
+    {
+      "id": "no-match-burger",
+      "status": "unavailable",
+      "expected_count": 0,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "exact_count": true,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 1.16
+    }
+  ],
+  "limitations": [
+    "程序绘制图只验证合同与评测器，不能替代真实照片模型质量结论",
+    "真实质量语料必须另行记录来源、许可、SHA-256 和人工标注审核"
+  ],
+  "adapter_id": "transformers-grounding-dino-local",
+  "run": {
+    "query_field": "query",
+    "model_path": "D:\\ProductAtelier-Models\\grounding-dino-tiny-a2bb814",
+    "cold_first_case_ms": 1.64,
+    "hot_mean_ms": 1.42,
+    "hot_p95_ms": 1.68,
+    "runtime": {
+      "python": "3.12.10",
+      "platform": "Windows-11-10.0.26200-SP0",
+      "packages": {
+        "torch": "2.6.0+cu124",
+        "transformers": "5.15.0",
+        "huggingface-hub": "1.27.0",
+        "safetensors": "0.8.0",
+        "Pillow": "12.3.0"
+      },
+      "cuda": {
+        "available": true,
+        "device": "NVIDIA GeForce RTX 4060",
+        "total_vram_mb": 8187.5,
+        "peak_allocated_mb": 0.0,
+        "peak_reserved_mb": 0.0
+      }
+    }
+  }
+}

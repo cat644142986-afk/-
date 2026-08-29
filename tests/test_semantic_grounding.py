@@ -110,7 +110,8 @@ class SemanticGroundingContractTests(unittest.TestCase):
                 load_calls.append(("processor", path, kwargs))
                 return cls()
 
-            def __call__(self, **_kwargs):  # type: ignore[no-untyped-def]
+            def __call__(self, **kwargs):  # type: ignore[no-untyped-def]
+                self.call_kwargs = kwargs
                 return {"input_ids": FakeTensor([1, 2, 3]), "pixel_values": FakeTensor([])}
 
             def post_process_grounded_object_detection(self, *_args, **_kwargs):
@@ -156,17 +157,35 @@ class SemanticGroundingContractTests(unittest.TestCase):
         ):
             result = ground_semantic_candidates(
                 self.image_path,
-                "汉堡",
+                "Hamburger",
                 1,
                 adapter=adapter,
             )
         self.assertEqual(result["status"], "candidates")
         self.assertEqual(result["candidates"][0]["bbox"], [0.1, 0.1, 0.5, 0.7])
+        self.assertEqual(adapter._processor.call_kwargs["text"], "hamburger.")
         self.assertEqual([call[0] for call in load_calls], ["processor", "model"])
         for _kind, path, kwargs in load_calls:
             self.assertEqual(path, str(model_dir))
             self.assertTrue(kwargs["local_files_only"])
             self.assertFalse(kwargs["trust_remote_code"])
+
+    def test_local_english_model_refuses_untranslated_chinese_instead_of_faking_semantics(self) -> None:
+        model_dir = Path(self.temp_dir.name) / "grounding-model"
+        model_dir.mkdir()
+        (model_dir / "config.json").write_text("{}", encoding="utf-8")
+        adapter = TransformersGroundingDinoAdapter(model_dir)
+        result = ground_semantic_candidates(
+            self.image_path,
+            "两个汉堡",
+            2,
+            adapter=adapter,
+        )
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["reason"], "query_translation_required")
+        self.assertFalse(result["attempted"])
+        self.assertIsNone(adapter._model)
+        self.assertIn("不能直接理解中文", result["message"])
 
     def test_confident_candidates_are_normalized_sorted_and_limited_to_count(self) -> None:
         adapter = FakeGroundingAdapter([

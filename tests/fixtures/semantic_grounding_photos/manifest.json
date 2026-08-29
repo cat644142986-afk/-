@@ -1,0 +1,111 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "product-atelier-semantic-grounding-photo-baseline-v1",
+  "corpus_kind": "licensed-photo-baseline",
+  "review": "manual-boxes-source-controlled",
+  "description": "可再分发真实照片小样，用于暴露程序图无法代表的定位质量问题；不是完整生产验收集。",
+  "limitations": [
+    "当前仅含 3 张来源明确的真实照片和 4 个查询，样本量不足以证明生产质量",
+    "人工框由开发检查点复核，后续仍需补多商品、包装、遮挡、毛发与复杂背景"
+  ],
+  "required_coverage": [
+    "food",
+    "single-product",
+    "transparent",
+    "shadow",
+    "texture",
+    "no-match"
+  ],
+  "gates": {
+    "iou_threshold": 0.5,
+    "min_recall": 0.8,
+    "min_precision": 0.8,
+    "min_exact_count_accuracy": 0.75,
+    "min_no_match_accuracy": 1.0,
+    "min_recovery_rate": 1.0
+  },
+  "cases": [
+    {
+      "id": "photo-big-mac-hamburger",
+      "tags": ["food", "single-product", "shadow"],
+      "query": "汉堡",
+      "model_query_hint": "hamburger",
+      "target_count": 1,
+      "canvas": [960, 829],
+      "image": {
+        "path": "big-mac-hamburger.jpg",
+        "bytes": 190798,
+        "sha256": "09fcecb98db7a0c505aa83391af8320baac2b1de203c70df683d386eb3d5a1ff",
+        "source_page": "https://commons.wikimedia.org/wiki/File:Big_Mac_hamburger.jpg",
+        "source_file": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Big_Mac_hamburger.jpg/960px-Big_Mac_hamburger.jpg",
+        "author": "Evan-Amos",
+        "license": "CC0",
+        "retrieved": "2026-08-29"
+      },
+      "expected": [
+        {"label": "汉堡", "bbox": [0.01, 0.035, 0.98, 0.92]}
+      ]
+    },
+    {
+      "id": "photo-transparent-water-bottle",
+      "tags": ["single-product", "transparent", "shadow"],
+      "query": "透明水瓶",
+      "model_query_hint": "transparent water bottle",
+      "target_count": 1,
+      "canvas": [960, 1964],
+      "image": {
+        "path": "evian-label-free-bottle.jpg",
+        "bytes": 214572,
+        "sha256": "38138a8d39f58360e381fdda97aab618d3171e1cf03997137a5b643794fc9529",
+        "source_page": "https://commons.wikimedia.org/wiki/File:Evian_Label-Free_Bottle.jpg",
+        "source_file": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5b/Evian_Label-Free_Bottle.jpg/960px-Evian_Label-Free_Bottle.jpg",
+        "author": "James Tamim",
+        "license": "CC BY-SA 4.0",
+        "retrieved": "2026-08-29"
+      },
+      "expected": [
+        {"label": "透明水瓶", "bbox": [0.19, 0.05, 0.63, 0.91]}
+      ]
+    },
+    {
+      "id": "photo-coffee-powder",
+      "tags": ["food", "texture"],
+      "query": "咖啡粉",
+      "model_query_hint": "coffee powder",
+      "target_count": 1,
+      "canvas": [960, 1280],
+      "image": {
+        "path": "coffee-powder.jpg",
+        "bytes": 562013,
+        "sha256": "75429c1f6141a759e4dc1eb0cb996277bc6eb9ec33c2c6e60ee13c7a816432c4",
+        "source_page": "https://commons.wikimedia.org/wiki/File:MC_Macau_Yoho_Treasure_Island_Hotel_room_drink_product_bag_Coffee_Tree_brand_Penang_White_Coffee_Kopi_Putih_Instant_Malaysian_Coffee_powder_March_2026_N13P_02.jpg",
+        "source_file": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/MC_Macau_Yoho_Treasure_Island_Hotel_room_drink_product_bag_Coffee_Tree_brand_Penang_White_Coffee_Kopi_Putih_Instant_Malaysian_Coffee_powder_March_2026_N13P_02.jpg/960px-thumbnail.jpg",
+        "author": "MCMAZ Lunggma",
+        "license": "CC0",
+        "retrieved": "2026-08-29"
+      },
+      "expected": [
+        {"label": "咖啡粉", "bbox": [0.0, 0.08, 0.98, 0.81]}
+      ]
+    },
+    {
+      "id": "photo-no-match-burger-on-coffee",
+      "tags": ["no-match", "texture"],
+      "query": "汉堡",
+      "model_query_hint": "hamburger",
+      "target_count": 1,
+      "canvas": [960, 1280],
+      "image": {
+        "path": "coffee-powder.jpg",
+        "bytes": 562013,
+        "sha256": "75429c1f6141a759e4dc1eb0cb996277bc6eb9ec33c2c6e60ee13c7a816432c4",
+        "source_page": "https://commons.wikimedia.org/wiki/File:MC_Macau_Yoho_Treasure_Island_Hotel_room_drink_product_bag_Coffee_Tree_brand_Penang_White_Coffee_Kopi_Putih_Instant_Malaysian_Coffee_powder_March_2026_N13P_02.jpg",
+        "source_file": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/MC_Macau_Yoho_Treasure_Island_Hotel_room_drink_product_bag_Coffee_Tree_brand_Penang_White_Coffee_Kopi_Putih_Instant_Malaysian_Coffee_powder_March_2026_N13P_02.jpg/960px-thumbnail.jpg",
+        "author": "MCMAZ Lunggma",
+        "license": "CC0",
+        "retrieved": "2026-08-29"
+      },
+      "expected": []
+    }
+  ]
+}

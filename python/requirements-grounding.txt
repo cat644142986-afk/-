@@ -1,0 +1,8 @@
+# Development-only semantic-grounding baseline. This file is intentionally not
+# referenced by the formal sidecar build or normal application bootstrap.
+-r requirements.txt
+torch==2.6.0
+torchvision==0.21.0
+transformers==5.15.0
+huggingface-hub==1.27.0
+safetensors==0.8.0

@@ -119,14 +119,18 @@ class TransformersGroundingDinoAdapter:
         box_threshold: float,
         text_threshold: float,
     ) -> Sequence[Mapping[str, Any]]:
-        self._load()
-        prompt = str(query or "").strip()
+        prompt = str(query or "").strip().lower()
         if not prompt:
             return []
+        if _contains_cjk(prompt):
+            raise GroundingAdapterUnavailable("query_translation_required")
+        if not prompt.endswith("."):
+            prompt += "."
+        self._load()
         with self._infer_lock:
             inputs = self._processor(
                 images=image.convert("RGB"),
-                text=[[prompt]],
+                text=prompt,
                 return_tensors="pt",
             )
             inputs = {
@@ -143,10 +147,11 @@ class TransformersGroundingDinoAdapter:
                 target_sizes=[image.size[::-1]],
             )[0]
         candidates: list[dict[str, Any]] = []
+        labels = result.get("text_labels") or result.get("labels", [])
         for box, score, label in zip(
             result.get("boxes", []),
             result.get("scores", []),
-            result.get("labels", []),
+            labels,
         ):
             candidates.append({
                 "bbox_xyxy": _plain_list(box),
@@ -174,6 +179,15 @@ def _plain_number(value: Any) -> float:
     if hasattr(value, "item"):
         value = value.item()
     return float(value)
+
+
+def _contains_cjk(value: str) -> bool:
+    return any(
+        "\u3400" <= char <= "\u4dbf"
+        or "\u4e00" <= char <= "\u9fff"
+        or "\uf900" <= char <= "\ufaff"
+        for char in value
+    )
 
 
 @lru_cache(maxsize=2)
@@ -239,6 +253,7 @@ def _unavailable_message(reason: str) -> str:
         "model_config_missing": "本地模型目录不完整，请手动框选",
         "runtime_missing": "本地目标定位运行环境不可用，请手动框选",
         "model_load_failed": "本地目标定位模型加载失败，请手动框选",
+        "query_translation_required": "当前本地模型不能直接理解中文名称，请手动框选",
     }.get(reason, "本地目标定位暂不可用，请手动框选")
 
 

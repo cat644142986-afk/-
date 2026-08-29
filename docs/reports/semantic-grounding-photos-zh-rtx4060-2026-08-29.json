@@ -1,0 +1,118 @@
+{
+  "corpus_id": "product-atelier-semantic-grounding-photo-baseline-v1",
+  "corpus_kind": "licensed-photo-baseline",
+  "metrics": {
+    "case_count": 4,
+    "true_positive": 0,
+    "false_positive": 0,
+    "false_negative": 3,
+    "recall": 0.0,
+    "precision": 0.0,
+    "mean_matched_iou": 0.0,
+    "exact_count_accuracy": 0.25,
+    "no_match_accuracy": 0.0,
+    "recovery_rate": 0.0,
+    "mean_latency_ms": 6.81,
+    "p95_latency_ms": 7.8
+  },
+  "gates": {
+    "iou_threshold": 0.5,
+    "min_recall": 0.8,
+    "min_precision": 0.8,
+    "min_exact_count_accuracy": 0.75,
+    "min_no_match_accuracy": 1.0,
+    "min_recovery_rate": 1.0
+  },
+  "checks": {
+    "recall": false,
+    "precision": false,
+    "exact_count_accuracy": false,
+    "no_match_accuracy": false,
+    "recovery_rate": false
+  },
+  "passed": false,
+  "case_results": [
+    {
+      "id": "photo-big-mac-hamburger",
+      "status": "unavailable",
+      "expected_count": 1,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact_count": false,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 4.47
+    },
+    {
+      "id": "photo-transparent-water-bottle",
+      "status": "unavailable",
+      "expected_count": 1,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact_count": false,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 7.34
+    },
+    {
+      "id": "photo-coffee-powder",
+      "status": "unavailable",
+      "expected_count": 1,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "exact_count": false,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 7.8
+    },
+    {
+      "id": "photo-no-match-burger-on-coffee",
+      "status": "unavailable",
+      "expected_count": 0,
+      "predicted_count": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "exact_count": true,
+      "recoverable": false,
+      "mean_iou": 0.0,
+      "elapsed_ms": 7.63
+    }
+  ],
+  "limitations": [
+    "当前仅含 3 张来源明确的真实照片和 4 个查询，样本量不足以证明生产质量",
+    "人工框由开发检查点复核，后续仍需补多商品、包装、遮挡、毛发与复杂背景"
+  ],
+  "adapter_id": "transformers-grounding-dino-local",
+  "run": {
+    "query_field": "query",
+    "model_path": "D:\\ProductAtelier-Models\\grounding-dino-tiny-a2bb814",
+    "cold_first_case_ms": 4.47,
+    "hot_mean_ms": 7.59,
+    "hot_p95_ms": 7.8,
+    "runtime": {
+      "python": "3.12.10",
+      "platform": "Windows-11-10.0.26200-SP0",
+      "packages": {
+        "torch": "2.6.0+cu124",
+        "transformers": "5.15.0",
+        "huggingface-hub": "1.27.0",
+        "safetensors": "0.8.0",
+        "Pillow": "12.3.0"
+      },
+      "cuda": {
+        "available": true,
+        "device": "NVIDIA GeForce RTX 4060",
+        "total_vram_mb": 8187.5,
+        "peak_allocated_mb": 0.0,
+        "peak_reserved_mb": 0.0
+      }
+    }
+  }
+}

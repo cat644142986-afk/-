@@ -227,3 +227,11 @@ git -C D:\ProductAtelier-Desktop switch -c restore/semantic-grounding-contract c
 ```
 
 本次新增的 preview 候选字段对旧前端不是破坏性数据库变更，但旧 sidecar 不具备候选状态和晚到结果保护。回退前仍应完成或取消新版本创建的语义任务、保留账本副本，并确保 `PRODUCT_ATELIER_GROUNDING_MODEL_PATH` 不会误指向已移动或不完整的模型目录。模型权重在正式发布事务之外，不得通过覆盖正式便携目录的方式“回滚”。
+
+## 2026-08-29 真实 Grounding DINO 基线源码检查点
+
+- 性质：源码、许可照片小样、外置模型获取合同与开发机基线；不是新的正式 EXE、sidecar、NSIS、模型包或快捷方式发布。
+- 模型权重固定在 Git 外的外置目录；删除或移动权重不会影响上一个正式便携版。需要停用时先清除当前开发终端的 `PRODUCT_ATELIER_GROUNDING_MODEL_PATH`，不修改正式目录。
+- `docs/model-artifacts/grounding-dino-tiny.json` 是来源与哈希合同，`tools/bootstrap_semantic_grounding.py --verify` 只验证外置文件；不要把 receipt、Hub cache 或权重复制进仓库和发布目录。
+- 本检查点新增的中文保护会把未翻译 CJK 返回 `query_translation_required`。回退到第二源码检查点会重新允许中文落为 `[UNK]` 后抓取显著主体，属于已知假语义风险，不应作为生产降级路线。
+- 上一个已验证正式发布仍是 `checkpoint-2026-08-28-unified-status-recovery-portable`。真实模型门禁失败，因此不得运行 candidate-first 正式提升。

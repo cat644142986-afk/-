@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -44,8 +45,9 @@ def load_grounding_manifest(path: str | Path) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("schema_version") != "1.0":
         raise ValueError("semantic grounding manifest schema_version must be 1.0")
-    if manifest.get("corpus_kind") != "procedural-contract":
-        raise ValueError("the source-controlled corpus must remain an explicit contract corpus")
+    corpus_kind = manifest.get("corpus_kind")
+    if corpus_kind not in {"procedural-contract", "licensed-photo-baseline"}:
+        raise ValueError("unsupported semantic grounding corpus kind")
     cases = manifest.get("cases")
     if not isinstance(cases, list) or not cases:
         raise ValueError("semantic grounding manifest requires cases")
@@ -59,12 +61,35 @@ def load_grounding_manifest(path: str | Path) -> dict[str, Any]:
             raise ValueError(f"case {index + 1} has a missing or duplicate id")
         identifiers.add(case_id)
         query = str(case.get("query") or "").strip()
+        model_query_hint = str(case.get("model_query_hint") or "").strip()
         target_count = int(case.get("target_count") or 0)
         canvas = case.get("canvas")
-        if not query or target_count < 1 or target_count > 8:
+        if not query or not model_query_hint or target_count < 1 or target_count > 8:
             raise ValueError(f"{case_id} has an invalid query or target_count")
         if not isinstance(canvas, list) or len(canvas) != 2 or min(map(int, canvas)) < 32:
             raise ValueError(f"{case_id} has an invalid canvas")
+        if corpus_kind == "licensed-photo-baseline":
+            image = case.get("image")
+            if not isinstance(image, dict):
+                raise ValueError(f"{case_id} requires licensed image metadata")
+            required_source = {
+                "path", "bytes", "sha256", "source_page", "source_file",
+                "author", "license", "retrieved",
+            }
+            if required_source - set(image):
+                raise ValueError(f"{case_id} has incomplete licensed image metadata")
+            relative = Path(str(image["path"]))
+            if relative.is_absolute() or ".." in relative.parts or not relative.name:
+                raise ValueError(f"{case_id} has an unsafe image path")
+            image_path = (manifest_path.parent / relative).resolve()
+            if not image_path.is_file() or image_path.stat().st_size != int(image["bytes"]):
+                raise ValueError(f"{case_id} image is missing or has the wrong size")
+            digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+            if digest != str(image["sha256"]):
+                raise ValueError(f"{case_id} image SHA-256 does not match")
+            with Image.open(image_path) as opened:
+                if opened.size != tuple(int(value) for value in canvas):
+                    raise ValueError(f"{case_id} image dimensions do not match canvas")
         tags = {str(item) for item in case.get("tags") or []}
         coverage.update(tags)
         expected = case.get("expected")
@@ -76,7 +101,12 @@ def load_grounding_manifest(path: str | Path) -> dict[str, Any]:
             if not isinstance(item, dict):
                 raise ValueError(f"{case_id} expected item {item_index + 1} must be an object")
             _normalized_bbox(item.get("bbox"), field=f"{case_id}.expected[{item_index}].bbox")
-    missing = REQUIRED_COVERAGE - coverage
+    required_coverage = (
+        REQUIRED_COVERAGE
+        if corpus_kind == "procedural-contract"
+        else {str(item) for item in manifest.get("required_coverage") or []}
+    )
+    missing = required_coverage - coverage
     if missing:
         raise ValueError(f"semantic grounding coverage is missing: {sorted(missing)}")
     manifest["coverage"] = sorted(coverage)

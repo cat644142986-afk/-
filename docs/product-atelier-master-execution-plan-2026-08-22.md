@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-08-29<br>
-> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 与 Phase 6 已闭环；“统一状态与冲突恢复”已于 Windows 以提交 `9eb71a8c50e6f916954d1871c40ba39a6312ae3b` 完成正式便携版门禁。R6 / Phase 7A-B 第二源码检查点已完成固定离线合同、可替换本地 grounding 适配层、候选/低置信度/无匹配状态、候选人工确认和晚到结果不覆盖用户修改；真实电商照片语料、真实模型权重基线、点选/蒙版修正仍未完成。当前源码门禁为前端 `96/96`、Python 168 项（167 通过、1 个平台预期跳过）、Vite 与 Rust 全绿；该检查点尚未提升为新的正式便携版。AI Agent 方案继续暂缓<br>
+> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 与 Phase 6 已闭环；“统一状态与冲突恢复”已于 Windows 以提交 `9eb71a8c50e6f916954d1871c40ba39a6312ae3b` 完成正式便携版门禁。R6 / Phase 7A-B 第三源码检查点已完成固定程序合同、3 张许可明确真实照片/4 查询小样、外置模型 SHA-256 获取校验和 RTX 4060 中英文基线；实测确认受控英文存在目标定位可用，但无匹配误检与中文 `[UNK]` 均未过门禁，中文现诚实回退手动框选。点选/蒙版修正、查询映射、扩展照片集仍未完成；该检查点尚未提升为新的正式便携版。AI Agent 方案继续暂缓<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1019,6 +1019,16 @@ DIY 外观要求：
 - 本机能力探测为 RTX 4060 8GB、torch 2.6.0+cu124、transformers 5.15.0，但本机没有缓存模型权重；自动化未下载大模型。全量结果：Python 168 项（167 通过、1 个平台预期跳过）、前端 96/96、Vite build、Rust custom-protocol、编译与 whitespace 门禁通过。
 - 应用内浏览器控制入口本轮不可用，因此没有把静态/单元测试误报成新界面实测；自动候选、后台返回与窄窗口的真实 UI 证据仍需在下一次可用浏览器或正式候选验收中补齐。
 - 详细边界、命令和候选模型判断见 `docs/semantic-grounding-evaluation-2026-08-29.md`。sidecar 源码合同升级为 `2026-08-29.1`；Windows 正式目录、桌面快捷方式、EXE、sidecar 与 NSIS 仍保持上一个已验证正式版本。
+
+**2026-08-29 · R6 / Phase 7A-B 第三源码检查点**
+
+- 锁定官方 `IDEA-Research/grounding-dino-tiny` 提交 `a2bb814...` 与 Apache-2.0 许可；`docs/model-artifacts/grounding-dino-tiny.json` 固定 9 个文件的尺寸/SHA-256，只下载 689MB safetensors，排除 pickle 权重。
+- 新增显式外置下载/验证工具。目标目录不得位于仓库内，应用不会自动下载；权重、缓存和本地 receipt 不进 Git，正式 sidecar 继续排除实验运行时。
+- 新增 3 张 Wikimedia Commons 许可照片、4 查询小样，清单固定来源、作者、许可、下载 URL、字节数、SHA-256、尺寸和人工框；当前样本量只作为真实照片基线，不冒充生产验收集。
+- RTX 4060 实测：受控英文在真实照片存在目标 3/3 命中、平均匹配 IoU 0.979，热平均约 310ms、P95 339ms、峰值 reserved 2506MB；但无匹配 0/1，错误“汉堡”候选置信度仍达 0.6631，整体门禁失败。
+- 原模型中文字符变为 `[UNK]`，此前框中显著主体不代表理解中文。适配器现拒绝未翻译 CJK 并返回 `query_translation_required`，保留人工框选；下一步先做可审计查询映射合同和 no-match 校准，再扩充 20+ 真实照片及点选/蒙版修正。
+- 源码门禁：Python 173 项（172 通过、1 个平台预期跳过）、前端 96/96、Vite production build、Rust/Tauri custom-protocol check、Python compileall、Git whitespace 与外置模型逐文件复验均通过。
+- 结果见 `docs/reports/semantic-grounding-*-rtx4060-2026-08-29.json`。未调用付费 API；正式 Windows EXE、sidecar、NSIS、桌面快捷方式仍保持 `9eb71a8...`，本检查点不得误标为正式提升。
 
 ### 阶段 8：可解释知识闭环与 Design DNA（P1，预计 12–20 小时）
 

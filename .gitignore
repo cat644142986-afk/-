@@ -53,6 +53,8 @@ config.json.lock
 output/
 history/
 assets/
+/models/
+/model-cache/
 
 # Local backups and scratch artifacts
 backup/
