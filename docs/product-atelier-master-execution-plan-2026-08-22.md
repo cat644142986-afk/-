@@ -1038,7 +1038,8 @@ DIY 外观要求：
 - 评测器新增 `--resolve-query`，可沿软件相同离线映射路径直接复测中文。新报告为 `semantic-grounding-photos-en-calibrated-rtx4060-2026-08-29.json` 与 `semantic-grounding-photos-zh-mapped-calibrated-rtx4060-2026-08-29.json`；RTX 4060 热平均约 0.31 秒，首次模型加载约 14–17 秒，峰值 reserved 2506MB。
 - 实际界面已在隔离数据目录完成中文名称、数量、92% 自动候选、人工确认、确认回执与未知名称手动恢复闭环。端到端验证修复了普通 15 秒请求上限误杀首次模型加载的问题，自动定位现单独使用 60 秒冷启动预算；等待期间始终允许立即手动画框。
 - 当前源码/开发环境的“按名称和数量智能选物”已经真实可操作，但正式便携 sidecar 仍排除 `torch / transformers / tokenizers`，桌面快捷方式仍指向 `9eb71a8...` 正式版，因此用户现在打开正式软件还不会得到自动模型候选。下一步是 20+ 真实照片门禁与独立可选模型运行时/模型包，不允许为了“看起来已发布”把多 GB 实验依赖直接塞进主 sidecar。
-- 本检查点不新增日常交接文件、不调用付费 API、不读取用户图片。提交前执行全量 Python、前端、Vite、Rust custom-protocol、compileall、Git whitespace 和外置模型校验；只有这些与扩展质量/发布门禁都通过后才进入正式便携版。
+- 源码提交 `20ad05efda105e9ea068729a8c7a2a4f7e0aac27` 已推送。全量门禁为 Python 181 项（180 通过、1 个平台预期跳过）、前端 97/97、Vite production build、Rust/Tauri custom-protocol check、compileall、Git whitespace 与外置模型 9 个文件校验通过；未调用付费 API，也未读取用户图片。
+- 提交后重建 PyInstaller sidecar 候选并通过清单/健康 smoke：EXE SHA-256 `D076F6BA6C6A3D940E4FA9924BF02A3DB926660AA6C86622F4696E91D8C882BC`，contract `2026-08-29.2`，source fingerprint `BB4A5C7AB14483AA881B5651D0DD6B5B439CA84967BC77380D54071C65ECAC34`。打包 API 实测可把“汉堡”映射为 `hamburger`；由于候选 sidecar未配置模型运行时，正确返回 `unavailable` 和手动框选，而不是伪造自动候选。仓库内候选 sidecar被更新，正式便携目录、NSIS和桌面快捷方式未改动；本检查点不新增日常交接文件。
 
 ### 阶段 8：可解释知识闭环与 Design DNA（P1，预计 12–20 小时）
 

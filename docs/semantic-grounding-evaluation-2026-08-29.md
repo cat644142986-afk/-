@@ -102,9 +102,11 @@ python tools\bootstrap_semantic_grounding.py --verify --destination "D:\ProductA
 
 实际界面已在隔离数据目录完成：导入授权汉堡图 → 选择“智能选物” → 输入“汉堡”、数量 1 → 首次本地模型加载 → 显示 92% 自动候选 → 人工确认 → 主界面显示“已确认 1 个汉堡”。验证中发现并修复两项只有端到端操作才暴露的问题：15 秒普通请求上限会误杀约 14–17 秒冷启动，现为该离线操作单独保留 60 秒；系统解析出的 `hamburger` 曾串成下一次用户覆盖词，现已分离解析词与用户覆盖词，未知“月球齿轮”会保持 0 个候选并解释手动恢复。
 
+同一提交还重建了不含实验模型依赖的 PyInstaller sidecar 候选。打包 API 能从随包 JSON 读取离线词表并把“汉堡”解析为 `hamburger`；没有外置运行时时返回 `unavailable` 并保留手动框选。该结果只证明打包合同和回退可用，不代表正式便携版已经具备自动候选；正式目录与桌面入口没有提升。
+
 因此当前模型只适合“离线中文映射后的候选框 + 强制人工确认”，不适合自动确认，也尚不适合进入正式包。3 张照片不足以证明生产质量，不能用本轮 100% 小样成绩代替扩展集门禁。
 
-本检查点完整源码门禁：Python 173 项（172 通过、1 个平台预期跳过）、前端 96/96、Vite production build、Rust/Tauri custom-protocol check、Python compileall、Git whitespace 与外置模型逐文件 SHA-256 复验通过。
+本检查点完整源码门禁：Python 181 项（180 通过、1 个平台预期跳过）、前端 97/97、Vite production build、Rust/Tauri custom-protocol check、Python compileall、Git whitespace、外置模型逐文件 SHA-256 与 PyInstaller sidecar smoke 通过。
 
 ## 6. 候选模型判断
 
