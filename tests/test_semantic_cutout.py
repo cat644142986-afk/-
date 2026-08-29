@@ -52,6 +52,31 @@ class SemanticCutoutContractTests(unittest.TestCase):
         self.assertEqual(mismatch.exception.stage, "selection")
         self.assertEqual(mismatch.exception.code, "SEMANTIC_TARGET_COUNT_MISMATCH")
 
+    def test_confirmed_automatic_candidates_bind_model_query_origin_and_method(self) -> None:
+        selection = build_confirmed_selection(
+            source_asset_id="asset-1",
+            query="汉堡",
+            model_query="hamburger",
+            target_count=1,
+            regions=[{
+                "id": "candidate-1",
+                "label": "hamburger",
+                "bbox": [0.1, 0.1, 0.8, 0.8],
+                "origin": "automatic",
+                "confidence": 0.91,
+            }],
+        )
+        source = selection["sources"]["asset-1"]
+        self.assertEqual(selection["model_query"], "hamburger")
+        self.assertEqual(source["method"], "model-candidate-confirmed")
+        self.assertEqual(source["regions"][0]["origin"], "automatic")
+        self.assertEqual(normalize_cutout_selection(selection), selection)
+
+        stale = {**selection, "model_query": "burger"}
+        with self.assertRaises(SemanticCutoutError) as mismatch:
+            normalize_cutout_selection(stale)
+        self.assertEqual(mismatch.exception.code, "SEMANTIC_CONFIRMATION_STALE")
+
     def test_confirmed_regions_keep_only_selected_alpha_area(self) -> None:
         source = Image.new("RGBA", (100, 80), (220, 80, 40, 255))
         result = apply_confirmed_regions(

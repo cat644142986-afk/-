@@ -68,6 +68,8 @@ const semanticCanvasState = {
   image: null,
   assetId: '',
   query: '',
+  modelQuery: '',
+  modelQueryOverride: '',
   targetCount: 1,
   regions: [],
   groundingStatus: 'unavailable',
@@ -1347,10 +1349,11 @@ function renderCutoutControls(rawSelection = null) {
   $('#cutout-capability').hidden = state.currentMode !== 'cutout-batch';
   $('#cutout-capability-title').textContent = semantic ? '智能选物 · 确认后执行' : '快速去背景';
   $('#cutout-capability-copy').textContent = semantic
-    ? '按名称和数量建立确认清单；当前离线版不会自动猜测目标，必须先框选。'
+    ? '按名称和数量自动定位候选；你确认选区后才会执行本地抠图。'
     : '分离画面中的全部前景；当前不理解物体名称、数量或“只保留某个物体”等文字要求。';
   $('#semantic-cutout-controls').hidden = !semantic;
   if (document.activeElement !== $('#semantic-query')) $('#semantic-query').value = selection.query;
+  if (document.activeElement !== $('#semantic-model-query')) $('#semantic-model-query').value = selection.model_query_override;
   if (document.activeElement !== $('#semantic-count')) $('#semantic-count').value = String(selection.target_count);
   const readiness = semanticCutoutReadiness(selection, selectedAssetIds('cutout-batch'));
   $('#semantic-cutout-status').textContent = readiness.message;
@@ -1360,7 +1363,7 @@ function renderCutoutControls(rawSelection = null) {
     || !state.backendReady
     || !state.assetsAvailable
   );
-  $('#btn-semantic-preview').textContent = readiness.ready ? '重新框选目标' : '框选并确认目标';
+  $('#btn-semantic-preview').textContent = readiness.ready ? '重新识别或调整' : '自动识别并确认';
 }
 
 function selectCutoutStrategy(strategy) {
@@ -1376,6 +1379,7 @@ function selectCutoutStrategy(strategy) {
 function updateSemanticCutoutField() {
   const next = updateSemanticCutoutState(cutoutSelectionState(), {
     query: $('#semantic-query').value,
+    model_query_override: $('#semantic-model-query').value,
     target_count: Number($('#semantic-count').value),
   });
   setCutoutSelectionState(next);
@@ -1386,21 +1390,21 @@ function updateSemanticCutoutField() {
 function renderCutoutCapability() {
   const selection = cutoutSelectionState();
   const semantic = selection.strategy === 'semantic';
-  $('#knowledge-summary').textContent = semantic ? '本地选物 · 需要手动确认' : '本地分割 · 不读取文字描述';
+  $('#knowledge-summary').textContent = semantic ? '名称定位 · 人工确认' : '本地分割 · 不读取文字描述';
   $('#knowledge-rule-count').textContent = '0 条规则';
   $('#knowledge-rule-list').innerHTML = statusPanelHtml('empty', {
-    title: semantic ? '目标以确认框为准' : '没有文字执行规则',
-    detail: semantic ? '物体名称用于核对，实际执行只采用已确认选区。' : '快速去背景只执行本地前景分割。',
+    title: semantic ? '先识别候选，再由你确认' : '没有文字执行规则',
+    detail: semantic ? '中文名称通过离线词表转换；无法转换或模型失败时保留手动框选。' : '快速去背景只执行本地前景分割。',
     compact: true,
   });
   $('#knowledge-source-count').textContent = '0 条执行知识';
   $('#knowledge-source-list').innerHTML = statusPanelHtml('empty', { title: '不读取知识来源', detail: '此工作流只执行本地前景分割。', compact: true });
   $('#knowledge-conflicts').innerHTML = semantic
-    ? '<div class="conflict-item ok"><span>i</span><p>当前不会自动猜测目标；未确认、数量不符或源图变化都会阻止入队。</p></div>'
+    ? '<div class="conflict-item ok"><span>i</span><p>自动候选不会直接入队；未确认、数量不符或源图变化都会阻止执行。</p></div>'
     : '<div class="conflict-item ok"><span>i</span><p>快速去背景只分离全部前景；需要按名称或数量选物时请切换“智能选物”。</p></div>';
-  $('#intelligence-brief').textContent = semantic ? '当前能力：确认后按区域选物' : '当前能力：分离全部前景';
+  $('#intelligence-brief').textContent = semantic ? '当前能力：按名称和数量定位目标' : '当前能力：分离全部前景';
   $('#intelligence-context').textContent = semantic
-    ? '名称用于确认标签，框选区域进入执行链；全程本地处理。'
+    ? '名称进入离线定位模型，候选框经人工确认后进入本地分割链。'
     : '文字描述、物体数量和知识规则不会进入本次执行链。';
   renderCutoutControls(selection);
 }
@@ -2806,6 +2810,8 @@ async function openSemanticSelection() {
   semanticCanvasState.previewRevision = previewRevision;
   semanticCanvasState.assetId = asset.id;
   semanticCanvasState.query = selection.query;
+  semanticCanvasState.modelQuery = selection.model_query;
+  semanticCanvasState.modelQueryOverride = selection.model_query_override;
   semanticCanvasState.targetCount = selection.target_count;
   const restoredRegions = (
     selection.status === 'confirmed'
@@ -2815,7 +2821,7 @@ async function openSemanticSelection() {
     && selection.regions.length === selection.target_count
   );
   semanticCanvasState.regions = restoredRegions
-    ? selection.regions.map((region) => ({ ...region, origin: 'manual', bbox: [...region.bbox] }))
+    ? selection.regions.map((region) => ({ ...region, bbox: [...region.bbox] }))
     : [];
   semanticCanvasState.manualRevision = 0;
   semanticCanvasState.groundingStatus = restoredRegions ? 'manual_regions' : 'loading';
@@ -2833,6 +2839,7 @@ async function openSemanticSelection() {
     const preview = await API.previewSemanticCutout({
       asset_id: asset.id,
       query: selection.query,
+      model_query: selection.model_query_override,
       target_count: selection.target_count,
       regions: restoredRegions ? selection.regions : [],
     });
@@ -2843,6 +2850,7 @@ async function openSemanticSelection() {
     const presentation = semanticGroundingPresentation(preview.preview);
     if (!restoredRegions && semanticCanvasState.manualRevision === 0) {
       semanticCanvasState.query = preview.preview.query;
+      semanticCanvasState.modelQuery = preview.preview.model_query || '';
       semanticCanvasState.targetCount = preview.preview.target_count;
       semanticCanvasState.regions = Array.from(preview.preview.regions || [], (region) => ({
         ...region,
@@ -2903,6 +2911,7 @@ async function confirmSemanticSelection() {
     const response = await API.confirmSemanticCutout({
       asset_id: semanticCanvasState.assetId,
       query: semanticCanvasState.query,
+      model_query: semanticCanvasState.modelQueryOverride,
       target_count: semanticCanvasState.targetCount,
       regions: semanticCanvasState.regions,
     });
@@ -2911,6 +2920,8 @@ async function confirmSemanticSelection() {
     setCutoutSelectionState(createSemanticCutoutState({
       strategy: 'semantic',
       query: selection.query,
+      model_query: selection.model_query,
+      model_query_override: semanticCanvasState.modelQueryOverride,
       target_count: selection.target_count,
       source_asset_id: semanticCanvasState.assetId,
       status: sourcePlan.status,
@@ -3574,6 +3585,7 @@ function bindEvents() {
   $$('.mode-button').forEach((button) => button.addEventListener('click', () => switchMode(button.dataset.mode)));
   $$('[data-cutout-strategy]').forEach((button) => button.addEventListener('click', () => selectCutoutStrategy(button.dataset.cutoutStrategy)));
   $('#semantic-query').addEventListener('input', updateSemanticCutoutField);
+  $('#semantic-model-query').addEventListener('input', updateSemanticCutoutField);
   $('#semantic-count').addEventListener('input', updateSemanticCutoutField);
   $('#btn-semantic-preview').addEventListener('click', openSemanticSelection);
   $('#semantic-selection-backdrop').addEventListener('click', () => closeSemanticSelection());

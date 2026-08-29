@@ -171,6 +171,10 @@ try {
             "python/job_engine.py",
             "python/knowledge_engine.py",
             "python/memory_engine.py",
+            "python/semantic_cutout.py",
+            "python/semantic_grounding.py",
+            "python/semantic_query.py",
+            "python/semantic_query_lexicon.json",
             "python/storage_paths.py",
             "python-server.spec"
         )

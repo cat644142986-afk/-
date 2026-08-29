@@ -238,7 +238,9 @@ def evaluate_grounding_predictions(
         recoverable_cases += int(recoverable)
         if not expected:
             no_match_total += 1
-            no_match_correct += int(not predicted and status == "no_match")
+            no_match_correct += int(
+                not predicted and status in {"no_match", "low_confidence"}
+            )
         latency = max(0.0, float(prediction.get("elapsed_ms") or 0.0))
         latencies.append(latency)
         case_results.append({

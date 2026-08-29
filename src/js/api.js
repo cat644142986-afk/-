@@ -9,6 +9,10 @@ let API_BASE = null;
 let progressPollTimer = null;
 let batchPollTimer = null;
 const DEFAULT_TIMEOUT_MS = 15000;
+// The first local grounding request must load the vision model into memory.
+// Keep the ordinary API budget tight, but give this one offline operation a
+// cold-start allowance so a successful inference is not reported as failed.
+const SEMANTIC_GROUNDING_TIMEOUT_MS = 60000;
 
 function currentWindow() {
   if (!isTauriRuntime) return null;
@@ -238,6 +242,7 @@ export async function previewSemanticCutout(payload) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload || {}),
+    timeoutMs: SEMANTIC_GROUNDING_TIMEOUT_MS,
   });
 }
 

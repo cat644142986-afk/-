@@ -42,6 +42,7 @@ try:
         validate_selection_sources,
     )
     from semantic_grounding import ground_semantic_candidates
+    from semantic_query import resolve_semantic_query
     from storage_paths import (
         OutputRootError,
         canonicalize_output_root,
@@ -72,6 +73,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         validate_selection_sources,
     )
     from python.semantic_grounding import ground_semantic_candidates
+    from python.semantic_query import resolve_semantic_query
     from python.storage_paths import (
         OutputRootError,
         canonicalize_output_root,
@@ -155,7 +157,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-29.1"
+SIDECAR_CONTRACT_VERSION = "2026-08-29.2"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -2098,6 +2100,7 @@ async def complete_workflow_workspace(mode: str, request: WorkflowCompletionRequ
 class SemanticCutoutRequest(BaseModel):
     asset_id: str
     query: str
+    model_query: str = ""
     target_count: int = 1
     regions: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -2158,13 +2161,32 @@ async def preview_semantic_cutout(request: SemanticCutoutRequest):
         "reason": "user_regions",
         "message": "请检查框选目标后确认",
     }
+    query_mapping = resolve_semantic_query(normalized["query"], request.model_query)
     if not regions:
-        grounding = await run_in_threadpool(
-            ground_semantic_candidates,
-            path,
-            normalized["query"],
-            normalized["target_count"],
-        )
+        if query_mapping["mapped"]:
+            grounding = await run_in_threadpool(
+                ground_semantic_candidates,
+                path,
+                query_mapping["model_query"],
+                normalized["target_count"],
+            )
+            grounding = dict(grounding)
+            grounding["message"] = (
+                f"{query_mapping['message']}；"
+                f"{grounding.get('message') or '请检查候选后确认'}"
+            )
+        else:
+            grounding = {
+                "status": "query_unmapped",
+                "adapter_id": "query-mapping",
+                "available": False,
+                "attempted": False,
+                "candidates": [],
+                "confidence_threshold": 0.0,
+                "elapsed_ms": 0.0,
+                "reason": query_mapping["status"],
+                "message": query_mapping["message"],
+            }
         regions = list(grounding.get("candidates") or [])
     candidate_status = str(grounding.get("status") or "unavailable")
     needs_confirmation = bool(regions)
@@ -2173,6 +2195,8 @@ async def preview_semantic_cutout(request: SemanticCutoutRequest):
             "status": "needs_confirmation" if needs_confirmation else "needs_manual_grounding",
             "source_asset_id": str(asset["id"]),
             "query": normalized["query"],
+            "model_query": query_mapping["model_query"],
+            "query_mapping": query_mapping,
             "target_count": normalized["target_count"],
             "regions": regions,
             "source": {"width": width, "height": height},
@@ -2194,9 +2218,11 @@ async def preview_semantic_cutout(request: SemanticCutoutRequest):
 async def confirm_semantic_cutout(request: SemanticCutoutRequest):
     asset, _path = _semantic_cutout_source(request.asset_id)
     try:
+        query_mapping = resolve_semantic_query(request.query, request.model_query)
         selection = build_confirmed_selection(
             source_asset_id=str(asset["id"]),
             query=request.query,
+            model_query=query_mapping["model_query"],
             target_count=request.target_count,
             regions=request.regions,
         )
@@ -4548,14 +4574,18 @@ def _execute_cutout_job(ctx, image, stage_dir, trace):
             "strategy": selection.get("strategy", "foreground"),
             "selection_method": source_plan.get("method", "all-foreground"),
             "query": selection.get("query", ""),
+            "model_query": selection.get("model_query", ""),
             "target_count": selection.get("target_count", 0),
             "confirmation_digest": source_plan.get("digest", ""),
         },
         output={
             "output_name": output["name"],
             "selection_prompt_supported": False,
-            "text_grounding_supported": False,
+            "text_grounding_supported": source_plan.get("method") in {
+                "model-candidate-confirmed", "model-assisted-confirmed",
+            },
             "manual_grounding_confirmed": semantic,
+            "human_confirmation_required": semantic,
             "selected_region_count": len(source_plan.get("regions") or []),
         },
     )

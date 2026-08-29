@@ -1,6 +1,6 @@
 # Product Atelier 智能选物自动定位合同与评测
 
-> 状态：R6 / Phase 7A-B 第三源码检查点。固定程序合同、许可明确的真实照片小样、外置模型获取/校验和 RTX 4060 基线均已进入 Git；结果未达到正式门槛，正式便携版没有提升。
+> 状态：R6 / Phase 7A-B 第四源码检查点。离线中文查询映射、误检安全门槛、真实照片复测和实际界面闭环已通过；照片集仍只有 3 张，正式便携版没有提升。
 
 ## 1. 已落地的产品边界
 
@@ -11,6 +11,8 @@
 5. 自动定位仅允许读取明确配置的本地模型目录；使用文件系统路径和 local_files_only=True，不会后台下载模型，也不会调用生图 API。
 6. 当前正式 PyInstaller sidecar 继续排除 torch / transformers / tokenizers，因此本检查点不会增加已发布便携版体积。真实模型只在开发 Python 环境中做基线，达到门槛后再决定 ONNX、独立可选模型包或其他正式交付方式。
 7. 当前 Grounding DINO 文本编码器不能可靠理解中文；中文字符会落为未知 token。适配器现会在未翻译中文上返回 `query_translation_required` 并保留手动框选，不再把显著物体框误报成中文语义理解。
+8. 高频中文商品名先经过源码受控的离线词表解析；映射结果与用户可选英文覆盖词分开保存。未知中文不调用模型、不继承上一次英文词，直接进入可解释的手动恢复。
+9. 置信度低于 0.75 的框不再自动预填。弱候选只用于返回 `low_confidence` 状态和数量，界面保留空选区，避免为了凑数量把错误对象交给用户。
 
 ## 2. 固定离线合同
 
@@ -61,6 +63,7 @@ python tools\evaluate_semantic_grounding.py
 $env:PRODUCT_ATELIER_GROUNDING_MODEL_PATH = "D:\ProductAtelier-Models\grounding-dino-tiny-a2bb814"
 python tools\evaluate_semantic_grounding.py --run-local --query-field model_query_hint
 python tools\evaluate_semantic_grounding.py --manifest tests\fixtures\semantic_grounding_photos\manifest.json --run-local --query-field model_query_hint
+python tools\evaluate_semantic_grounding.py --manifest tests\fixtures\semantic_grounding_photos\manifest.json --run-local --query-field query --resolve-query
 ~~~
 
 评测命令不会下载权重。未配置模型时会得到 unavailable 并以门禁失败退出，这是预期的诚实结果。
@@ -90,10 +93,16 @@ python tools\bootstrap_semantic_grounding.py --verify --destination "D:\ProductA
 | 4 个真实照片查询 | 受控英文 | 100% | 75% | 75% | 0% | 14.75s | 310 / 339ms | 2506MB | 未过门禁 |
 | 8 个程序合同 | 中文原词 | 0% | 0% | 12.5% | 0% | 无模型加载 | 约 1.4ms 回退 | 0MB | 明确拒绝未翻译中文 |
 | 4 个真实照片查询 | 中文原词 | 0% | 0% | 25% | 0% | 无模型加载 | 约 7.6ms 回退 | 0MB | 明确拒绝未翻译中文 |
+| 4 个真实照片查询 | 受控英文 + 0.75 安全门槛 | 100% | 100% | 100% | 100% | 14.88s | 321 / 330ms | 2506MB | 小样门禁通过 |
+| 4 个真实照片查询 | 中文离线映射 + 0.75 安全门槛 | 100% | 100% | 100% | 100% | 13.84s | 306 / 310ms | 2506MB | 小样门禁通过 |
 
 英文路径对存在目标的 3 个真实照片查询全部命中且平均匹配 IoU 0.979，但把咖啡粉照片误判为汉堡，置信度仍达到 0.6631；简单提高 0.4 阈值无法解决。中文在封锁前同一误候选置信度 0.5176、标签为 `[UNK] [UNK]`，证明“框中显著主体”不是理解中文。详细原始报告位于 `docs/reports/semantic-grounding-*-rtx4060-2026-08-29.json`。
 
-因此当前模型只适合“英文语义映射后的候选框 + 强制人工确认”，不适合自动判定不存在、不适合自动确认，也尚不适合进入正式包。下一阶段必须同时解决中文查询映射和 no-match 校准；不能用降低门槛来掩盖。
+第四检查点把自动预填门槛提高到 0.75；咖啡粉照片上的错误“汉堡”框（0.6631）改为 `low_confidence` 且不再进入候选，因此这次的“无匹配正确”是安全弃权，不代表模型已经具备可靠的不存在分类能力。中文“汉堡 / 透明水瓶 / 咖啡粉”通过源码词表映射后，在同一小样中得到与英文路径一致的结果。报告为 `docs/reports/semantic-grounding-photos-en-calibrated-rtx4060-2026-08-29.json` 和 `docs/reports/semantic-grounding-photos-zh-mapped-calibrated-rtx4060-2026-08-29.json`。
+
+实际界面已在隔离数据目录完成：导入授权汉堡图 → 选择“智能选物” → 输入“汉堡”、数量 1 → 首次本地模型加载 → 显示 92% 自动候选 → 人工确认 → 主界面显示“已确认 1 个汉堡”。验证中发现并修复两项只有端到端操作才暴露的问题：15 秒普通请求上限会误杀约 14–17 秒冷启动，现为该离线操作单独保留 60 秒；系统解析出的 `hamburger` 曾串成下一次用户覆盖词，现已分离解析词与用户覆盖词，未知“月球齿轮”会保持 0 个候选并解释手动恢复。
+
+因此当前模型只适合“离线中文映射后的候选框 + 强制人工确认”，不适合自动确认，也尚不适合进入正式包。3 张照片不足以证明生产质量，不能用本轮 100% 小样成绩代替扩展集门禁。
 
 本检查点完整源码门禁：Python 173 项（172 通过、1 个平台预期跳过）、前端 96/96、Vite production build、Rust/Tauri custom-protocol check、Python compileall、Git whitespace 与外置模型逐文件 SHA-256 复验通过。
 
@@ -113,8 +122,8 @@ python tools\bootstrap_semantic_grounding.py --verify --destination "D:\ProductA
 
 ## 7. 下一门禁
 
-1. 建立可替换查询映射合同：中文原词必须经过可审计的英文受控提示或本地多语模型，映射失败立即回退，不允许静默送入英文 BERT。先评估小词典 + 用户可编辑提示能否覆盖高频电商名词，再决定是否增加本地翻译权重。
-2. 扩充至少 20 张真实照片，补多相似商品、包装、遮挡、毛发、复杂背景和更多 no-match；冻结双人复核人工框后再校准阈值或二级存在性判断。
+1. 已完成首版可审计查询映射合同：高频电商中文词表 + 用户英文覆盖 + 未知词安全回退。扩展词表时必须带用例，不能把联网翻译或自由生成伪装成稳定合同。
+2. 下一质量门禁仍是扩充至少 20 张真实照片，补多相似商品、包装、遮挡、毛发、复杂背景和更多 no-match；冻结人工复核框后再判断 0.75 是否稳健，必要时增加二级存在性判断。
 3. 为候选增加点选、增删目标和蒙版修正；定位稳定后再评估 SAM 类边缘修正。单图失败继续停留人工确认，不能让整批任务作废。
-4. 评估模型常驻或独立可选模型服务，把 14–16 秒首次加载从用户第一次操作移出；正式 sidecar 继续不含实验依赖。
-5. 只有中文映射、no-match、真实照片扩展集、UI 实测和完整 Windows candidate-first 门禁全部通过，才允许提升新正式便携版。
+4. 评估模型常驻或独立可选模型服务，把首次约 14–17 秒加载从用户第一次操作移出；正式 sidecar 当前继续不含实验依赖。
+5. 只有扩展照片集、可选模型运行时/模型包、正式 sidecar 实测和完整 Windows candidate-first 门禁全部通过，才允许提升新正式便携版。源码界面可用不等于正式便携版已经获得自动定位能力。

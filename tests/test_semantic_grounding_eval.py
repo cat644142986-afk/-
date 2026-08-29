@@ -86,6 +86,27 @@ class SemanticGroundingEvaluationTests(unittest.TestCase):
         self.assertFalse(report["checks"]["exact_count_accuracy"])
         self.assertFalse(report["checks"]["recovery_rate"])
 
+    def test_no_match_gate_accepts_safe_abstention_but_never_a_false_candidate(self) -> None:
+        predictions = {}
+        for case in self.manifest["cases"]:
+            expected = case["expected"]
+            predictions[case["id"]] = {
+                "status": "candidates" if expected else "low_confidence",
+                "candidates": [
+                    {"bbox": item["bbox"], "confidence": 0.9}
+                    for item in expected
+                ],
+                "elapsed_ms": 25,
+            }
+        report = evaluate_grounding_predictions(self.manifest, predictions)
+        self.assertEqual(report["metrics"]["no_match_accuracy"], 1)
+        predictions["no-match-burger"]["candidates"] = [{
+            "bbox": [0.1, 0.1, 0.4, 0.4],
+            "confidence": 0.8,
+        }]
+        report = evaluate_grounding_predictions(self.manifest, predictions)
+        self.assertEqual(report["metrics"]["no_match_accuracy"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

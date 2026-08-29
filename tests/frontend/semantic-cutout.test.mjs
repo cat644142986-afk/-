@@ -96,6 +96,7 @@ test('confirmed semantic selection compiles to a per-source immutable job plan',
   assert.deepEqual(semanticCutoutPayload(state, ['asset-1']), {
     strategy: 'semantic',
     query: '汉堡',
+    model_query: '',
     target_count: 2,
     sources: {
       'asset-1': {
@@ -107,6 +108,39 @@ test('confirmed semantic selection compiles to a per-source immutable job plan',
       },
     },
   });
+});
+
+test('resolved model query never leaks into the editable override and changing the override invalidates confirmation', () => {
+  const confirmed = createSemanticCutoutState({
+    strategy: 'semantic',
+    query: '汉堡',
+    model_query: 'hamburger',
+    model_query_override: '',
+    target_count: 1,
+    source_asset_id: 'asset-1',
+    status: 'confirmed',
+    method: 'model-candidate-confirmed',
+    digest: 'sha256:model-confirmed',
+    regions: [{
+      id: 'candidate-1',
+      label: '汉堡',
+      bbox: [0.1, 0.1, 0.8, 0.8],
+      origin: 'automatic',
+      confidence: 0.91,
+    }],
+  });
+  assert.equal(confirmed.regions[0].origin, 'automatic');
+  assert.equal(confirmed.regions[0].confidence, 0.91);
+  assert.equal(confirmed.model_query_override, '');
+  const renamed = updateSemanticCutoutState(confirmed, { query: '月球齿轮' });
+  assert.equal(renamed.model_query, '');
+  assert.equal(renamed.model_query_override, '');
+  const changed = updateSemanticCutoutState(confirmed, { model_query_override: 'burger' });
+  assert.equal(changed.status, 'draft');
+  assert.equal(changed.model_query, '');
+  assert.equal(changed.model_query_override, 'burger');
+  assert.equal(changed.digest, '');
+  assert.deepEqual(changed.regions, []);
 });
 
 test('automatic candidate states always explain confirmation or manual recovery', () => {
@@ -127,4 +161,7 @@ test('automatic candidate states always explain confirmation or manual recovery'
   const unavailable = semanticGroundingPresentation({ candidate_status: 'unavailable' });
   assert.equal(unavailable.tone, 'manual');
   assert.match(unavailable.message, /手动框选/);
+  const unmapped = semanticGroundingPresentation({ candidate_status: 'query_unmapped' });
+  assert.equal(unmapped.tone, 'manual');
+  assert.match(unmapped.message, /英文识别词|手动框选/);
 });

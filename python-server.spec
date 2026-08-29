@@ -70,6 +70,10 @@ datas += collect_data_files('pymatting')
 datas += collect_data_files('certifi')
 datas += collect_data_files('requests')
 datas += collect_data_files('urllib3')
+# Runtime-owned offline query contract. `server.py` imports semantic_query as a
+# top-level module in the sidecar, so keep the JSON at the PyInstaller internal
+# root where `Path(__file__).with_name(...)` resolves it.
+datas.append((os.path.join('python', 'semantic_query_lexicon.json'), '.'))
 # Package metadata needed by pymatting/numba/llvmlite version checks
 for pkg in ['pymatting', 'numba', 'llvmlite', 'rembg', 'onnxruntime', 'scipy', 'scikit-image',
            'PIL', 'numpy', 'fastapi', 'uvicorn', 'python-multipart', 'starlette', 'anyio',

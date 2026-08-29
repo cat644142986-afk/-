@@ -25,6 +25,7 @@ from python.semantic_grounding import (  # noqa: E402
     ground_semantic_candidates,
     grounding_adapter_from_environment,
 )
+from python.semantic_query import resolve_semantic_query  # noqa: E402
 
 
 DEFAULT_MANIFEST = (
@@ -74,6 +75,7 @@ def _run_metadata(
     predictions: dict,
     *,
     query_field: str,
+    resolve_query: bool,
     runtime: dict,
     torch_module: object | None,
 ) -> dict:
@@ -95,6 +97,7 @@ def _run_metadata(
         )
     return {
         "query_field": query_field,
+        "offline_query_resolution": resolve_query,
         "model_path": str(os.environ.get("PRODUCT_ATELIER_GROUNDING_MODEL_PATH", "")),
         "cold_first_case_ms": round(latencies[0], 2) if latencies else 0.0,
         "hot_mean_ms": round(mean(hot), 2) if hot else 0.0,
@@ -143,6 +146,11 @@ def main() -> int:
         default="query",
         help="Choose the original Chinese request or the controlled English model hint.",
     )
+    parser.add_argument(
+        "--resolve-query",
+        action="store_true",
+        help="Resolve the selected query through the same offline Chinese-to-model-query contract as the app.",
+    )
     parser.add_argument("--output", type=Path, help="Optionally write the JSON report.")
     args = parser.parse_args()
     if args.predictions and args.run_local:
@@ -167,17 +175,33 @@ def main() -> int:
                     render_semantic_fixture(case).save(image_path)
                 else:
                     image_path = _photo_path(manifest, case)
+                query = str(case[args.query_field])
+                mapping = resolve_semantic_query(query) if args.resolve_query else None
+                model_query = str(mapping["model_query"]) if mapping else query
+                if mapping and not model_query:
+                    predictions[case["id"]] = {
+                        "status": "query_unmapped",
+                        "available": False,
+                        "attempted": False,
+                        "candidates": [],
+                        "elapsed_ms": 0.0,
+                        "query_mapping": mapping,
+                    }
+                    continue
                 predictions[case["id"]] = ground_semantic_candidates(
                     image_path,
-                    case[args.query_field],
+                    model_query,
                     case["target_count"],
                     adapter=adapter,
                 )
+                if mapping:
+                    predictions[case["id"]]["query_mapping"] = mapping
         report = evaluate_grounding_predictions(manifest, predictions)
         report["adapter_id"] = getattr(adapter, "adapter_id", "unknown")
         report["run"] = _run_metadata(
             predictions,
             query_field=args.query_field,
+            resolve_query=args.resolve_query,
             runtime=runtime,
             torch_module=torch_module,
         )

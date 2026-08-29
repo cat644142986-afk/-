@@ -12,8 +12,8 @@ from PIL import Image
 
 
 GROUNDING_MODEL_PATH_ENV = "PRODUCT_ATELIER_GROUNDING_MODEL_PATH"
-DEFAULT_CONFIDENCE_THRESHOLD = 0.40
-DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.20
+DEFAULT_CONFIDENCE_THRESHOLD = 0.75
+DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.40
 DEFAULT_TEXT_THRESHOLD = 0.30
 
 
@@ -319,24 +319,30 @@ def ground_semantic_candidates(
         if region and region["confidence"] >= low_confidence_threshold:
             normalized.append(region)
     normalized.sort(key=lambda item: item["confidence"], reverse=True)
-    candidates = normalized[: max(1, int(target_count))]
+    ranked_candidates = normalized[: max(1, int(target_count))]
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
     confident = [
-        candidate for candidate in candidates
+        candidate for candidate in ranked_candidates
         if candidate["confidence"] >= confidence_threshold
     ]
     if len(confident) >= int(target_count):
         status = "candidates"
         candidates = confident[: int(target_count)]
         message = f"本地模型找到 {len(candidates)} 个候选，请逐个检查后确认"
-    elif candidates:
+    elif confident:
         status = "low_confidence"
+        candidates = confident
         message = (
-            f"本地模型只找到 {len(candidates)} 个低置信候选，"
-            "请修正选区或补充框选"
+            f"本地模型只找到 {len(candidates)} 个可靠候选，"
+            "其余低置信结果未自动预填；请补充框选"
         )
+    elif ranked_candidates:
+        status = "low_confidence"
+        candidates = []
+        message = "本地模型结果置信度不足，已停止自动预填；请手动框选目标"
     else:
         status = "no_match"
+        candidates = []
         message = "本地模型没有找到可靠候选，请手动框选目标"
     return {
         "status": status,
@@ -344,6 +350,7 @@ def ground_semantic_candidates(
         "available": True,
         "attempted": True,
         "candidates": candidates,
+        "weak_candidate_count": max(0, len(ranked_candidates) - len(confident)),
         "confidence_threshold": confidence_threshold,
         "elapsed_ms": elapsed_ms,
         "reason": "",

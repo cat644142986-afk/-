@@ -45,6 +45,17 @@ def _target_count(value: Any) -> int:
     return count
 
 
+def _model_query(value: Any) -> str:
+    model_query = " ".join(str(value or "").strip().split()).lower().rstrip(".")[:80]
+    if any("\u3400" <= char <= "\u9fff" or "\uf900" <= char <= "\ufaff" for char in model_query):
+        raise SemanticCutoutError(
+            "SEMANTIC_MODEL_QUERY_INVALID",
+            "模型识别词必须使用英文；可清空后重新自动映射",
+            stage="recognition",
+        )
+    return model_query
+
+
 def _number(value: Any, field: str) -> float:
     try:
         result = float(value)
@@ -103,11 +114,19 @@ def normalize_regions(regions: Any, query: str) -> list[dict[str, Any]]:
                 f"第 {index + 1} 个选区太小，请扩大后重试",
                 stage="selection",
             )
-        normalized.append({
+        normalized_region = {
             "id": str(region.get("id") or f"target-{index + 1}")[:80],
             "label": str(region.get("label") or query).strip()[:80] or query,
             "bbox": [round(value, 6) for value in (x, y, width, height)],
-        })
+            "origin": "automatic" if region.get("origin") == "automatic" else "manual",
+        }
+        if normalized_region["origin"] == "automatic":
+            try:
+                confidence = float(region.get("confidence", 0))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            normalized_region["confidence"] = round(max(0.0, min(1.0, confidence)), 4)
+        normalized.append(normalized_region)
     return normalized
 
 
@@ -117,6 +136,7 @@ def _selection_digest(
     target_count: int,
     method: str,
     regions: list[dict[str, Any]],
+    model_query: str = "",
 ) -> str:
     payload = {
         "source_asset_id": source_asset_id,
@@ -125,6 +145,8 @@ def _selection_digest(
         "method": method,
         "regions": regions,
     }
+    if model_query:
+        payload["model_query"] = model_query
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -135,6 +157,7 @@ def build_confirmed_selection(
     query: Any,
     target_count: Any,
     regions: Any,
+    model_query: Any = "",
 ) -> dict[str, Any]:
     asset_id = str(source_asset_id or "").strip()
     if not asset_id:
@@ -144,6 +167,7 @@ def build_confirmed_selection(
             stage="selection",
         )
     normalized_query = _query(query)
+    normalized_model_query = _model_query(model_query)
     count = _target_count(target_count)
     normalized_regions = normalize_regions(regions, normalized_query)
     if len(normalized_regions) != count:
@@ -152,7 +176,14 @@ def build_confirmed_selection(
             f"要求保留 {count} 个目标，但当前确认了 {len(normalized_regions)} 个",
             stage="selection",
         )
-    method = "manual-box"
+    automatic_count = sum(region.get("origin") == "automatic" for region in normalized_regions)
+    method = (
+        "model-candidate-confirmed"
+        if automatic_count == len(normalized_regions)
+        else "model-assisted-confirmed"
+        if automatic_count
+        else "manual-box"
+    )
     source_plan = {
         "source_asset_id": asset_id,
         "status": "confirmed",
@@ -160,11 +191,17 @@ def build_confirmed_selection(
         "regions": normalized_regions,
     }
     source_plan["digest"] = _selection_digest(
-        asset_id, normalized_query, count, method, normalized_regions
+        asset_id,
+        normalized_query,
+        count,
+        method,
+        normalized_regions,
+        normalized_model_query,
     )
     return {
         "strategy": "semantic",
         "query": normalized_query,
+        "model_query": normalized_model_query,
         "target_count": count,
         "sources": {asset_id: source_plan},
     }
@@ -189,6 +226,7 @@ def normalize_cutout_selection(value: Any) -> dict[str, Any]:
             stage="selection",
         )
     query = _query(value.get("query"))
+    model_query = _model_query(value.get("model_query"))
     count = _target_count(value.get("target_count"))
     raw_sources = value.get("sources")
     if not isinstance(raw_sources, dict):
@@ -208,7 +246,10 @@ def normalize_cutout_selection(value: Any) -> dict[str, Any]:
                 "目标确认记录与源图片不一致，请重新确认",
                 stage="selection",
             )
-        if raw_plan.get("status") != "confirmed" or raw_plan.get("method") != "manual-box":
+        method = str(raw_plan.get("method") or "")
+        if raw_plan.get("status") != "confirmed" or method not in {
+            "manual-box", "model-candidate-confirmed", "model-assisted-confirmed",
+        }:
             raise SemanticCutoutError(
                 "SEMANTIC_CONFIRMATION_REQUIRED",
                 "智能选物必须先逐张确认目标",
@@ -221,7 +262,7 @@ def normalize_cutout_selection(value: Any) -> dict[str, Any]:
                 f"要求保留 {count} 个目标，但当前确认了 {len(regions)} 个",
                 stage="selection",
             )
-        expected = _selection_digest(asset_id, query, count, "manual-box", regions)
+        expected = _selection_digest(asset_id, query, count, method, regions, model_query)
         if str(raw_plan.get("digest") or "") != expected:
             raise SemanticCutoutError(
                 "SEMANTIC_CONFIRMATION_STALE",
@@ -231,13 +272,14 @@ def normalize_cutout_selection(value: Any) -> dict[str, Any]:
         sources[asset_id] = {
             "source_asset_id": asset_id,
             "status": "confirmed",
-            "method": "manual-box",
+            "method": method,
             "digest": expected,
             "regions": regions,
         }
     return {
         "strategy": "semantic",
         "query": query,
+        "model_query": model_query,
         "target_count": count,
         "sources": sources,
     }

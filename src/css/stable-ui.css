@@ -156,6 +156,11 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .semantic-cutout-controls input::placeholder { color: rgba(255,255,255,.34); }
 .semantic-confirm-trigger { grid-column: 1 / -1; min-height: 34px; border-radius: 10px; background: var(--yellow); color: var(--dark); font-size: var(--type-caption); font-weight: 800; }
 .semantic-cutout-controls > p { grid-column: 1 / -1; margin: 0; font-size: var(--type-micro); line-height: 1.45; }
+.semantic-query-override { grid-column: 1 / -1; min-width: 0; border-top: 1px solid rgba(255,255,255,.08); padding-top: 6px; }
+.semantic-query-override summary { min-height: 34px; display: flex; align-items: center; color: rgba(255,255,255,.56); font-size: var(--type-micro); cursor: pointer; user-select: none; }
+.semantic-query-override[open] summary { color: #f6d978; }
+.semantic-query-override label { margin-top: 4px; }
+.semantic-query-override small { display: block; margin-top: 5px; color: rgba(255,255,255,.4); font-size: var(--type-micro); line-height: 1.4; }
 #semantic-query-help { color: rgba(255,255,255,.42); }
 .semantic-cutout-status { color: #f6d978; }
 .semantic-cutout-status.is-confirmed { color: #89dda3; }
@@ -948,6 +953,7 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .task-dock .creative-command { min-height: 44px; padding-block: 3px; }
   .task-dock .folder-source { min-height: 58px; padding-block: 4px; }
   .task-dock.is-semantic-cutout #semantic-query-help { display: none; }
+  .task-dock.is-semantic-cutout .semantic-query-override:not([open]) { display: none; }
   .folder-source small { display: none; }
   .task-dock { gap: 6px; padding: 9px 10px; }
   .task-dock__body { gap: 6px; }

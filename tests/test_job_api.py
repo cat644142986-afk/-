@@ -902,6 +902,11 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertTrue(payload["requires_confirmation"])
             self.assertEqual(payload["regions"], grounding["candidates"])
             ground_mock.assert_called_once()
+            self.assertEqual(ground_mock.call_args.args[1], "hamburger")
+            self.assertEqual(ground_mock.call_args.args[2], 2)
+            self.assertEqual(payload["query"], "汉堡")
+            self.assertEqual(payload["model_query"], "hamburger")
+            self.assertEqual(payload["query_mapping"]["status"], "mapped_exact")
 
             rejected = client.post(
                 "/api/jobs",
@@ -924,6 +929,65 @@ class DurableJobApiTests(unittest.TestCase):
                 rejected.json()["detail"]["code"],
                 "SEMANTIC_CONFIRMATION_REQUIRED",
             )
+
+            confirmed = client.post(
+                "/api/semantic-cutout/confirm",
+                json={
+                    "asset_id": source["id"],
+                    "query": "汉堡",
+                    "model_query": "hamburger",
+                    "target_count": 2,
+                    "regions": grounding["candidates"],
+                },
+            )
+            self.assertEqual(confirmed.status_code, 200, confirmed.text)
+            selection = confirmed.json()["selection"]
+            source_plan = selection["sources"][source["id"]]
+            self.assertEqual(selection["model_query"], "hamburger")
+            self.assertEqual(source_plan["method"], "model-candidate-confirmed")
+
+            created = self.create_job(
+                client,
+                {
+                    "mode": "cutout-batch",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {"cutout_selection": selection},
+                },
+            )
+            final = self.wait_for_job(created["job"]["id"])
+            self.assertEqual(final["status"], "completed")
+            traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
+            segment = next(item for item in traces if item["stage"] == "cutout.segment")
+            self.assertEqual(segment["parameters"]["model_query"], "hamburger")
+            self.assertTrue(segment["output"]["text_grounding_supported"])
+            self.assertTrue(segment["output"]["human_confirmation_required"])
+            self.network_request.assert_not_called()
+
+    def test_unknown_chinese_query_does_not_fake_automatic_grounding(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "unknown-object.png", (140, 90, 60))
+            with mock.patch.object(
+                server,
+                "ground_semantic_candidates",
+                side_effect=AssertionError("unmapped query must not reach the English model"),
+            ) as ground_mock:
+                preview = client.post(
+                    "/api/semantic-cutout/preview",
+                    json={
+                        "asset_id": source["id"],
+                        "query": "火星纪念摆件",
+                        "target_count": 1,
+                        "regions": [],
+                    },
+                )
+            self.assertEqual(preview.status_code, 200, preview.text)
+            payload = preview.json()["preview"]
+            self.assertEqual(payload["candidate_status"], "query_unmapped")
+            self.assertEqual(payload["query_mapping"]["status"], "unmapped")
+            self.assertEqual(payload["regions"], [])
+            self.assertFalse(payload["automatic_grounding_available"])
+            self.assertIn("英文识别词", payload["message"])
+            ground_mock.assert_not_called()
             self.network_request.assert_not_called()
 
     def test_semantic_cutout_low_confidence_keeps_manual_confirmation_recovery(self) -> None:
@@ -937,17 +1001,12 @@ class DurableJobApiTests(unittest.TestCase):
                     "adapter_id": "fixture-grounding",
                     "available": True,
                     "attempted": True,
-                    "candidates": [{
-                        "id": "candidate-1",
-                        "label": "burger",
-                        "bbox": [0.1, 0.1, 0.5, 0.7],
-                        "origin": "automatic",
-                        "confidence": 0.31,
-                    }],
-                    "confidence_threshold": 0.4,
+                    "candidates": [],
+                    "weak_candidate_count": 1,
+                    "confidence_threshold": 0.75,
                     "elapsed_ms": 20.1,
                     "reason": "",
-                    "message": "本地模型只找到 1 个低置信候选，请修正选区或补充框选",
+                    "message": "本地模型结果置信度不足，已停止自动预填；请手动框选目标",
                 },
             ):
                 preview = client.post(
@@ -960,10 +1019,10 @@ class DurableJobApiTests(unittest.TestCase):
                     },
                 )
             payload = preview.json()["preview"]
-            self.assertEqual(payload["status"], "needs_confirmation")
+            self.assertEqual(payload["status"], "needs_manual_grounding")
             self.assertEqual(payload["candidate_status"], "low_confidence")
-            self.assertEqual(len(payload["regions"]), 1)
-            self.assertIn("补充框选", payload["message"])
+            self.assertEqual(payload["regions"], [])
+            self.assertIn("停止自动预填", payload["message"])
             self.network_request.assert_not_called()
 
     def test_semantic_cutout_restored_regions_skip_optional_model_inference(self) -> None:

@@ -352,15 +352,20 @@ test('quick cutout does not pretend to understand a semantic brief or knowledge 
 test('semantic cutout requires visible name, count, region confirmation, and keeps a keyboard alternative', () => {
   assert.match(html, /data-cutout-strategy="semantic"[^>]*aria-pressed="false">智能选物/);
   assert.match(html, /<label for="semantic-query">/);
+  assert.match(html, /id="semantic-model-query"[^>]*placeholder="例如：hamburger"/);
   assert.match(html, /id="semantic-count"[^>]*min="1"[^>]*max="8"/);
   assert.match(html, /id="semantic-selection-modal"[^>]*role="dialog"[^>]*aria-modal="true"/);
   assert.match(html, /id="semantic-region-list"/);
   assert.match(html, /id="semantic-grounding-status"[^>]*role="status"/);
   assert.match(html, /id="semantic-add-full"/);
   assert.match(app, /API\.previewSemanticCutout/);
+  assert.match(app, /model_query: selection\.model_query_override/);
+  assert.match(app, /model_query_override: semanticCanvasState\.modelQueryOverride/);
   assert.match(app, /API\.confirmSemanticCutout/);
   assert.match(app, /cutout_selection: semanticCutoutPayload/);
   assert.match(api, /export async function previewSemanticCutout/);
+  assert.match(api, /SEMANTIC_GROUNDING_TIMEOUT_MS = 60000/);
+  assert.match(api, /previewSemanticCutout[\s\S]*timeoutMs: SEMANTIC_GROUNDING_TIMEOUT_MS/);
   assert.match(api, /export async function confirmSemanticCutout/);
   assert.match(css, /\.semantic-region-coordinates/);
   assert.match(app, /正在运行本地目标定位；无需等待，可直接手动框选/);

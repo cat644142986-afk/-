@@ -52,6 +52,11 @@ test('sidecar build cannot overwrite the formal portable release', () => {
   assert.match(spec, /'transformers'/);
   assert.match(spec, /'tokenizers'/);
   assert.doesNotMatch(spec, /collect_data_files\('transformers'\)/);
+  assert.match(spec, /semantic_query_lexicon\.json'\), '\.'/);
+  assert.match(script, /"python\/semantic_cutout\.py"/);
+  assert.match(script, /"python\/semantic_grounding\.py"/);
+  assert.match(script, /"python\/semantic_query\.py"/);
+  assert.match(script, /"python\/semantic_query_lexicon\.json"/);
 });
 
 test('portable smoke binds runtime identity to the candidate artifacts', () => {

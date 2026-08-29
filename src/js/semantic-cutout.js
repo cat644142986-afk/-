@@ -4,32 +4,47 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, Number(value) || 0));
 }
 
+function normalizeModelQuery(value) {
+  return String(value || '').trim().toLowerCase().replace(/\.+$/, '').slice(0, 80);
+}
+
 function normalizeRegion(region, index, query) {
   const raw = Array.isArray(region?.bbox) ? region.bbox : [];
   const x = clamp(raw[0], 0, 1);
   const y = clamp(raw[1], 0, 1);
   const width = clamp(raw[2], 0, 1 - x);
   const height = clamp(raw[3], 0, 1 - y);
-  return {
+  const normalized = {
     id: String(region?.id || `target-${index + 1}`),
     label: String(region?.label || query || `目标 ${index + 1}`).trim(),
     bbox: [x, y, width, height].map((value) => Number(value.toFixed(6))),
+    origin: region?.origin === 'automatic' ? 'automatic' : 'manual',
   };
+  if (normalized.origin === 'automatic') {
+    normalized.confidence = Number(clamp(region?.confidence, 0, 1).toFixed(4));
+  }
+  return normalized;
 }
 
 export function createSemanticCutoutState(raw = {}) {
   const strategy = STRATEGIES.has(raw?.strategy) ? raw.strategy : 'foreground';
   const query = String(raw?.query || '').trim().slice(0, 80);
+  const modelQuery = normalizeModelQuery(raw?.model_query);
+  const modelQueryOverride = normalizeModelQuery(raw?.model_query_override);
   const targetCount = Math.round(clamp(raw?.target_count ?? 1, 1, 8));
   const regions = Array.from(raw?.regions || [], (region, index) => normalizeRegion(region, index, query))
     .filter((region) => region.bbox[2] > 0 && region.bbox[3] > 0);
   return {
     strategy,
     query,
+    model_query: modelQuery,
+    model_query_override: modelQueryOverride,
     target_count: targetCount,
     source_asset_id: String(raw?.source_asset_id || ''),
     status: raw?.status === 'confirmed' ? 'confirmed' : 'draft',
-    method: raw?.method === 'manual-box' ? 'manual-box' : 'manual-box',
+    method: ['manual-box', 'model-candidate-confirmed', 'model-assisted-confirmed'].includes(raw?.method)
+      ? raw.method
+      : 'manual-box',
     digest: String(raw?.digest || ''),
     regions,
   };
@@ -40,6 +55,7 @@ export function updateSemanticCutoutState(current, patch = {}) {
   const next = createSemanticCutoutState({ ...before, ...patch });
   const invalidatesConfirmation = (
     next.query !== before.query
+    || next.model_query_override !== before.model_query_override
     || next.target_count !== before.target_count
     || (
       Object.prototype.hasOwnProperty.call(patch, 'source_asset_id')
@@ -53,6 +69,7 @@ export function updateSemanticCutoutState(current, patch = {}) {
   );
   if (invalidatesConfirmation && !carriesFreshConfirmation) {
     next.status = 'draft';
+    next.model_query = '';
     next.digest = '';
     next.source_asset_id = '';
     next.regions = [];
@@ -98,6 +115,7 @@ export function semanticCutoutPayload(rawState, selectedAssetIds = []) {
   return {
     strategy: 'semantic',
     query: state.query,
+    model_query: state.model_query,
     target_count: state.target_count,
     sources: {
       [sourceId]: {
@@ -127,6 +145,7 @@ export function semanticGroundingPresentation(rawPreview = {}) {
     candidates: '本地模型已给出候选，请逐个检查；确认前不会开始抠图',
     low_confidence: '候选置信度不足，请修正选区或补充框选',
     no_match: '没有找到可靠候选，请手动框选目标',
+    query_unmapped: '当前名称还没有离线识别词；可填写英文识别词或手动框选',
     unavailable: '当前未配置本地目标定位模型，请手动框选',
     failed: '本地自动定位失败，请手动框选；当前图片仍可继续处理',
     manual_regions: '请检查手动选区后确认',

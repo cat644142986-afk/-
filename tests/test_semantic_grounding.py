@@ -189,7 +189,7 @@ class SemanticGroundingContractTests(unittest.TestCase):
 
     def test_confident_candidates_are_normalized_sorted_and_limited_to_count(self) -> None:
         adapter = FakeGroundingAdapter([
-            {"bbox_xyxy": [110, 10, 190, 90], "confidence": 0.73, "label": "burger"},
+            {"bbox_xyxy": [110, 10, 190, 90], "confidence": 0.83, "label": "burger"},
             {"bbox_xyxy": [10, 15, 90, 95], "confidence": 0.91, "label": "burger"},
             {"bbox_xyxy": [80, 20, 130, 70], "confidence": 0.62, "label": "burger"},
         ])
@@ -203,13 +203,13 @@ class SemanticGroundingContractTests(unittest.TestCase):
         self.assertTrue(result["available"])
         self.assertTrue(result["attempted"])
         self.assertEqual(adapter.calls, 1)
-        self.assertEqual([item["confidence"] for item in result["candidates"]], [0.91, 0.73])
+        self.assertEqual([item["confidence"] for item in result["candidates"]], [0.91, 0.83])
         self.assertEqual(result["candidates"][0]["bbox"], [0.05, 0.15, 0.4, 0.8])
         self.assertTrue(all(item["origin"] == "automatic" for item in result["candidates"]))
 
     def test_partial_or_weak_candidates_stay_low_confidence(self) -> None:
         adapter = FakeGroundingAdapter([
-            {"bbox_xyxy": [20, 10, 80, 70], "confidence": 0.34, "label": "burger"},
+            {"bbox_xyxy": [20, 10, 80, 70], "confidence": 0.54, "label": "burger"},
         ])
         result = ground_semantic_candidates(
             self.image_path,
@@ -218,8 +218,9 @@ class SemanticGroundingContractTests(unittest.TestCase):
             adapter=adapter,
         )
         self.assertEqual(result["status"], "low_confidence")
-        self.assertEqual(len(result["candidates"]), 1)
-        self.assertIn("补充框选", result["message"])
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["weak_candidate_count"], 1)
+        self.assertIn("停止自动预填", result["message"])
 
     def test_no_match_and_runtime_failure_both_preserve_manual_recovery(self) -> None:
         no_match = ground_semantic_candidates(

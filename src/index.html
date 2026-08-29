@@ -114,8 +114,9 @@
                   <div class="semantic-cutout-controls" id="semantic-cutout-controls" hidden>
                     <label for="semantic-query"><span>保留什么</span><input id="semantic-query" type="text" maxlength="80" autocomplete="off" placeholder="例如：汉堡" aria-describedby="semantic-query-help" /></label>
                     <label for="semantic-count"><span>保留数量</span><input id="semantic-count" type="number" min="1" max="8" step="1" value="1" inputmode="numeric" /></label>
-                    <button class="semantic-confirm-trigger" id="btn-semantic-preview" type="button">框选并确认目标</button>
-                    <p id="semantic-query-help">离线首版由你框选目标，名称用于核对；不会调用生图 API。</p>
+                    <button class="semantic-confirm-trigger" id="btn-semantic-preview" type="button">自动识别并确认</button>
+                    <details class="semantic-query-override"><summary>识别不准？可填写英文识别词</summary><label for="semantic-model-query"><span>英文识别词（可选）</span><input id="semantic-model-query" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="例如：hamburger" aria-describedby="semantic-model-query-help" /></label><small id="semantic-model-query-help">常用中文名称会离线转换；这里的英文只覆盖本次识别，不会调用网络翻译。</small></details>
+                    <p id="semantic-query-help">先按名称和数量自动定位候选；识别不到时仍可手动框选，不消耗生图额度。</p>
                     <p class="semantic-cutout-status" id="semantic-cutout-status" role="status" aria-live="polite">等待选择一张图片</p>
                   </div>
                 </div>
