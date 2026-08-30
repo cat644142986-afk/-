@@ -18,7 +18,6 @@ hiddenimports = [
     'transformers.models.bert.configuration_bert',
     'transformers.models.bert.modeling_bert',
     'transformers.models.bert.tokenization_bert',
-    'transformers.models.bert.tokenization_bert_fast',
     'torchvision.io.image',
     'torchvision.transforms.v2.functional',
     'safetensors.torch',
@@ -55,9 +54,12 @@ a = Analysis(
     excludes=[
         'tkinter', 'matplotlib', 'notebook', 'IPython', 'pytest',
         'tensorflow', 'pandas', 'sklearn', 'sqlalchemy', 'scipy',
-        'onnxruntime', 'cv2', 'av', 'torchaudio', 'timm',
+        'onnxruntime', 'onnx', 'cv2', 'av', 'torchaudio', 'timm',
         'fastapi', 'uvicorn', 'pydantic', 'opentelemetry',
-        'torch.utils.tensorboard',
+        'torch.utils.tensorboard', 'torch.distributed', 'torch._inductor',
+        'torch._dynamo', 'torch.onnx', 'torch.export',
+        'numba', 'llvmlite', 'pydub', 'faiss', 'accelerate',
+        'aiohttp', 'httpx', 'sentencepiece', 'typer',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -76,7 +78,9 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,
+    # `--probe` is a machine-readable JSON contract consumed through stdout.
+    # The parent process still launches the worker with CREATE_NO_WINDOW.
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
