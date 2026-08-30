@@ -19,6 +19,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PINNED_MANIFEST = (
     PROJECT_ROOT / "docs" / "model-artifacts" / "grounding-dino-tiny.json"
 )
+OWLV2_PINNED_MANIFEST = (
+    PROJECT_ROOT / "docs" / "model-artifacts" / "owlv2-base-patch16-ensemble.json"
+)
 
 
 def _entry(path: str, content: bytes) -> dict:
@@ -51,6 +54,30 @@ class ModelArtifactTests(unittest.TestCase):
         self.assertNotIn("requirements-grounding.txt", (
             PROJECT_ROOT / "python" / "requirements-build.txt"
         ).read_text(encoding="utf-8"))
+
+    def test_owlv2_candidate_is_pinned_and_cannot_enter_a_release(self) -> None:
+        manifest = load_artifact_manifest(OWLV2_PINNED_MANIFEST)
+        paths = {item["path"] for item in manifest["files"]}
+        self.assertEqual(
+            manifest["source"]["revision"],
+            "cfd3195ba4ea9592eec887ded089f4c08eff231d",
+        )
+        self.assertEqual(manifest["source"]["license"], "apache-2.0")
+        self.assertEqual(manifest["distribution"], "development-baseline")
+        self.assertTrue(manifest["packaging_policy"]["development_only"])
+        self.assertFalse(manifest["packaging_policy"]["optional_external_pack"])
+        self.assertFalse(manifest["packaging_policy"]["include_in_formal_sidecar"])
+        self.assertFalse(manifest["packaging_policy"]["automatic_application_download"])
+        self.assertIn("model.safetensors", paths)
+        self.assertNotIn("pytorch_model.bin", paths)
+        self.assertEqual(
+            next(
+                item["sha256"]
+                for item in manifest["files"]
+                if item["path"] == "model.safetensors"
+            ),
+            "e1e130b9e404cf91a75ad45644c1da9d7fa5284085eecc864266a6923efb99e7",
+        )
 
     def test_destination_inside_repository_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "outside the source repository"):

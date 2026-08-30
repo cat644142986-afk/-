@@ -22,6 +22,7 @@ from python.semantic_grounding_eval import (  # noqa: E402
     render_semantic_fixture,
 )
 from python.semantic_grounding import (  # noqa: E402
+    TransformersGroundingDinoAdapter,
     ground_semantic_candidates,
     grounding_adapter_from_environment,
 )
@@ -31,6 +32,7 @@ from python.semantic_query import resolve_semantic_query  # noqa: E402
 DEFAULT_MANIFEST = (
     PROJECT_ROOT / "tests" / "fixtures" / "semantic_grounding" / "manifest.json"
 )
+OWLV2_MODEL_PATH_ENV = "PRODUCT_ATELIER_OWLV2_MODEL_PATH"
 
 
 def _percentile_95(values: list[float]) -> float:
@@ -80,6 +82,7 @@ def _run_metadata(
     torch_module: object | None,
     confidence_threshold: float,
     low_confidence_threshold: float,
+    model_path: str,
 ) -> dict:
     latencies = [
         max(0.0, float(item.get("elapsed_ms") or 0.0))
@@ -102,7 +105,7 @@ def _run_metadata(
         "offline_query_resolution": resolve_query,
         "confidence_threshold": confidence_threshold,
         "low_confidence_threshold": low_confidence_threshold,
-        "model_path": str(os.environ.get("PRODUCT_ATELIER_GROUNDING_MODEL_PATH", "")),
+        "model_path": model_path,
         "cold_first_case_ms": round(latencies[0], 2) if latencies else 0.0,
         "hot_mean_ms": round(mean(hot), 2) if hot else 0.0,
         "hot_p95_ms": round(_percentile_95(hot), 2),
@@ -139,6 +142,30 @@ def _photo_path(
     return Path(manifest["manifest_path"]).parent / case["image"]["path"]
 
 
+def _local_adapter(
+    adapter_name: str,
+    model_path: Path | None,
+    device: str | None,
+) -> tuple[object, str]:
+    if adapter_name == "grounding-dino":
+        configured = str(
+            model_path or os.environ.get("PRODUCT_ATELIER_GROUNDING_MODEL_PATH", "")
+        ).strip()
+        if configured:
+            return TransformersGroundingDinoAdapter(configured, device=device), configured
+        return grounding_adapter_from_environment(), ""
+    configured = str(
+        model_path or os.environ.get(OWLV2_MODEL_PATH_ENV, "")
+    ).strip()
+    if not configured:
+        raise ValueError(
+            "OWLv2 evaluation requires --model-path or " + OWLV2_MODEL_PATH_ENV
+        )
+    from python.semantic_grounding_owlv2 import TransformersOwlv2Adapter
+
+    return TransformersOwlv2Adapter(configured, device=device), configured
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -163,6 +190,21 @@ def main() -> int:
         "--run-local",
         action="store_true",
         help="Run the explicitly configured local-only adapter on all contract cases.",
+    )
+    parser.add_argument(
+        "--adapter",
+        choices=("grounding-dino", "owlv2"),
+        default="grounding-dino",
+        help="Local evaluation adapter; OWLv2 remains an evaluation-only candidate.",
+    )
+    parser.add_argument(
+        "--model-path",
+        type=Path,
+        help="Explicit local-only model directory for the selected adapter.",
+    )
+    parser.add_argument(
+        "--device",
+        help="Optional torch device override such as cpu or cuda.",
     )
     parser.add_argument(
         "--render-dir",
@@ -213,7 +255,14 @@ def main() -> int:
         for case in manifest["cases"]:
             render_semantic_fixture(case).save(args.render_dir / f"{case['id']}.png")
     if args.run_local:
-        adapter = grounding_adapter_from_environment()
+        try:
+            adapter, configured_model_path = _local_adapter(
+                args.adapter,
+                args.model_path,
+                args.device,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
         predictions = {}
         runtime, torch_module = _runtime_before()
         with tempfile.TemporaryDirectory(prefix="product-atelier-grounding-") as temp_dir:
@@ -259,6 +308,7 @@ def main() -> int:
             torch_module=torch_module,
             confidence_threshold=args.confidence_threshold,
             low_confidence_threshold=args.low_confidence_threshold,
+            model_path=configured_model_path,
         )
         _emit(report, args.output)
         return 0 if report["passed"] else 1
