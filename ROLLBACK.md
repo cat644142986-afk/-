@@ -273,3 +273,23 @@ NSIS 已完成隔离安装、安装态双 smoke 与静默卸载，但没有 Auth
 活动 transaction 文件不存在，桌面快捷方式目标与工作目录已指向上述正式目录，健康接口确认 contract `.5`、manifest `ok`、schema v3。该版本没有数据库迁移；新增的是后续生图任务的 Prompt/知识/参考请求指纹、阶段耗时、失败边界与明确缺失的费用字段。回退到 `.4` 不需要迁移数据库，但 `.4` 不会生成新观测字段；回退前仍应先退出正式 EXE 和它启动的 sidecar，并为当前正式目录和 `%APPDATA%\ProductAtelier` 各保留一份新副本。
 
 本轮没有重建 NSIS。此前 `408C22F...` 的未签名 NSIS 绑定 `.4`，不能用于恢复或安装 `.5`；当前 `.5` 的可恢复事实源是 Git 提交、正式便携目录、上方外部备份和 promotion evidence。
+
+## 2026-08-31 “Prompt v2 默认关闭与盲评预算门禁”正式便携检查点
+
+- 正式源码提交：`1b5947502af00ac57f273510bf4a26a72d7c577a`
+- 正式目录：`D:\ProductAtelier-Desktop\release\ProductAtelier-Portable`
+- sidecar contract：`2026-08-31.1`；generation trace contract：`generation-baseline-2026-08-31.1`；数据库 schema：v3
+- source fingerprint：`AA08DDF0762CF3AF71F8AE687DAF34AC4133C1AC8D44CCD679B8EF28BFCFF34C`
+- 正式 EXE SHA-256：`A2736D7FC053C5EAB20E04214499586C24A5E4458F60ADEFCD11DD0E8E30A5DC`
+- sidecar SHA-256：`26CF20FF286EFEE74096BF18C8FF89A9904FF2FB369B2D099C5AA7F80DA53381`
+- manifest SHA-256：`9C163ADD7C8A87657E6ADB538E3EC9F3FE455AC58B595953D1715833678D5223`
+- 正式目录 tree SHA-256：`CF07D4317D6FEEC5EE936C851ABA0F5F5BE54A45F4405BC7E3A480CFAF8BEDBA`
+- 已 finalized 事务：`b3c0c1da03bc4f4faf029ecaf844508a`
+- 上一 `.5` 正式目录完整备份：`D:\ProductAtelier-Backups\release-before-20260831-001837-1b5947502af0`
+- promotion evidence SHA-256：`BCF7D27AB8A3D64B5E776BB6FBC5929E69AC5AD4080CCC83FEDBE4D647EA9F7F`
+
+活动 transaction 文件不存在。桌面快捷方式目标和工作目录均指向正式目录；正式应用与单一 sidecar 正在运行，动态端口 `64731` 的健康接口返回 `ok`、manifest `ok`、contract `2026-08-31.1`、schema v3。
+
+本版没有数据库迁移。正常任务仍默认冻结 `prompt_v1`；`prompt_v2` 只有在显式环境门禁开启且任务参数明确选择时才会入队。回退到 `.5` 不需要转换账本，但 `.5` 不认识新 Prompt 模板快照与 v2 编译合同；回退前应先让本版创建的排队/运行任务完成或明确取消，退出正式 EXE 和对应 sidecar，并为当前正式目录及 `%APPDATA%\ProductAtelier` 另留新副本，再从目标 Git 提交重走完整 candidate-first 发布流程。
+
+本轮没有调用付费 VLM/生图、没有处理用户图片，也没有重建 NSIS。现存未签名 NSIS 仍绑定 `.4`，不能用于安装或恢复本检查点。
