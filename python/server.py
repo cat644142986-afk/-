@@ -184,7 +184,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-30.3"
+SIDECAR_CONTRACT_VERSION = "2026-08-30.4"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -1073,7 +1073,9 @@ def remove_bg_hd(img):
 
 def tight_crop_alpha(img, pad_pct=0.06):
     if img.mode != "RGBA": img = img.convert("RGBA")
-    bbox = img.getbbox()
+    # Transparent PNGs commonly retain non-zero RGB below alpha=0. Cropping the
+    # RGBA union therefore keeps the whole canvas; only alpha defines content.
+    bbox = img.getchannel("A").getbbox()
     if bbox is None: return img
     w, h = img.size
     pad_x, pad_y = int(w*pad_pct), int(h*pad_pct)

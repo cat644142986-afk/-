@@ -1092,11 +1092,11 @@ DIY 外观要求：
 - 新增固定语料 `tests/fixtures/semantic_mask_quality/manifest.json`、本地评测器和 6 项程序合同测试。3 张许可真实照片覆盖食品、透明容器、阴影、细边和包装；评测锁定图片与本地 ONNX 的字节数/SHA-256，缺模型时拒绝自动下载。
 - 同图同模型对照定位到生产 `post_process_mask=True` 会把 BiRefNet 蒙版阈值化：旧参数 3 张均只有 2 级 Alpha、0 个过渡像素，柔边门禁 0/3；关闭该后处理后 3 张均保留 256 级 Alpha，分别有 7,197、14,119、14,051 个过渡像素，门禁 3/3。
 - 生产 `remove_bg_hd()` 现保留 BiRefNet 原生柔和 Alpha，继续禁用额外 alpha matting，不新增依赖或付费调用。执行 trace 固定记录 `alpha_mode=native-soft` 与 `post_process_mask=false`，避免以后静默回退到硬二值蒙版。
-- 由于本地抠图的输出语义发生变化，主 sidecar 合同由 `2026-08-30.2` 升级为 `2026-08-30.3`；候选构建必须让健康接口、manifest 和源码身份精确一致，不能让软边与旧硬边包共享同一个合同版本。
+- 首次正式包真实 PNG 复验确认 256 级 Alpha，同时暴露出旧 `tight_crop_alpha()` 使用 RGBA 联合边界：透明像素下仍保留的非零 RGB 会让部分抠图错误保留整张透明画布。现改为只按 Alpha 通道裁边，并增加“透明 RGB 非零”回归；主 sidecar 合同最终升级为 `2026-08-30.4`。
 - 两组修正恢复均为 3/3；新参数平均 10,984.005ms、P95 11,374.920ms，旧参数平均 11,378.515ms、P95 11,809.976ms，未观察到性能回退。当前 ONNX Runtime 只有 Azure/CPU provider，约 11 秒/张不能误报为 RTX GPU 推理。
 - 本烟测没有逐像素真值，不能据此宣称边缘准确率、透明材质保真或商业成品质量；确认区域外像素为 0 只证明区域应用合同。详细结论见 `docs/semantic-mask-quality-evaluation-2026-08-30.md` 及 `docs/reports/semantic-mask-quality-postprocess-*.json`。
-- 全量源码门禁为 Python 214/214（另 1 个平台预期跳过）、前端 101/101、Vite production build、Rust/Tauri locked custom-protocol check、compileall 与 Git whitespace 全绿；未读取用户图片、未调用付费 API。
-- 本检查点仍不提升正式便携目录、NSIS 或桌面快捷方式。下一步先提交并推送形成干净 Git 身份，再执行 PyInstaller sidecar、候选 EXE、真实 PNG Alpha、事务提升、正式目录双 smoke、快捷方式和 NSIS 的 Windows candidate-first 门禁。
+- 裁边回归加入后的最终源码门禁为 Python 215/215（另 1 个平台预期跳过）、前端 101/101、Vite production build、Rust/Tauri locked custom-protocol check、compileall 与 Git whitespace 全绿；`.4` 候选发布链仍会在提升前再次执行同一完整门禁。未读取用户图片、未调用付费 API。
+- `.3` 中间候选已通过事务提升并用于正式 sidecar 的真实 PNG 复验，上一正式版已有外部完整备份；它不作为本检查点终态。下一步先提交并推送裁边修复形成 `.4` 干净 Git 身份，再重新执行 PyInstaller sidecar、候选 EXE、事务提升、正式目录双 smoke、快捷方式和 NSIS 的 Windows candidate-first 终门禁。
 
 ### 阶段 8：可解释知识闭环与 Design DNA（P1，预计 12–20 小时）
 

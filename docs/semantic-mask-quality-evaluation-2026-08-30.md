@@ -14,7 +14,7 @@
 - `alpha_matting=False`，不新增 pymatting/numba 体积；
 - 语义确认区域约束、保留/删除笔画和空蒙版拒绝逻辑不变；
 - trace 新增 `alpha_mode=native-soft` 与 `post_process_mask=false`，结果可审计。
-- 主 sidecar 合同升级到 `2026-08-30.3`，使候选 manifest 和健康接口能够区分旧硬边行为与新柔边行为。
+- 正式包真实 PNG 复验又发现透明像素下的非零 RGB 会让旧 `tight_crop_alpha()` 保留整张画布；裁边已改为只读取 Alpha 通道。主 sidecar 合同最终升级到 `2026-08-30.4`，使候选 manifest 和健康接口能够区分旧硬边/旧裁边行为与新行为。
 
 ## 2. 固定语料和声明边界
 

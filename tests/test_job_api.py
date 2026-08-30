@@ -869,6 +869,17 @@ class DurableJobApiTests(unittest.TestCase):
         self.assertIs(kwargs["alpha_matting"], False)
         self.assertIs(kwargs["post_process_mask"], False)
 
+    def test_tight_crop_uses_alpha_when_transparent_pixels_retain_rgb(self) -> None:
+        alpha = Image.new("L", (100, 80), 0)
+        alpha.paste(255, (30, 20, 70, 60))
+        image = Image.new("RGBA", alpha.size, (210, 80, 35, 0))
+        image.putalpha(alpha)
+
+        cropped = server.tight_crop_alpha(image, pad_pct=0)
+
+        self.assertEqual(cropped.size, (40, 40))
+        self.assertEqual(cropped.getchannel("A").getbbox(), (0, 0, 40, 40))
+
     def test_semantic_mask_preview_and_corrections_are_local_and_durable(self) -> None:
         with self.live_client() as client:
             source = self.import_asset(client, "mask-correction.png", (210, 80, 35))
