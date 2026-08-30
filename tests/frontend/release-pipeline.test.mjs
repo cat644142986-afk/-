@@ -124,7 +124,10 @@ test('optional grounding runtime is independently locked and never bundled into 
   assert.match(locker, /supported_model_artifact_ids/);
   assert.match(locker, /source_fingerprint/);
   assert.match(locker, /runtime pack cannot contain links/);
-  assert.match(runtimeSpec, /collect_all\(package\)/);
+  assert.match(runtimeSpec, /collect_submodules\(package\)/);
+  assert.doesNotMatch(runtimeSpec, /collect_all\(/);
+  assert.match(runtimeSpec, /'transformers\.models\.grounding_dino'/);
+  assert.match(runtimeSpec, /'torch\.utils\.tensorboard'/);
   assert.match(sidecarSpec, /'grounding_runtime_worker'/);
   assert.match(sidecarSpec, /model-artifacts/);
 });

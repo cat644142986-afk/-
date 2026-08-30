@@ -1,7 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-import os
-
-from PyInstaller.utils.hooks import collect_all, copy_metadata
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
 
 block_cipher = None
@@ -15,13 +13,29 @@ hiddenimports = [
     'transformers.models.grounding_dino',
     'transformers.models.grounding_dino.modeling_grounding_dino',
     'transformers.models.grounding_dino.processing_grounding_dino',
+    'transformers.models.swin.configuration_swin',
+    'transformers.models.swin.modeling_swin',
+    'transformers.models.bert.configuration_bert',
+    'transformers.models.bert.modeling_bert',
+    'transformers.models.bert.tokenization_bert',
+    'transformers.models.bert.tokenization_bert_fast',
+    'torchvision.io.image',
+    'torchvision.transforms.v2.functional',
+    'safetensors.torch',
 ]
 
-for package in ['torch', 'transformers', 'tokenizers', 'safetensors', 'huggingface_hub']:
-    package_datas, package_binaries, package_hidden = collect_all(package)
-    datas += package_datas
-    binaries += package_binaries
-    hiddenimports += package_hidden
+# Transformers exposes model implementations through lazy import maps. Keep
+# those dynamic imports explicit and bounded to this one detector, its Swin
+# image backbone, and its BERT text backbone. A broad package sweep would
+# silently drag unrelated audio, web-server, ONNX and training stacks into the
+# optional runtime.
+for package in [
+    'transformers.models.grounding_dino',
+    'transformers.models.swin',
+    'transformers.models.bert',
+    'tokenizers',
+]:
+    hiddenimports += collect_submodules(package)
 
 for package in ['torch', 'transformers', 'tokenizers', 'safetensors', 'huggingface-hub', 'Pillow']:
     try:
@@ -40,7 +54,10 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         'tkinter', 'matplotlib', 'notebook', 'IPython', 'pytest',
-        'tensorflow', 'pandas', 'sklearn', 'sqlalchemy',
+        'tensorflow', 'pandas', 'sklearn', 'sqlalchemy', 'scipy',
+        'onnxruntime', 'cv2', 'av', 'torchaudio', 'timm',
+        'fastapi', 'uvicorn', 'pydantic', 'opentelemetry',
+        'torch.utils.tensorboard',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -77,4 +94,3 @@ coll = COLLECT(
     upx_exclude=[],
     name='grounding-runtime',
 )
-
