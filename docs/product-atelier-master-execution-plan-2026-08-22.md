@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-08-30<br>
-> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 与 Phase 6 已闭环；“统一状态与冲突恢复”已于 Windows 以提交 `9eb71a8c50e6f916954d1871c40ba39a6312ae3b` 完成正式便携版门禁。R6 / Phase 7A-B 已完成中文离线映射、30 张 Open Images 扩展门禁、两级人工建议、外置模型合同、独立 Windows GPU 运行包和轻量主 sidecar 的真实联调，并完成 Grounding DINO、OWLv2、Florence-2 与双模型共识对照。当前安全共识策略最高可信召回 69.39%，仍低于 75% 检查点目标，因此三种候选均不进入正式包；第九源码检查点已补齐本地蒙版预览、保留/删除画笔、键盘坐标修正、确认摘要绑定和最终导出应用。下一游标为固定样本边缘质量/恢复回归和正式 Windows 候选门禁；正式便携目录、NSIS 与桌面快捷方式尚未提升。AI Agent 方案继续暂缓<br>
+> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 与 Phase 6 已闭环；“统一状态与冲突恢复”已于 Windows 以提交 `9eb71a8c50e6f916954d1871c40ba39a6312ae3b` 完成正式便携版门禁。R6 / Phase 7A-B 已完成中文离线映射、30 张 Open Images 扩展门禁、两级人工建议、外置模型合同、独立 Windows GPU 运行包和轻量主 sidecar 的真实联调，并完成 Grounding DINO、OWLv2、Florence-2 与双模型共识对照。当前安全共识策略最高可信召回 69.39%，仍低于 75% 检查点目标，因此三种定位候选均不进入正式包；第九检查点已补齐本地蒙版修正闭环，第十检查点进一步用固定真实照片定位并修复 rembg 二值后处理造成的硬边锯齿，原生柔和 Alpha 3/3 通过且失败恢复 3/3 通过。下一游标为从干净 Git 身份执行 Windows candidate-first 正式门禁；正式便携目录、NSIS 与桌面快捷方式尚未提升。AI Agent 方案继续暂缓<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -24,7 +24,7 @@
 | Phase 4 正式 UI 骨架 | 首发 P0 壳层门禁完成并进入正式便携版，后续职责拆分仍按总路线推进 | sidecar 启动/45 秒健康等待已移出 `setup()` 同步路径；确定性首帧壳和 DWM 原生圆角已通过 100/125/150/175/200% DPI、最大化/恢复、最小化/恢复和 150%↔100% 跨屏实测；系统重启后 10 次启动、五档 60fps 编码逐帧样本均无黑帧；正式目录 smoke 与可见启动通过 |
 | Phase 5 素材管理与 Task Dock | 素材与批量任务大数据检查点均已进入正式版 | 素材搜索、多维排序、40 张分段渲染、主画布 60 张上限、任务选入、批量移出/恢复、持久手动顺序、保护期倒计时、引用解释与二次确认永久清理均已通过；任务中心 12 条分段、活跃任务保底可见、20 项展开、逐项失败原因与只重试失败项也已通过；比例/2K/4K 已贯通 UI、快照、供应商适配、trace 与实际像素 |
 | Phase 6 Result Review 与情境对比 | **已完成并进入正式便携版** | 原子“开始下一项”、显式结果游标、结果级 review/feedback、持久学习回执、V1→V2 不可变调整、结构化原因标签、原图/版本 A/B、同步缩放/平移、对比位置与首次引导持久恢复均已通过 |
-| Phase 7 智能选物与模型质量 | **7A-B 第九用户修正闭环检查点完成，待正式质量门禁** | 名称/数量、逐图确认、中文离线映射、30 张照片门禁、两级建议、外置模型和独立 Windows GPU 运行包均已联调；DINO、OWLv2、Florence-2 和双模型共识均未同时通过难负例与召回门禁，安全共识最高召回 69.39%。现已补齐可持久化的目标增删、本地蒙版预览、保留/删除画笔及键盘坐标修正；仍需固定样本边缘质量/恢复回归，不提升正式便携版 |
+| Phase 7 智能选物与模型质量 | **7A-B 第十柔边与恢复门禁完成，待 Windows 正式候选** | 名称/数量、逐图确认、中文离线映射、30 张照片门禁、两级建议、外置模型和独立 Windows GPU 运行包均已联调；DINO、OWLv2、Florence-2 和双模型共识均未同时通过难负例与召回门禁，安全共识最高召回 69.39%。可持久化目标增删、蒙版预览、保留/删除修正与键盘坐标均已闭环；固定真实照片证明旧二值后处理 0/3、新原生柔和 Alpha 3/3，下一步进入 Windows candidate-first 门禁，不提前提升正式便携版 |
 | Phase 8 可解释成长系统 | Growth 核心投影、双向追溯和统一状态已进入正式便携版 | 全局/当前任务投影、0 待审核中性态、五类状态测试、“结果 → 建议 → 来源结果”的精确游标恢复，以及七类统一状态与 revision 冲突可见恢复均通过浏览器、打包数据和正式便携门禁 |
 | Phase 9 主题、无障碍与性能 | 未开始 | 等 Phase 6–8 状态契约稳定后实施 |
 | Phase 10 正式发布与灾备 | 可恢复发布链和当前正式检查点已完成，后续检查点继续复用 | 正式 EXE、sidecar、manifest、外部完整备份、事务证据、桌面快捷方式、DWM/DPI 与 NSIS 隔离安装均已验证；NSIS 尚未代码签名，不作为对外公开分发包 |
@@ -1087,6 +1087,17 @@ DIY 外观要求：
 - 全量门禁为 Python 208/208（另 1 个平台预期跳过）、前端 101/101、Vite production build 和 Rust/Tauri locked custom-protocol check 全绿；Rust 必须在前端产物完成后顺序检查，不能与会重建 `dist` 的 Vite build 并行读取同一嵌入资源目录。
 - 本检查点没有启用付费 API、没有把实验定位模型进入正式包，也没有提升正式便携目录、NSIS 或桌面快捷方式。它完成的是人工可恢复闭环，不把画笔修正冒充新的自动点提示分割模型；下一游标是固定样本边缘质量/失败恢复回归和 Windows candidate-first 正式门禁。
 
+**2026-08-30 · R6 / Phase 7A-B 第十柔边与失败恢复门禁检查点**
+
+- 新增固定语料 `tests/fixtures/semantic_mask_quality/manifest.json`、本地评测器和 6 项程序合同测试。3 张许可真实照片覆盖食品、透明容器、阴影、细边和包装；评测锁定图片与本地 ONNX 的字节数/SHA-256，缺模型时拒绝自动下载。
+- 同图同模型对照定位到生产 `post_process_mask=True` 会把 BiRefNet 蒙版阈值化：旧参数 3 张均只有 2 级 Alpha、0 个过渡像素，柔边门禁 0/3；关闭该后处理后 3 张均保留 256 级 Alpha，分别有 7,197、14,119、14,051 个过渡像素，门禁 3/3。
+- 生产 `remove_bg_hd()` 现保留 BiRefNet 原生柔和 Alpha，继续禁用额外 alpha matting，不新增依赖或付费调用。执行 trace 固定记录 `alpha_mode=native-soft` 与 `post_process_mask=false`，避免以后静默回退到硬二值蒙版。
+- 由于本地抠图的输出语义发生变化，主 sidecar 合同由 `2026-08-30.2` 升级为 `2026-08-30.3`；候选构建必须让健康接口、manifest 和源码身份精确一致，不能让软边与旧硬边包共享同一个合同版本。
+- 两组修正恢复均为 3/3；新参数平均 10,984.005ms、P95 11,374.920ms，旧参数平均 11,378.515ms、P95 11,809.976ms，未观察到性能回退。当前 ONNX Runtime 只有 Azure/CPU provider，约 11 秒/张不能误报为 RTX GPU 推理。
+- 本烟测没有逐像素真值，不能据此宣称边缘准确率、透明材质保真或商业成品质量；确认区域外像素为 0 只证明区域应用合同。详细结论见 `docs/semantic-mask-quality-evaluation-2026-08-30.md` 及 `docs/reports/semantic-mask-quality-postprocess-*.json`。
+- 全量源码门禁为 Python 214/214（另 1 个平台预期跳过）、前端 101/101、Vite production build、Rust/Tauri locked custom-protocol check、compileall 与 Git whitespace 全绿；未读取用户图片、未调用付费 API。
+- 本检查点仍不提升正式便携目录、NSIS 或桌面快捷方式。下一步先提交并推送形成干净 Git 身份，再执行 PyInstaller sidecar、候选 EXE、真实 PNG Alpha、事务提升、正式目录双 smoke、快捷方式和 NSIS 的 Windows candidate-first 门禁。
+
 ### 阶段 8：可解释知识闭环与 Design DNA（P1，预计 12–20 小时）
 
 **目标**
@@ -1285,7 +1296,7 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 从 Phase 4 剩余门禁开始，不重复 Phase 0–3，也不退回历史 `vXX-fixes.css` 补丁路线。
-4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review 以及统一状态与冲突恢复均已进入正式便携版；R6 / Phase 7A-B 的名称/数量合同、逐图确认、中文查询映射、30 张 Open Images 扩展门禁、两级人工建议、独立可选 Windows runtime candidate、轻量打包 sidecar、三模型质量对照和可持久化蒙版修正已经完成但尚未提升正式包。下一步直接做固定样本边缘质量/失败恢复回归和 Windows candidate-first 门禁；不要重复单阈值/双模型扫描、继续堆叠相似检测器或把模型依赖塞入主 sidecar。
+4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review 以及统一状态与冲突恢复均已进入正式便携版；R6 / Phase 7A-B 的名称/数量合同、逐图确认、中文查询映射、30 张 Open Images 扩展门禁、两级人工建议、独立可选 Windows runtime candidate、轻量打包 sidecar、三模型质量对照、可持久化蒙版修正和原生柔和 Alpha 门禁已经完成但尚未提升正式包。下一步从干净 Git 身份直接执行 Windows candidate-first 正式门禁；不要重复单阈值/双模型扫描、继续堆叠相似检测器或把模型依赖塞入主 sidecar。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 

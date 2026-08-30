@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "product-atelier-semantic-mask-photo-smoke-v1",
+  "claim_scope": "This smoke set verifies non-empty local segmentation, alpha softness, confirmed-region containment, bounded latency, and include/exclude correction recovery. It has no pixel-level ground-truth masks and must not be reported as edge accuracy or production quality.",
+  "description": "三张已入库许可真实照片的本地蒙版与失败恢复小样；不含逐像素真值。",
+  "correction_radius": 0.012,
+  "gates": {
+    "min_nonzero_pixels": 500,
+    "min_region_coverage": 0.01,
+    "max_region_coverage": 0.95,
+    "min_soft_pixels": 100,
+    "min_transition_pixels": 100,
+    "min_alpha_level_count": 8,
+    "min_mean_foreground_alpha": 0.95,
+    "max_outside_region_nonzero_pixels": 0,
+    "max_elapsed_ms": 60000
+  },
+  "cases": [
+    {
+      "id": "mask-photo-big-mac-hamburger",
+      "tags": ["food", "shadow", "soft-edge"],
+      "canvas": [960, 829],
+      "image": {
+        "path": "../semantic_grounding_photos/big-mac-hamburger.jpg",
+        "bytes": 190798,
+        "sha256": "09fcecb98db7a0c505aa83391af8320baac2b1de203c70df683d386eb3d5a1ff"
+      },
+      "regions": [
+        {"id": "target-1", "bbox": [0.01, 0.035, 0.98, 0.92]}
+      ]
+    },
+    {
+      "id": "mask-photo-transparent-water-bottle",
+      "tags": ["transparent", "shadow", "thin-edge"],
+      "canvas": [960, 1964],
+      "image": {
+        "path": "../semantic_grounding_photos/evian-label-free-bottle.jpg",
+        "bytes": 214572,
+        "sha256": "38138a8d39f58360e381fdda97aab618d3171e1cf03997137a5b643794fc9529"
+      },
+      "regions": [
+        {"id": "target-1", "bbox": [0.19, 0.05, 0.63, 0.91]}
+      ]
+    },
+    {
+      "id": "mask-photo-coffee-package",
+      "tags": ["packaging", "texture", "edge"],
+      "canvas": [960, 1280],
+      "image": {
+        "path": "../semantic_grounding_photos/coffee-powder.jpg",
+        "bytes": 562013,
+        "sha256": "75429c1f6141a759e4dc1eb0cb996277bc6eb9ec33c2c6e60ee13c7a816432c4"
+      },
+      "regions": [
+        {"id": "target-1", "bbox": [0.0, 0.08, 0.98, 0.81]}
+      ]
+    }
+  ]
+}

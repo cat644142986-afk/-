@@ -184,7 +184,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-30.2"
+SIDECAR_CONTRACT_VERSION = "2026-08-30.3"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -1065,10 +1065,11 @@ def remove_bg_hd(img):
     if isinstance(img, (str, Path)): img = Image.open(img)
     if img.mode != "RGBA": img = img.convert("RGBA")
     # alpha_matting disabled to avoid pymatting/numba dependency (~120MB)
-    # BiRefNet produces high-quality alpha masks natively for product photography
+    # BiRefNet already produces a soft alpha mask. rembg's post-processing
+    # thresholds that mask to binary, which creates visibly jagged product edges.
     with _BG_INFERENCE_LOCK:
         return remove(img, session=session, alpha_matting=False,
-                      post_process_mask=True)
+                      post_process_mask=False)
 
 def tight_crop_alpha(img, pad_pct=0.06):
     if img.mode != "RGBA": img = img.convert("RGBA")
@@ -4803,6 +4804,8 @@ def _execute_cutout_job(ctx, image, stage_dir, trace):
         ignored_fields=ignored_fields,
         parameters={
             "model": "local-rembg/birefnet-general",
+            "alpha_mode": "native-soft",
+            "post_process_mask": False,
             "operation": (
                 "confirmed-region-segmentation" if semantic else "foreground-segmentation"
             ),

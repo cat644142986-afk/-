@@ -1,0 +1,312 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "product-atelier-semantic-mask-photo-smoke-v1",
+  "claim_scope": "This smoke set verifies non-empty local segmentation, alpha softness, confirmed-region containment, bounded latency, and include/exclude correction recovery. It has no pixel-level ground-truth masks and must not be reported as edge accuracy or production quality.",
+  "generated_at": "2026-08-30T09:08:19Z",
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.10",
+    "onnxruntime_providers": [
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ]
+  },
+  "model": {
+    "id": "rembg/birefnet-general",
+    "file": "birefnet-general.onnx",
+    "bytes": 972666916,
+    "sha256": "58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c",
+    "load_ms": 7624.143,
+    "post_process_mask": true,
+    "automatic_download_allowed": false
+  },
+  "summary": {
+    "case_count": 3,
+    "passed_case_count": 0,
+    "failed_case_count": 3,
+    "mean_elapsed_ms": 11378.515,
+    "p95_elapsed_ms": 11809.976,
+    "passed": false
+  },
+  "cases": [
+    {
+      "id": "mask-photo-big-mac-hamburger",
+      "tags": [
+        "food",
+        "shadow",
+        "soft-edge"
+      ],
+      "image": {
+        "path": "tests/fixtures/semantic_grounding_photos/big-mac-hamburger.jpg",
+        "bytes": 190798,
+        "sha256": "09fcecb98db7a0c505aa83391af8320baac2b1de203c70df683d386eb3d5a1ff"
+      },
+      "elapsed_ms": 11303.753,
+      "metrics": {
+        "width": 960,
+        "height": 829,
+        "total_pixels": 795840,
+        "region_pixels": 718746,
+        "nonzero_pixels": 597159,
+        "opaque_pixels": 597159,
+        "soft_pixels": 0,
+        "low_alpha_pixels": 0,
+        "transition_pixels": 0,
+        "near_opaque_pixels": 0,
+        "alpha_level_count": 2,
+        "outside_region_nonzero_pixels": 0,
+        "foreground_fraction": 0.75035057,
+        "region_coverage": 0.83083454,
+        "soft_edge_fraction": 0.0,
+        "opaque_fraction": 1.0,
+        "mean_foreground_alpha": 1.0,
+        "alpha_bbox": [
+          0.013542,
+          0.038601,
+          0.969792,
+          0.916767
+        ],
+        "raw_alpha_bbox": [
+          0.013542,
+          0.038601,
+          0.969792,
+          0.922799
+        ],
+        "alpha_sum": 152275545.0
+      },
+      "gates": {
+        "min_nonzero_pixels": 500,
+        "min_region_coverage": 0.01,
+        "max_region_coverage": 0.95,
+        "min_soft_pixels": 100,
+        "min_transition_pixels": 100,
+        "min_alpha_level_count": 8,
+        "min_mean_foreground_alpha": 0.95,
+        "max_outside_region_nonzero_pixels": 0,
+        "max_elapsed_ms": 60000
+      },
+      "gate_result": {
+        "passed": false,
+        "checks": {
+          "nonempty": true,
+          "region_coverage_min": true,
+          "region_coverage_max": true,
+          "soft_pixels": false,
+          "transition_pixels": false,
+          "alpha_levels": false,
+          "mean_foreground_alpha": true,
+          "outside_region": true,
+          "elapsed": true
+        },
+        "failed_checks": [
+          "soft_pixels",
+          "transition_pixels",
+          "alpha_levels"
+        ]
+      },
+      "correction_recovery": {
+        "passed": true,
+        "checks": {
+          "exclude_reduces_alpha": true,
+          "include_restores_alpha": true,
+          "restored_nonempty": true
+        },
+        "point": [
+          0.39399,
+          0.040619
+        ],
+        "radius": 0.012,
+        "baseline_alpha_sum": 152275545.0,
+        "excluded_alpha_sum": 152226018.0,
+        "restored_alpha_sum": 152287840.0
+      },
+      "passed": false
+    },
+    {
+      "id": "mask-photo-transparent-water-bottle",
+      "tags": [
+        "transparent",
+        "shadow",
+        "thin-edge"
+      ],
+      "image": {
+        "path": "tests/fixtures/semantic_grounding_photos/evian-label-free-bottle.jpg",
+        "bytes": 214572,
+        "sha256": "38138a8d39f58360e381fdda97aab618d3171e1cf03997137a5b643794fc9529"
+      },
+      "elapsed_ms": 11809.976,
+      "metrics": {
+        "width": 960,
+        "height": 1964,
+        "total_pixels": 1885440,
+        "region_pixels": 1083528,
+        "nonzero_pixels": 861161,
+        "opaque_pixels": 861161,
+        "soft_pixels": 0,
+        "low_alpha_pixels": 0,
+        "transition_pixels": 0,
+        "near_opaque_pixels": 0,
+        "alpha_level_count": 2,
+        "outside_region_nonzero_pixels": 0,
+        "foreground_fraction": 0.45674272,
+        "region_coverage": 0.79477503,
+        "soft_edge_fraction": 0.0,
+        "opaque_fraction": 1.0,
+        "mean_foreground_alpha": 1.0,
+        "alpha_bbox": [
+          0.195833,
+          0.057026,
+          0.623958,
+          0.899185
+        ],
+        "raw_alpha_bbox": [
+          0.195833,
+          0.057026,
+          0.623958,
+          0.899185
+        ],
+        "alpha_sum": 219596055.0
+      },
+      "gates": {
+        "min_nonzero_pixels": 500,
+        "min_region_coverage": 0.01,
+        "max_region_coverage": 0.95,
+        "min_soft_pixels": 100,
+        "min_transition_pixels": 100,
+        "min_alpha_level_count": 8,
+        "min_mean_foreground_alpha": 0.95,
+        "max_outside_region_nonzero_pixels": 0,
+        "max_elapsed_ms": 60000
+      },
+      "gate_result": {
+        "passed": false,
+        "checks": {
+          "nonempty": true,
+          "region_coverage_min": true,
+          "region_coverage_max": true,
+          "soft_pixels": false,
+          "transition_pixels": false,
+          "alpha_levels": false,
+          "mean_foreground_alpha": true,
+          "outside_region": true,
+          "elapsed": true
+        },
+        "failed_checks": [
+          "soft_pixels",
+          "transition_pixels",
+          "alpha_levels"
+        ]
+      },
+      "correction_recovery": {
+        "passed": true,
+        "checks": {
+          "exclude_reduces_alpha": true,
+          "include_restores_alpha": true,
+          "restored_nonempty": true
+        },
+        "point": [
+          0.462329,
+          0.058431
+        ],
+        "radius": 0.012,
+        "baseline_alpha_sum": 219596055.0,
+        "excluded_alpha_sum": 219526972.0,
+        "restored_alpha_sum": 219635567.0
+      },
+      "passed": false
+    },
+    {
+      "id": "mask-photo-coffee-package",
+      "tags": [
+        "packaging",
+        "texture",
+        "edge"
+      ],
+      "image": {
+        "path": "tests/fixtures/semantic_grounding_photos/coffee-powder.jpg",
+        "bytes": 562013,
+        "sha256": "75429c1f6141a759e4dc1eb0cb996277bc6eb9ec33c2c6e60ee13c7a816432c4"
+      },
+      "elapsed_ms": 11021.815,
+      "metrics": {
+        "width": 960,
+        "height": 1280,
+        "total_pixels": 1228800,
+        "region_pixels": 976758,
+        "nonzero_pixels": 738596,
+        "opaque_pixels": 738596,
+        "soft_pixels": 0,
+        "low_alpha_pixels": 0,
+        "transition_pixels": 0,
+        "near_opaque_pixels": 0,
+        "alpha_level_count": 2,
+        "outside_region_nonzero_pixels": 0,
+        "foreground_fraction": 0.60107096,
+        "region_coverage": 0.75617092,
+        "soft_edge_fraction": 0.0,
+        "opaque_fraction": 1.0,
+        "mean_foreground_alpha": 1.0,
+        "alpha_bbox": [
+          0.0,
+          0.105469,
+          0.970833,
+          0.777344
+        ],
+        "raw_alpha_bbox": [
+          0.0,
+          0.105469,
+          0.970833,
+          0.777344
+        ],
+        "alpha_sum": 188341980.0
+      },
+      "gates": {
+        "min_nonzero_pixels": 500,
+        "min_region_coverage": 0.01,
+        "max_region_coverage": 0.95,
+        "min_soft_pixels": 100,
+        "min_transition_pixels": 100,
+        "min_alpha_level_count": 8,
+        "min_mean_foreground_alpha": 0.95,
+        "max_outside_region_nonzero_pixels": 0,
+        "max_elapsed_ms": 60000
+      },
+      "gate_result": {
+        "passed": false,
+        "checks": {
+          "nonempty": true,
+          "region_coverage_min": true,
+          "region_coverage_max": true,
+          "soft_pixels": false,
+          "transition_pixels": false,
+          "alpha_levels": false,
+          "mean_foreground_alpha": true,
+          "outside_region": true,
+          "elapsed": true
+        },
+        "failed_checks": [
+          "soft_pixels",
+          "transition_pixels",
+          "alpha_levels"
+        ]
+      },
+      "correction_recovery": {
+        "passed": true,
+        "checks": {
+          "exclude_reduces_alpha": true,
+          "include_restores_alpha": true,
+          "restored_nonempty": true
+        },
+        "point": [
+          0.603563,
+          0.106845
+        ],
+        "radius": 0.012,
+        "baseline_alpha_sum": 188341980.0,
+        "excluded_alpha_sum": 188274043.0,
+        "restored_alpha_sum": 188382950.0
+      },
+      "passed": false
+    }
+  ]
+}

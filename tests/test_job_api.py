@@ -113,6 +113,7 @@ class DurableJobApiTests(unittest.TestCase):
         self.remove_calls = 0
         self.real_ai_i2i = server.ai_i2i
         self.real_vlm_detect_products = server.vlm_detect_products
+        self.real_remove_bg_hd = server.remove_bg_hd
 
         self.patches = [
             mock.patch.object(
@@ -843,12 +844,30 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertEqual(segment["ignored_fields"], [])
             self.assertEqual(segment["parameters"]["strategy"], "semantic")
             self.assertEqual(segment["parameters"]["selection_method"], "manual-box")
+            self.assertEqual(segment["parameters"]["alpha_mode"], "native-soft")
+            self.assertIs(segment["parameters"]["post_process_mask"], False)
             self.assertFalse(segment["output"]["text_grounding_supported"])
             self.assertTrue(segment["output"]["manual_grounding_confirmed"])
             self.assertEqual(segment["output"]["selected_region_count"], 1)
             self.assertEqual(self.remove_mock.call_count, 1)
             self.assertEqual(self.ai_mock.call_count, 0)
             self.network_request.assert_not_called()
+
+    def test_local_cutout_preserves_birefnet_native_soft_alpha(self) -> None:
+        image = Image.new("RGB", (12, 8), (210, 80, 35))
+        expected = image.convert("RGBA")
+        session = object()
+        with (
+            mock.patch.object(server, "_get_bgsession", return_value=session),
+            mock.patch("rembg.remove", return_value=expected) as remove,
+        ):
+            actual = self.real_remove_bg_hd(image)
+
+        self.assertIs(actual, expected)
+        _, kwargs = remove.call_args
+        self.assertIs(kwargs["session"], session)
+        self.assertIs(kwargs["alpha_matting"], False)
+        self.assertIs(kwargs["post_process_mask"], False)
 
     def test_semantic_mask_preview_and_corrections_are_local_and_durable(self) -> None:
         with self.live_client() as client:
