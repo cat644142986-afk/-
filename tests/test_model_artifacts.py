@@ -87,7 +87,11 @@ class ModelArtifactTests(unittest.TestCase):
         paths = {item["path"] for item in manifest["files"]}
         self.assertEqual(
             manifest["source"]["revision"],
-            "f6c1a25888ffc1d945ee8a1a77ac833c7303d46e",
+            "0b03b6f15a4a211370fb204aee4e7dd48887ea37",
+        )
+        self.assertEqual(
+            manifest["source"]["repo_id"],
+            "florence-community/Florence-2-base-ft",
         )
         self.assertEqual(manifest["source"]["license"], "mit")
         self.assertEqual(manifest["distribution"], "development-baseline")
