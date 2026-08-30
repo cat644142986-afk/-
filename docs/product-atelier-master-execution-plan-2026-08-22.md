@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
-> 首次制定：2026-08-22；最近校准：2026-08-29<br>
-> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 与 Phase 6 已闭环；“统一状态与冲突恢复”已于 Windows 以提交 `9eb71a8c50e6f916954d1871c40ba39a6312ae3b` 完成正式便携版门禁。R6 / Phase 7A-B 第三源码检查点已完成固定程序合同、3 张许可明确真实照片/4 查询小样、外置模型 SHA-256 获取校验和 RTX 4060 中英文基线；实测确认受控英文存在目标定位可用，但无匹配误检与中文 `[UNK]` 均未过门禁，中文现诚实回退手动框选。点选/蒙版修正、查询映射、扩展照片集仍未完成；该检查点尚未提升为新的正式便携版。AI Agent 方案继续暂缓<br>
+> 首次制定：2026-08-22；最近校准：2026-08-30<br>
+> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 与 Phase 6 已闭环；“统一状态与冲突恢复”已于 Windows 以提交 `9eb71a8c50e6f916954d1871c40ba39a6312ae3b` 完成正式便携版门禁。R6 / Phase 7A-B 已完成中文离线映射、30 张 Open Images 扩展门禁、两级人工建议、外置模型合同、独立 Windows GPU 运行包和轻量主 sidecar 的真实联调；运行包在 RTX 4060 上可识别图片且不会调用付费 API。当前 Grounding DINO 的可信层召回仍只有 46.94%，未达到正式质量门槛，因此正式便携目录、NSIS 与桌面快捷方式尚未提升。AI Agent 方案继续暂缓<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -24,7 +24,7 @@
 | Phase 4 正式 UI 骨架 | 首发 P0 壳层门禁完成并进入正式便携版，后续职责拆分仍按总路线推进 | sidecar 启动/45 秒健康等待已移出 `setup()` 同步路径；确定性首帧壳和 DWM 原生圆角已通过 100/125/150/175/200% DPI、最大化/恢复、最小化/恢复和 150%↔100% 跨屏实测；系统重启后 10 次启动、五档 60fps 编码逐帧样本均无黑帧；正式目录 smoke 与可见启动通过 |
 | Phase 5 素材管理与 Task Dock | 素材与批量任务大数据检查点均已进入正式版 | 素材搜索、多维排序、40 张分段渲染、主画布 60 张上限、任务选入、批量移出/恢复、持久手动顺序、保护期倒计时、引用解释与二次确认永久清理均已通过；任务中心 12 条分段、活跃任务保底可见、20 项展开、逐项失败原因与只重试失败项也已通过；比例/2K/4K 已贯通 UI、快照、供应商适配、trace 与实际像素 |
 | Phase 6 Result Review 与情境对比 | **已完成并进入正式便携版** | 原子“开始下一项”、显式结果游标、结果级 review/feedback、持久学习回执、V1→V2 不可变调整、结构化原因标签、原图/版本 A/B、同步缩放/平移、对比位置与首次引导持久恢复均已通过 |
-| Phase 7 智能选物与模型质量 | **7A-B 第二源码检查点完成，真实模型与照片质量基线待续** | GPT Image 2 与 Gemini 3.1 Flash 输出规格已进入正式版；源码现具备快速/智能分流、名称数量合同、逐图框选确认、固定离线合同、local-only Grounding DINO 适配边界、候选状态与失败恢复。真实照片评测、点选/蒙版修正和正式模型交付方式仍未完成 |
+| Phase 7 智能选物与模型质量 | **7A-B 第七候选检查点完成，正式质量门槛未过** | 名称/数量、逐图确认、中文离线映射、30 张照片门禁、两级建议、外置模型和独立 Windows GPU 运行包均已联调；可信层召回 46.94%，当前只能作为强制人工确认的可选候选，尚不提升正式便携版。点选/蒙版修正及更强模型对照待续 |
 | Phase 8 可解释成长系统 | Growth 核心投影、双向追溯和统一状态已进入正式便携版 | 全局/当前任务投影、0 待审核中性态、五类状态测试、“结果 → 建议 → 来源结果”的精确游标恢复，以及七类统一状态与 revision 冲突可见恢复均通过浏览器、打包数据和正式便携门禁 |
 | Phase 9 主题、无障碍与性能 | 未开始 | 等 Phase 6–8 状态契约稳定后实施 |
 | Phase 10 正式发布与灾备 | 可恢复发布链和当前正式检查点已完成，后续检查点继续复用 | 正式 EXE、sidecar、manifest、外部完整备份、事务证据、桌面快捷方式、DWM/DPI 与 NSIS 隔离安装均已验证；NSIS 尚未代码签名，不作为对外公开分发包 |
@@ -1060,6 +1060,16 @@ DIY 外观要求：
 - 全量源码门禁：Python 197 项（196 通过、1 个平台预期跳过）、前端 100/100、Vite production build、Rust/Tauri custom-protocol check、compileall、PowerShell 解析与 Git whitespace。设置页真实浏览器验收确认只有一层滚动、卡片和禁用态完整可见、控制台 0 error / 0 warning。
 - 源码 sidecar 合同升级为 `2026-08-30.2`。下一步先在提交后的干净工作区构建并验证真实 Windows runtime candidate，再重建主 sidecar，完成设置页/真实图片联调、便携目录、NSIS、快捷方式和 candidate-first 正式提升；本检查点仍未提升正式版。
 
+**2026-08-30 · R6 / Phase 7A-B 第七 Windows 候选检查点**
+
+- 提交 `e62732caa8c7ce40e7164001ff4a393ac8479a0f` 已从干净 Windows 工作区构建独立 GPU runtime candidate。运行时 ID 为 `grounding-dino-transformers-windows-amd64-v1`，合同 `2026-08-30.1`，共 6042 个文件、4,026,031,474 bytes；入口 SHA-256 `55a4181afd5c76e45bfa148a543e008cf8f3d37d6df4b3fcd0102a659fdf9c7d`，完整清单 SHA-256 `92c83c587a186f8265b6985db7607d237e6d08f58e9192f5dee00e1c5152f014`。
+- 构建探针现在真实导入 `torch / transformers / safetensors`，并在候选目录发布前运行。实测曾拦下缺失 `httpx` 的不可用包；修复后才发布固定候选路径，后续探针失败的临时包会在受控 `build` 临时目录清理，不再看起来像可发布成品。
+- runtime 与 9 文件外置模型均完成完整 SHA-256 复验；打包 worker 在 RTX 4060 / CUDA 上对程序生成瓶形图返回 1 个 `bottle`，置信度 0.7161，坐标吻合。关闭适配器后残留 worker 为 0。
+- 同一提交重建轻量主 sidecar：合同 `2026-08-30.2`、schema v3、1745 个文件、365,152,636 bytes，EXE SHA-256 `555949C5B69A3C28BE3091EBDCA050DF57C2620D84038107B14F6B61DC2AD187`，source fingerprint `9DDD3959D92B15D4576DD3C8B54BD6E766F3457306B9EED6B28F88261D86EF3C`；打包健康 smoke 通过。
+- 打包 sidecar 的隔离联调已贯通：设置 runtime/model 路径 → 完整验证 → 导入合成图片 → 中文“瓶子”映射为 `bottle` → 调用外置 worker。0.7161 结果低于 0.75 可信线，因此作为 1 条橙色待采用建议、默认选中 0 个；这是预期的强制人工确认，不是故障，也没有调用生图接口。
+- 全量回归为 Python 198 项（197 通过、1 个平台预期跳过）、前端 100/100、Vite production build、Rust/Tauri custom-protocol check 和打包 sidecar smoke 全绿。当前 Grounding DINO 在冻结扩展集上的可信层召回仍为 46.94%，所以本检查点只完成可运行候选和打包联调，不能绕过质量门槛提升正式便携目录、NSIS 或桌面快捷方式。
+- 下一执行游标：在同一冻结集对照更强定位/存在性验证方案，目标是在不牺牲难负例安全率的情况下把可信召回提高到至少 75%；随后补点选/蒙版修正，再重跑 `tools/dev.ps1` 的 candidate-first 正式发布链。
+
 ### 阶段 8：可解释知识闭环与 Design DNA（P1，预计 12–20 小时）
 
 **目标**
@@ -1258,7 +1268,7 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 从 Phase 4 剩余门禁开始，不重复 Phase 0–3，也不退回历史 `vXX-fixes.css` 补丁路线。
-4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review 以及统一状态与冲突恢复均已进入正式便携版；R6 / Phase 7A-B 的名称/数量合同、逐图确认、中文查询映射、30 张 Open Images 扩展门禁、两级人工建议以及独立可选运行时源码合同已经完成但尚未提升正式包。下一步从干净 Git 提交构建并验证真实 Windows runtime candidate，再做主 sidecar 与 candidate-first 正式提升；不要重复阈值扫描或把模型依赖塞入主 sidecar。
+4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review 以及统一状态与冲突恢复均已进入正式便携版；R6 / Phase 7A-B 的名称/数量合同、逐图确认、中文查询映射、30 张 Open Images 扩展门禁、两级人工建议、独立可选 Windows runtime candidate 和轻量打包 sidecar 联调已经完成但尚未提升正式包。下一步在同一冻结集对照更强定位/存在性验证方案，把可信召回提高到至少 75%，再补点选/蒙版修正并进入 candidate-first 正式提升；不要重复单阈值扫描或把模型依赖塞入主 sidecar。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 

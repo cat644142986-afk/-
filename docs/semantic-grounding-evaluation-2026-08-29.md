@@ -1,6 +1,6 @@
 # Product Atelier 智能选物自动定位合同与评测
 
-> 状态：R6 / Phase 7A-B 第六源码检查点。独立可选 Windows 识别运行时、外置模型包合同、设置页与安全回退已进入源码；正式便携版仍未提升。
+> 状态：R6 / Phase 7A-B 第七 Windows 候选检查点。独立可选 Windows GPU 运行包与轻量打包 sidecar 已完成真实识图联调；模型可信召回未过正式门槛，正式便携版仍未提升。
 
 ## 1. 已落地的产品边界
 
@@ -149,7 +149,7 @@ python tools\bootstrap_semantic_grounding.py --verify --destination "D:\ProductA
 ## 7. 下一门禁
 
 1. 已完成可审计查询映射、30 张真实照片/35 查询门禁和两级人工建议界面。后续扩展词表或数据集必须带固定用例，不能把联网翻译、自由生成或人工建议指标伪装成自动质量。
-2. 独立可选模型运行时/模型包源码合同已经落地：主 sidecar 保持轻量，运行时和权重有独立版本、平台、全文件清单、哈希、健康探测、缺失回退和设置页状态；路径不硬编码本机盘符。下一门禁是从已提交的干净 Git 状态构建真实 Windows runtime candidate，并通过完整哈希、探测、真实推理和主 sidecar 联调。
+2. 独立可选模型运行时/模型包已经完成真实 Windows candidate：主 sidecar 保持轻量，运行时和权重有独立版本、平台、全文件清单、哈希、健康探测、缺失回退和设置页状态；完整哈希、真实推理和打包 sidecar 联调均已通过。
 3. 对照第二存在性验证器或更强定位模型，目标是提高可信层召回并压低难负例建议。必须在同一冻结扩展集上比较，不能只展示成功图片。
 4. 为候选增加点选、增删目标和蒙版修正；定位稳定后再评估 SAM 类边缘修正。单图失败继续停留人工确认，不能让整批任务作废。
 5. 只有可选运行时/模型包、扩展集可信门禁、正式 sidecar 实测和完整 Windows candidate-first 门禁全部通过，才允许提升新正式便携版。源码界面可用不等于正式便携版已经获得自动定位能力。
@@ -162,3 +162,11 @@ python tools\bootstrap_semantic_grounding.py --verify --destination "D:\ProductA
 - RTX 4060 源码协议实测通过：外置模型 receipt 快速检查、9 文件完整哈希、worker 健康握手和真实本地推理均成功；程序生成的简单瓶形图得到 0.716 `bottle` 候选。没有付费 API 调用，也没有读取用户图片。
 - `tools/Build-GroundingRuntime.ps1` 只允许在 Windows 干净工作区构建全新候选目录；旧输出不覆盖，临时构建目录使用唯一事务名并限定在仓库 `build` 下清理。该源码检查点不等于运行时正式候选已经构建，也不更新桌面快捷方式。
 - 源码门禁为 Python 197 项（196 通过、1 个平台预期跳过）、前端 100/100、Vite production build、Rust/Tauri custom-protocol check、Python compileall、PowerShell 解析与 Git whitespace。设置页在真实本地浏览器验证只有一层滚动，卡片与禁用态完整可见，控制台 0 error / 0 warning。
+
+## 9. 2026-08-30 Windows 候选与打包联调
+
+- 干净提交 `e62732caa8c7ce40e7164001ff4a393ac8479a0f` 构建出 `grounding-dino-transformers-windows-amd64-v1`：6042 个文件、4,026,031,474 bytes，入口 SHA-256 `55a4181afd5c76e45bfa148a543e008cf8f3d37d6df4b3fcd0102a659fdf9c7d`，清单 SHA-256 `92c83c587a186f8265b6985db7607d237e6d08f58e9192f5dee00e1c5152f014`。
+- 严格构建探针真实导入 `torch / transformers / safetensors`。它先发现并拦截了缺失 `httpx` 的不可用包；修复后才发布候选目录。运行时和 9 文件模型完整哈希均通过，CUDA 设备为 RTX 4060。
+- 打包 worker 对程序生成瓶形图返回 1 个 `bottle`，置信度 0.7161。轻量主 sidecar 合同 `2026-08-30.2` 通过健康 smoke，并从设置、完整验证、中文 `瓶子 → bottle`、素材导入到外置 worker 推理完成隔离联调；结果按规则进入 1 条待采用建议、默认选中 0 个，退出后 worker 残留为 0。
+- 主 sidecar 仍只有 365,152,636 bytes，不包含可选 4GB GPU runtime 或 689MB 模型。全量回归为 Python 198 项（197 通过、1 个平台预期跳过）、前端 100/100、Vite build 与 Rust custom-protocol check 全绿。
+- 该结果证明交付结构和真实调度可用，不改变模型质量结论：冻结扩展集上的可信层召回仍为 46.94%，低于 75% 门槛。正式便携目录、NSIS 与桌面快捷方式保持上一正式版本；下一步必须比较更强定位/存在性验证方案并补用户修正能力，不能把“候选能运行”写成“模型已达到生产质量”。
