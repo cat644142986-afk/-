@@ -56,14 +56,17 @@ try {
         --git-commit $commit
     if ($LASTEXITCODE -ne 0) { throw "Grounding runtime manifest generation failed" }
 
-    Move-Item -LiteralPath $Candidate -Destination $OutputRoot
-
     if ($ModelPath) {
-        $probe = & (Join-Path $OutputRoot "grounding-runtime.exe") --probe --model-path ([System.IO.Path]::GetFullPath($ModelPath))
+        $probe = & (Join-Path $Candidate "grounding-runtime.exe") --probe --model-path ([System.IO.Path]::GetFullPath($ModelPath))
         if ($LASTEXITCODE -ne 0) { throw "Built grounding runtime probe failed" }
         $probeState = $probe | ConvertFrom-Json
         if ($probeState.status -ne "ready") { throw "Built grounding runtime is not ready for the selected model" }
     }
+
+    # Publish the well-known candidate path only after every requested gate has
+    # passed. A failed probe remains inside the unique temporary dist root and
+    # is removed by the guarded finally block instead of looking releasable.
+    Move-Item -LiteralPath $Candidate -Destination $OutputRoot
 } finally {
     foreach ($temporaryRoot in @($BuildRoot, $DistRoot)) {
         $resolved = [System.IO.Path]::GetFullPath($temporaryRoot)

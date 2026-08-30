@@ -8,6 +8,7 @@ binaries = []
 hiddenimports = [
     'PIL.Image',
     'requests',
+    'httpx',
     'torch',
     'transformers',
     'transformers.models.grounding_dino',
@@ -58,7 +59,7 @@ a = Analysis(
         'fastapi', 'uvicorn', 'pydantic', 'opentelemetry',
         'torch.utils.tensorboard',
         'numba', 'llvmlite', 'pydub', 'faiss', 'accelerate',
-        'aiohttp', 'httpx', 'sentencepiece', 'typer',
+        'aiohttp', 'sentencepiece', 'typer',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
