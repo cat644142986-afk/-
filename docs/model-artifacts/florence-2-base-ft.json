@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "artifact_id": "florence-2-base-ft-f6c1a25",
+  "purpose": "Product Atelier evaluation-only generative open-vocabulary detector for semantic grounding quality gates",
+  "source": {
+    "provider": "Hugging Face Hub",
+    "repo_id": "microsoft/Florence-2-base-ft",
+    "url": "https://huggingface.co/microsoft/Florence-2-base-ft",
+    "revision": "f6c1a25888ffc1d945ee8a1a77ac833c7303d46e",
+    "license": "mit"
+  },
+  "packaging_policy": {
+    "distribution": "development-baseline",
+    "development_only": true,
+    "optional_external_pack": false,
+    "include_in_formal_sidecar": false,
+    "automatic_application_download": false,
+    "storage": "external-directory-only",
+    "notes": "Evaluation candidate only. Product Atelier loads this checkpoint through the native Transformers Florence2 classes with trust_remote_code disabled, so repository Python implementation files are deliberately excluded. Only safetensors weights are allowed and pytorch_model.bin is excluded."
+  },
+  "files": [
+    {
+      "path": "LICENSE",
+      "bytes": 1141,
+      "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+    },
+    {
+      "path": "README.md",
+      "bytes": 14820,
+      "sha256": "092b90e814cd6c15f734b15a81e294b4d12c92d12bff3c674a9474ca935ecd1c"
+    },
+    {
+      "path": "config.json",
+      "bytes": 2430,
+      "sha256": "c666d0fe0172d46e115e8fba6cd93cd83714575b33a73005cab8d24ce2a3aa8f"
+    },
+    {
+      "path": "model.safetensors",
+      "bytes": 463221266,
+      "sha256": "58757d657ff44051314c8030b68e04cb1bb618ca9a4885418f111f6fb708185a"
+    },
+    {
+      "path": "preprocessor_config.json",
+      "bytes": 806,
+      "sha256": "2f5921bbc53c7cc04251e1027b45b1cec726276be6db23d1bb40641bfbe2cf29"
+    },
+    {
+      "path": "tokenizer.json",
+      "bytes": 1355863,
+      "sha256": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e"
+    },
+    {
+      "path": "tokenizer_config.json",
+      "bytes": 34,
+      "sha256": "79ffcf43af8ebda99d165f61d243180da2e2639952e41e71e11611c18770489c"
+    },
+    {
+      "path": "vocab.json",
+      "bytes": 1099884,
+      "sha256": "394fdc63c71aabe0a9b97117f5d62fb5fcc4d59b2b3ea929a3929e6a53217b3c"
+    }
+  ]
+}

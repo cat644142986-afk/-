@@ -22,6 +22,9 @@ PINNED_MANIFEST = (
 OWLV2_PINNED_MANIFEST = (
     PROJECT_ROOT / "docs" / "model-artifacts" / "owlv2-base-patch16-ensemble.json"
 )
+FLORENCE2_PINNED_MANIFEST = (
+    PROJECT_ROOT / "docs" / "model-artifacts" / "florence-2-base-ft.json"
+)
 
 
 def _entry(path: str, content: bytes) -> dict:
@@ -78,6 +81,25 @@ class ModelArtifactTests(unittest.TestCase):
             ),
             "e1e130b9e404cf91a75ad45644c1da9d7fa5284085eecc864266a6923efb99e7",
         )
+
+    def test_florence2_candidate_uses_native_code_and_cannot_enter_a_release(self) -> None:
+        manifest = load_artifact_manifest(FLORENCE2_PINNED_MANIFEST)
+        paths = {item["path"] for item in manifest["files"]}
+        self.assertEqual(
+            manifest["source"]["revision"],
+            "f6c1a25888ffc1d945ee8a1a77ac833c7303d46e",
+        )
+        self.assertEqual(manifest["source"]["license"], "mit")
+        self.assertEqual(manifest["distribution"], "development-baseline")
+        self.assertTrue(manifest["packaging_policy"]["development_only"])
+        self.assertFalse(manifest["packaging_policy"]["optional_external_pack"])
+        self.assertFalse(manifest["packaging_policy"]["include_in_formal_sidecar"])
+        self.assertFalse(manifest["packaging_policy"]["automatic_application_download"])
+        self.assertIn("model.safetensors", paths)
+        self.assertNotIn("pytorch_model.bin", paths)
+        self.assertNotIn("modeling_florence2.py", paths)
+        self.assertNotIn("processing_florence2.py", paths)
+        self.assertNotIn("configuration_florence2.py", paths)
 
     def test_destination_inside_repository_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "outside the source repository"):

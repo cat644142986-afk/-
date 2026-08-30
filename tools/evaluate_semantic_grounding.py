@@ -33,6 +33,7 @@ DEFAULT_MANIFEST = (
     PROJECT_ROOT / "tests" / "fixtures" / "semantic_grounding" / "manifest.json"
 )
 OWLV2_MODEL_PATH_ENV = "PRODUCT_ATELIER_OWLV2_MODEL_PATH"
+FLORENCE2_MODEL_PATH_ENV = "PRODUCT_ATELIER_FLORENCE2_MODEL_PATH"
 
 
 def _percentile_95(values: list[float]) -> float:
@@ -154,16 +155,23 @@ def _local_adapter(
         if configured:
             return TransformersGroundingDinoAdapter(configured, device=device), configured
         return grounding_adapter_from_environment(), ""
-    configured = str(
-        model_path or os.environ.get(OWLV2_MODEL_PATH_ENV, "")
-    ).strip()
+    environment_name = (
+        OWLV2_MODEL_PATH_ENV
+        if adapter_name == "owlv2"
+        else FLORENCE2_MODEL_PATH_ENV
+    )
+    configured = str(model_path or os.environ.get(environment_name, "")).strip()
     if not configured:
         raise ValueError(
-            "OWLv2 evaluation requires --model-path or " + OWLV2_MODEL_PATH_ENV
+            f"{adapter_name} evaluation requires --model-path or {environment_name}"
         )
-    from python.semantic_grounding_owlv2 import TransformersOwlv2Adapter
+    if adapter_name == "owlv2":
+        from python.semantic_grounding_owlv2 import TransformersOwlv2Adapter
 
-    return TransformersOwlv2Adapter(configured, device=device), configured
+        return TransformersOwlv2Adapter(configured, device=device), configured
+    from python.semantic_grounding_florence2 import TransformersFlorence2Adapter
+
+    return TransformersFlorence2Adapter(configured, device=device), configured
 
 
 def main() -> int:
@@ -193,7 +201,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--adapter",
-        choices=("grounding-dino", "owlv2"),
+        choices=("grounding-dino", "owlv2", "florence2"),
         default="grounding-dino",
         help="Local evaluation adapter; OWLv2 remains an evaluation-only candidate.",
     )
