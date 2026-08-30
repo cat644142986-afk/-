@@ -40,21 +40,35 @@ def runtime_probe(model_path: str | Path) -> dict[str, Any]:
             packages[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
             packages[name] = "missing"
-    try:
-        import torch
-
+    imports = {}
+    torch_module = None
+    for module_name in ("torch", "transformers", "safetensors"):
+        try:
+            module = __import__(module_name)
+            imports[module_name] = {"status": "ready"}
+            if module_name == "torch":
+                torch_module = module
+        except Exception as exc:
+            imports[module_name] = {
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {str(exc)[:300]}",
+            }
+    if torch_module is not None:
+        cuda_available = bool(torch_module.cuda.is_available())
         cuda = {
-            "available": bool(torch.cuda.is_available()),
-            "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
+            "available": cuda_available,
+            "device": torch_module.cuda.get_device_name(0) if cuda_available else "cpu",
         }
-    except Exception:
+    else:
         cuda = {"available": False, "device": "unavailable"}
     model_ready = root.is_dir() and (root / "config.json").is_file() and (root / "model.safetensors").is_file()
+    imports_ready = all(item["status"] == "ready" for item in imports.values())
     return {
-        "status": "ready" if model_ready and packages["torch"] != "missing" and packages["transformers"] != "missing" else "unavailable",
+        "status": "ready" if model_ready and imports_ready else "unavailable",
         "model_path": str(root),
         "model_ready": model_ready,
         "packages": packages,
+        "imports": imports,
         "cuda": cuda,
     }
 

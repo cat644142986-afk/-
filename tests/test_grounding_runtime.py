@@ -19,6 +19,7 @@ from python.grounding_runtime import (
     verify_model_pack,
     verify_runtime_pack,
 )
+from python.grounding_runtime_worker import runtime_probe
 from python.model_artifacts import verify_artifact, write_local_receipt
 
 
@@ -148,6 +149,17 @@ ThreadingHTTPServer(('127.0.0.1', args.port), Handler).serve_forever()
 
 
 class GroundingRuntimeTests(unittest.TestCase):
+    def test_source_probe_requires_real_runtime_imports(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_root = Path(temp_dir)
+            (model_root / "config.json").write_text("{}", encoding="utf-8")
+            (model_root / "model.safetensors").write_bytes(b"fixture")
+            probe = runtime_probe(model_root)
+            self.assertEqual(probe["status"], "ready")
+            self.assertEqual(probe["imports"]["torch"]["status"], "ready")
+            self.assertEqual(probe["imports"]["transformers"]["status"], "ready")
+            self.assertEqual(probe["imports"]["safetensors"]["status"], "ready")
+
     def test_manifest_generator_locks_a_complete_candidate_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_root = Path(temp_dir) / "candidate"
