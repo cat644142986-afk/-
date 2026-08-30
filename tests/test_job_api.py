@@ -162,6 +162,7 @@ class DurableJobApiTests(unittest.TestCase):
         stage="?",
         tid_ref="?",
         on_submitted=None,
+        on_evidence=None,
         output_spec=None,
     ):
         del negative_prompt, size, tid_ref
@@ -181,6 +182,29 @@ class DurableJobApiTests(unittest.TestCase):
             raise TimeoutError("offline AI release gate timed out")
         if on_submitted is not None:
             on_submitted(f"offline-{stage}-{len(self.ai_calls)}")
+        if on_evidence is not None:
+            on_evidence({
+                "trace_contract_version": server.GENERATION_TRACE_CONTRACT_VERSION,
+                "completed": not should_fail,
+                "timings_ms": {
+                    "reference_encode": 0.1,
+                    "submit": 0.2,
+                    "poll": 0.3,
+                    "download": 0.4,
+                    "decode": 0.1,
+                    "total": 1.1,
+                },
+                "reference": {
+                    "source_kind": "offline-fixture",
+                    "provider_sha256": "0" * 64,
+                },
+                **({
+                    "failure": {
+                        "phase": "provider.poll",
+                        "error_type": "JobExecutionError",
+                    }
+                } if should_fail else {}),
+            })
         if should_fail:
             raise JobExecutionError("OFFLINE_INJECTED_FAILURE", "injected offline failure")
         if output_spec and output_spec.get("strict_aspect"):
@@ -324,6 +348,35 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertTrue(any(
                 item["stage"] == "result.publish"
                 and len(item["output"]["result_asset_ids"]) == 4
+                for item in trace_items
+            ))
+            primary_prompt = next(
+                item for item in trace_items if item["stage"] == "prompt.primary"
+            )
+            self.assertEqual(
+                primary_prompt["parameters"]["prompt_version"], "prompt_v1"
+            )
+            self.assertTrue(primary_prompt["parameters"]["base_prompt"])
+            self.assertEqual(
+                primary_prompt["output"]["prompt_snapshot"]["prompt_version"],
+                "prompt_v1",
+            )
+            provider_trace = next(
+                item for item in trace_items if item["stage"] == "provider.image.1-1"
+            )
+            self.assertEqual(provider_trace["output"]["elapsed_ms"], 1.1)
+            self.assertEqual(
+                provider_trace["output"]["billing"]["status"], "unavailable"
+            )
+            self.assertEqual(
+                provider_trace["parameters"]["capability_contract"]["status"],
+                "request-shape-checked",
+            )
+            self.assertIn("local.cutout.1", {item["stage"] for item in trace_items})
+            self.assertTrue(any(
+                item["stage"] == "workflow.complete"
+                and item["status"] == "completed"
+                and item["output"]["elapsed_ms"] >= 0
                 for item in trace_items
             ))
             self.network_request.assert_not_called()
@@ -634,6 +687,7 @@ class DurableJobApiTests(unittest.TestCase):
 
     def test_ai_download_temp_names_are_unique_even_in_same_millisecond(self) -> None:
         destinations: list[Path] = []
+        evidence: list[dict] = []
 
         def fake_download(_url: str, destination: Path) -> str:
             destination = Path(destination)
@@ -649,7 +703,11 @@ class DurableJobApiTests(unittest.TestCase):
             server, "download_result", side_effect=fake_download
         ), mock.patch.object(server.time, "time", return_value=1234.567):
             first = self.real_ai_i2i(
-                "offline prompt", Image.new("RGB", (8, 6)), "offline-model", stage="1-1"
+                "offline prompt",
+                Image.new("RGB", (8, 6)),
+                "offline-model",
+                stage="1-1",
+                on_evidence=evidence.append,
             )
             second = self.real_ai_i2i(
                 "offline prompt", Image.new("RGB", (8, 6)), "offline-model", stage="1-1"
@@ -660,6 +718,14 @@ class DurableJobApiTests(unittest.TestCase):
         self.assertEqual(len(destinations), 2)
         self.assertNotEqual(destinations[0], destinations[1])
         self.assertTrue(all(not path.exists() for path in destinations))
+        self.assertEqual(len(evidence), 1)
+        self.assertTrue(evidence[0]["completed"])
+        self.assertEqual(evidence[0]["reference"]["source_width"], 8)
+        self.assertEqual(evidence[0]["reference"]["source_height"], 6)
+        self.assertEqual(len(evidence[0]["reference"]["provider_sha256"]), 64)
+        self.assertIn("submit", evidence[0]["timings_ms"])
+        self.assertIn("poll", evidence[0]["timings_ms"])
+        self.assertIn("download", evidence[0]["timings_ms"])
         self.network_request.assert_not_called()
 
     def test_multi_file_accepts_twenty_sources_but_keeps_output_budget(self) -> None:

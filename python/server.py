@@ -31,6 +31,13 @@ try:
         idempotent_id,
     )
     from job_engine import JobEngine, JobExecutionError, JobProcessorResult
+    from generation_baseline import (
+        GENERATION_TRACE_CONTRACT_VERSION,
+        PROMPT_COMPILER_VERSION,
+        capability_contract,
+        prompt_snapshot,
+        unavailable_billing_evidence,
+    )
     from knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from memory_engine import MemoryEngine
     from grounding_runtime import (
@@ -75,6 +82,13 @@ except ImportError:  # Allows importing as python.server during local tests.
         idempotent_id,
     )
     from python.job_engine import JobEngine, JobExecutionError, JobProcessorResult
+    from python.generation_baseline import (
+        GENERATION_TRACE_CONTRACT_VERSION,
+        PROMPT_COMPILER_VERSION,
+        capability_contract,
+        prompt_snapshot,
+        unavailable_billing_evidence,
+    )
     from python.knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from python.memory_engine import MemoryEngine
     from python.grounding_runtime import (
@@ -184,7 +198,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-30.4"
+SIDECAR_CONTRACT_VERSION = "2026-08-30.5"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -968,25 +982,59 @@ def api_request(method, path, body=None, timeout=120):
         resp.raise_for_status()
         return resp.json()
 
-def image_to_data_url(img):
+def image_to_reference_payload(img):
+    """Return the exact provider payload plus a reproducible transform receipt."""
+    source_kind = type(img).__name__
+    transform = {"operation": "preserve-bytes"}
+    width = height = None
+    source_mode = ""
     if isinstance(img, (str, Path)):
         p = Path(img)
         b = p.read_bytes()
         mime = mimetypes.guess_type(p.name)[0] or "image/jpeg"
+        source_kind = "path"
+        try:
+            with Image.open(p) as opened:
+                width, height = opened.size
+                source_mode = opened.mode
+        except Exception:
+            pass
     elif isinstance(img, Image.Image):
+        width, height = img.size
+        source_mode = img.mode
         buf = io.BytesIO()
         if img.mode == "RGBA":
             img = img.convert("RGB")
         img.save(buf, format="JPEG", quality=96)
         b = buf.getvalue()
         mime = "image/jpeg"
+        source_kind = "pillow-image"
+        transform = {
+            "operation": "encode-jpeg",
+            "quality": 96,
+            "alpha_handling": "flatten-to-rgb" if source_mode == "RGBA" else "none",
+        }
     elif isinstance(img, bytes):
         b = img
         mime = "image/jpeg"
+        source_kind = "bytes"
     else:
         raise TypeError(f"Unsupported image type: {type(img)}")
     b64 = base64.b64encode(b).decode("ascii")
-    return f"data:{mime};base64,{b64}"
+    return f"data:{mime};base64,{b64}", {
+        "source_kind": source_kind,
+        "source_width": width,
+        "source_height": height,
+        "source_mode": source_mode,
+        "provider_mime": mime,
+        "provider_byte_count": len(b),
+        "provider_sha256": hashlib.sha256(b).hexdigest(),
+        "transform": transform,
+    }
+
+
+def image_to_data_url(img):
+    return image_to_reference_payload(img)[0]
 
 def image_to_bytes(img, fmt="JPEG", quality=96):
     buf = io.BytesIO()
@@ -1199,29 +1247,91 @@ def ai_i2i(
     stage="?",
     tid_ref="?",
     on_submitted=None,
+    on_evidence=None,
     output_spec=None,
 ):
-    ref_url = image_to_data_url(ref_img)
-    log_msg(tid_ref, f"[S{stage}] 提交生成 ({model_key})...")
-    tid = submit_generate(
-        prompt,
-        model_key,
-        ref_url,
-        size=size,
-        negative_prompt=negative_prompt,
-        output_spec=output_spec,
-    )
-    if on_submitted is not None:
-        on_submitted(tid)
-    log_msg(tid_ref, f"[S{stage}] 任务ID: {tid}")
-    result_url = poll_task(tid, task_id_ref=tid_ref)
-    tmp = OUTPUT_DIR / "_tmp" / f"stage_{safe_stem(str(stage), 'stage')}_{uuid.uuid4().hex}.jpg"
+    total_started = time.perf_counter()
+    phase = "reference.encode"
+    evidence = {
+        "trace_contract_version": GENERATION_TRACE_CONTRACT_VERSION,
+        "timings_ms": {},
+        "completed": False,
+    }
+    tmp = None
     try:
+        phase_started = time.perf_counter()
+        ref_url, reference_evidence = image_to_reference_payload(ref_img)
+        evidence["reference"] = reference_evidence
+        evidence["timings_ms"]["reference_encode"] = round(
+            (time.perf_counter() - phase_started) * 1000, 3
+        )
+
+        phase = "provider.submit"
+        log_msg(tid_ref, f"[S{stage}] 提交生成 ({model_key})...")
+        phase_started = time.perf_counter()
+        tid = submit_generate(
+            prompt,
+            model_key,
+            ref_url,
+            size=size,
+            negative_prompt=negative_prompt,
+            output_spec=output_spec,
+        )
+        evidence["timings_ms"]["submit"] = round(
+            (time.perf_counter() - phase_started) * 1000, 3
+        )
+        if on_submitted is not None:
+            on_submitted(tid)
+        log_msg(tid_ref, f"[S{stage}] 任务ID: {tid}")
+
+        phase = "provider.poll"
+        phase_started = time.perf_counter()
+        result_url = poll_task(tid, task_id_ref=tid_ref)
+        evidence["timings_ms"]["poll"] = round(
+            (time.perf_counter() - phase_started) * 1000, 3
+        )
+
+        phase = "result.download"
+        tmp = OUTPUT_DIR / "_tmp" / (
+            f"stage_{safe_stem(str(stage), 'stage')}_{uuid.uuid4().hex}.jpg"
+        )
+        phase_started = time.perf_counter()
         download_result(result_url, tmp)
+        evidence["timings_ms"]["download"] = round(
+            (time.perf_counter() - phase_started) * 1000, 3
+        )
+
+        phase = "result.decode"
+        phase_started = time.perf_counter()
         with Image.open(tmp) as downloaded:
-            return downloaded.copy()
+            result = downloaded.copy()
+        evidence["timings_ms"]["decode"] = round(
+            (time.perf_counter() - phase_started) * 1000, 3
+        )
+        evidence["result"] = {
+            "width": result.width,
+            "height": result.height,
+            "mode": result.mode,
+        }
+        evidence["completed"] = True
+        return result
+    except Exception as exc:
+        evidence["failure"] = {
+            "phase": phase,
+            "error_type": type(exc).__name__,
+        }
+        raise
     finally:
-        tmp.unlink(missing_ok=True)
+        evidence["timings_ms"]["total"] = round(
+            (time.perf_counter() - total_started) * 1000, 3
+        )
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+        if on_evidence is not None:
+            try:
+                on_evidence(dict(evidence))
+            except Exception as exc:
+                print(f"[trace] provider evidence callback failed: {exc}", file=sys.stderr, flush=True)
 
 def vlm_detect_products(image_path, tid_ref="?"):
     img_url = image_to_data_url(image_path)
@@ -3829,11 +3939,26 @@ def _record_execution_trace_safe(
         return None
 
 
-def _record_job_prompt(trace, prompt, negative_prompt, stage, knowledge_bundle):
+def _record_job_prompt(
+    trace,
+    prompt,
+    negative_prompt,
+    stage,
+    knowledge_bundle,
+    *,
+    base_prompt="",
+):
     knowledge_refs = list((knowledge_bundle or {}).get("sources") or [])
     applied_evidence = KnowledgeCompiler.execution_evidence(knowledge_bundle)
+    base_prompt = str(base_prompt or prompt)
+    snapshot = prompt_snapshot(
+        base_prompt=base_prompt,
+        compiled_prompt=prompt,
+        negative_prompt=negative_prompt,
+        knowledge_evidence=applied_evidence,
+    )
     generation_id = trace["generation_id"]
-    changes = {"status": "running"}
+    changes = {"status": "running", "prompt_version": PROMPT_COMPILER_VERSION}
     if stage == "primary":
         changes.update({
             "prompt": prompt,
@@ -3860,9 +3985,12 @@ def _record_job_prompt(trace, prompt, negative_prompt, stage, knowledge_bundle):
         applied_knowledge=applied_evidence,
         parameters={
             **dict(trace.get("parameters") or {}),
+            "trace_contract_version": GENERATION_TRACE_CONTRACT_VERSION,
+            "prompt_version": PROMPT_COMPILER_VERSION,
+            "base_prompt": base_prompt,
             "negative_prompt": negative_prompt,
         },
-        output={"prompt_stage": stage},
+        output={"prompt_stage": stage, "prompt_snapshot": snapshot},
     )
 
 
@@ -4041,6 +4169,7 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, o
 
     def commit():
         nonlocal durable_committed
+        publish_started = time.perf_counter()
         published = []
         try:
             try:
@@ -4098,6 +4227,7 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, o
                 "result.publish",
                 "completed",
                 output={
+                    "elapsed_ms": round((time.perf_counter() - publish_started) * 1000, 3),
                     "result_asset_ids": list(committed_asset_ids),
                     "output_count": len(committed_asset_ids),
                     "output_root": str(output_root),
@@ -4111,6 +4241,22 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, o
                         }
                         for entry in published
                     ],
+                },
+            )
+            workflow_started = trace.get("workflow_started_perf")
+            workflow_elapsed_ms = (
+                round((time.perf_counter() - workflow_started) * 1000, 3)
+                if isinstance(workflow_started, (int, float))
+                else None
+            )
+            _record_execution_trace_safe(
+                trace,
+                "workflow.complete",
+                "completed",
+                output={
+                    "elapsed_ms": workflow_elapsed_ms,
+                    "output_count": len(committed_asset_ids),
+                    "mode": str(ctx.job.get("mode") or ""),
                 },
             )
             return {
@@ -4162,6 +4308,19 @@ def _cloud_job_call(
     trace,
 ):
     remote_tasks = list(dict(ctx.metadata).get("remote_tasks", []))
+    trace_stage = f"provider.image.{stage}"
+    provider_evidence = {}
+    outer_started = time.perf_counter()
+    provider_parameters = {
+        "model": model,
+        "requested_ratio": output_spec.get("requested_ratio"),
+        "effective_ratio": output_spec.get("effective_ratio"),
+        "requested_resolution": output_spec.get("requested_resolution"),
+        "provider_params": output_spec.get("provider_params"),
+        "capability_contract": capability_contract(
+            model, str(output_spec.get("provider_family") or "")
+        ),
+    }
 
     def remember_remote(task_id):
         remote_tasks.append({"stage": stage, "task_id": str(task_id)})
@@ -4174,32 +4333,65 @@ def _cloud_job_call(
             LEDGER.update_task_attempt_metadata(str(ctx.item_id), payload)
             raise
 
-    with ctx.resource("cloud-image"):
-        generated = ai_i2i(
-            prompt,
-            reference,
-            model,
-            negative_prompt=negative_prompt,
-            size=str(output_spec.get("provider_size") or "2048x2048"),
-            stage=stage,
-            tid_ref=str(ctx.job_id),
-            on_submitted=remember_remote,
-            output_spec=output_spec,
+    def remember_evidence(evidence):
+        provider_evidence.clear()
+        provider_evidence.update(dict(evidence or {}))
+
+    try:
+        with ctx.resource("cloud-image"):
+            generated = ai_i2i(
+                prompt,
+                reference,
+                model,
+                negative_prompt=negative_prompt,
+                size=str(output_spec.get("provider_size") or "2048x2048"),
+                stage=stage,
+                tid_ref=str(ctx.job_id),
+                on_submitted=remember_remote,
+                on_evidence=remember_evidence,
+                output_spec=output_spec,
+            )
+    except Exception as exc:
+        timings = dict(provider_evidence.get("timings_ms") or {})
+        elapsed_ms = timings.get("total")
+        if not isinstance(elapsed_ms, (int, float)):
+            elapsed_ms = round((time.perf_counter() - outer_started) * 1000, 3)
+        _record_execution_trace_safe(
+            trace,
+            trace_stage,
+            "failed",
+            parameters=provider_parameters,
+            output={
+                "elapsed_ms": elapsed_ms,
+                "timings_ms": timings,
+                "reference": provider_evidence.get("reference") or {},
+                "failure": provider_evidence.get("failure") or {
+                    "phase": "provider.call",
+                    "error_type": type(exc).__name__,
+                },
+                "billing": unavailable_billing_evidence(),
+            },
+            error_code=str(getattr(exc, "code", "PROVIDER_IMAGE_FAILED")),
+            error_message=str(exc) or type(exc).__name__,
         )
+        raise
     measurement = _output_measurement(generated, output_spec)
-    trace_stage = f"provider.image.{stage}"
+    timings = dict(provider_evidence.get("timings_ms") or {})
+    elapsed_ms = timings.get("total")
+    if not isinstance(elapsed_ms, (int, float)):
+        elapsed_ms = round((time.perf_counter() - outer_started) * 1000, 3)
+    measurement.update({
+        "elapsed_ms": elapsed_ms,
+        "timings_ms": timings,
+        "reference": provider_evidence.get("reference") or {},
+        "billing": unavailable_billing_evidence(),
+    })
     if output_spec.get("strict_aspect") and not measurement["aspect_matches"]:
         _record_execution_trace_safe(
             trace,
             trace_stage,
             "failed",
-            parameters={
-                "model": model,
-                "requested_ratio": output_spec.get("requested_ratio"),
-                "effective_ratio": output_spec.get("effective_ratio"),
-                "requested_resolution": output_spec.get("requested_resolution"),
-                "provider_params": output_spec.get("provider_params"),
-            },
+            parameters=provider_parameters,
             output=measurement,
             error_code="OUTPUT_ASPECT_MISMATCH",
             error_message="供应商返回比例与本次有效规格不一致",
@@ -4217,13 +4409,7 @@ def _cloud_job_call(
         trace,
         trace_stage,
         "completed",
-        parameters={
-            "model": model,
-            "requested_ratio": output_spec.get("requested_ratio"),
-            "effective_ratio": output_spec.get("effective_ratio"),
-            "requested_resolution": output_spec.get("requested_resolution"),
-            "provider_params": output_spec.get("provider_params"),
-        },
+        parameters=provider_parameters,
         output=measurement,
     )
     return generated
@@ -4272,6 +4458,41 @@ def _job_knowledge_context(trace, **values):
     return context
 
 
+def _run_local_stage(trace, stage, operation, *, parameters=None):
+    """Time one local operation and keep its failure boundary visible."""
+    started = time.perf_counter()
+    try:
+        value = operation()
+    except Exception as exc:
+        _record_execution_trace_safe(
+            trace,
+            stage,
+            "failed",
+            parameters=parameters or {},
+            output={"elapsed_ms": round((time.perf_counter() - started) * 1000, 3)},
+            error_code=str(getattr(exc, "code", "LOCAL_STAGE_FAILED")),
+            error_message=str(exc) or type(exc).__name__,
+        )
+        raise
+    output = {"elapsed_ms": round((time.perf_counter() - started) * 1000, 3)}
+    if isinstance(value, Image.Image):
+        output.update({"width": value.width, "height": value.height, "mode": value.mode})
+    elif isinstance(value, dict):
+        output.update({
+            key: value[key]
+            for key in ("name", "role", "width", "height", "sha256")
+            if key in value
+        })
+    _record_execution_trace_safe(
+        trace,
+        stage,
+        "completed",
+        parameters=parameters or {},
+        output=output,
+    )
+    return value
+
+
 def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
     params = dict(ctx.job.get("parameters") or {})
     mode = str(ctx.job["mode"])
@@ -4312,14 +4533,34 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
         product_name = safe_stem(source_asset.get("name", ""), "产品")
     if not product_name:
         ctx.progress(0.03, {"phase": "vlm"})
-        with ctx.resource("vlm"):
-            detection = vlm_detect_products(str(source_asset["path"]), str(ctx.job_id))
+        vlm_started = time.perf_counter()
+        try:
+            with ctx.resource("vlm"):
+                detection = vlm_detect_products(str(source_asset["path"]), str(ctx.job_id))
+        except Exception as exc:
+            _record_execution_trace_safe(
+                trace,
+                "vlm.detect",
+                "failed",
+                parameters={"model": "gemini-3.5-flash", "purpose": "product-detection"},
+                output={
+                    "elapsed_ms": round((time.perf_counter() - vlm_started) * 1000, 3),
+                    "billing": unavailable_billing_evidence(),
+                },
+                error_code=str(getattr(exc, "code", "VLM_DETECTION_FAILED")),
+                error_message=str(exc) or type(exc).__name__,
+            )
+            raise
         _record_execution_trace_safe(
             trace,
             "vlm.detect",
             "completed",
             parameters={"model": "gemini-3.5-flash", "purpose": "product-detection"},
-            output={"detected_products": len(detection.get("products") or [])},
+            output={
+                "detected_products": len(detection.get("products") or []),
+                "elapsed_ms": round((time.perf_counter() - vlm_started) * 1000, 3),
+                "billing": unavailable_billing_evidence(),
+            },
         )
         products = detection.get("products") or []
         if products:
@@ -4335,7 +4576,12 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             trace,
             "vlm.detect",
             "skipped",
-            output={"reason": "product_name_supplied", "product_name": product_name},
+            output={
+                "reason": "product_name_supplied",
+                "product_name": product_name,
+                "elapsed_ms": 0.0,
+                "billing": {"status": "not-applicable", "amount": 0},
+            },
         )
 
     negative = build_negative(platter)
@@ -4353,14 +4599,20 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             fidelity=fidelity,
             product_name=product_name,
         )
+        base_stage1_prompt = make_prompt(
+            build_single_prompt(product_name, platter, product_type, angle), fidelity
+        )
         stage1 = KNOWLEDGE.enrich_prompt(
-            make_prompt(build_single_prompt(product_name, platter, product_type, angle), fidelity),
-            negative,
-            knowledge_context,
+            base_stage1_prompt, negative, knowledge_context
         )
         prompt_stage = "primary" if index == 0 else f"primary-variation-{index + 1}"
         _record_job_prompt(
-            trace, stage1["prompt"], stage1["negative_prompt"], prompt_stage, stage1
+            trace,
+            stage1["prompt"],
+            stage1["negative_prompt"],
+            prompt_stage,
+            stage1,
+            base_prompt=base_stage1_prompt,
         )
         generated = _cloud_job_call(
             ctx,
@@ -4373,10 +4625,11 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             trace=trace,
         )
         ctx.progress(0.05 + per * index + per * 0.36, {"phase": "cloud-refine", "variation": index + 1})
+        base_stage2_prompt = make_prompt(
+            build_stage2_prompt(product_name, platter, product_type, angle), fidelity
+        )
         stage2 = KNOWLEDGE.enrich_prompt(
-            make_prompt(build_stage2_prompt(product_name, platter, product_type, angle), fidelity),
-            negative,
-            knowledge_context,
+            base_stage2_prompt, negative, knowledge_context
         )
         _record_job_prompt(
             trace,
@@ -4384,6 +4637,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             stage2["negative_prompt"],
             f"refine-{index + 1}",
             stage2,
+            base_prompt=base_stage2_prompt,
         )
         generated = _cloud_job_call(
             ctx,
@@ -4395,15 +4649,39 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             output_spec=output_spec,
             trace=trace,
         )
-        main_image = post_process_enhance(generated)
-        outputs.append(_stage_output(
-            main_image, stage_dir, f"{index + 1:02d}_main.jpg", "result_main"
+        main_image = _run_local_stage(
+            trace,
+            f"local.enhance.{index + 1}",
+            lambda: post_process_enhance(generated),
+            parameters={"operation": "post-process-enhance"},
+        )
+        outputs.append(_run_local_stage(
+            trace,
+            f"local.save.main.{index + 1}",
+            lambda: _stage_output(
+                main_image, stage_dir, f"{index + 1:02d}_main.jpg", "result_main"
+            ),
+            parameters={"format": "jpeg", "quality": 96},
         ))
         ctx.progress(0.05 + per * index + per * 0.76, {"phase": "local-cutout", "variation": index + 1})
         with ctx.resource("local-cutout"):
-            cutout = tight_crop_alpha(remove_bg_hd(main_image))
-        outputs.append(_stage_output(
-            cutout, stage_dir, f"{index + 1:02d}_cutout.png", "result_cutout"
+            cutout = _run_local_stage(
+                trace,
+                f"local.cutout.{index + 1}",
+                lambda: tight_crop_alpha(remove_bg_hd(main_image)),
+                parameters={
+                    "model": "local-rembg/birefnet-general",
+                    "alpha_mode": "native-soft",
+                    "post_process_mask": False,
+                },
+            )
+        outputs.append(_run_local_stage(
+            trace,
+            f"local.save.cutout.{index + 1}",
+            lambda: _stage_output(
+                cutout, stage_dir, f"{index + 1:02d}_cutout.png", "result_cutout"
+            ),
+            parameters={"format": "png"},
         ))
     return outputs, {
         "product_name": product_name,
@@ -4469,10 +4747,9 @@ def _execute_adjustment_job(ctx, source_asset, image, stage_dir, trace):
         NEG_BASE
         + ",重构整张画面,改变未提及内容,改变产品数量,改变包装文字,改变画布比例"
     )
+    base_prompt = make_prompt(build_adjustment_prompt(instruction), fidelity)
     prompt_bundle = KNOWLEDGE.enrich_prompt(
-        make_prompt(build_adjustment_prompt(instruction), fidelity),
-        negative,
-        knowledge_context,
+        base_prompt, negative, knowledge_context
     )
     _record_job_prompt(
         trace,
@@ -4480,6 +4757,7 @@ def _execute_adjustment_job(ctx, source_asset, image, stage_dir, trace):
         prompt_bundle["negative_prompt"],
         "primary",
         prompt_bundle,
+        base_prompt=base_prompt,
     )
     ctx.progress(0.08, {"phase": "cloud-adjustment", "version": adjustment.get("version")})
     generated = _cloud_job_call(
@@ -4493,7 +4771,14 @@ def _execute_adjustment_job(ctx, source_asset, image, stage_dir, trace):
         trace=trace,
     )
     ctx.progress(0.9, {"phase": "publishing-adjustment"})
-    output = _stage_output(generated, stage_dir, "01_adjusted_main.jpg", "result_main")
+    output = _run_local_stage(
+        trace,
+        "local.save.adjustment.1",
+        lambda: _stage_output(
+            generated, stage_dir, "01_adjusted_main.jpg", "result_main"
+        ),
+        parameters={"format": "jpeg", "quality": 96},
+    )
     output["parent_asset_id"] = parent_result_asset_id
     output["metadata"] = {
         "adjustment": {
@@ -4613,11 +4898,27 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
     fidelity = max(0, min(int(params.get("fidelity", 35)), 100))
     angle = str(params.get("angle") or "auto")
     ctx.progress(0.03, {"phase": "vlm"})
-    with ctx.resource("vlm"):
-        detection = vlm_detect_products(str(source_asset["path"]), str(ctx.job_id))
-    # Validate the complete untrusted VLM response before the first paid image
-    # call. A late malformed product must not waste earlier successful calls.
-    products = _validated_group_products(detection)
+    vlm_started = time.perf_counter()
+    try:
+        with ctx.resource("vlm"):
+            detection = vlm_detect_products(str(source_asset["path"]), str(ctx.job_id))
+        # Validate the complete untrusted VLM response before the first paid
+        # image call. A late malformed product must not waste earlier calls.
+        products = _validated_group_products(detection)
+    except Exception as exc:
+        _record_execution_trace_safe(
+            trace,
+            "vlm.detect",
+            "failed",
+            parameters={"model": "gemini-3.5-flash", "purpose": "group-detection"},
+            output={
+                "elapsed_ms": round((time.perf_counter() - vlm_started) * 1000, 3),
+                "billing": unavailable_billing_evidence(),
+            },
+            error_code=str(getattr(exc, "code", "VLM_DETECTION_FAILED")),
+            error_message=str(exc) or type(exc).__name__,
+        )
+        raise
     _record_execution_trace_safe(
         trace,
         "vlm.detect",
@@ -4626,6 +4927,8 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
         output={
             "detected_products": len(products),
             "product_names": [product["name"] for product in products],
+            "elapsed_ms": round((time.perf_counter() - vlm_started) * 1000, 3),
+            "billing": unavailable_billing_evidence(),
         },
     )
 
@@ -4685,15 +4988,14 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             product_name=name,
         )
         ctx.progress(0.05 + index * per, {"phase": "cloud-primary", "product": index + 1})
-        stage1 = KNOWLEDGE.enrich_prompt(
-            make_prompt(
-                build_multi_stage1_prompt(
-                    name, product_type, "cutoff" if cutoff else "complete", platter, angle
-                ),
-                fidelity,
+        base_stage1_prompt = make_prompt(
+            build_multi_stage1_prompt(
+                name, product_type, "cutoff" if cutoff else "complete", platter, angle
             ),
-            negative,
-            knowledge_context,
+            fidelity,
+        )
+        stage1 = KNOWLEDGE.enrich_prompt(
+            base_stage1_prompt, negative, knowledge_context
         )
         _record_job_prompt(
             trace,
@@ -4701,6 +5003,7 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             stage1["negative_prompt"],
             "primary" if index == 0 else f"product-{index + 1}-primary",
             stage1,
+            base_prompt=base_stage1_prompt,
         )
         generated = _cloud_job_call(
             ctx,
@@ -4714,10 +5017,11 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
         )
         if do_refine:
             ctx.progress(0.05 + index * per + per * 0.38, {"phase": "cloud-refine", "product": index + 1})
+            base_stage2_prompt = make_prompt(
+                build_stage2_prompt(name, platter, product_type, angle), fidelity
+            )
             stage2 = KNOWLEDGE.enrich_prompt(
-                make_prompt(build_stage2_prompt(name, platter, product_type, angle), fidelity),
-                negative,
-                knowledge_context,
+                base_stage2_prompt, negative, knowledge_context
             )
             _record_job_prompt(
                 trace,
@@ -4725,6 +5029,7 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
                 stage2["negative_prompt"],
                 f"product-{index + 1}-refine",
                 stage2,
+                base_prompt=base_stage2_prompt,
             )
             generated = _cloud_job_call(
                 ctx,
@@ -4736,16 +5041,46 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
                 output_spec=output_spec,
                 trace=trace,
             )
-        main_image = post_process_enhance(generated)
+        main_image = _run_local_stage(
+            trace,
+            f"local.enhance.{index + 1}",
+            lambda: post_process_enhance(generated),
+            parameters={"operation": "post-process-enhance"},
+        )
         safe_name = safe_stem(name, f"product-{index + 1}")
-        outputs.append(_stage_output(
-            main_image, stage_dir, f"{index + 1:02d}_{safe_name}_main.jpg", "result_main"
+        outputs.append(_run_local_stage(
+            trace,
+            f"local.save.main.{index + 1}",
+            lambda: _stage_output(
+                main_image,
+                stage_dir,
+                f"{index + 1:02d}_{safe_name}_main.jpg",
+                "result_main",
+            ),
+            parameters={"format": "jpeg", "quality": 96},
         ))
         ctx.progress(0.05 + index * per + per * 0.78, {"phase": "local-cutout", "product": index + 1})
         with ctx.resource("local-cutout"):
-            cutout = tight_crop_alpha(remove_bg_hd(main_image))
-        outputs.append(_stage_output(
-            cutout, stage_dir, f"{index + 1:02d}_{safe_name}_cutout.png", "result_cutout"
+            cutout = _run_local_stage(
+                trace,
+                f"local.cutout.{index + 1}",
+                lambda: tight_crop_alpha(remove_bg_hd(main_image)),
+                parameters={
+                    "model": "local-rembg/birefnet-general",
+                    "alpha_mode": "native-soft",
+                    "post_process_mask": False,
+                },
+            )
+        outputs.append(_run_local_stage(
+            trace,
+            f"local.save.cutout.{index + 1}",
+            lambda: _stage_output(
+                cutout,
+                stage_dir,
+                f"{index + 1:02d}_{safe_name}_cutout.png",
+                "result_cutout",
+            ),
+            parameters={"format": "png"},
         ))
     return outputs, {
         "detected_products": len(products),
@@ -4764,6 +5099,7 @@ def _execute_cutout_job(ctx, image, stage_dir, trace):
     }
     semantic = selection.get("strategy") == "semantic"
     ctx.progress(0.08, {"phase": "semantic-cutout" if semantic else "local-cutout"})
+    segment_started = time.perf_counter()
     try:
         with ctx.resource("local-cutout"):
             segmented = remove_bg_hd(image)
@@ -4792,7 +5128,24 @@ def _execute_cutout_job(ctx, image, stage_dir, trace):
             parameters={"strategy": selection.get("strategy", "foreground")},
         )
         raise JobExecutionError(exc.code, exc.message) from exc
-    output = _stage_output(cutout, stage_dir, "01_cutout.png", "result_cutout")
+    except Exception as exc:
+        _record_execution_trace_safe(
+            trace,
+            "cutout.segment",
+            "failed",
+            parameters={"strategy": selection.get("strategy", "foreground")},
+            output={"elapsed_ms": round((time.perf_counter() - segment_started) * 1000, 3)},
+            error_code=str(getattr(exc, "code", "CUTOUT_FAILED")),
+            error_message=str(exc) or type(exc).__name__,
+        )
+        raise
+    segment_elapsed_ms = round((time.perf_counter() - segment_started) * 1000, 3)
+    output = _run_local_stage(
+        trace,
+        "local.save.cutout.1",
+        lambda: _stage_output(cutout, stage_dir, "01_cutout.png", "result_cutout"),
+        parameters={"format": "png"},
+    )
     ignored_fields = []
     if trace.get("brief") and not semantic:
         ignored_fields.append("brief")
@@ -4829,6 +5182,7 @@ def _execute_cutout_job(ctx, image, stage_dir, trace):
             "human_confirmation_required": semantic,
             "selected_region_count": len(source_plan.get("regions") or []),
             "mask_edit_count": len(source_plan.get("mask_edits") or []),
+            "elapsed_ms": segment_elapsed_ms,
         },
     )
     return [output], {
@@ -4852,11 +5206,17 @@ def execute_job_workflow(ctx):
     except Exception as exc:
         raise JobExecutionError("INVALID_SOURCE_IMAGE", "The persisted source image cannot be decoded") from exc
     trace = _job_trace_context(ctx)
+    trace["workflow_started_perf"] = time.perf_counter()
     _record_execution_trace_safe(
         trace,
         "workflow.start",
         "started",
-        output={"mode": str(ctx.job["mode"]), "source_asset_id": trace["source_asset_id"]},
+        output={
+            "mode": str(ctx.job["mode"]),
+            "source_asset_id": trace["source_asset_id"],
+            "trace_contract_version": GENERATION_TRACE_CONTRACT_VERSION,
+            "prompt_version": PROMPT_COMPILER_VERSION,
+        },
     )
     stage_dir = _attempt_directory(ctx)
     try:
@@ -4923,7 +5283,12 @@ def execute_job_workflow(ctx):
             "failed",
             error_code=str(getattr(exc, "code", "PROCESSOR_ERROR")),
             error_message=str(exc) or type(exc).__name__,
-            output={"exception_type": type(exc).__name__},
+            output={
+                "exception_type": type(exc).__name__,
+                "elapsed_ms": round(
+                    (time.perf_counter() - trace["workflow_started_perf"]) * 1000, 3
+                ),
+            },
         )
         if stage_dir.exists():
             shutil.rmtree(stage_dir)

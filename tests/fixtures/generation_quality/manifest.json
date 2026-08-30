@@ -1,0 +1,106 @@
+{
+  "schema_version": "1.0",
+  "renderer_version": "generation-quality-fixture-2026-08-30.1",
+  "prompt_version": "prompt_v1",
+  "status": "offline-inputs-frozen-paid-baseline-not-run",
+  "score_axes": [
+    "subject_fidelity",
+    "structure_and_count",
+    "packaging_text",
+    "brand_color",
+    "composition",
+    "material",
+    "lighting",
+    "background_cleanliness",
+    "edge_quality",
+    "commercial_usability"
+  ],
+  "blind_review": {
+    "scale": "0-5",
+    "rounds": 2,
+    "randomize_variant_labels": true,
+    "separate_aesthetic_preference_from_deliverable": true,
+    "deliverable_gate": {
+      "commercial_usability_min": 4,
+      "subject_fidelity_min": 4,
+      "structure_and_count_min": 4
+    }
+  },
+  "cases": [
+    {
+      "id": "food-single-real",
+      "coverage": ["food", "complex-texture", "quantity"],
+      "source": {
+        "type": "licensed-photo",
+        "path": "../semantic_grounding_photos/big-mac-hamburger.jpg",
+        "sha256": "09fcecb98db7a0c505aa83391af8320baac2b1de203c70df683d386eb3d5a1ff"
+      },
+      "brief": {"product_name": "汉堡", "quantity": 1, "platter": "remove"},
+      "invariants": ["only one burger", "ingredient layers remain recognizable", "no plate"]
+    },
+    {
+      "id": "loose-product-real",
+      "coverage": ["food", "loose-powder", "edge-quality"],
+      "source": {
+        "type": "licensed-photo",
+        "path": "../semantic_grounding_photos/coffee-powder.jpg",
+        "sha256": "75429c1f6141a759e4dc1eb0cb996277bc6eb9ec33c2c6e60ee13c7a816432c4"
+      },
+      "brief": {"product_name": "咖啡粉", "quantity": 1, "platter": "keep"},
+      "invariants": ["powder texture remains granular", "original vessel remains", "no invented packaging"]
+    },
+    {
+      "id": "transparent-bottle-real",
+      "coverage": ["transparent-material", "reflection", "edge-quality"],
+      "source": {
+        "type": "licensed-photo",
+        "path": "../semantic_grounding_photos/evian-label-free-bottle.jpg",
+        "sha256": "38138a8d39f58360e381fdda97aab618d3171e1cf03997137a5b643794fc9529"
+      },
+      "brief": {"product_name": "透明水瓶", "quantity": 1, "platter": "remove"},
+      "invariants": ["transparent body remains transparent", "one bottle", "specular highlights remain plausible"]
+    },
+    {
+      "id": "packaging-text-brand-procedural",
+      "coverage": ["packaging-text", "brand-color", "packaging"],
+      "source": {"type": "procedural", "scene": "packaging-text-brand", "path": "generated/packaging-text-brand.png", "sha256": "2a6afca49fcaf0e1d050ae3447e818db408e94ed781a928a50a9c3083bd2f56f"},
+      "brief": {"product_name": "PA TEA 250g", "quantity": 1, "platter": "remove"},
+      "invariants": ["PA TEA remains exact", "250g remains exact", "coral package color remains stable", "one package"]
+    },
+    {
+      "id": "multi-count-procedural",
+      "coverage": ["multi-product", "quantity", "brand-color"],
+      "source": {"type": "procedural", "scene": "multi-product-count", "path": "generated/multi-product-count.png", "sha256": "ecd35ba39cf4dc5f280f3eef21bc315955c14f5f9b596007a9c973d1dff56512"},
+      "brief": {"product_name": "三瓶组合", "quantity": 3, "platter": "remove"},
+      "invariants": ["exactly three bottles", "red green and blue identities remain distinct", "no extra product"]
+    },
+    {
+      "id": "reflective-material-procedural",
+      "coverage": ["reflective-material", "highlight", "edge-quality"],
+      "source": {"type": "procedural", "scene": "reflective-material", "path": "generated/reflective-material.png", "sha256": "95c650ee8bfe5754be20373d2cf387c9f9c4be8d3ed55627f1878b2e9571dc6a"},
+      "brief": {"product_name": "金属瓶", "quantity": 1, "platter": "remove"},
+      "invariants": ["one bottle", "vertical highlight pattern remains coherent", "metal does not become plastic"]
+    },
+    {
+      "id": "vessel-preservation-procedural",
+      "coverage": ["vessel-preservation", "food", "structure"],
+      "source": {"type": "procedural", "scene": "vessel-preservation", "path": "generated/vessel-preservation.png", "sha256": "72c31847c30072fb25ac595a2f9d965d1f188890b15fc973d298d8eea2583222"},
+      "brief": {"product_name": "碗装食品", "quantity": 1, "platter": "keep"},
+      "invariants": ["bowl remains", "three food components remain", "vessel is not replaced"]
+    },
+    {
+      "id": "cropped-completion-procedural",
+      "coverage": ["truncation-completion", "packaging-text", "structure"],
+      "source": {"type": "procedural", "scene": "cropped-completion", "path": "generated/cropped-completion.png", "sha256": "1001094cf3d43b1e5fa752a9f295efa1c4e2ce761d28a16ef6bcd959f25693f6"},
+      "brief": {"product_name": "SNACK 包装", "quantity": 1, "platter": "remove"},
+      "invariants": ["complete the cropped package", "SNACK remains exact", "do not invent a second package"]
+    },
+    {
+      "id": "complex-shadow-procedural",
+      "coverage": ["complex-shadow", "packaging", "lighting"],
+      "source": {"type": "procedural", "scene": "complex-shadow", "path": "generated/complex-shadow.png", "sha256": "5a26eb6ed3a02cd93db66dc8343717d2199ec45b3d289cc8193a8706667400b8"},
+      "brief": {"product_name": "玻璃罐", "quantity": 1, "platter": "remove"},
+      "invariants": ["one jar", "remove the cast shadow for white-background delivery", "preserve the jar silhouette"]
+    }
+  ]
+}
