@@ -255,3 +255,21 @@ git -C D:\ProductAtelier-Desktop switch -c restore/semantic-grounding-contract c
 本检查点没有数据库迁移。新 sidecar 创建的语义确认任务包含 `cutout_selection`、`mask_edits` 与确认摘要；回退到不认识这些字段的旧 sidecar 前，必须先让相关排队/暂停任务完成或明确取消，避免旧程序按“全部前景”语义接管。外置自动定位 runtime/模型不在正式目录事务内，当前正式包仍保持质量不达标时的人工确认回退。
 
 NSIS 已完成隔离安装、安装态双 smoke 与静默卸载，但没有 Authenticode 签名，只能作为内部候选。对外分发前必须签名后重新记录安装器哈希；签名会改变文件字节，不能沿用上方 SHA-256。
+
+## 2026-08-30 “R7 生图零成本基线”正式便携检查点
+
+- 正式源码提交：`e776a96d36cc6b8536f37eecddf3b089b28be04d`
+- 正式目录：`D:\ProductAtelier-Desktop\release\ProductAtelier-Portable`
+- sidecar contract：`2026-08-30.5`；数据库 schema：v3
+- source fingerprint：`2D5DA786D1457F0A307496A981665B49FB5186D25848EDBB73773035CA995819`
+- 正式 EXE SHA-256：`7A184036AD70B866D5B3EB8CF9D9B03F19EDB41138158358A56BE2D97319554B`
+- sidecar SHA-256：`F3899399AA3AFA65B301AFB31C2402337842F2804EDCB9673847E8E83A920C01`
+- manifest SHA-256：`7B5980F0BFF4327C1B86CD411BC7C783F44603DA6AE971E0780586AB8B0E1EDE`
+- 正式目录 tree SHA-256：`CE3F3148DCE2C4C40BD4FEDE4E971662D72D6BE7156BCD8E24A4508EF8F08E15`
+- 已 finalized 事务：`5bdb52a1667c43b9a77f97a1fb10d22a`
+- 上一 `.4` 正式目录完整备份：`D:\ProductAtelier-Backups\release-before-20260830-200109-e776a96d36cc`
+- promotion evidence SHA-256：`E9162CF69E65B1D7D895055AC3169366D1BA7647330B186F785E619DD9CA513A`
+
+活动 transaction 文件不存在，桌面快捷方式目标与工作目录已指向上述正式目录，健康接口确认 contract `.5`、manifest `ok`、schema v3。该版本没有数据库迁移；新增的是后续生图任务的 Prompt/知识/参考请求指纹、阶段耗时、失败边界与明确缺失的费用字段。回退到 `.4` 不需要迁移数据库，但 `.4` 不会生成新观测字段；回退前仍应先退出正式 EXE 和它启动的 sidecar，并为当前正式目录和 `%APPDATA%\ProductAtelier` 各保留一份新副本。
+
+本轮没有重建 NSIS。此前 `408C22F...` 的未签名 NSIS 绑定 `.4`，不能用于恢复或安装 `.5`；当前 `.5` 的可恢复事实源是 Git 提交、正式便携目录、上方外部备份和 promotion evidence。

@@ -30,3 +30,11 @@
 ## 尚未执行的付费门禁
 
 本检查点没有调用付费 VLM 或生图接口。下一步只有在用户确认预算后才执行小批 A/B：先冻结模型快照、调用数、最高费用和停止条件，再比较 `prompt_v1` 基线与默认关闭的候选策略。供应商实际账单仍需以 LK 返回或账单回执为准；在取得真实费用前，“每张可采用成品成本”保持未知，不能套用 OpenAI 官方直连价格。
+
+## Windows 正式便携门禁
+
+源码提交 `e776a96d36cc6b8536f37eecddf3b089b28be04d` 已以 sidecar contract `2026-08-30.5` 进入正式便携目录。Python 223 项通过（另 1 项平台预期跳过）、前端 101/101、Vite、Rust/Tauri、PyInstaller 候选和正式应用双 smoke 均通过；事务 `5bdb52a1667c43b9a77f97a1fb10d22a` 已 finalize，上一 `.4` 正式目录完整备份位于 `D:\ProductAtelier-Backups\release-before-20260830-200109-e776a96d36cc`。
+
+正式 EXE、sidecar、manifest 与目录 tree SHA-256 分别为 `7A184036AD70B866D5B3EB8CF9D9B03F19EDB41138158358A56BE2D97319554B`、`F3899399AA3AFA65B301AFB31C2402337842F2804EDCB9673847E8E83A920C01`、`7B5980F0BFF4327C1B86CD411BC7C783F44603DA6AE971E0780586AB8B0E1EDE` 和 `CE3F3148DCE2C4C40BD4FEDE4E971662D72D6BE7156BCD8E24A4508EF8F08E15`。正式健康接口返回 manifest `ok`、schema v3，桌面快捷方式目标和工作目录均为正式便携目录。
+
+本轮未重建 NSIS；现存未签名安装候选仍属于 `.4`。不要把它描述为 `.5` 安装包或公开分发包。
