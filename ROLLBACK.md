@@ -235,3 +235,23 @@ git -C D:\ProductAtelier-Desktop switch -c restore/semantic-grounding-contract c
 - `docs/model-artifacts/grounding-dino-tiny.json` 是来源与哈希合同，`tools/bootstrap_semantic_grounding.py --verify` 只验证外置文件；不要把 receipt、Hub cache 或权重复制进仓库和发布目录。
 - 本检查点新增的中文保护会把未翻译 CJK 返回 `query_translation_required`。回退到第二源码检查点会重新允许中文落为 `[UNK]` 后抓取显著主体，属于已知假语义风险，不应作为生产降级路线。
 - 上一个已验证正式发布仍是 `checkpoint-2026-08-28-unified-status-recovery-portable`。真实模型门禁失败，因此不得运行 candidate-first 正式提升。
+
+## 2026-08-30 “智能选物人工恢复、柔边与 Alpha 紧裁边”正式便携检查点
+
+- 正式源码提交：`dddedf1ea7a123e02cc9205c40401afc93e5cbf6`
+- 正式目录：`D:\ProductAtelier-Desktop\release\ProductAtelier-Portable`
+- sidecar contract：`2026-08-30.4`；数据库 schema：v3
+- 正式 EXE SHA-256：`AFDFA20FD4721D53749A3C9BF537C2806B4AA184EA8D3838C0412E9AD118CE88`
+- sidecar SHA-256：`CA60D20BB78B7C3267A4D99A092C96B6803175E28746D8164FCD3FBF086B321E`
+- manifest SHA-256：`FC876CCD07E39495BA6F8DB1AE0E0789495D2C675E6EE97E994803231095A5D7`
+- 正式目录 tree SHA-256：`9FBD24CA83E521625FDC4E24B10AEFE2C3678EA91EC6E99460986AFF77B03816`
+- 已 finalized 事务：`f64dd12fed5540b0b8489f1d439f3b4b`
+- 上一正式目录完整备份：`D:\ProductAtelier-Backups\release-before-20260830-192339-dddedf1ea7a1`
+- promotion evidence SHA-256：`CD1CE541F0895C055B0EF3533EEB48847BBBB35BCD8DB7F82F951D5E6864496A`
+- NSIS 候选 SHA-256：`408C22F03B9C60947A1E01970CB1230BA6038594A24556BE8B76286A22EB7D80`（107,359,397 bytes，`NotSigned`）
+
+该事务已经 finalize，活动 transaction 文件不存在。上一正式目录备份是 `.3` 中间包；更早的 `D:\ProductAtelier-Backups\release-before-20260830-172404-a8dbb550fbed` 仍保存 2026-08-28 的正式包。不要直接把任一备份覆盖到运行中的正式目录；如需降级，先退出正式 EXE 和对应 sidecar，保留当前正式目录与 `%APPDATA%\ProductAtelier` 的新副本，再从目标提交重新走 `tools/dev.ps1` 的 candidate-first 发布链。
+
+本检查点没有数据库迁移。新 sidecar 创建的语义确认任务包含 `cutout_selection`、`mask_edits` 与确认摘要；回退到不认识这些字段的旧 sidecar 前，必须先让相关排队/暂停任务完成或明确取消，避免旧程序按“全部前景”语义接管。外置自动定位 runtime/模型不在正式目录事务内，当前正式包仍保持质量不达标时的人工确认回退。
+
+NSIS 已完成隔离安装、安装态双 smoke 与静默卸载，但没有 Authenticode 签名，只能作为内部候选。对外分发前必须签名后重新记录安装器哈希；签名会改变文件字节，不能沿用上方 SHA-256。

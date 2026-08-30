@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-08-30<br>
-> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 与 Phase 6 已闭环；“统一状态与冲突恢复”已于 Windows 以提交 `9eb71a8c50e6f916954d1871c40ba39a6312ae3b` 完成正式便携版门禁。R6 / Phase 7A-B 已完成中文离线映射、30 张 Open Images 扩展门禁、两级人工建议、外置模型合同、独立 Windows GPU 运行包和轻量主 sidecar 的真实联调，并完成 Grounding DINO、OWLv2、Florence-2 与双模型共识对照。当前安全共识策略最高可信召回 69.39%，仍低于 75% 检查点目标，因此三种定位候选均不进入正式包；第九检查点已补齐本地蒙版修正闭环，第十检查点进一步用固定真实照片定位并修复 rembg 二值后处理造成的硬边锯齿，原生柔和 Alpha 3/3 通过且失败恢复 3/3 通过。下一游标为从干净 Git 身份执行 Windows candidate-first 正式门禁；正式便携目录、NSIS 与桌面快捷方式尚未提升。AI Agent 方案继续暂缓<br>
+> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R4 已关闭；R5 与 Phase 6 已闭环；R6 的名称/数量确认、人工候选修正、蒙版预览与画笔恢复已经以提交 `dddedf1ea7a123e02cc9205c40401afc93e5cbf6` 进入 Windows 正式便携版。第十检查点同时关闭 rembg 二值后处理造成的硬边锯齿和透明 RGB 导致的紧裁边失效：固定照片原生柔和 Alpha 3/3、失败恢复 3/3，正式透明瓶输出从 960×1964 收紧到 719×1964 并保留 256 级 Alpha。Grounding DINO、OWLv2、Florence-2 与双模型共识最高安全召回仍只有 69.39%，所以实验自动定位模型继续不进入正式包。正式目录、桌面快捷方式和 NSIS 隔离安装门禁均已通过；NSIS 尚未签名，仅作为内部候选。下一游标为 R7 零成本冻结当前生图 Prompt/逐阶段耗时/历史质量基线，任何付费 A/B 仍须先确认预算。AI Agent 方案继续暂缓<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -24,7 +24,7 @@
 | Phase 4 正式 UI 骨架 | 首发 P0 壳层门禁完成并进入正式便携版，后续职责拆分仍按总路线推进 | sidecar 启动/45 秒健康等待已移出 `setup()` 同步路径；确定性首帧壳和 DWM 原生圆角已通过 100/125/150/175/200% DPI、最大化/恢复、最小化/恢复和 150%↔100% 跨屏实测；系统重启后 10 次启动、五档 60fps 编码逐帧样本均无黑帧；正式目录 smoke 与可见启动通过 |
 | Phase 5 素材管理与 Task Dock | 素材与批量任务大数据检查点均已进入正式版 | 素材搜索、多维排序、40 张分段渲染、主画布 60 张上限、任务选入、批量移出/恢复、持久手动顺序、保护期倒计时、引用解释与二次确认永久清理均已通过；任务中心 12 条分段、活跃任务保底可见、20 项展开、逐项失败原因与只重试失败项也已通过；比例/2K/4K 已贯通 UI、快照、供应商适配、trace 与实际像素 |
 | Phase 6 Result Review 与情境对比 | **已完成并进入正式便携版** | 原子“开始下一项”、显式结果游标、结果级 review/feedback、持久学习回执、V1→V2 不可变调整、结构化原因标签、原图/版本 A/B、同步缩放/平移、对比位置与首次引导持久恢复均已通过 |
-| Phase 7 智能选物与模型质量 | **7A-B 第十柔边与恢复门禁完成，待 Windows 正式候选** | 名称/数量、逐图确认、中文离线映射、30 张照片门禁、两级建议、外置模型和独立 Windows GPU 运行包均已联调；DINO、OWLv2、Florence-2 和双模型共识均未同时通过难负例与召回门禁，安全共识最高召回 69.39%。可持久化目标增删、蒙版预览、保留/删除修正与键盘坐标均已闭环；固定真实照片证明旧二值后处理 0/3、新原生柔和 Alpha 3/3，下一步进入 Windows candidate-first 门禁，不提前提升正式便携版 |
+| Phase 7 智能选物与模型质量 | **R6 人工可恢复链与柔边输出已进入正式便携版；R7 生图质量基线待执行** | 名称/数量、逐图确认、中文离线映射、可持久化目标增删、蒙版预览、保留/删除修正、键盘坐标、原生柔和 Alpha 和按 Alpha 紧裁边均已完成正式门禁。DINO、OWLv2、Florence-2 和双模型共识仍未通过难负例与召回门槛，最高安全召回 69.39%，实验自动定位模型继续外置且不进入正式包；下一步转入零成本生图基线冻结 |
 | Phase 8 可解释成长系统 | Growth 核心投影、双向追溯和统一状态已进入正式便携版 | 全局/当前任务投影、0 待审核中性态、五类状态测试、“结果 → 建议 → 来源结果”的精确游标恢复，以及七类统一状态与 revision 冲突可见恢复均通过浏览器、打包数据和正式便携门禁 |
 | Phase 9 主题、无障碍与性能 | 未开始 | 等 Phase 6–8 状态契约稳定后实施 |
 | Phase 10 正式发布与灾备 | 可恢复发布链和当前正式检查点已完成，后续检查点继续复用 | 正式 EXE、sidecar、manifest、外部完整备份、事务证据、桌面快捷方式、DWM/DPI 与 NSIS 隔离安装均已验证；NSIS 尚未代码签名，不作为对外公开分发包 |
@@ -1096,7 +1096,11 @@ DIY 外观要求：
 - 两组修正恢复均为 3/3；新参数平均 10,984.005ms、P95 11,374.920ms，旧参数平均 11,378.515ms、P95 11,809.976ms，未观察到性能回退。当前 ONNX Runtime 只有 Azure/CPU provider，约 11 秒/张不能误报为 RTX GPU 推理。
 - 本烟测没有逐像素真值，不能据此宣称边缘准确率、透明材质保真或商业成品质量；确认区域外像素为 0 只证明区域应用合同。详细结论见 `docs/semantic-mask-quality-evaluation-2026-08-30.md` 及 `docs/reports/semantic-mask-quality-postprocess-*.json`。
 - 裁边回归加入后的最终源码门禁为 Python 215/215（另 1 个平台预期跳过）、前端 101/101、Vite production build、Rust/Tauri locked custom-protocol check、compileall 与 Git whitespace 全绿；`.4` 候选发布链仍会在提升前再次执行同一完整门禁。未读取用户图片、未调用付费 API。
-- `.3` 中间候选已通过事务提升并用于正式 sidecar 的真实 PNG 复验，上一正式版已有外部完整备份；它不作为本检查点终态。下一步先提交并推送裁边修复形成 `.4` 干净 Git 身份，再重新执行 PyInstaller sidecar、候选 EXE、事务提升、正式目录双 smoke、快捷方式和 NSIS 的 Windows candidate-first 终门禁。
+- `.3` 中间候选只用于发现紧裁边缺陷；最终 `.4` 提交 `dddedf1ea7a123e02cc9205c40401afc93e5cbf6` 已通过 PyInstaller 6.22.2/hooks 2026.7、候选/正式两轮 sidecar 与应用 smoke，并以事务 `f64dd12fed5540b0b8489f1d439f3b4b` finalize。正式 EXE、sidecar、manifest 和目录 tree SHA-256 分别为 `AFDFA20FD4721D53749A3C9BF537C2806B4AA184EA8D3838C0412E9AD118CE88`、`CA60D20BB78B7C3267A4D99A092C96B6803175E28746D8164FCD3FBF086B321E`、`FC876CCD07E39495BA6F8DB1AE0E0789495D2C675E6EE97E994803231095A5D7`、`9FBD24CA83E521625FDC4E24B10AEFE2C3678EA91EC6E99460986AFF77B03816`。
+- 上一正式目录完整备份为 `D:\ProductAtelier-Backups\release-before-20260830-192339-dddedf1ea7a1`，promotion evidence SHA-256 为 `CD1CE541F0895C055B0EF3533EEB48847BBBB35BCD8DB7F82F951D5E6864496A`；活动 transaction 已清除。桌面快捷方式目标/工作目录均指向正式便携目录，正式应用与单一 sidecar 以动态端口 `65479`、contract `.4`、schema v3 和 manifest `ok` 重新启动。
+- 正式 sidecar 对许可透明瓶的独立账本实测输出 `719×1964` PNG（原图 `960×1964`），保留 256 级 Alpha、14,119 个过渡像素；证据 SHA-256 为 `866FEDB4CA702B68C06E3A49DDA8C35A35A28AA723130205689A8EE3C8B32C94`。没有读取用户图片或调用付费 API。
+- 最终 NSIS `Product Atelier_1.0.0_x64-setup.exe` 为 107,359,397 bytes，SHA-256 `408C22F03B9C60947A1E01970CB1230BA6038594A24556BE8B76286A22EB7D80`；已在仓库 `build` 下隔离静默安装，安装态应用/sidecar/动态端口/manifest/账本 smoke 通过，卸载返回 0、隔离目录清除并恢复正式桌面入口。Authenticode 状态为 `NotSigned`，只作为内部安装候选。
+- R6 当前正式游标关闭。下一步进入 R7 的零成本部分：冻结精确 Prompt、知识快照、参考图变换和逐阶段耗时，先用历史结果与离线评分建立基线；未获预算确认前不发起付费 A/B。
 
 ### 阶段 8：可解释知识闭环与 Design DNA（P1，预计 12–20 小时）
 
