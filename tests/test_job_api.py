@@ -358,6 +358,10 @@ class DurableJobApiTests(unittest.TestCase):
             )
             self.assertTrue(primary_prompt["parameters"]["base_prompt"])
             self.assertEqual(
+                primary_prompt["parameters"]["template_prompt"],
+                primary_prompt["parameters"]["base_prompt"],
+            )
+            self.assertEqual(
                 primary_prompt["output"]["prompt_snapshot"]["prompt_version"],
                 "prompt_v1",
             )
@@ -380,6 +384,66 @@ class DurableJobApiTests(unittest.TestCase):
                 for item in trace_items
             ))
             self.network_request.assert_not_called()
+
+    def test_prompt_v2_is_rejected_before_provider_work_unless_feature_enabled(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "prompt-v2-disabled.png", (90, 140, 190))
+            response = client.post("/api/jobs", json={
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "parameters": {
+                    "batch": 1,
+                    "product_name": "茶盒",
+                    "prompt_version": "prompt_v2",
+                },
+                "client_request_id": "prompt-v2-disabled",
+            })
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertIn("prompt_v2 is disabled", response.text)
+            self.ai_mock.assert_not_called()
+            self.network_request.assert_not_called()
+
+    def test_prompt_v2_is_task_frozen_and_traceable_when_feature_enabled(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {server.PROMPT_V2_FEATURE_ENV: "1"},
+            clear=False,
+        ):
+            with self.live_client() as client:
+                source = self.import_asset(client, "prompt-v2-enabled.png", (190, 110, 60))
+                created = self.create_job(client, {
+                    "mode": "single",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "batch": 1,
+                        "product_name": "茶盒",
+                        "platter": "remove",
+                        "angle": "front",
+                        "fidelity": 20,
+                        "prompt_version": "prompt_v2",
+                    },
+                    "client_request_id": "prompt-v2-enabled",
+                })
+                self.assertEqual(created["job"]["parameters"]["prompt_version"], "prompt_v2")
+                final = self.wait_for_job(created["job"]["id"])
+                self.assertEqual(final["status"], "completed")
+                generation = server.LEDGER.get_generation(
+                    final["items"][0]["generation_id"]
+                )
+                self.assertEqual(generation["prompt_version"], "prompt_v2")
+                traces = client.get(
+                    f"/api/jobs/{final['id']}/traces"
+                ).json()["traces"]
+                primary = next(item for item in traces if item["stage"] == "prompt.primary")
+                self.assertEqual(primary["parameters"]["prompt_version"], "prompt_v2")
+                self.assertIn("任务目标：", primary["parameters"]["base_prompt"])
+                self.assertNotIn("任务目标：", primary["parameters"]["template_prompt"])
+                self.assertIn("不可破坏项：", primary["compiled_prompt"])
+                self.assertEqual(
+                    primary["output"]["prompt_snapshot"]["prompt_version"],
+                    "prompt_v2",
+                )
+                self.network_request.assert_not_called()
 
     def test_explicit_output_spec_survives_job_snapshot_and_both_cloud_stages(self) -> None:
         with self.live_client() as client:

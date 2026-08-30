@@ -9,11 +9,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from typing import Any, Iterable, Mapping
 
 
-GENERATION_TRACE_CONTRACT_VERSION = "generation-baseline-2026-08-30.1"
+GENERATION_TRACE_CONTRACT_VERSION = "generation-baseline-2026-08-31.1"
 PROMPT_COMPILER_VERSION = "prompt_v1"
+PROMPT_V1 = "prompt_v1"
+PROMPT_V2 = "prompt_v2"
+SUPPORTED_PROMPT_VERSIONS = frozenset({PROMPT_V1, PROMPT_V2})
+PROMPT_V2_FEATURE_ENV = "PRODUCT_ATELIER_ENABLE_PROMPT_V2"
 PROVIDER_ADAPTER_VERSION = "lk-media-generate-v1"
 
 
@@ -58,18 +63,100 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def prompt_v2_enabled(environment: Mapping[str, str] | None = None) -> bool:
+    source = environment if environment is not None else os.environ
+    return str(source.get(PROMPT_V2_FEATURE_ENV, "")).strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def normalize_prompt_version(
+    requested: Any,
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> str:
+    version = str(requested or PROMPT_V1).strip().lower()
+    if version not in SUPPORTED_PROMPT_VERSIONS:
+        raise ValueError(f"unsupported prompt version: {version}")
+    if version == PROMPT_V2 and not prompt_v2_enabled(environment):
+        raise ValueError(
+            f"{PROMPT_V2} is disabled; enable {PROMPT_V2_FEATURE_ENV} only for an approved A/B"
+        )
+    return version
+
+
+def compile_prompt_version(
+    template_prompt: str,
+    *,
+    prompt_version: str,
+    context: Mapping[str, Any] | None = None,
+    stage: str = "primary",
+) -> str:
+    """Compile a versioned prompt while keeping v1 byte-for-byte unchanged."""
+    version = str(prompt_version or PROMPT_V1).strip().lower()
+    if version == PROMPT_V1:
+        return str(template_prompt)
+    if version != PROMPT_V2:
+        raise ValueError(f"unsupported prompt version: {version}")
+
+    values = dict(context or {})
+    product_name = str(values.get("product_name") or "参考图中的产品").strip()
+    output_kind = str(values.get("output_kind") or "ecommerce-main").strip()
+    angle = str(values.get("angle") or "auto").strip()
+    platter = str(values.get("platter") or "auto").strip()
+    fidelity = max(0, min(int(values.get("fidelity", 40)), 100))
+    stage_key = str(stage or "primary").lower()
+    if "adjust" in stage_key:
+        objective = f"只对{product_name}执行用户指定的局部调整，正确区域保持不变"
+    elif "refine" in stage_key or stage_key.startswith("2-"):
+        objective = f"精修{product_name}并提高商业交付完成度，不重新设计主体"
+    else:
+        objective = f"把参考图中的{product_name}转化为可直接交付的商业电商主图"
+
+    platter_rule = {
+        "keep": "保留并优化原有器皿，不替换器皿类型",
+        "remove": "移除器皿和托盘，主体直接置于纯白背景",
+    }.get(platter, "按产品类型处理器皿，但不得凭空增加无关容器")
+    angle_rule = {
+        "keep": "严格保持参考图的角度与透视",
+        "front": "采用正面平视，包装正面和文字清晰",
+        "45top": "采用约 45 度俯视的三分之四视角",
+        "30side": "采用约 30 度斜侧视角",
+        "90top": "采用正俯视平铺视角",
+    }.get(angle, "选择适合产品的商业角度，并保持主体结构可信")
+    fidelity_rule = (
+        "只允许改变背景和光线" if fidelity <= 25
+        else "允许轻度优化光影和构图" if fidelity <= 50
+        else "允许增强材质和商业表现" if fidelity <= 75
+        else "允许较明显的商业美化，但产品仍须可识别"
+    )
+    return "\n".join((
+        f"任务目标：{objective}。",
+        "不可破坏项：保持主体结构、产品数量、包装轮廓、可见文字、品牌色和关键材质特征；不要增加未请求的产品。",
+        f"允许修改项：{fidelity_rule}；{platter_rule}。",
+        f"场景、光线与构图：{angle_rule}；使用干净纯白影棚背景、柔和均匀灯光和完整不裁切的主体构图。",
+        f"输出约束：输出类型为 {output_kind}；边缘自然清晰，透明与反光材质符合真实光学关系，结果应可用于商业交付。",
+        f"基线细节要求：{str(template_prompt).strip()}",
+    ))
+
+
 def prompt_snapshot(
     *,
+    template_prompt: str | None = None,
     base_prompt: str,
     compiled_prompt: str,
     negative_prompt: str,
     knowledge_evidence: Iterable[Any] | None = None,
+    prompt_version: str = PROMPT_COMPILER_VERSION,
 ) -> dict[str, Any]:
     """Freeze both sides of knowledge enrichment without changing the prompt."""
     evidence = list(knowledge_evidence or [])
     return {
         "trace_contract_version": GENERATION_TRACE_CONTRACT_VERSION,
-        "prompt_version": PROMPT_COMPILER_VERSION,
+        "prompt_version": str(prompt_version),
+        "template_prompt_sha256": hashlib.sha256(
+            str(template_prompt if template_prompt is not None else base_prompt).encode("utf-8")
+        ).hexdigest(),
         "base_prompt_sha256": hashlib.sha256(str(base_prompt).encode("utf-8")).hexdigest(),
         "compiled_prompt_sha256": hashlib.sha256(
             str(compiled_prompt).encode("utf-8")

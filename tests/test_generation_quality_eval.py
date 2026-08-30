@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 from python.generation_quality_eval import (
     SCORE_AXES,
+    build_blind_review_packet,
     load_quality_manifest,
+    paid_run_gate,
     png_bytes,
     render_procedural_fixture,
+    validate_experiment_plan,
     validate_scorecard,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "tests" / "fixtures" / "generation_quality" / "manifest.json"
+EXPERIMENT_TEMPLATE = MANIFEST.parent / "experiment-template.json"
 
 
 class GenerationQualityEvaluationTests(unittest.TestCase):
@@ -66,6 +72,70 @@ class GenerationQualityEvaluationTests(unittest.TestCase):
         scorecard["edge_quality"] = 5.1
         with self.assertRaisesRegex(ValueError, "between 0 and 5"):
             validate_scorecard(scorecard)
+
+    def test_experiment_template_is_valid_but_cannot_spend(self) -> None:
+        plan = json.loads(EXPERIMENT_TEMPLATE.read_text(encoding="utf-8"))
+        validated = validate_experiment_plan(plan)
+        self.assertEqual(validated["variable_under_test"], "prompt_version")
+        self.assertEqual(
+            paid_run_gate(plan),
+            {"allowed": False, "reason": "user_budget_authorization_required"},
+        )
+
+    def test_authorized_paid_gate_stops_at_frozen_call_limit(self) -> None:
+        plan = json.loads(EXPERIMENT_TEMPLATE.read_text(encoding="utf-8"))
+        plan["status"] = "authorized"
+        plan["paid_execution_authorized"] = True
+        plan["budget"]["max_paid_calls"] = 18
+        plan["budget"]["max_total_amount"] = 50
+        plan["budget"]["currency"] = "CNY"
+        self.assertEqual(
+            paid_run_gate(plan, calls_already_used=7, amount_already_used=17.5),
+            {
+                "allowed": True,
+                "reason": "within_authorized_call_limit",
+                "remaining_paid_calls": 11,
+                "remaining_amount": 32.5,
+                "currency": "CNY",
+            },
+        )
+        self.assertEqual(
+            paid_run_gate(plan, calls_already_used=7),
+            {"allowed": False, "reason": "actual_billing_total_required"},
+        )
+        self.assertEqual(
+            paid_run_gate(plan, calls_already_used=18, amount_already_used=17.5),
+            {"allowed": False, "reason": "paid_call_limit_reached"},
+        )
+        self.assertEqual(
+            paid_run_gate(plan, calls_already_used=7, amount_already_used=50),
+            {"allowed": False, "reason": "monetary_budget_reached"},
+        )
+
+    def test_blind_packet_is_deterministic_and_hides_variant_identity(self) -> None:
+        plan = json.loads(EXPERIMENT_TEMPLATE.read_text(encoding="utf-8"))
+        for index, variant in enumerate(plan["variants"]):
+            variant["artifact_refs"] = [f"round-1/case-01/{index}.png"]
+        first_packet, first_mapping = build_blind_review_packet(plan, seed="fixed-seed")
+        second_packet, second_mapping = build_blind_review_packet(plan, seed="fixed-seed")
+        self.assertEqual(first_packet, second_packet)
+        self.assertEqual(first_mapping, second_mapping)
+        public_text = json.dumps(first_packet, ensure_ascii=False, sort_keys=True)
+        self.assertNotIn("prompt_v1", public_text)
+        self.assertNotIn("prompt_v2", public_text)
+        self.assertNotIn("baseline-v1", public_text)
+        self.assertNotIn("candidate-v2", public_text)
+        private_text = json.dumps(first_mapping, ensure_ascii=False, sort_keys=True)
+        self.assertIn("prompt_v1", private_text)
+        self.assertIn("prompt_v2", private_text)
+        self.assertEqual(len(first_mapping["mapping_sha256"]), 64)
+
+    def test_experiment_rejects_a_variant_that_changes_multiple_variables(self) -> None:
+        plan = json.loads(EXPERIMENT_TEMPLATE.read_text(encoding="utf-8"))
+        invalid = deepcopy(plan)
+        invalid["variants"][1]["changes"]["model"] = "another-model"
+        with self.assertRaisesRegex(ValueError, "only variable_under_test"):
+            validate_experiment_plan(invalid)
 
 
 if __name__ == "__main__":

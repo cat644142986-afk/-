@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import random
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -98,6 +99,139 @@ def validate_scorecard(scorecard: Mapping[str, Any]) -> dict[str, float]:
             raise ValueError(f"score must be between 0 and 5: {axis}")
         normalized[axis] = number
     return normalized
+
+
+def validate_experiment_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the paid gate without authorizing or executing any provider call."""
+    value = dict(plan or {})
+    if value.get("schema_version") != "1.0":
+        raise ValueError("unsupported generation experiment plan")
+    experiment_id = str(value.get("experiment_id") or "").strip()
+    if not experiment_id:
+        raise ValueError("experiment_id is required")
+    variable = str(value.get("variable_under_test") or "").strip()
+    if not variable:
+        raise ValueError("exactly one variable_under_test is required")
+    variants = value.get("variants")
+    if not isinstance(variants, list) or len(variants) < 2:
+        raise ValueError("at least two variants are required")
+    variant_ids = [str(item.get("id") or "").strip() for item in variants]
+    if any(not item for item in variant_ids) or len(variant_ids) != len(set(variant_ids)):
+        raise ValueError("variant ids must be unique and non-empty")
+    for item in variants:
+        changes = item.get("changes")
+        if not isinstance(changes, dict) or set(changes) != {variable}:
+            raise ValueError("each variant must change only variable_under_test")
+
+    budget = value.get("budget")
+    if not isinstance(budget, dict):
+        raise ValueError("budget is required")
+    max_paid_calls = budget.get("max_paid_calls")
+    if isinstance(max_paid_calls, bool) or not isinstance(max_paid_calls, int):
+        raise ValueError("budget.max_paid_calls must be an integer")
+    authorized = value.get("paid_execution_authorized") is True
+    if max_paid_calls < 0 or (authorized and max_paid_calls < 1):
+        raise ValueError("authorized experiments require a positive call limit")
+    max_amount = budget.get("max_total_amount")
+    if max_amount is not None and (
+        isinstance(max_amount, bool)
+        or not isinstance(max_amount, (int, float))
+        or float(max_amount) <= 0
+    ):
+        raise ValueError("budget.max_total_amount must be positive or null")
+    if max_amount is not None and not str(budget.get("currency") or "").strip():
+        raise ValueError("a monetary budget requires currency")
+
+    stop = value.get("stop_conditions")
+    if not isinstance(stop, dict):
+        raise ValueError("stop_conditions are required")
+    for field in ("consecutive_failures", "unusable_results"):
+        number = stop.get(field)
+        if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+            raise ValueError(f"stop_conditions.{field} must be a positive integer")
+    if stop.get("stop_on_call_limit") is not True:
+        raise ValueError("stop_on_call_limit must be true")
+    if max_amount is not None and stop.get("stop_on_amount_limit") is not True:
+        raise ValueError("stop_on_amount_limit must be true for a monetary budget")
+    return value
+
+
+def paid_run_gate(
+    plan: Mapping[str, Any],
+    *,
+    calls_already_used: int = 0,
+    amount_already_used: float | None = None,
+) -> dict[str, Any]:
+    value = validate_experiment_plan(plan)
+    call_limit = int(value["budget"]["max_paid_calls"])
+    if value.get("paid_execution_authorized") is not True:
+        return {"allowed": False, "reason": "user_budget_authorization_required"}
+    calls_used = max(0, int(calls_already_used))
+    if calls_used >= call_limit:
+        return {"allowed": False, "reason": "paid_call_limit_reached"}
+    budget = value["budget"]
+    amount_limit = budget.get("max_total_amount")
+    if amount_limit is not None:
+        if amount_already_used is None:
+            return {"allowed": False, "reason": "actual_billing_total_required"}
+        amount_used = max(0.0, float(amount_already_used))
+        if amount_used >= float(amount_limit):
+            return {"allowed": False, "reason": "monetary_budget_reached"}
+    result = {
+        "allowed": True,
+        "reason": "within_authorized_call_limit",
+        "remaining_paid_calls": call_limit - calls_used,
+    }
+    if amount_limit is not None:
+        result["remaining_amount"] = round(float(amount_limit) - amount_used, 6)
+        result["currency"] = str(budget["currency"])
+    return result
+
+
+def build_blind_review_packet(
+    plan: Mapping[str, Any],
+    *,
+    seed: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    value = validate_experiment_plan(plan)
+    seed_text = str(seed or "").strip()
+    if not seed_text:
+        raise ValueError("a non-empty blind randomization seed is required")
+    variants = list(value["variants"])
+    shuffled = list(variants)
+    random.Random(seed_text).shuffle(shuffled)
+    labels = [f"方案 {chr(ord('A') + index)}" for index in range(len(shuffled))]
+    reviewer_variants = []
+    private_mapping = []
+    for label, variant in zip(labels, shuffled):
+        reviewer_variants.append({
+            "blind_label": label,
+            "artifact_refs": list(variant.get("artifact_refs") or []),
+        })
+        private_mapping.append({
+            "blind_label": label,
+            "variant_id": str(variant["id"]),
+            "changes": dict(variant["changes"]),
+        })
+    packet = {
+        "schema_version": "1.0",
+        "experiment_id": value["experiment_id"],
+        "score_axes": list(SCORE_AXES),
+        "rounds": 2,
+        "variants": reviewer_variants,
+        "provider_identity_hidden": True,
+        "prompt_version_hidden": True,
+    }
+    mapping = {
+        "schema_version": "1.0",
+        "experiment_id": value["experiment_id"],
+        "seed_sha256": hashlib.sha256(seed_text.encode("utf-8")).hexdigest(),
+        "mapping": private_mapping,
+    }
+    mapping["mapping_sha256"] = hashlib.sha256(
+        json.dumps(private_mapping, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return packet, mapping
 
 
 def load_quality_manifest(path: Path) -> dict[str, Any]:

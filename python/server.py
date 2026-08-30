@@ -34,7 +34,10 @@ try:
     from generation_baseline import (
         GENERATION_TRACE_CONTRACT_VERSION,
         PROMPT_COMPILER_VERSION,
+        PROMPT_V2_FEATURE_ENV,
         capability_contract,
+        compile_prompt_version,
+        normalize_prompt_version,
         prompt_snapshot,
         unavailable_billing_evidence,
     )
@@ -85,7 +88,10 @@ except ImportError:  # Allows importing as python.server during local tests.
     from python.generation_baseline import (
         GENERATION_TRACE_CONTRACT_VERSION,
         PROMPT_COMPILER_VERSION,
+        PROMPT_V2_FEATURE_ENV,
         capability_contract,
+        compile_prompt_version,
+        normalize_prompt_version,
         prompt_snapshot,
         unavailable_billing_evidence,
     )
@@ -198,7 +204,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-30.5"
+SIDECAR_CONTRACT_VERSION = "2026-08-31.1"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -2628,8 +2634,13 @@ def _normalize_job_parameters(mode: str, parameters: dict) -> dict:
         normalized["cutout_selection"] = normalize_cutout_selection(
             normalized.get("cutout_selection")
         )
+        normalized.pop("prompt_version", None)
     elif not str(normalized.get("model") or "").strip():
         normalized["model"] = default_model
+    if mode != "cutout-batch":
+        normalized["prompt_version"] = normalize_prompt_version(
+            normalized.get("prompt_version")
+        )
     if mode == "cutout-batch":
         normalized.pop("output_ratio", None)
         normalized.pop("output_resolution", None)
@@ -3891,6 +3902,7 @@ def _job_trace_context(ctx):
         "category": session.get("category", "general"),
         "brand_profile": session.get("brand_profile", ""),
         "model": str(parameters.get("model") or ""),
+        "prompt_version": str(parameters.get("prompt_version") or PROMPT_COMPILER_VERSION),
         "parameters": parameters,
     }
 
@@ -3947,18 +3959,23 @@ def _record_job_prompt(
     knowledge_bundle,
     *,
     base_prompt="",
+    template_prompt="",
 ):
     knowledge_refs = list((knowledge_bundle or {}).get("sources") or [])
     applied_evidence = KnowledgeCompiler.execution_evidence(knowledge_bundle)
     base_prompt = str(base_prompt or prompt)
+    template_prompt = str(template_prompt or base_prompt)
+    prompt_version = str(trace.get("prompt_version") or PROMPT_COMPILER_VERSION)
     snapshot = prompt_snapshot(
+        template_prompt=template_prompt,
         base_prompt=base_prompt,
         compiled_prompt=prompt,
         negative_prompt=negative_prompt,
         knowledge_evidence=applied_evidence,
+        prompt_version=prompt_version,
     )
     generation_id = trace["generation_id"]
-    changes = {"status": "running", "prompt_version": PROMPT_COMPILER_VERSION}
+    changes = {"status": "running", "prompt_version": prompt_version}
     if stage == "primary":
         changes.update({
             "prompt": prompt,
@@ -3986,7 +4003,8 @@ def _record_job_prompt(
         parameters={
             **dict(trace.get("parameters") or {}),
             "trace_contract_version": GENERATION_TRACE_CONTRACT_VERSION,
-            "prompt_version": PROMPT_COMPILER_VERSION,
+            "prompt_version": prompt_version,
+            "template_prompt": template_prompt,
             "base_prompt": base_prompt,
             "negative_prompt": negative_prompt,
         },
@@ -4458,6 +4476,15 @@ def _job_knowledge_context(trace, **values):
     return context
 
 
+def _compile_job_base_prompt(trace, template_prompt, knowledge_context, stage):
+    return compile_prompt_version(
+        template_prompt,
+        prompt_version=str(trace.get("prompt_version") or PROMPT_COMPILER_VERSION),
+        context=knowledge_context,
+        stage=stage,
+    )
+
+
 def _run_local_stage(trace, stage, operation, *, parameters=None):
     """Time one local operation and keep its failure boundary visible."""
     started = time.perf_counter()
@@ -4599,8 +4626,11 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             fidelity=fidelity,
             product_name=product_name,
         )
-        base_stage1_prompt = make_prompt(
+        template_stage1_prompt = make_prompt(
             build_single_prompt(product_name, platter, product_type, angle), fidelity
+        )
+        base_stage1_prompt = _compile_job_base_prompt(
+            trace, template_stage1_prompt, knowledge_context, "primary"
         )
         stage1 = KNOWLEDGE.enrich_prompt(
             base_stage1_prompt, negative, knowledge_context
@@ -4613,6 +4643,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             prompt_stage,
             stage1,
             base_prompt=base_stage1_prompt,
+            template_prompt=template_stage1_prompt,
         )
         generated = _cloud_job_call(
             ctx,
@@ -4625,8 +4656,11 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             trace=trace,
         )
         ctx.progress(0.05 + per * index + per * 0.36, {"phase": "cloud-refine", "variation": index + 1})
-        base_stage2_prompt = make_prompt(
+        template_stage2_prompt = make_prompt(
             build_stage2_prompt(product_name, platter, product_type, angle), fidelity
+        )
+        base_stage2_prompt = _compile_job_base_prompt(
+            trace, template_stage2_prompt, knowledge_context, f"refine-{index + 1}"
         )
         stage2 = KNOWLEDGE.enrich_prompt(
             base_stage2_prompt, negative, knowledge_context
@@ -4638,6 +4672,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             f"refine-{index + 1}",
             stage2,
             base_prompt=base_stage2_prompt,
+            template_prompt=template_stage2_prompt,
         )
         generated = _cloud_job_call(
             ctx,
@@ -4747,7 +4782,10 @@ def _execute_adjustment_job(ctx, source_asset, image, stage_dir, trace):
         NEG_BASE
         + ",重构整张画面,改变未提及内容,改变产品数量,改变包装文字,改变画布比例"
     )
-    base_prompt = make_prompt(build_adjustment_prompt(instruction), fidelity)
+    template_prompt = make_prompt(build_adjustment_prompt(instruction), fidelity)
+    base_prompt = _compile_job_base_prompt(
+        trace, template_prompt, knowledge_context, "adjustment-primary"
+    )
     prompt_bundle = KNOWLEDGE.enrich_prompt(
         base_prompt, negative, knowledge_context
     )
@@ -4758,6 +4796,7 @@ def _execute_adjustment_job(ctx, source_asset, image, stage_dir, trace):
         "primary",
         prompt_bundle,
         base_prompt=base_prompt,
+        template_prompt=template_prompt,
     )
     ctx.progress(0.08, {"phase": "cloud-adjustment", "version": adjustment.get("version")})
     generated = _cloud_job_call(
@@ -4988,11 +5027,17 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             product_name=name,
         )
         ctx.progress(0.05 + index * per, {"phase": "cloud-primary", "product": index + 1})
-        base_stage1_prompt = make_prompt(
+        template_stage1_prompt = make_prompt(
             build_multi_stage1_prompt(
                 name, product_type, "cutoff" if cutoff else "complete", platter, angle
             ),
             fidelity,
+        )
+        base_stage1_prompt = _compile_job_base_prompt(
+            trace,
+            template_stage1_prompt,
+            knowledge_context,
+            "primary" if index == 0 else f"product-{index + 1}-primary",
         )
         stage1 = KNOWLEDGE.enrich_prompt(
             base_stage1_prompt, negative, knowledge_context
@@ -5004,6 +5049,7 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             "primary" if index == 0 else f"product-{index + 1}-primary",
             stage1,
             base_prompt=base_stage1_prompt,
+            template_prompt=template_stage1_prompt,
         )
         generated = _cloud_job_call(
             ctx,
@@ -5017,8 +5063,14 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
         )
         if do_refine:
             ctx.progress(0.05 + index * per + per * 0.38, {"phase": "cloud-refine", "product": index + 1})
-            base_stage2_prompt = make_prompt(
+            template_stage2_prompt = make_prompt(
                 build_stage2_prompt(name, platter, product_type, angle), fidelity
+            )
+            base_stage2_prompt = _compile_job_base_prompt(
+                trace,
+                template_stage2_prompt,
+                knowledge_context,
+                f"product-{index + 1}-refine",
             )
             stage2 = KNOWLEDGE.enrich_prompt(
                 base_stage2_prompt, negative, knowledge_context
@@ -5030,6 +5082,7 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
                 f"product-{index + 1}-refine",
                 stage2,
                 base_prompt=base_stage2_prompt,
+                template_prompt=template_stage2_prompt,
             )
             generated = _cloud_job_call(
                 ctx,
@@ -5215,7 +5268,7 @@ def execute_job_workflow(ctx):
             "mode": str(ctx.job["mode"]),
             "source_asset_id": trace["source_asset_id"],
             "trace_contract_version": GENERATION_TRACE_CONTRACT_VERSION,
-            "prompt_version": PROMPT_COMPILER_VERSION,
+            "prompt_version": trace.get("prompt_version") or PROMPT_COMPILER_VERSION,
         },
     )
     stage_dir = _attempt_directory(ctx)

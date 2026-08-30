@@ -5,7 +5,10 @@ import unittest
 from python.generation_baseline import (
     GENERATION_TRACE_CONTRACT_VERSION,
     PROMPT_COMPILER_VERSION,
+    PROMPT_V2_FEATURE_ENV,
     capability_contract,
+    compile_prompt_version,
+    normalize_prompt_version,
     prompt_snapshot,
     summarize_trace_timings,
     unavailable_billing_evidence,
@@ -14,6 +17,46 @@ from tools.export_generation_baseline import build_report
 
 
 class GenerationBaselineTests(unittest.TestCase):
+    def test_prompt_v1_is_byte_identical_and_v2_is_structured(self) -> None:
+        template = "原始模板，严格保持。"
+        self.assertEqual(
+            compile_prompt_version(
+                template,
+                prompt_version="prompt_v1",
+                context={"product_name": "茶盒"},
+            ),
+            template,
+        )
+        compiled = compile_prompt_version(
+            template,
+            prompt_version="prompt_v2",
+            context={
+                "product_name": "茶盒",
+                "output_kind": "ecommerce-main",
+                "platter": "remove",
+                "angle": "front",
+                "fidelity": 20,
+            },
+            stage="primary",
+        )
+        self.assertIn("任务目标：", compiled)
+        self.assertIn("不可破坏项：", compiled)
+        self.assertIn("茶盒", compiled)
+        self.assertIn(template, compiled)
+
+    def test_prompt_v2_requires_an_explicit_feature_gate(self) -> None:
+        self.assertEqual(normalize_prompt_version(None, environment={}), "prompt_v1")
+        with self.assertRaisesRegex(ValueError, "is disabled"):
+            normalize_prompt_version("prompt_v2", environment={})
+        self.assertEqual(
+            normalize_prompt_version(
+                "prompt_v2", environment={PROMPT_V2_FEATURE_ENV: "true"}
+            ),
+            "prompt_v2",
+        )
+        with self.assertRaisesRegex(ValueError, "unsupported prompt version"):
+            normalize_prompt_version("prompt_v3", environment={})
+
     def test_prompt_snapshot_changes_for_each_reproducibility_input(self) -> None:
         baseline = prompt_snapshot(
             base_prompt="base",

@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "experiment_id": "r7-prompt-v1-v2-placeholder",
+  "status": "planned-not-authorized",
+  "paid_execution_authorized": false,
+  "variable_under_test": "prompt_version",
+  "fixed_parameters": {
+    "model": "must-be-frozen-before-authorization",
+    "model_snapshot": "must-be-frozen-before-authorization",
+    "output_ratio": "1:1",
+    "output_resolution": "2k",
+    "stage_count": 2,
+    "fixture_manifest": "tests/fixtures/generation_quality/manifest.json"
+  },
+  "variants": [
+    {
+      "id": "baseline-v1",
+      "changes": {"prompt_version": "prompt_v1"},
+      "artifact_refs": []
+    },
+    {
+      "id": "candidate-v2",
+      "changes": {"prompt_version": "prompt_v2"},
+      "artifact_refs": []
+    }
+  ],
+  "budget": {
+    "max_paid_calls": 0,
+    "max_total_amount": null,
+    "currency": null
+  },
+  "stop_conditions": {
+    "consecutive_failures": 2,
+    "unusable_results": 3,
+    "stop_on_call_limit": true,
+    "stop_on_amount_limit": true,
+    "stop_if_quality_gain_absent_after_first_round": true
+  }
+}
