@@ -5,7 +5,7 @@ import json
 import math
 from typing import Any, Iterable
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 
 class SemanticCutoutError(ValueError):
@@ -132,6 +132,75 @@ def normalize_regions(regions: Any, query: str) -> list[dict[str, Any]]:
     return normalized
 
 
+def normalize_mask_edits(mask_edits: Any) -> list[dict[str, Any]]:
+    if mask_edits in (None, ""):
+        return []
+    if not isinstance(mask_edits, list):
+        raise SemanticCutoutError(
+            "SEMANTIC_MASK_EDITS_INVALID",
+            "蒙版修正记录无效，请清除后重试",
+            stage="selection",
+        )
+    if len(mask_edits) > 200:
+        raise SemanticCutoutError(
+            "SEMANTIC_MASK_EDITS_LIMIT",
+            "蒙版修正笔画过多，请合并笔画或清除后重试",
+            stage="selection",
+        )
+    normalized: list[dict[str, Any]] = []
+    for edit_index, edit in enumerate(mask_edits):
+        if not isinstance(edit, dict):
+            raise SemanticCutoutError(
+                "SEMANTIC_MASK_EDIT_INVALID",
+                f"第 {edit_index + 1} 笔蒙版修正无效",
+                stage="selection",
+            )
+        mode = str(edit.get("mode") or "").strip().lower()
+        if mode not in {"include", "exclude"}:
+            raise SemanticCutoutError(
+                "SEMANTIC_MASK_EDIT_INVALID",
+                f"第 {edit_index + 1} 笔蒙版修正缺少保留或删除模式",
+                stage="selection",
+            )
+        raw_points = edit.get("points")
+        if not isinstance(raw_points, list) or not raw_points or len(raw_points) > 1024:
+            raise SemanticCutoutError(
+                "SEMANTIC_MASK_EDIT_INVALID",
+                f"第 {edit_index + 1} 笔蒙版修正缺少有效轨迹",
+                stage="selection",
+            )
+        points: list[list[float]] = []
+        for point_index, point in enumerate(raw_points):
+            if not isinstance(point, (list, tuple)) or len(point) != 2:
+                raise SemanticCutoutError(
+                    "SEMANTIC_MASK_EDIT_INVALID",
+                    f"第 {edit_index + 1} 笔第 {point_index + 1} 个坐标无效",
+                    stage="selection",
+                )
+            x = _number(point[0], "x")
+            y = _number(point[1], "y")
+            if x < 0 or x > 1 or y < 0 or y > 1:
+                raise SemanticCutoutError(
+                    "SEMANTIC_MASK_EDIT_OUT_OF_BOUNDS",
+                    f"第 {edit_index + 1} 笔蒙版修正超出图片范围",
+                    stage="selection",
+                )
+            points.append([round(x, 6), round(y, 6)])
+        radius = _number(edit.get("radius", 0.018), "radius")
+        if radius < 0.003 or radius > 0.1:
+            raise SemanticCutoutError(
+                "SEMANTIC_MASK_EDIT_INVALID",
+                f"第 {edit_index + 1} 笔画笔大小超出允许范围",
+                stage="selection",
+            )
+        normalized.append({
+            "mode": mode,
+            "points": points,
+            "radius": round(radius, 6),
+        })
+    return normalized
+
+
 def _selection_digest(
     source_asset_id: str,
     query: str,
@@ -139,6 +208,7 @@ def _selection_digest(
     method: str,
     regions: list[dict[str, Any]],
     model_query: str = "",
+    mask_edits: list[dict[str, Any]] | None = None,
 ) -> str:
     payload = {
         "source_asset_id": source_asset_id,
@@ -149,6 +219,9 @@ def _selection_digest(
     }
     if model_query:
         payload["model_query"] = model_query
+    # Keep historical confirmations valid when they have no mask corrections.
+    if mask_edits:
+        payload["mask_edits"] = mask_edits
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -160,6 +233,7 @@ def build_confirmed_selection(
     target_count: Any,
     regions: Any,
     model_query: Any = "",
+    mask_edits: Any = None,
 ) -> dict[str, Any]:
     asset_id = str(source_asset_id or "").strip()
     if not asset_id:
@@ -172,6 +246,7 @@ def build_confirmed_selection(
     normalized_model_query = _model_query(model_query)
     count = _target_count(target_count)
     normalized_regions = normalize_regions(regions, normalized_query)
+    normalized_mask_edits = normalize_mask_edits(mask_edits)
     if len(normalized_regions) != count:
         raise SemanticCutoutError(
             "SEMANTIC_TARGET_COUNT_MISMATCH",
@@ -194,6 +269,7 @@ def build_confirmed_selection(
         "status": "confirmed",
         "method": method,
         "regions": normalized_regions,
+        "mask_edits": normalized_mask_edits,
     }
     source_plan["digest"] = _selection_digest(
         asset_id,
@@ -202,6 +278,7 @@ def build_confirmed_selection(
         method,
         normalized_regions,
         normalized_model_query,
+        normalized_mask_edits,
     )
     return {
         "strategy": "semantic",
@@ -261,13 +338,16 @@ def normalize_cutout_selection(value: Any) -> dict[str, Any]:
                 stage="selection",
             )
         regions = normalize_regions(raw_plan.get("regions"), query)
+        mask_edits = normalize_mask_edits(raw_plan.get("mask_edits"))
         if len(regions) != count:
             raise SemanticCutoutError(
                 "SEMANTIC_TARGET_COUNT_MISMATCH",
                 f"要求保留 {count} 个目标，但当前确认了 {len(regions)} 个",
                 stage="selection",
             )
-        expected = _selection_digest(asset_id, query, count, method, regions, model_query)
+        expected = _selection_digest(
+            asset_id, query, count, method, regions, model_query, mask_edits
+        )
         if str(raw_plan.get("digest") or "") != expected:
             raise SemanticCutoutError(
                 "SEMANTIC_CONFIRMATION_STALE",
@@ -280,6 +360,7 @@ def normalize_cutout_selection(value: Any) -> dict[str, Any]:
             "method": method,
             "digest": expected,
             "regions": regions,
+            "mask_edits": mask_edits,
         }
     return {
         "strategy": "semantic",
@@ -305,7 +386,7 @@ def validate_selection_sources(selection: dict[str, Any], source_asset_ids: Iter
         )
 
 
-def apply_confirmed_regions(image: Image.Image, regions: Any) -> Image.Image:
+def _confirmed_region_mask(size: tuple[int, int], regions: Any) -> Image.Image:
     normalized = normalize_regions(regions, "目标")
     if not normalized:
         raise SemanticCutoutError(
@@ -313,10 +394,9 @@ def apply_confirmed_regions(image: Image.Image, regions: Any) -> Image.Image:
             "没有可执行的目标选区",
             stage="selection",
         )
-    rgba = image.convert("RGBA")
-    mask = Image.new("L", rgba.size, 0)
+    mask = Image.new("L", size, 0)
     draw = ImageDraw.Draw(mask)
-    width, height = rgba.size
+    width, height = size
     for region in normalized:
         x, y, box_width, box_height = region["bbox"]
         left = max(0, min(width, math.floor(x * width)))
@@ -324,11 +404,59 @@ def apply_confirmed_regions(image: Image.Image, regions: Any) -> Image.Image:
         right = max(left + 1, min(width, math.ceil((x + box_width) * width)))
         bottom = max(top + 1, min(height, math.ceil((y + box_height) * height)))
         draw.rectangle((left, top, right - 1, bottom - 1), fill=255)
+    return mask
+
+
+def apply_confirmed_regions(image: Image.Image, regions: Any) -> Image.Image:
+    rgba = image.convert("RGBA")
+    mask = _confirmed_region_mask(rgba.size, regions)
     alpha = ImageChops.multiply(rgba.getchannel("A"), mask)
     if alpha.getbbox() is None:
         raise SemanticCutoutError(
             "SEMANTIC_SEGMENTATION_EMPTY",
             "框选区域内没有得到有效前景，请扩大选区后重试",
+            stage="segmentation",
+        )
+    rgba.putalpha(alpha)
+    return rgba
+
+
+def apply_mask_edits(image: Image.Image, mask_edits: Any, regions: Any) -> Image.Image:
+    edits = normalize_mask_edits(mask_edits)
+    if not edits:
+        return image.convert("RGBA")
+    rgba = image.convert("RGBA")
+    width, height = rgba.size
+    region_mask = _confirmed_region_mask(rgba.size, regions)
+    alpha = rgba.getchannel("A")
+    for edit in edits:
+        radius_px = max(1, round(edit["radius"] * min(width, height)))
+        stroke = Image.new("L", rgba.size, 0)
+        draw = ImageDraw.Draw(stroke)
+        points = [
+            (round(point[0] * (width - 1)), round(point[1] * (height - 1)))
+            for point in edit["points"]
+        ]
+        diameter = max(2, radius_px * 2)
+        if len(points) > 1:
+            draw.line(points, fill=255, width=diameter, joint="curve")
+        for x, y in (points[0], points[-1]):
+            draw.ellipse(
+                (x - radius_px, y - radius_px, x + radius_px, y + radius_px),
+                fill=255,
+            )
+        feather = max(0.6, radius_px * 0.16)
+        stroke = stroke.filter(ImageFilter.GaussianBlur(feather))
+        stroke = ImageChops.multiply(stroke, region_mask)
+        if edit["mode"] == "include":
+            alpha = ImageChops.lighter(alpha, stroke)
+        else:
+            alpha = ImageChops.multiply(alpha, ImageOps.invert(stroke))
+    alpha = ImageChops.multiply(alpha, region_mask)
+    if alpha.getbbox() is None:
+        raise SemanticCutoutError(
+            "SEMANTIC_SEGMENTATION_EMPTY",
+            "蒙版修正删除了全部前景，请撤销部分删除笔画",
             stage="segmentation",
         )
     rgba.putalpha(alpha)

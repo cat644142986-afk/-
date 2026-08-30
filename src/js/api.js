@@ -260,6 +260,15 @@ export async function confirmSemanticCutout(payload) {
   });
 }
 
+export async function previewSemanticCutoutMask(payload) {
+  return fetchJSON('/api/semantic-cutout/mask-preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+    timeoutMs: SEMANTIC_GROUNDING_TIMEOUT_MS,
+  });
+}
+
 export async function getCollectionAssets(collection, options = {}) {
   const limit = Number(options.limit || 200);
   const offset = Number(options.offset || 0);

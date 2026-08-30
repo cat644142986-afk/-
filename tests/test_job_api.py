@@ -850,6 +850,50 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertEqual(self.ai_mock.call_count, 0)
             self.network_request.assert_not_called()
 
+    def test_semantic_mask_preview_and_corrections_are_local_and_durable(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "mask-correction.png", (210, 80, 35))
+            payload = {
+                "asset_id": source["id"],
+                "query": "汉堡",
+                "target_count": 1,
+                "regions": [{"id": "burger-1", "bbox": [0.05, 0.05, 0.9, 0.9]}],
+                "mask_edits": [{
+                    "mode": "exclude",
+                    "points": [[0.2, 0.2], [0.25, 0.25]],
+                    "radius": 0.03,
+                }],
+            }
+            preview = client.post("/api/semantic-cutout/mask-preview", json=payload)
+            self.assertEqual(preview.status_code, 200, preview.text)
+            mask_preview = preview.json()["mask_preview"]
+            self.assertTrue(mask_preview["data_url"].startswith("data:image/png;base64,"))
+            self.assertEqual(mask_preview["edit_count"], 1)
+
+            confirmed = client.post("/api/semantic-cutout/confirm", json=payload)
+            self.assertEqual(confirmed.status_code, 200, confirmed.text)
+            selection = confirmed.json()["selection"]
+            source_plan = selection["sources"][source["id"]]
+            self.assertEqual(len(source_plan["mask_edits"]), 1)
+
+            created = self.create_job(
+                client,
+                {
+                    "mode": "cutout-batch",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {"cutout_selection": selection},
+                },
+            )
+            final = self.wait_for_job(created["job"]["id"])
+            self.assertEqual(final["status"], "completed")
+            traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
+            segment = next(item for item in traces if item["stage"] == "cutout.segment")
+            self.assertEqual(segment["parameters"]["mask_edit_count"], 1)
+            self.assertEqual(segment["output"]["mask_edit_count"], 1)
+            self.assertEqual(self.remove_mock.call_count, 2)
+            self.assertEqual(self.ai_mock.call_count, 0)
+            self.network_request.assert_not_called()
+
     def test_semantic_cutout_preview_exposes_editable_candidates_but_never_confirms_them(self) -> None:
         with self.live_client() as client:
             source = self.import_asset(client, "candidate-burgers.png", (210, 80, 35))

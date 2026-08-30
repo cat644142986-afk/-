@@ -43,8 +43,10 @@ try:
     from semantic_cutout import (
         SemanticCutoutError,
         apply_confirmed_regions,
+        apply_mask_edits,
         build_confirmed_selection,
         normalize_cutout_selection,
+        normalize_mask_edits,
         normalize_regions,
         validate_selection_sources,
     )
@@ -85,8 +87,10 @@ except ImportError:  # Allows importing as python.server during local tests.
     from python.semantic_cutout import (
         SemanticCutoutError,
         apply_confirmed_regions,
+        apply_mask_edits,
         build_confirmed_selection,
         normalize_cutout_selection,
+        normalize_mask_edits,
         normalize_regions,
         validate_selection_sources,
     )
@@ -1035,6 +1039,7 @@ def save_temp(img, prefix="tmp"):
 # ======================== IMAGE PROCESSING ========================
 _BGSESSION = None
 _BGSESSION_LOCK = threading.Lock()
+_BG_INFERENCE_LOCK = threading.Lock()
 
 def _get_bgsession():
     global _BGSESSION
@@ -1061,8 +1066,9 @@ def remove_bg_hd(img):
     if img.mode != "RGBA": img = img.convert("RGBA")
     # alpha_matting disabled to avoid pymatting/numba dependency (~120MB)
     # BiRefNet produces high-quality alpha masks natively for product photography
-    return remove(img, session=session, alpha_matting=False,
-                  post_process_mask=True)
+    with _BG_INFERENCE_LOCK:
+        return remove(img, session=session, alpha_matting=False,
+                      post_process_mask=True)
 
 def tight_crop_alpha(img, pad_pct=0.06):
     if img.mode != "RGBA": img = img.convert("RGBA")
@@ -2220,6 +2226,7 @@ class SemanticCutoutRequest(BaseModel):
     model_query: str = ""
     target_count: int = 1
     regions: list[dict[str, Any]] = Field(default_factory=list)
+    mask_edits: list[dict[str, Any]] = Field(default_factory=list)
 
     class Config:
         extra = "forbid"
@@ -2354,10 +2361,67 @@ async def confirm_semantic_cutout(request: SemanticCutoutRequest):
             model_query=query_mapping["model_query"],
             target_count=request.target_count,
             regions=request.regions,
+            mask_edits=request.mask_edits,
         )
     except SemanticCutoutError as exc:
         _semantic_cutout_error(exc)
     return {"selection": selection}
+
+
+def _render_semantic_mask_preview(
+    path: Path,
+    regions: list[dict[str, Any]],
+    mask_edits: list[dict[str, Any]],
+) -> dict[str, Any]:
+    with Image.open(path) as source:
+        segmented = remove_bg_hd(source.copy())
+    segmented = apply_confirmed_regions(segmented, regions)
+    segmented = apply_mask_edits(segmented, mask_edits, regions)
+    alpha = segmented.getchannel("A")
+    alpha.thumbnail((1400, 1100), Image.Resampling.LANCZOS)
+    overlay = Image.new("RGBA", alpha.size, (37, 190, 137, 0))
+    overlay.putalpha(alpha)
+    encoded = base64.b64encode(image_to_bytes(overlay, "PNG")).decode("ascii")
+    return {
+        "width": alpha.width,
+        "height": alpha.height,
+        "data_url": f"data:image/png;base64,{encoded}",
+        "edit_count": len(mask_edits),
+    }
+
+
+@app.post("/api/semantic-cutout/mask-preview")
+async def preview_semantic_cutout_mask(request: SemanticCutoutRequest):
+    asset, path = _semantic_cutout_source(request.asset_id)
+    try:
+        selection = build_confirmed_selection(
+            source_asset_id=str(asset["id"]),
+            query=request.query,
+            model_query=request.model_query,
+            target_count=request.target_count,
+            regions=request.regions,
+            mask_edits=request.mask_edits,
+        )
+        source_plan = selection["sources"][str(asset["id"])]
+        mask_edits = normalize_mask_edits(source_plan.get("mask_edits"))
+        preview = await run_in_threadpool(
+            _render_semantic_mask_preview,
+            path,
+            source_plan["regions"],
+            mask_edits,
+        )
+    except SemanticCutoutError as exc:
+        _semantic_cutout_error(exc)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "SEMANTIC_MASK_PREVIEW_FAILED",
+                "stage": "segmentation",
+                "message": "本地蒙版预览失败；选区仍可确认并执行",
+            },
+        ) from exc
+    return {"mask_preview": preview}
 
 
 class JobCreateRequest(BaseModel):
@@ -4709,6 +4773,11 @@ def _execute_cutout_job(ctx, image, stage_dir, trace):
                         stage="selection",
                     )
                 segmented = apply_confirmed_regions(segmented, source_plan.get("regions"))
+                segmented = apply_mask_edits(
+                    segmented,
+                    source_plan.get("mask_edits"),
+                    source_plan.get("regions"),
+                )
             cutout = tight_crop_alpha(segmented)
     except SemanticCutoutError as exc:
         _record_execution_trace_safe(
@@ -4743,6 +4812,7 @@ def _execute_cutout_job(ctx, image, stage_dir, trace):
             "model_query": selection.get("model_query", ""),
             "target_count": selection.get("target_count", 0),
             "confirmation_digest": source_plan.get("digest", ""),
+            "mask_edit_count": len(source_plan.get("mask_edits") or []),
         },
         output={
             "output_name": output["name"],
@@ -4753,12 +4823,14 @@ def _execute_cutout_job(ctx, image, stage_dir, trace):
             "manual_grounding_confirmed": semantic,
             "human_confirmation_required": semantic,
             "selected_region_count": len(source_plan.get("regions") or []),
+            "mask_edit_count": len(source_plan.get("mask_edits") or []),
         },
     )
     return [output], {
         "operation": "semantic-selection-cutout" if semantic else "background-removal",
         "selection_method": source_plan.get("method", "all-foreground"),
         "selected_region_count": len(source_plan.get("regions") or []),
+        "mask_edit_count": len(source_plan.get("mask_edits") or []),
     }
 
 

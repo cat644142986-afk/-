@@ -743,11 +743,11 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .semantic-modal-head h2 { margin: 0; font-size: 20px; }
 .semantic-modal-head span { display: block; margin-top: 4px; color: var(--ink-3); font-size: var(--type-caption); }
 .semantic-modal-close { position: static; flex: 0 0 auto; }
-.semantic-modal-body { display: grid; grid-template-columns: minmax(0,1fr) 280px; min-height: 0; gap: 14px; padding: 14px; background: var(--shell-deep); }
+.semantic-modal-body { display: grid; grid-template-columns: minmax(0,1fr) 300px; min-height: 0; gap: 14px; padding: 14px; background: var(--shell-deep); }
 .semantic-canvas-wrap { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; overflow: hidden; border-radius: 17px; background: #171a1e; }
 .semantic-canvas-wrap canvas { display: block; max-width: 100%; max-height: 100%; background: #fff; cursor: crosshair; touch-action: none; }
 .semantic-canvas-hint { position: absolute; right: 10px; bottom: 10px; left: 10px; padding: 7px 9px; border-radius: 9px; background: rgba(20,23,27,.72); color: rgba(255,255,255,.82); font-size: var(--type-caption); text-align: center; pointer-events: none; backdrop-filter: blur(8px); }
-.semantic-region-panel { display: grid; grid-template-rows: auto auto auto minmax(0,1fr) auto; min-height: 0; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 17px; background: var(--paper); }
+.semantic-region-panel { display: grid; grid-template-rows: auto auto auto auto auto auto auto auto minmax(0,1fr) auto; min-height: 0; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 17px; background: var(--paper); }
 .semantic-region-progress { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .semantic-region-progress strong { color: var(--coral); font-size: 18px; font-variant-numeric: tabular-nums; }
 .semantic-region-progress span { color: var(--ink-3); font-size: var(--type-caption); }
@@ -757,6 +757,23 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .semantic-grounding-status[data-tone="error"] { border-color: rgba(255,95,87,.24); background: rgba(255,95,87,.07); }
 .semantic-region-actions { display: grid; grid-template-columns: 1fr auto auto; gap: 5px; }
 .semantic-region-actions button { min-height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper-soft); color: var(--ink-2); font-size: var(--type-caption); }
+.semantic-mask-tools, .semantic-mask-actions { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 5px; }
+.semantic-mask-tools button, .semantic-mask-actions button { min-height: 32px; padding: 0 6px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper-soft); color: var(--ink-2); font-size: var(--type-caption); font-weight: 750; }
+.semantic-mask-tools button.active { border-color: color-mix(in srgb,var(--coral) 54%,var(--line)); background: color-mix(in srgb,var(--coral) 12%,var(--paper)); color: var(--coral); }
+.semantic-mask-tools button[data-semantic-tool="include"].active { border-color: rgba(37,165,85,.4); background: rgba(37,165,85,.1); color: #178b45; }
+.semantic-mask-tools button[data-semantic-tool="exclude"].active { border-color: rgba(255,95,87,.38); background: rgba(255,95,87,.09); color: var(--red); }
+.semantic-mask-actions button:first-child { grid-column: span 1; background: var(--dark); color: #fff; }
+.semantic-mask-status { margin: 0; color: var(--ink-3); font-size: var(--type-caption); line-height: 1.4; }
+.semantic-brush-size { display: grid; gap: 4px; color: var(--ink-3); font-size: var(--type-caption); }
+.semantic-brush-size span { display: flex; justify-content: space-between; gap: 8px; }
+.semantic-brush-size output { color: var(--ink-2); font-weight: 800; font-variant-numeric: tabular-nums; }
+.semantic-brush-size input { width: 100%; accent-color: var(--coral); }
+.semantic-mask-keyboard { color: var(--ink-3); font-size: var(--type-caption); }
+.semantic-mask-keyboard summary { cursor: pointer; font-weight: 750; }
+.semantic-mask-keyboard > div { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding-top: 7px; }
+.semantic-mask-keyboard label { display: grid; gap: 3px; }
+.semantic-mask-keyboard input { width: 100%; min-height: 30px; padding: 0 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); font-size: var(--type-caption); }
+.semantic-mask-keyboard button { min-height: 30px; padding: 0 5px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper-soft); color: var(--ink-2); font-size: var(--type-caption); }
 .semantic-region-list { display: grid; align-content: start; gap: 8px; min-height: 0; overflow: auto; padding-right: 2px; scrollbar-width: thin; }
 .semantic-region-empty { padding: 16px 8px; color: var(--ink-3); font-size: var(--type-caption); line-height: 1.6; text-align: center; }
 .semantic-region-item { display: grid; gap: 7px; padding: 9px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-soft); }
@@ -1049,6 +1066,8 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .semantic-selection-modal { padding: 8px; }
   .semantic-modal-card { width: 100%; height: 100%; border-radius: 17px; }
   .semantic-modal-body { grid-template-columns: 1fr; grid-template-rows: minmax(240px,1fr) minmax(210px,.7fr); }
+  .semantic-region-panel { grid-template-rows: repeat(8,auto) minmax(90px,auto) auto; overflow-y: auto; align-content: start; }
+  .semantic-region-list { overflow: visible; }
   .semantic-modal-footer { align-items: stretch; flex-direction: column; }
   .semantic-modal-footer > div { justify-content: flex-end; }
 }

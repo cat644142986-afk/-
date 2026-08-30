@@ -28,6 +28,20 @@ function normalizeRegion(region, index, query) {
   return normalized;
 }
 
+function normalizeMaskEdit(edit) {
+  const mode = edit?.mode === 'include' ? 'include' : edit?.mode === 'exclude' ? 'exclude' : '';
+  const points = Array.from(edit?.points || [], (point) => [
+    Number(clamp(point?.[0], 0, 1).toFixed(6)),
+    Number(clamp(point?.[1], 0, 1).toFixed(6)),
+  ]).filter((point) => point.every(Number.isFinite));
+  if (!mode || !points.length) return null;
+  return {
+    mode,
+    points,
+    radius: Number(clamp(edit?.radius ?? 0.018, 0.003, 0.1).toFixed(6)),
+  };
+}
+
 export function createSemanticCutoutState(raw = {}) {
   const strategy = STRATEGIES.has(raw?.strategy) ? raw.strategy : 'foreground';
   const query = String(raw?.query || '').trim().slice(0, 80);
@@ -36,6 +50,7 @@ export function createSemanticCutoutState(raw = {}) {
   const targetCount = Math.round(clamp(raw?.target_count ?? 1, 1, 8));
   const regions = Array.from(raw?.regions || [], (region, index) => normalizeRegion(region, index, query))
     .filter((region) => region.bbox[2] > 0 && region.bbox[3] > 0);
+  const maskEdits = Array.from(raw?.mask_edits || [], normalizeMaskEdit).filter(Boolean);
   return {
     strategy,
     query,
@@ -49,6 +64,7 @@ export function createSemanticCutoutState(raw = {}) {
       : 'manual-box',
     digest: String(raw?.digest || ''),
     regions,
+    mask_edits: maskEdits,
   };
 }
 
@@ -63,6 +79,10 @@ export function updateSemanticCutoutState(current, patch = {}) {
       Object.prototype.hasOwnProperty.call(patch, 'source_asset_id')
       && next.source_asset_id !== before.source_asset_id
     )
+    || (
+      Object.prototype.hasOwnProperty.call(patch, 'mask_edits')
+      && JSON.stringify(next.mask_edits) !== JSON.stringify(before.mask_edits)
+    )
   );
   const carriesFreshConfirmation = (
     patch?.status === 'confirmed'
@@ -75,6 +95,7 @@ export function updateSemanticCutoutState(current, patch = {}) {
     next.digest = '';
     next.source_asset_id = '';
     next.regions = [];
+    next.mask_edits = [];
   }
   return next;
 }
@@ -126,6 +147,10 @@ export function semanticCutoutPayload(rawState, selectedAssetIds = []) {
         method: state.method,
         digest: state.digest,
         regions: state.regions.map((region) => ({ ...region, bbox: [...region.bbox] })),
+        mask_edits: state.mask_edits.map((edit) => ({
+          ...edit,
+          points: edit.points.map((point) => [...point]),
+        })),
       },
     },
   };

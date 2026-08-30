@@ -365,7 +365,14 @@ test('semantic cutout requires visible name, count, region confirmation, and kee
   assert.match(html, /id="semantic-region-list"/);
   assert.match(html, /id="semantic-grounding-status"[^>]*role="status"/);
   assert.match(html, /id="semantic-add-full"/);
+  assert.match(html, /data-semantic-tool="include"[^>]*>保留画笔/);
+  assert.match(html, /data-semantic-tool="exclude"[^>]*>删除画笔/);
+  assert.match(html, /id="semantic-mask-preview"[^>]*>生成蒙版预览/);
+  assert.match(html, /id="semantic-brush-size"[^>]*type="range"/);
+  assert.match(html, /id="semantic-mask-point-include"[^>]*>添加保留点/);
+  assert.match(html, /id="semantic-mask-point-exclude"[^>]*>添加删除点/);
   assert.match(app, /API\.previewSemanticCutout/);
+  assert.match(app, /API\.previewSemanticCutoutMask/);
   assert.match(app, /model_query: selection\.model_query_override/);
   assert.match(app, /model_query_override: semanticCanvasState\.modelQueryOverride/);
   assert.match(app, /API\.confirmSemanticCutout/);
@@ -374,7 +381,12 @@ test('semantic cutout requires visible name, count, region confirmation, and kee
   assert.match(api, /SEMANTIC_GROUNDING_TIMEOUT_MS = 180000/);
   assert.match(api, /previewSemanticCutout[\s\S]*timeoutMs: SEMANTIC_GROUNDING_TIMEOUT_MS/);
   assert.match(api, /export async function confirmSemanticCutout/);
+  assert.match(api, /export async function previewSemanticCutoutMask/);
+  assert.match(api, /semantic-cutout\/mask-preview/);
   assert.match(css, /\.semantic-region-coordinates/);
+  assert.match(css, /\.semantic-mask-tools/);
+  assert.match(app, /previewSemanticCutoutMask\([\s\S]{0,500}mask_edits: semanticCanvasState\.maskEdits/);
+  assert.match(app, /confirmSemanticCutout\([\s\S]{0,500}mask_edits: semanticCanvasState\.maskEdits/);
   assert.match(app, /正在运行本地目标定位；无需等待，可直接手动框选/);
   assert.match(app, /自动结果不会覆盖你的修改/);
   assert.match(app, /semantic-region-list'\)\.addEventListener\('input'/);

@@ -73,6 +73,13 @@ const semanticCanvasState = {
   targetCount: 1,
   regions: [],
   suggestedRegions: [],
+  maskEdits: [],
+  maskImage: null,
+  maskStatus: '确认目标框后，可预览绿色蒙版并修正边缘。',
+  maskPreviewRevision: 0,
+  tool: 'box',
+  brushRadius: 0.018,
+  stroke: null,
   groundingStatus: 'unavailable',
   groundingTone: 'manual',
   groundingMessage: '请手动框选目标',
@@ -2640,11 +2647,50 @@ function semanticCanvasPoint(event) {
   };
 }
 
+function drawSemanticMaskStroke(context, edit, active = false) {
+  const canvas = $('#semantic-selection-canvas');
+  const points = Array.from(edit?.points || []);
+  if (!points.length) return;
+  context.save();
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+  context.lineWidth = Math.max(4, Number(edit.radius || 0.018) * Math.min(canvas.width, canvas.height) * 2);
+  context.strokeStyle = edit.mode === 'include'
+    ? active ? 'rgba(36,211,138,.86)' : 'rgba(36,190,128,.62)'
+    : active ? 'rgba(255,70,70,.9)' : 'rgba(255,82,72,.66)';
+  context.fillStyle = context.strokeStyle;
+  if (points.length === 1) {
+    context.beginPath();
+    context.arc(points[0][0] * canvas.width, points[0][1] * canvas.height, context.lineWidth / 2, 0, Math.PI * 2);
+    context.fill();
+  } else {
+    context.beginPath();
+    context.moveTo(points[0][0] * canvas.width, points[0][1] * canvas.height);
+    points.slice(1).forEach((point) => context.lineTo(point[0] * canvas.width, point[1] * canvas.height));
+    context.stroke();
+  }
+  context.restore();
+}
+
+function invalidateSemanticMask(message = '选区或笔画已变化，请重新生成蒙版预览。') {
+  semanticCanvasState.maskPreviewRevision += 1;
+  semanticCanvasState.maskImage = null;
+  semanticCanvasState.maskStatus = message;
+}
+
 function drawSemanticCanvas() {
   const canvas = $('#semantic-selection-canvas');
   const context = canvas.getContext('2d');
   context.clearRect(0, 0, canvas.width, canvas.height);
   if (semanticCanvasState.image) context.drawImage(semanticCanvasState.image, 0, 0, canvas.width, canvas.height);
+  if (semanticCanvasState.maskImage) {
+    context.save();
+    context.globalAlpha = 0.48;
+    context.drawImage(semanticCanvasState.maskImage, 0, 0, canvas.width, canvas.height);
+    context.restore();
+  }
+  semanticCanvasState.maskEdits.forEach((edit) => drawSemanticMaskStroke(context, edit));
+  if (semanticCanvasState.stroke) drawSemanticMaskStroke(context, semanticCanvasState.stroke, true);
   const outlines = [
     ...semanticCanvasState.suggestedRegions.map((region) => ({ ...region, isSuggestion: true })),
     ...semanticCanvasState.regions,
@@ -2674,8 +2720,14 @@ function drawSemanticCanvas() {
     const suggestion = Boolean(region.isSuggestion);
     context.setLineDash(suggestion ? [10, 7] : []);
     context.strokeStyle = region.id === 'preview' || suggestion ? '#ffd351' : '#ff6b43';
-    context.fillStyle = region.id === 'preview' || suggestion ? 'rgba(255,211,81,.14)' : 'rgba(255,107,67,.12)';
-    context.fillRect(left, top, boxWidth, boxHeight);
+    context.fillStyle = region.id === 'preview' || suggestion
+      ? 'rgba(255,211,81,.14)'
+      : semanticCanvasState.maskImage
+        ? 'rgba(255,107,67,0)'
+        : 'rgba(255,107,67,.12)';
+    if (region.id === 'preview' || suggestion || !semanticCanvasState.maskImage) {
+      context.fillRect(left, top, boxWidth, boxHeight);
+    }
     context.strokeRect(left, top, boxWidth, boxHeight);
     if (region.id !== 'preview') {
       const label = suggestion
@@ -2703,6 +2755,18 @@ function renderSemanticRegions() {
   groundingStatus.textContent = semanticCanvasState.groundingMessage;
   $('#semantic-region-count').textContent = `${count} / ${semanticCanvasState.targetCount}${suggestionCount ? ` · ${suggestionCount} 个待确认` : ''}`;
   $('#semantic-selection-summary').textContent = `要保留 ${semanticCanvasState.targetCount} 个“${semanticCanvasState.query}”`;
+  $('#semantic-mask-status').textContent = semanticCanvasState.maskStatus;
+  $('#semantic-brush-size-value').textContent = `${(semanticCanvasState.brushRadius * 100).toFixed(1)}%`;
+  $$('[data-semantic-tool]').forEach((button) => {
+    const active = button.dataset.semanticTool === semanticCanvasState.tool;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  $('#semantic-canvas-hint').textContent = semanticCanvasState.tool === 'box'
+    ? '拖动鼠标框选目标；每个框只包住一个物体并留少量边距'
+    : semanticCanvasState.tool === 'include'
+      ? '绿色保留画笔：把被误删的产品边缘补回蒙版'
+      : '红色删除画笔：清除蒙版中多余背景或相邻物体';
   if (!count && !suggestionCount) {
     list.innerHTML = '<div class="semantic-region-empty">尚未框选。可在左侧拖动鼠标，或用“添加全图范围”后在这里用键盘调整坐标。</div>';
   } else {
@@ -2731,6 +2795,11 @@ function renderSemanticRegions() {
   $('#semantic-undo').disabled = count === 0;
   $('#semantic-clear').disabled = count === 0 && suggestionCount === 0;
   $('#semantic-add-full').disabled = count >= semanticCanvasState.targetCount;
+  $('#semantic-mask-preview').disabled = !exact || semanticCanvasState.maskStatus === '正在生成本地蒙版预览…';
+  $('#semantic-mask-undo').disabled = semanticCanvasState.maskEdits.length === 0;
+  $('#semantic-mask-clear').disabled = semanticCanvasState.maskEdits.length === 0;
+  $('#semantic-mask-point-include').disabled = !exact || semanticCanvasState.maskEdits.length >= 200;
+  $('#semantic-mask-point-exclude').disabled = !exact || semanticCanvasState.maskEdits.length >= 200;
   drawSemanticCanvas();
 }
 
@@ -2756,6 +2825,7 @@ function addSemanticRegion(bbox) {
   semanticCanvasState.groundingTone = 'manual';
   semanticCanvasState.groundingMessage = '已进入人工修正；请检查所有选区后确认';
   semanticCanvasState.manualRevision += 1;
+  invalidateSemanticMask('目标框已变化；确认数量后可生成蒙版预览。');
   renderSemanticRegions();
 }
 
@@ -2777,6 +2847,7 @@ function updateSemanticRegionCoordinate(input, render = true) {
   semanticCanvasState.groundingTone = 'manual';
   semanticCanvasState.groundingMessage = '已修改自动候选；请检查所有选区后确认';
   semanticCanvasState.manualRevision += 1;
+  invalidateSemanticMask();
   if (render) {
     renderSemanticRegions();
   } else {
@@ -2803,6 +2874,75 @@ function loadSemanticCanvasImage(url) {
     image.onerror = () => reject(new Error('源图片预览无法加载'));
     image.src = url;
   });
+}
+
+function loadSemanticMaskImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('蒙版预览无法加载'));
+    image.src = url;
+  });
+}
+
+async function previewSemanticMask() {
+  if (semanticCanvasState.regions.length !== semanticCanvasState.targetCount) {
+    semanticCanvasState.maskStatus = '请先完成目标框与数量确认。';
+    renderSemanticRegions();
+    return;
+  }
+  const revision = semanticCanvasState.maskPreviewRevision + 1;
+  semanticCanvasState.maskPreviewRevision = revision;
+  semanticCanvasState.maskStatus = '正在生成本地蒙版预览…';
+  renderSemanticRegions();
+  try {
+    const response = await API.previewSemanticCutoutMask({
+      asset_id: semanticCanvasState.assetId,
+      query: semanticCanvasState.query,
+      model_query: semanticCanvasState.modelQueryOverride,
+      target_count: semanticCanvasState.targetCount,
+      regions: semanticCanvasState.regions,
+      mask_edits: semanticCanvasState.maskEdits,
+    });
+    if (
+      semanticCanvasState.maskPreviewRevision !== revision
+      || $('#semantic-selection-modal').hidden
+    ) return;
+    const preview = response.mask_preview || {};
+    semanticCanvasState.maskImage = await loadSemanticMaskImage(preview.data_url);
+    if (semanticCanvasState.maskPreviewRevision !== revision) return;
+    semanticCanvasState.maskStatus = semanticCanvasState.maskEdits.length
+      ? `绿色区域为最终保留蒙版 · 已应用 ${semanticCanvasState.maskEdits.length} 笔修正`
+      : '绿色区域为当前保留蒙版；发现缺失或多余时可切换画笔修正。';
+  } catch (error) {
+    if (semanticCanvasState.maskPreviewRevision !== revision) return;
+    semanticCanvasState.maskImage = null;
+    semanticCanvasState.maskStatus = formatApiError(error, '本地蒙版预览失败；仍可确认后执行');
+  }
+  renderSemanticRegions();
+}
+
+function addSemanticMaskPoint(mode) {
+  if (semanticCanvasState.regions.length !== semanticCanvasState.targetCount) {
+    semanticCanvasState.maskStatus = '请先完成目标框与数量确认，再添加蒙版修正点。';
+    renderSemanticRegions();
+    return;
+  }
+  if (semanticCanvasState.maskEdits.length >= 200) {
+    semanticCanvasState.maskStatus = '蒙版修正已达到 200 笔上限；请撤销或清除部分笔画。';
+    renderSemanticRegions();
+    return;
+  }
+  const x = Math.max(0, Math.min(100, Number($('#semantic-mask-point-x').value) || 0)) / 100;
+  const y = Math.max(0, Math.min(100, Number($('#semantic-mask-point-y').value) || 0)) / 100;
+  semanticCanvasState.maskEdits.push({
+    mode,
+    points: [[Number(x.toFixed(6)), Number(y.toFixed(6))]],
+    radius: semanticCanvasState.brushRadius,
+  });
+  semanticCanvasState.manualRevision += 1;
+  invalidateSemanticMask(`已通过坐标添加${mode === 'include' ? '保留' : '删除'}点；请重新生成预览复核。`);
+  renderSemanticRegions();
 }
 
 async function openSemanticSelection() {
@@ -2839,6 +2979,20 @@ async function openSemanticSelection() {
   semanticCanvasState.regions = restoredRegions
     ? selection.regions.map((region) => ({ ...region, bbox: [...region.bbox] }))
     : [];
+  semanticCanvasState.maskEdits = restoredRegions
+    ? selection.mask_edits.map((edit) => ({
+      ...edit,
+      points: edit.points.map((point) => [...point]),
+    }))
+    : [];
+  semanticCanvasState.maskImage = null;
+  semanticCanvasState.maskStatus = restoredRegions && semanticCanvasState.maskEdits.length
+    ? `已恢复 ${semanticCanvasState.maskEdits.length} 笔蒙版修正；可重新生成预览复核。`
+    : '确认目标框后，可预览绿色蒙版并修正边缘。';
+  semanticCanvasState.maskPreviewRevision += 1;
+  semanticCanvasState.tool = 'box';
+  semanticCanvasState.brushRadius = 0.018;
+  semanticCanvasState.stroke = null;
   semanticCanvasState.suggestedRegions = [];
   semanticCanvasState.manualRevision = 0;
   semanticCanvasState.groundingStatus = restoredRegions ? 'manual_regions' : 'loading';
@@ -2859,6 +3013,7 @@ async function openSemanticSelection() {
       model_query: selection.model_query_override,
       target_count: selection.target_count,
       regions: restoredRegions ? selection.regions : [],
+      mask_edits: restoredRegions ? selection.mask_edits : [],
     });
     if (
       semanticCanvasState.previewRevision !== previewRevision
@@ -2915,7 +3070,10 @@ function closeSemanticSelection(restoreFocus = true) {
   modal.hidden = true;
   semanticCanvasState.previewRevision += 1;
   semanticCanvasState.image = null;
+  semanticCanvasState.maskImage = null;
+  semanticCanvasState.maskPreviewRevision += 1;
   semanticCanvasState.suggestedRegions = [];
+  semanticCanvasState.stroke = null;
   semanticCanvasState.dragStart = null;
   semanticCanvasState.dragCurrent = null;
   if (restoreFocus && semanticReturnFocus instanceof HTMLElement) semanticReturnFocus.focus();
@@ -2936,6 +3094,7 @@ async function confirmSemanticSelection() {
       model_query: semanticCanvasState.modelQueryOverride,
       target_count: semanticCanvasState.targetCount,
       regions: semanticCanvasState.regions,
+      mask_edits: semanticCanvasState.maskEdits,
     });
     const selection = response.selection;
     const sourcePlan = selection.sources[semanticCanvasState.assetId];
@@ -2950,10 +3109,11 @@ async function confirmSemanticSelection() {
       method: sourcePlan.method,
       digest: sourcePlan.digest,
       regions: sourcePlan.regions,
+      mask_edits: sourcePlan.mask_edits,
     }));
     closeSemanticSelection();
     updateCtaState();
-    toast(`已确认 ${selection.target_count} 个“${selection.query}”，现在可以开始本地抠图`, 'success', 4200);
+    toast(`已确认 ${selection.target_count} 个“${selection.query}”${sourcePlan.mask_edits.length ? `及 ${sourcePlan.mask_edits.length} 笔蒙版修正` : ''}，现在可以开始本地抠图`, 'success', 4200);
   } catch (error) {
     const stage = error?.detail?.stage;
     $('#semantic-region-error').hidden = false;
@@ -3615,21 +3775,50 @@ function bindEvents() {
   $('#semantic-selection-cancel').addEventListener('click', () => closeSemanticSelection());
   $('#semantic-selection-confirm').addEventListener('click', confirmSemanticSelection);
   $('#semantic-add-full').addEventListener('click', () => addSemanticRegion([0, 0, 1, 1]));
+  $('#semantic-mask-preview').addEventListener('click', previewSemanticMask);
+  $('#semantic-brush-size').addEventListener('input', (event) => {
+    semanticCanvasState.brushRadius = Math.max(0.005, Math.min(0.06, Number(event.target.value) / 100));
+    $('#semantic-brush-size-value').textContent = `${(semanticCanvasState.brushRadius * 100).toFixed(1)}%`;
+  });
+  $('#semantic-mask-point-include').addEventListener('click', () => addSemanticMaskPoint('include'));
+  $('#semantic-mask-point-exclude').addEventListener('click', () => addSemanticMaskPoint('exclude'));
+  $$('[data-semantic-tool]').forEach((button) => button.addEventListener('click', () => {
+    semanticCanvasState.tool = button.dataset.semanticTool;
+    semanticCanvasState.dragStart = null;
+    semanticCanvasState.dragCurrent = null;
+    semanticCanvasState.stroke = null;
+    renderSemanticRegions();
+  }));
+  $('#semantic-mask-undo').addEventListener('click', () => {
+    semanticCanvasState.maskEdits.pop();
+    invalidateSemanticMask(semanticCanvasState.maskEdits.length
+      ? `已撤销一笔修正，当前保留 ${semanticCanvasState.maskEdits.length} 笔；请重新生成预览。`
+      : '已撤销全部蒙版修正；可重新生成预览。');
+    renderSemanticRegions();
+  });
+  $('#semantic-mask-clear').addEventListener('click', () => {
+    semanticCanvasState.maskEdits = [];
+    invalidateSemanticMask('已清除全部蒙版修正；可重新生成预览。');
+    renderSemanticRegions();
+  });
   $('#semantic-undo').addEventListener('click', () => {
     semanticCanvasState.regions.pop();
     semanticCanvasState.groundingStatus = 'manual_regions';
     semanticCanvasState.groundingTone = 'manual';
     semanticCanvasState.groundingMessage = '已撤销一个选区；请补充并检查后确认';
     semanticCanvasState.manualRevision += 1;
+    invalidateSemanticMask('目标框已变化；补齐数量后可重新生成蒙版预览。');
     renderSemanticRegions();
   });
   $('#semantic-clear').addEventListener('click', () => {
     semanticCanvasState.regions = [];
     semanticCanvasState.suggestedRegions = [];
+    semanticCanvasState.maskEdits = [];
     semanticCanvasState.groundingStatus = 'manual_regions';
     semanticCanvasState.groundingTone = 'manual';
     semanticCanvasState.groundingMessage = '已清空候选与建议，请重新手动框选目标';
     semanticCanvasState.manualRevision += 1;
+    invalidateSemanticMask('已清空目标框和蒙版笔画，请重新框选目标。');
     renderSemanticRegions();
   });
   $('#semantic-region-list').addEventListener('click', (event) => {
@@ -3649,6 +3838,7 @@ function bindEvents() {
       semanticCanvasState.groundingStatus = 'review_adopted';
       semanticCanvasState.groundingTone = 'warning';
       semanticCanvasState.groundingMessage = '已采用一个橙色建议；它仍需你检查位置和目标是否正确';
+      invalidateSemanticMask('目标框已变化；确认数量后可生成蒙版预览。');
       renderSemanticRegions();
       return;
     }
@@ -3660,6 +3850,7 @@ function bindEvents() {
     semanticCanvasState.groundingTone = 'manual';
     semanticCanvasState.groundingMessage = '已移除一个候选；请补充并检查后确认';
     semanticCanvasState.manualRevision += 1;
+    invalidateSemanticMask('目标框已变化；补齐数量后可重新生成蒙版预览。');
     renderSemanticRegions();
   });
   $('#semantic-region-list').addEventListener('change', (event) => {
@@ -3673,6 +3864,27 @@ function bindEvents() {
   const semanticCanvas = $('#semantic-selection-canvas');
   semanticCanvas.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return;
+    if (semanticCanvasState.tool !== 'box') {
+      if (semanticCanvasState.regions.length !== semanticCanvasState.targetCount) {
+        semanticCanvasState.maskStatus = '请先完成目标框与数量确认，再使用蒙版画笔。';
+        renderSemanticRegions();
+        return;
+      }
+      if (semanticCanvasState.maskEdits.length >= 200) {
+        semanticCanvasState.maskStatus = '蒙版修正已达到 200 笔上限；请撤销或清除部分笔画。';
+        renderSemanticRegions();
+        return;
+      }
+      semanticCanvas.setPointerCapture(event.pointerId);
+      const point = semanticCanvasPoint(event);
+      semanticCanvasState.stroke = {
+        mode: semanticCanvasState.tool,
+        points: [[point.x, point.y]],
+        radius: semanticCanvasState.brushRadius,
+      };
+      drawSemanticCanvas();
+      return;
+    }
     if (semanticCanvasState.regions.length >= semanticCanvasState.targetCount) {
       addSemanticRegion([0, 0, 0, 0]);
       return;
@@ -3687,11 +3899,46 @@ function bindEvents() {
     drawSemanticCanvas();
   });
   semanticCanvas.addEventListener('pointermove', (event) => {
+    if (semanticCanvasState.stroke) {
+      const point = semanticCanvasPoint(event);
+      const last = semanticCanvasState.stroke.points.at(-1);
+      if (
+        semanticCanvasState.stroke.points.length < 1024
+        && Math.hypot(point.x - last[0], point.y - last[1]) >= 0.002
+      ) {
+        semanticCanvasState.stroke.points.push([point.x, point.y]);
+        drawSemanticCanvas();
+      }
+      return;
+    }
     if (!semanticCanvasState.dragStart) return;
     semanticCanvasState.dragCurrent = semanticCanvasPoint(event);
     drawSemanticCanvas();
   });
   semanticCanvas.addEventListener('pointerup', (event) => {
+    if (semanticCanvasState.stroke) {
+      const stroke = semanticCanvasState.stroke;
+      const point = semanticCanvasPoint(event);
+      const last = stroke.points.at(-1);
+      if (
+        stroke.points.length < 1024
+        && Math.hypot(point.x - last[0], point.y - last[1]) >= 0.001
+      ) {
+        stroke.points.push([point.x, point.y]);
+      }
+      semanticCanvasState.maskEdits.push({
+        ...stroke,
+        points: stroke.points.map(([x, y]) => [
+          Number(x.toFixed(6)),
+          Number(y.toFixed(6)),
+        ]),
+      });
+      semanticCanvasState.stroke = null;
+      semanticCanvasState.manualRevision += 1;
+      invalidateSemanticMask(`已记录 ${semanticCanvasState.maskEdits.length} 笔蒙版修正；请重新生成预览复核。`);
+      renderSemanticRegions();
+      return;
+    }
     if (!semanticCanvasState.dragStart) return;
     const start = semanticCanvasState.dragStart;
     const end = semanticCanvasPoint(event);
@@ -3703,6 +3950,12 @@ function bindEvents() {
       Math.abs(end.x - start.x),
       Math.abs(end.y - start.y),
     ]);
+  });
+  semanticCanvas.addEventListener('pointercancel', () => {
+    semanticCanvasState.stroke = null;
+    semanticCanvasState.dragStart = null;
+    semanticCanvasState.dragCurrent = null;
+    drawSemanticCanvas();
   });
   const input = $('#file-input');
   $('#btn-browse').addEventListener('click', () => input.click());

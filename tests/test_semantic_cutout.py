@@ -7,8 +7,10 @@ from PIL import Image
 from python.semantic_cutout import (
     SemanticCutoutError,
     apply_confirmed_regions,
+    apply_mask_edits,
     build_confirmed_selection,
     normalize_cutout_selection,
+    normalize_mask_edits,
     validate_selection_sources,
 )
 
@@ -106,6 +108,49 @@ class SemanticCutoutContractTests(unittest.TestCase):
         self.assertEqual(alpha.getpixel((20, 30)), 255)
         self.assertEqual(alpha.getpixel((80, 30)), 0)
         self.assertEqual(alpha.getbbox(), (10, 20, 50, 60))
+
+    def test_mask_edits_are_normalized_and_bound_to_confirmation_digest(self) -> None:
+        edits = [{
+            "mode": "exclude",
+            "points": [[0.2, 0.3], [0.25, 0.35]],
+            "radius": 0.02,
+        }]
+        selection = build_confirmed_selection(
+            source_asset_id="asset-1",
+            query="汉堡",
+            target_count=1,
+            regions=[{"id": "target-1", "bbox": [0.1, 0.1, 0.8, 0.8]}],
+            mask_edits=edits,
+        )
+        source = selection["sources"]["asset-1"]
+        self.assertEqual(source["mask_edits"], edits)
+        self.assertEqual(normalize_cutout_selection(selection), selection)
+
+        stale = {**selection, "sources": {"asset-1": {**source, "mask_edits": []}}}
+        with self.assertRaises(SemanticCutoutError) as mismatch:
+            normalize_cutout_selection(stale)
+        self.assertEqual(mismatch.exception.code, "SEMANTIC_CONFIRMATION_STALE")
+
+    def test_mask_edits_can_remove_and_restore_alpha_inside_confirmed_region(self) -> None:
+        source = Image.new("RGBA", (100, 100), (220, 80, 40, 255))
+        regions = [{"id": "target-1", "bbox": [0.1, 0.1, 0.8, 0.8]}]
+        edited = apply_mask_edits(source, [
+            {"mode": "exclude", "points": [[0.5, 0.5]], "radius": 0.08},
+            {"mode": "include", "points": [[0.5, 0.5]], "radius": 0.025},
+        ], regions)
+        alpha = edited.getchannel("A")
+        self.assertGreater(alpha.getpixel((50, 50)), 240)
+        self.assertLess(alpha.getpixel((56, 50)), 220)
+        self.assertEqual(alpha.getpixel((5, 5)), 0)
+
+    def test_mask_edits_reject_out_of_bounds_points(self) -> None:
+        with self.assertRaises(SemanticCutoutError) as invalid:
+            normalize_mask_edits([{
+                "mode": "include",
+                "points": [[1.2, 0.5]],
+                "radius": 0.02,
+            }])
+        self.assertEqual(invalid.exception.code, "SEMANTIC_MASK_EDIT_OUT_OF_BOUNDS")
 
 
 if __name__ == "__main__":

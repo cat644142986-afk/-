@@ -105,6 +105,7 @@ test('confirmed semantic selection compiles to a per-source immutable job plan',
         method: 'manual-box',
         digest: 'sha256:confirmed',
         regions: state.regions,
+        mask_edits: [],
       },
     },
   });
@@ -181,4 +182,25 @@ test('an adopted review suggestion keeps its lower-trust origin in the durable d
   });
   assert.equal(state.regions[0].origin, 'automatic-review');
   assert.equal(state.regions[0].confidence, 0.72);
+});
+
+test('mask correction strokes are normalized and persisted in the immutable job plan', () => {
+  const state = createSemanticCutoutState({
+    strategy: 'semantic',
+    query: '汉堡',
+    target_count: 1,
+    source_asset_id: 'asset-1',
+    status: 'confirmed',
+    digest: 'sha256:mask-confirmed',
+    regions: [{ id: 'target-1', label: '汉堡', bbox: [0.1, 0.1, 0.8, 0.8] }],
+    mask_edits: [{ mode: 'exclude', points: [[0.2, 0.3], [0.25, 0.35]], radius: 0.02 }],
+  });
+  const source = semanticCutoutPayload(state, ['asset-1']).sources['asset-1'];
+  assert.deepEqual(source.mask_edits, state.mask_edits);
+  assert.notEqual(source.mask_edits, state.mask_edits);
+  assert.notEqual(source.mask_edits[0].points, state.mask_edits[0].points);
+
+  const changed = updateSemanticCutoutState(state, { mask_edits: [] });
+  assert.equal(changed.status, 'draft');
+  assert.equal(changed.digest, '');
 });

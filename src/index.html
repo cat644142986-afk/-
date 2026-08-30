@@ -222,16 +222,21 @@
     <section class="semantic-modal-card">
       <header class="semantic-modal-head"><div><p>LOCAL TARGET CONFIRMATION</p><h2 id="semantic-selection-title">框选要保留的目标</h2><span id="semantic-selection-summary">请在原图上拖动框选</span></div><button class="modal-close semantic-modal-close" id="semantic-selection-close" type="button" aria-label="取消目标确认">×</button></header>
       <div class="semantic-modal-body">
-        <div class="semantic-canvas-wrap"><canvas id="semantic-selection-canvas" width="960" height="640" aria-label="目标框选画布；可拖动框选，也可使用右侧坐标输入"></canvas><span class="semantic-canvas-hint">拖动鼠标框选目标；每个框只包住一个物体并留少量边距</span></div>
+        <div class="semantic-canvas-wrap"><canvas id="semantic-selection-canvas" width="960" height="640" aria-label="目标与蒙版修正画布；可框选目标，或使用保留和删除画笔修正蒙版"></canvas><span class="semantic-canvas-hint" id="semantic-canvas-hint">拖动鼠标框选目标；每个框只包住一个物体并留少量边距</span></div>
         <aside class="semantic-region-panel" aria-label="已框选目标">
           <div class="semantic-region-progress"><strong id="semantic-region-count">0 / 1</strong><span>已框选</span></div>
           <p class="semantic-grounding-status" id="semantic-grounding-status" role="status" aria-live="polite">正在检查本地候选能力</p>
           <div class="semantic-region-actions"><button id="semantic-add-full" type="button">添加全图范围</button><button id="semantic-undo" type="button">撤销</button><button id="semantic-clear" type="button">清空</button></div>
+          <div class="semantic-mask-tools" role="group" aria-label="画布工具"><button class="active" type="button" data-semantic-tool="box" aria-pressed="true">框选</button><button type="button" data-semantic-tool="include" aria-pressed="false">保留画笔</button><button type="button" data-semantic-tool="exclude" aria-pressed="false">删除画笔</button></div>
+          <label class="semantic-brush-size" for="semantic-brush-size"><span>画笔大小 <output id="semantic-brush-size-value">1.8%</output></span><input id="semantic-brush-size" type="range" min="0.5" max="6" step="0.1" value="1.8" /></label>
+          <div class="semantic-mask-actions"><button id="semantic-mask-preview" type="button">生成蒙版预览</button><button id="semantic-mask-undo" type="button">撤销笔画</button><button id="semantic-mask-clear" type="button">清除笔画</button></div>
+          <p class="semantic-mask-status" id="semantic-mask-status">确认目标框后，可预览绿色蒙版并修正边缘。</p>
+          <details class="semantic-mask-keyboard"><summary>键盘添加修正点</summary><div><label>X %<input id="semantic-mask-point-x" type="number" min="0" max="100" step="0.1" value="50" /></label><label>Y %<input id="semantic-mask-point-y" type="number" min="0" max="100" step="0.1" value="50" /></label><button id="semantic-mask-point-include" type="button">添加保留点</button><button id="semantic-mask-point-exclude" type="button">添加删除点</button></div></details>
           <div class="semantic-region-list" id="semantic-region-list"></div>
           <p class="semantic-region-error" id="semantic-region-error" role="alert" hidden></p>
         </aside>
       </div>
-      <footer class="semantic-modal-footer"><p>此步只确认目标，不消耗生图额度。确认后仍由本地 BiRefNet 处理边缘。</p><div><button class="secondary-button" id="semantic-selection-cancel" type="button">取消</button><button class="primary-button primary-button--compact" id="semantic-selection-confirm" type="button">确认目标</button></div></footer>
+      <footer class="semantic-modal-footer"><p>本地 BiRefNet 先生成蒙版；保留/删除笔画会随任务保存并真实作用于导出，不消耗生图额度。</p><div><button class="secondary-button" id="semantic-selection-cancel" type="button">取消</button><button class="primary-button primary-button--compact" id="semantic-selection-confirm" type="button">确认目标与蒙版</button></div></footer>
     </section>
   </div>
   <script type="module" src="./js/app.js"></script>
