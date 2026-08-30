@@ -33,6 +33,13 @@ try:
     from job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from memory_engine import MemoryEngine
+    from grounding_runtime import (
+        bundled_model_manifest_path,
+        grounding_pack_status,
+        probe_grounding_pack,
+        verify_model_pack,
+        verify_runtime_pack,
+    )
     from semantic_cutout import (
         SemanticCutoutError,
         apply_confirmed_regions,
@@ -41,7 +48,11 @@ try:
         normalize_regions,
         validate_selection_sources,
     )
-    from semantic_grounding import ground_semantic_candidates
+    from semantic_grounding import (
+        UnavailableGroundingAdapter,
+        ground_semantic_candidates,
+        grounding_adapter_from_pack,
+    )
     from semantic_query import resolve_semantic_query
     from storage_paths import (
         OutputRootError,
@@ -64,6 +75,13 @@ except ImportError:  # Allows importing as python.server during local tests.
     from python.job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from python.knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from python.memory_engine import MemoryEngine
+    from python.grounding_runtime import (
+        bundled_model_manifest_path,
+        grounding_pack_status,
+        probe_grounding_pack,
+        verify_model_pack,
+        verify_runtime_pack,
+    )
     from python.semantic_cutout import (
         SemanticCutoutError,
         apply_confirmed_regions,
@@ -72,7 +90,11 @@ except ImportError:  # Allows importing as python.server during local tests.
         normalize_regions,
         validate_selection_sources,
     )
-    from python.semantic_grounding import ground_semantic_candidates
+    from python.semantic_grounding import (
+        UnavailableGroundingAdapter,
+        ground_semantic_candidates,
+        grounding_adapter_from_pack,
+    )
     from python.semantic_query import resolve_semantic_query
     from python.storage_paths import (
         OutputRootError,
@@ -132,6 +154,7 @@ except Exception:
 _knowledge_path = str(_startup_config.get("knowledge_base_path", "")).strip()
 KNOWLEDGE = KnowledgeCompiler(_knowledge_path) if _knowledge_path else KnowledgeCompiler()
 MEMORY = MemoryEngine(LEDGER)
+GROUNDING_MODEL_MANIFEST_PATH = bundled_model_manifest_path()
 
 # Legacy config path for migration. Keep the old location discoverable without
 # embedding one developer's Windows account in the application.
@@ -157,7 +180,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-30.1"
+SIDECAR_CONTRACT_VERSION = "2026-08-30.2"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -540,6 +563,15 @@ _RUNTIME_KNOWLEDGE_PATH = str(KNOWLEDGE.vault_path)
 _RUNTIME_OUTPUT_ROOT = canonicalize_output_root(
     str(_startup_config.get("output_root") or OUTPUT_DIR)
 )
+_RUNTIME_GROUNDING_RUNTIME_ROOT = str(
+    _startup_config.get("grounding_runtime_root") or ""
+).strip()
+_RUNTIME_GROUNDING_MODEL_ROOT = str(
+    _startup_config.get("grounding_model_root") or ""
+).strip()
+_GROUNDING_ADAPTER_LOCK = threading.RLock()
+_GROUNDING_ADAPTER_KEY: tuple[str, str] | None = None
+_GROUNDING_ADAPTER: Any = None
 
 
 @contextmanager
@@ -703,9 +735,81 @@ def set_api_key(key: str):
     API_KEY = key
 
 
+def _normalize_pack_root(value: Any, *, kind: str) -> Path:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("请选择本地扩展包目录")
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError("本地扩展包必须使用绝对路径")
+    root = candidate.resolve()
+    if root == Path(root.anchor) or root == Path.home().resolve():
+        raise ValueError("不能把磁盘根目录或用户主目录作为扩展包")
+    if kind == "runtime":
+        status = verify_runtime_pack(root, full=False)
+    else:
+        status = verify_model_pack(root, GROUNDING_MODEL_MANIFEST_PATH, full=False)
+    if status.get("status") != "ready":
+        raise ValueError(str(status.get("message") or "本地扩展包不可用"))
+    return root
+
+
+def _grounding_pack_state(*, full: bool = False) -> dict[str, Any]:
+    status = grounding_pack_status(
+        _RUNTIME_GROUNDING_RUNTIME_ROOT,
+        _RUNTIME_GROUNDING_MODEL_ROOT,
+        GROUNDING_MODEL_MANIFEST_PATH,
+        full=full,
+    )
+    runtime = status.get("runtime")
+    if isinstance(runtime, dict):
+        runtime.pop("manifest", None)
+    return status
+
+
+def _configured_grounding_adapter():
+    global _GROUNDING_ADAPTER, _GROUNDING_ADAPTER_KEY
+    runtime_root = _RUNTIME_GROUNDING_RUNTIME_ROOT
+    model_root = _RUNTIME_GROUNDING_MODEL_ROOT
+    if not runtime_root and not model_root:
+        return None
+    status = _grounding_pack_state(full=False)
+    if not status.get("available"):
+        return UnavailableGroundingAdapter(
+            str(status.get("code") or "grounding_pack_unavailable").lower()
+        )
+    key = (runtime_root, model_root)
+    with _GROUNDING_ADAPTER_LOCK:
+        if _GROUNDING_ADAPTER_KEY != key:
+            previous = _GROUNDING_ADAPTER
+            _GROUNDING_ADAPTER = grounding_adapter_from_pack(
+                runtime_root,
+                model_root,
+                GROUNDING_MODEL_MANIFEST_PATH,
+            )
+            _GROUNDING_ADAPTER_KEY = key
+            if previous is not None and hasattr(previous, "close"):
+                previous.close()
+        return _GROUNDING_ADAPTER
+
+
+def _dispose_grounding_adapter_if_changed(runtime_root: str, model_root: str) -> None:
+    global _GROUNDING_ADAPTER, _GROUNDING_ADAPTER_KEY
+    next_key = (runtime_root, model_root) if runtime_root and model_root else None
+    with _GROUNDING_ADAPTER_LOCK:
+        if _GROUNDING_ADAPTER_KEY == next_key:
+            return
+        previous = _GROUNDING_ADAPTER
+        _GROUNDING_ADAPTER = None
+        _GROUNDING_ADAPTER_KEY = None
+        if previous is not None and hasattr(previous, "close"):
+            previous.close()
+
+
 def refresh_runtime_config() -> dict:
     """Refresh process-local runtime objects from the shared atomic config."""
     global API_KEY, _RUNTIME_KNOWLEDGE_PATH, _RUNTIME_OUTPUT_ROOT
+    global _RUNTIME_GROUNDING_RUNTIME_ROOT, _RUNTIME_GROUNDING_MODEL_ROOT
     cfg = load_config()
     with _RUNTIME_CONFIG_LOCK:
         updates: dict[str, object] = {}
@@ -740,6 +844,16 @@ def refresh_runtime_config() -> dict:
         })]
         if cfg.get("known_output_roots") != known_roots:
             updates["known_output_roots"] = known_roots
+        _RUNTIME_GROUNDING_RUNTIME_ROOT = str(
+            cfg.get("grounding_runtime_root") or ""
+        ).strip()
+        _RUNTIME_GROUNDING_MODEL_ROOT = str(
+            cfg.get("grounding_model_root") or ""
+        ).strip()
+        _dispose_grounding_adapter_if_changed(
+            _RUNTIME_GROUNDING_RUNTIME_ROOT,
+            _RUNTIME_GROUNDING_MODEL_ROOT,
+        )
         if updates:
             save_config(updates)
             cfg = {**cfg, **updates}
@@ -761,6 +875,9 @@ def get_settings():
         "internal_data_dir": str(APP_DIR),
         "knowledge_base_path": _RUNTIME_KNOWLEDGE_PATH,
         "knowledge": KNOWLEDGE.status(),
+        "grounding_runtime_root": _RUNTIME_GROUNDING_RUNTIME_ROOT,
+        "grounding_model_root": _RUNTIME_GROUNDING_MODEL_ROOT,
+        "grounding_pack": _grounding_pack_state(full=False),
     }
 
 # ======================== PROGRESS TRACKING ========================
@@ -2170,6 +2287,7 @@ async def preview_semantic_cutout(request: SemanticCutoutRequest):
                 path,
                 query_mapping["model_query"],
                 normalized["target_count"],
+                adapter=_configured_grounding_adapter(),
             )
             grounding = dict(grounding)
             grounding["message"] = (
@@ -3069,6 +3187,20 @@ async def update_settings(data: dict):
             })
             save["output_root"] = str(selected)
             save["known_output_roots"] = [str(path) for path in known_roots]
+        if "grounding_runtime_root" in data:
+            raw_runtime = str(data.get("grounding_runtime_root") or "").strip()
+            save["grounding_runtime_root"] = (
+                str(_normalize_pack_root(raw_runtime, kind="runtime"))
+                if raw_runtime
+                else ""
+            )
+        if "grounding_model_root" in data:
+            raw_model = str(data.get("grounding_model_root") or "").strip()
+            save["grounding_model_root"] = (
+                str(_normalize_pack_root(raw_model, kind="model"))
+                if raw_model
+                else ""
+            )
         if save:
             save_config(save)
         refresh_runtime_config()
@@ -3078,6 +3210,29 @@ async def update_settings(data: dict):
             status_code=400,
             detail={"code": exc.code, "message": exc.message},
         )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_GROUNDING_PACK", "message": str(exc)},
+        )
+
+
+@app.post("/api/grounding-pack/verify")
+async def verify_grounding_pack():
+    if not _RUNTIME_GROUNDING_RUNTIME_ROOT or not _RUNTIME_GROUNDING_MODEL_ROOT:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "GROUNDING_PACK_NOT_CONFIGURED",
+                "message": "请先选择本地识别运行时和模型包",
+            },
+        )
+    return await run_in_threadpool(
+        probe_grounding_pack,
+        _RUNTIME_GROUNDING_RUNTIME_ROOT,
+        _RUNTIME_GROUNDING_MODEL_ROOT,
+        GROUNDING_MODEL_MANIFEST_PATH,
+    )
 
 @app.get("/api/balance")
 async def balance():

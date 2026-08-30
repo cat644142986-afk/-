@@ -92,6 +92,13 @@ test('settings and knowledge connection behavior lives outside the page orchestr
   assert.match(settings, /api\.selectFolder\(\)/);
   assert.match(settings, /api\.saveSettings\(\{ output_root: selected \}\)/);
   assert.match(css, /\.output-root-field/);
+  assert.match(html, /<h2>本地智能选物（可选）<\/h2>/);
+  assert.match(html, /id="setting-grounding-runtime-root"[^>]*readonly/);
+  assert.match(html, /id="setting-grounding-model-root"[^>]*readonly/);
+  assert.match(html, /id="btn-verify-grounding-pack"/);
+  assert.match(settings, /groundingPackStatusCopy/);
+  assert.match(settings, /api\.verifyGroundingPack\(\)/);
+  assert.match(css, /\.grounding-pack-status\.is-error/);
 });
 
 test('job submission captures an immutable draft before any knowledge await', () => {
@@ -364,7 +371,7 @@ test('semantic cutout requires visible name, count, region confirmation, and kee
   assert.match(app, /API\.confirmSemanticCutout/);
   assert.match(app, /cutout_selection: semanticCutoutPayload/);
   assert.match(api, /export async function previewSemanticCutout/);
-  assert.match(api, /SEMANTIC_GROUNDING_TIMEOUT_MS = 60000/);
+  assert.match(api, /SEMANTIC_GROUNDING_TIMEOUT_MS = 180000/);
   assert.match(api, /previewSemanticCutout[\s\S]*timeoutMs: SEMANTIC_GROUNDING_TIMEOUT_MS/);
   assert.match(api, /export async function confirmSemanticCutout/);
   assert.match(css, /\.semantic-region-coordinates/);

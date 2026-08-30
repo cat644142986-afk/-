@@ -196,6 +196,35 @@ def _cached_local_adapter(configured_path: str) -> GroundingAdapter:
     return TransformersGroundingDinoAdapter(configured_path)
 
 
+@lru_cache(maxsize=2)
+def _cached_external_adapter(
+    runtime_root: str,
+    model_root: str,
+    model_manifest_path: str,
+) -> GroundingAdapter:
+    try:
+        from grounding_runtime import ExternalGroundingWorkerAdapter
+    except ImportError:  # pragma: no cover - package imports used by tests
+        from python.grounding_runtime import ExternalGroundingWorkerAdapter
+    return ExternalGroundingWorkerAdapter(
+        runtime_root,
+        model_root,
+        model_manifest_path,
+    )
+
+
+def grounding_adapter_from_pack(
+    runtime_root: str | Path,
+    model_root: str | Path,
+    model_manifest_path: str | Path,
+) -> GroundingAdapter:
+    return _cached_external_adapter(
+        str(Path(runtime_root).expanduser().resolve()),
+        str(Path(model_root).expanduser().resolve()),
+        str(Path(model_manifest_path).resolve()),
+    )
+
+
 def grounding_adapter_from_environment(
     environment: Mapping[str, str] | None = None,
 ) -> GroundingAdapter:

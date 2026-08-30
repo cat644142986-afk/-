@@ -44,7 +44,7 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(
         description=(
-            "Explicitly download or verify the development-only local semantic-grounding model. "
+            "Explicitly download or verify the optional external semantic-grounding model pack. "
             "The Product Atelier application never calls this tool automatically."
         ),
     )

@@ -41,6 +41,8 @@ struct AppConfig {
     knowledge_base_path: String,
     output_root: String,
     known_output_roots: Vec<String>,
+    grounding_runtime_root: String,
+    grounding_model_root: String,
 }
 
 impl Default for AppConfig {
@@ -55,6 +57,8 @@ impl Default for AppConfig {
             knowledge_base_path: String::new(),
             output_root: String::new(),
             known_output_roots: Vec::new(),
+            grounding_runtime_root: String::new(),
+            grounding_model_root: String::new(),
         }
     }
 }

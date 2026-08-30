@@ -111,3 +111,20 @@ test('GitHub identity checks tolerate transient TLS failures without weakening r
   assert.match(release, /Local HEAD does not match the GitHub upstream/);
   assert.match(release, /Formal release requires a clean worktree/);
 });
+
+test('optional grounding runtime is independently locked and never bundled into the slim sidecar', () => {
+  const build = read('tools/Build-GroundingRuntime.ps1');
+  const locker = read('tools/build_grounding_runtime_manifest.py');
+  const runtimeSpec = read('grounding-runtime.spec');
+  const sidecarSpec = read('python-server.spec');
+
+  assert.match(build, /verify_build_requirements\.py/);
+  assert.match(build, /build_grounding_runtime_manifest\.py/);
+  assert.match(build, /output already exists/);
+  assert.match(locker, /supported_model_artifact_ids/);
+  assert.match(locker, /source_fingerprint/);
+  assert.match(locker, /runtime pack cannot contain links/);
+  assert.match(runtimeSpec, /collect_all\(package\)/);
+  assert.match(sidecarSpec, /'grounding_runtime_worker'/);
+  assert.match(sidecarSpec, /model-artifacts/);
+});

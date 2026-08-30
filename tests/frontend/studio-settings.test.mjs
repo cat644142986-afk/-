@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  groundingPackStatusCopy,
   knowledgeStatusCopy,
   normalizeSettingsPayload,
   outputRootStatusCopy,
@@ -25,6 +26,32 @@ test('settings payload trims paths and only sends a non-empty key on explicit sa
   });
   assert.equal(normalizeSettingsPayload(values, true).api_key, 'secret-value');
   assert.equal('api_key' in normalizeSettingsPayload({ ...values, apiKey: '   ' }, true), false);
+});
+
+test('optional grounding pack status distinguishes disabled, ready, and verified states', () => {
+  assert.deepEqual(groundingPackStatusCopy({
+    available: false,
+    code: 'RUNTIME_NOT_CONFIGURED',
+    message: '尚未选择本地识别运行时',
+  }), {
+    title: '未启用（当前使用手动框选）',
+    detail: '尚未选择本地识别运行时',
+    tone: 'idle',
+  });
+  assert.deepEqual(groundingPackStatusCopy({ available: true, verified: false }), {
+    title: '扩展已就绪',
+    detail: '首次使用前建议执行一次完整验证',
+    tone: 'ready',
+  });
+  assert.deepEqual(groundingPackStatusCopy({
+    available: true,
+    verified: true,
+    message: '本地智能选物扩展已完整验证，运行环境可用',
+  }), {
+    title: '完整验证通过',
+    detail: '本地智能选物扩展已完整验证，运行环境可用',
+    tone: 'ready',
+  });
 });
 
 test('knowledge status keeps all core meaning in Chinese', () => {

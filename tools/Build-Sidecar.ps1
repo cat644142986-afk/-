@@ -171,10 +171,13 @@ try {
             "python/job_engine.py",
             "python/knowledge_engine.py",
             "python/memory_engine.py",
+            "python/model_artifacts.py",
             "python/semantic_cutout.py",
             "python/semantic_grounding.py",
+            "python/grounding_runtime.py",
             "python/semantic_query.py",
             "python/semantic_query_lexicon.json",
+            "docs/model-artifacts/grounding-dino-tiny.json",
             "python/storage_paths.py",
             "python-server.spec"
         )

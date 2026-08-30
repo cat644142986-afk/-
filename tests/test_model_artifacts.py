@@ -30,7 +30,7 @@ def _entry(path: str, content: bytes) -> dict:
 
 
 class ModelArtifactTests(unittest.TestCase):
-    def test_pinned_manifest_is_reproducible_safe_and_not_formally_packaged(self) -> None:
+    def test_pinned_manifest_is_reproducible_safe_and_optional_only(self) -> None:
         manifest = load_artifact_manifest(PINNED_MANIFEST)
         paths = {item["path"] for item in manifest["files"]}
         self.assertEqual(
@@ -40,6 +40,8 @@ class ModelArtifactTests(unittest.TestCase):
         self.assertEqual(manifest["source"]["license"], "apache-2.0")
         self.assertIn("model.safetensors", paths)
         self.assertNotIn("pytorch_model.bin", paths)
+        self.assertEqual(manifest["distribution"], "optional-external-pack")
+        self.assertTrue(manifest["packaging_policy"]["optional_external_pack"])
         self.assertFalse(manifest["packaging_policy"]["include_in_formal_sidecar"])
         self.assertFalse(manifest["packaging_policy"]["automatic_application_download"])
         grounding_requirements = (

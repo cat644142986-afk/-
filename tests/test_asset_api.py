@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -50,6 +51,10 @@ class AssetApiTests(unittest.TestCase):
             server.OUTPUT_DIR,
             server.CONFIG_PATH,
             server._RUNTIME_OUTPUT_ROOT,
+            server._RUNTIME_GROUNDING_RUNTIME_ROOT,
+            server._RUNTIME_GROUNDING_MODEL_ROOT,
+            server._GROUNDING_ADAPTER_KEY,
+            server._GROUNDING_ADAPTER,
         )
         server.LEDGER = self.ledger
         server.ASSET_STORE = self.store
@@ -57,6 +62,10 @@ class AssetApiTests(unittest.TestCase):
         server.OUTPUT_DIR = self.output_dir
         server.CONFIG_PATH = self.root / "config.json"
         server._RUNTIME_OUTPUT_ROOT = self.output_dir
+        server._RUNTIME_GROUNDING_RUNTIME_ROOT = ""
+        server._RUNTIME_GROUNDING_MODEL_ROOT = ""
+        server._GROUNDING_ADAPTER_KEY = None
+        server._GROUNDING_ADAPTER = None
         server.save_config({
             "output_root": str(self.output_dir),
             "known_output_roots": [str(self.output_dir)],
@@ -72,6 +81,10 @@ class AssetApiTests(unittest.TestCase):
             server.OUTPUT_DIR,
             server.CONFIG_PATH,
             server._RUNTIME_OUTPUT_ROOT,
+            server._RUNTIME_GROUNDING_RUNTIME_ROOT,
+            server._RUNTIME_GROUNDING_MODEL_ROOT,
+            server._GROUNDING_ADAPTER_KEY,
+            server._GROUNDING_ADAPTER,
         ) = self.original_globals
         self.temp_dir.cleanup()
 
@@ -104,6 +117,59 @@ class AssetApiTests(unittest.TestCase):
         )
         self.assertEqual(unavailable.status_code, 400, unavailable.text)
         self.assertEqual(unavailable.json()["detail"]["code"], "OUTPUT_ROOT_UNAVAILABLE")
+
+    def test_grounding_pack_settings_are_optional_and_invalid_roots_are_rejected(self) -> None:
+        settings = self.client.get("/api/settings")
+        self.assertEqual(settings.status_code, 200, settings.text)
+        pack = settings.json()["grounding_pack"]
+        self.assertFalse(pack["available"])
+        self.assertEqual(pack["runtime"]["status"], "not_configured")
+        self.assertNotIn("manifest", pack["runtime"])
+
+        invalid_runtime = self.root / "not-a-runtime-pack"
+        invalid_runtime.mkdir()
+        rejected = self.client.post(
+            "/api/settings",
+            json={"grounding_runtime_root": str(invalid_runtime)},
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.text)
+        self.assertEqual(rejected.json()["detail"]["code"], "INVALID_GROUNDING_PACK")
+
+        missing = self.client.post("/api/grounding-pack/verify")
+        self.assertEqual(missing.status_code, 400, missing.text)
+        self.assertEqual(
+            missing.json()["detail"]["code"],
+            "GROUNDING_PACK_NOT_CONFIGURED",
+        )
+
+    def test_grounding_pack_probe_runs_only_after_both_paths_are_configured(self) -> None:
+        server._RUNTIME_GROUNDING_RUNTIME_ROOT = str(self.root / "runtime")
+        server._RUNTIME_GROUNDING_MODEL_ROOT = str(self.root / "model")
+        expected = {
+            "available": True,
+            "verified": True,
+            "message": "本地智能选物扩展已完整验证，运行环境可用",
+        }
+        with mock.patch.object(server, "probe_grounding_pack", return_value=expected) as probe:
+            response = self.client.post("/api/grounding-pack/verify")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), expected)
+        probe.assert_called_once_with(
+            server._RUNTIME_GROUNDING_RUNTIME_ROOT,
+            server._RUNTIME_GROUNDING_MODEL_ROOT,
+            server.GROUNDING_MODEL_MANIFEST_PATH,
+        )
+
+    def test_changing_or_disabling_grounding_pack_closes_the_old_worker(self) -> None:
+        old_adapter = mock.Mock()
+        server._GROUNDING_ADAPTER = old_adapter
+        server._GROUNDING_ADAPTER_KEY = ("old-runtime", "old-model")
+
+        server._dispose_grounding_adapter_if_changed("", "")
+
+        old_adapter.close.assert_called_once_with()
+        self.assertIsNone(server._GROUNDING_ADAPTER)
+        self.assertIsNone(server._GROUNDING_ADAPTER_KEY)
 
     def test_cors_rejects_untrusted_web_origin_for_reads_and_mutations(self) -> None:
         attacker_headers = {"Origin": "https://attacker.example"}

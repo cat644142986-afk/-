@@ -39,6 +39,29 @@ export function outputRootStatusCopy(status) {
   };
 }
 
+export function groundingPackStatusCopy(status) {
+  if (status?.available && status?.verified) {
+    return {
+      title: '完整验证通过',
+      detail: status.message || '本地智能选物扩展可以使用',
+      tone: 'ready',
+    };
+  }
+  if (status?.available) {
+    return {
+      title: '扩展已就绪',
+      detail: '首次使用前建议执行一次完整验证',
+      tone: 'ready',
+    };
+  }
+  const notConfigured = ['RUNTIME_NOT_CONFIGURED', 'MODEL_NOT_CONFIGURED'].includes(status?.code);
+  return {
+    title: notConfigured ? '未启用（当前使用手动框选）' : '扩展不可用',
+    detail: status?.message || '分别选择运行时和模型包后再验证',
+    tone: notConfigured ? 'idle' : 'error',
+  };
+}
+
 export function createSettingsController({
   api,
   state,
@@ -68,6 +91,21 @@ export function createSettingsController({
     query('#btn-open-output-root').disabled = !path || status.error;
   }
 
+  function renderGroundingPack(settings) {
+    const runtimeRoot = String(settings?.grounding_runtime_root || '').trim();
+    const modelRoot = String(settings?.grounding_model_root || '').trim();
+    const copy = groundingPackStatusCopy(settings?.grounding_pack);
+    query('#setting-grounding-runtime-root').value = runtimeRoot;
+    query('#setting-grounding-model-root').value = modelRoot;
+    const statusNode = query('#grounding-pack-status');
+    statusNode.classList.toggle('is-ready', copy.tone === 'ready');
+    statusNode.classList.toggle('is-error', copy.tone === 'error');
+    query('#grounding-pack-title').textContent = copy.title;
+    query('#grounding-pack-detail').textContent = copy.detail;
+    query('#btn-verify-grounding-pack').disabled = !runtimeRoot || !modelRoot;
+    query('#btn-disable-grounding-pack').disabled = !runtimeRoot && !modelRoot;
+  }
+
   async function load() {
     try {
       const settings = await api.getSettings();
@@ -94,6 +132,7 @@ export function createSettingsController({
       }
       query('#setting-fid-val').textContent = `${query('#setting-fidelity').value}%`;
       renderOutputRoot(settings);
+      renderGroundingPack(settings);
       query('#setting-api-key').placeholder = settings.api_key_set ? '已配置（留空不修改）' : '输入 API Key';
       query('#setting-knowledge-path').value = settings.knowledge_base_path || '';
       renderKnowledgeStatus(settings.knowledge);
@@ -121,6 +160,7 @@ export function createSettingsController({
       query('#setting-api-key').value = '';
       renderKnowledgeStatus(result.knowledge);
       renderOutputRoot(result);
+      renderGroundingPack(result);
       toast('设置已保存', 'success');
     } catch (error) {
       toast(`保存失败：${error}`, 'error');
@@ -175,6 +215,61 @@ export function createSettingsController({
     }
   }
 
+  async function selectGroundingRoot(kind) {
+    const isRuntime = kind === 'runtime';
+    const button = query(isRuntime ? '#btn-select-grounding-runtime' : '#btn-select-grounding-model');
+    button.disabled = true;
+    try {
+      const selected = await api.selectFolder();
+      if (!selected) return;
+      const field = isRuntime ? 'grounding_runtime_root' : 'grounding_model_root';
+      const result = await api.saveSettings({ [field]: selected });
+      state.settings = result;
+      renderGroundingPack(result);
+      toast(isRuntime ? '本地识别运行时已选择' : '本地识别模型包已选择', 'success');
+    } catch (error) {
+      toast(`本地扩展设置失败：${error}`, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function verifyGroundingPack() {
+    const button = query('#btn-verify-grounding-pack');
+    button.disabled = true;
+    query('#grounding-pack-title').textContent = '正在完整验证…';
+    query('#grounding-pack-detail').textContent = '正在校验全部文件并探测本地运行环境';
+    try {
+      const groundingPack = await api.verifyGroundingPack();
+      state.settings = { ...state.settings, grounding_pack: groundingPack };
+      renderGroundingPack(state.settings);
+      toast(groundingPack.available ? '本地智能选物扩展验证通过' : groundingPack.message, groundingPack.available ? 'success' : 'error');
+    } catch (error) {
+      toast(`完整验证失败：${error}`, 'error');
+      await load();
+    } finally {
+      button.disabled = !state.settings?.grounding_runtime_root || !state.settings?.grounding_model_root;
+    }
+  }
+
+  async function disableGroundingPack() {
+    const button = query('#btn-disable-grounding-pack');
+    button.disabled = true;
+    try {
+      const result = await api.saveSettings({
+        grounding_runtime_root: '',
+        grounding_model_root: '',
+      });
+      state.settings = result;
+      renderGroundingPack(result);
+      toast('已关闭本地智能选物扩展；仍可继续手动框选', 'success');
+    } catch (error) {
+      toast(`关闭本地扩展失败：${error}`, 'error');
+    } finally {
+      button.disabled = !state.settings?.grounding_runtime_root && !state.settings?.grounding_model_root;
+    }
+  }
+
   function bind() {
     if (bound) return;
     query('#btn-save-key').addEventListener('click', () => save(true));
@@ -183,6 +278,10 @@ export function createSettingsController({
     query('#btn-check-balance').addEventListener('click', checkBalance);
     query('#btn-select-output-root').addEventListener('click', selectOutputRoot);
     query('#btn-open-output-root').addEventListener('click', openOutputRoot);
+    query('#btn-select-grounding-runtime').addEventListener('click', () => selectGroundingRoot('runtime'));
+    query('#btn-select-grounding-model').addEventListener('click', () => selectGroundingRoot('model'));
+    query('#btn-verify-grounding-pack').addEventListener('click', verifyGroundingPack);
+    query('#btn-disable-grounding-pack').addEventListener('click', disableGroundingPack);
     query('#setting-fidelity').addEventListener('input', () => {
       query('#setting-fid-val').textContent = `${query('#setting-fidelity').value}%`;
     });
@@ -195,6 +294,7 @@ export function createSettingsController({
     load,
     reloadKnowledge,
     renderKnowledgeStatus,
+    renderGroundingPack,
     renderOutputRoot,
     save,
   };

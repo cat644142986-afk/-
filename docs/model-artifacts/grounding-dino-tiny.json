@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "artifact_id": "grounding-dino-tiny-a2bb814",
-  "purpose": "Product Atelier development-only semantic grounding baseline",
+  "purpose": "Product Atelier optional external semantic grounding model pack",
   "source": {
     "provider": "Hugging Face Hub",
     "repo_id": "IDEA-Research/grounding-dino-tiny",
@@ -10,11 +10,13 @@
     "license": "apache-2.0"
   },
   "packaging_policy": {
-    "development_only": true,
+    "distribution": "optional-external-pack",
+    "development_only": false,
+    "optional_external_pack": true,
     "include_in_formal_sidecar": false,
     "automatic_application_download": false,
     "storage": "external-directory-only",
-    "notes": "Only the safetensors weights are allowed; pytorch_model.bin is intentionally excluded."
+    "notes": "Optional pack only. The main sidecar stays slim; only safetensors weights are allowed and pytorch_model.bin is excluded."
   },
   "files": [
     {

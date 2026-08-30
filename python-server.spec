@@ -74,6 +74,9 @@ datas += collect_data_files('urllib3')
 # top-level module in the sidecar, so keep the JSON at the PyInstaller internal
 # root where `Path(__file__).with_name(...)` resolves it.
 datas.append((os.path.join('python', 'semantic_query_lexicon.json'), '.'))
+# Pinned optional model-pack contract. The 689 MB weights remain external;
+# only this small manifest is embedded so the slim sidecar can verify them.
+datas.append((os.path.join('docs', 'model-artifacts', 'grounding-dino-tiny.json'), 'model-artifacts'))
 # Package metadata needed by pymatting/numba/llvmlite version checks
 for pkg in ['pymatting', 'numba', 'llvmlite', 'rembg', 'onnxruntime', 'scipy', 'scikit-image',
            'PIL', 'numpy', 'fastapi', 'uvicorn', 'python-multipart', 'starlette', 'anyio',
@@ -94,6 +97,7 @@ excludes = [
     'tensorboard', 'wandb',
     'pytest',
     'pydub',
+    'grounding_runtime_worker',
     'cv2', 'opencv_python', 'opencv_python_headless',
     # Runtime does not use the developer/tooling surfaces that recursive
     # collect_submodules previously pulled into the portable sidecar.

@@ -23,8 +23,15 @@ def load_artifact_manifest(path: str | Path) -> dict[str, Any]:
     revision = str(source.get("revision") or "")
     if len(revision) != 40 or any(char not in "0123456789abcdef" for char in revision):
         raise ValueError("model artifact source revision must be a full lowercase git SHA")
-    if not isinstance(policy, dict) or not policy.get("development_only"):
-        raise ValueError("model artifact must remain development-only")
+    if not isinstance(policy, dict):
+        raise ValueError("model artifact requires a packaging policy")
+    distribution = str(policy.get("distribution") or "development-baseline")
+    if distribution not in {"development-baseline", "optional-external-pack"}:
+        raise ValueError("model artifact distribution is unsupported")
+    if distribution == "development-baseline" and not policy.get("development_only"):
+        raise ValueError("development baseline must remain development-only")
+    if distribution == "optional-external-pack" and policy.get("optional_external_pack") is not True:
+        raise ValueError("optional model artifact must declare optional_external_pack")
     if policy.get("include_in_formal_sidecar") is not False:
         raise ValueError("model artifact must remain excluded from the formal sidecar")
     if policy.get("automatic_application_download") is not False:
@@ -52,6 +59,7 @@ def load_artifact_manifest(path: str | Path) -> dict[str, Any]:
     if "model.safetensors" not in seen or "pytorch_model.bin" in seen:
         raise ValueError("only safetensors model weights are permitted")
     manifest["manifest_path"] = str(manifest_path)
+    manifest["distribution"] = distribution
     return manifest
 
 
@@ -89,7 +97,11 @@ def verify_artifact(destination: str | Path, manifest: Mapping[str, Any]) -> dic
     results = []
     for expected in manifest["files"]:
         relative = str(expected["path"])
-        target = root / relative
+        target = (root / relative).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"model artifact file {relative} leaves its root") from exc
         exists = target.is_file()
         size = target.stat().st_size if exists else 0
         digest = sha256_file(target) if exists and size == int(expected["bytes"]) else ""

@@ -1050,6 +1050,16 @@ DIY 外观要求：
 - 新增语料 bootstrap/verify、清单生成、低阈值候选保存与离线阈值扫描工具。全量源码门禁：Python 188 项（187 通过、1 个平台预期跳过）、前端 98/98、Vite production build、Rust/Tauri custom-protocol check、compileall、Git whitespace 与 30/30 图片锁验证通过；未调用付费 API、未读取用户图片。
 - 源码 sidecar 合同升级为 `2026-08-30.1`，本检查点仍不是正式发布。下一步进入独立可选模型运行时/模型包合同：主 sidecar 保持轻量，运行时与权重独立版本/清单/哈希/健康探测/缺失回退，不能硬编码本机 `D:\` 路径。之后才做正式 sidecar、便携目录、NSIS、快捷方式和 Windows candidate-first 提升门禁。
 
+**2026-08-30 · R6 / Phase 7A-B 第六源码检查点**
+
+- 独立可选 Windows 识别运行时与外置模型包合同已落地。主 sidecar 仍排除 `torch / transformers / tokenizers`，只嵌入小型模型清单与运行时管理器；数 GB 依赖不会进入主程序，也不会由应用自动下载。
+- 运行时 candidate 采用独立一目录 PyInstaller worker；清单锁定平台、架构、入口、支持模型、Git SHA、源码指纹和完整文件库存。设置时做快速完整性提示，实际执行前重新哈希全部运行时与模型文件，不能靠修改本地 receipt 绕过。
+- worker 只监听随机 localhost 端口并使用随机令牌认证，父 sidecar 退出后自停；启动、健康探测、图片传输和推理均在本机完成。配置缺失、损坏或不兼容时保留手动框选，关闭扩展立即终止旧 worker。
+- 设置页新增“本地智能选物（可选）”卡片，支持分别选运行时/模型包、完整验证和关闭；路径写入共享配置但不硬编码盘符。Tauri 配置结构同步保留两个字段，避免原生配置写回时丢失。
+- RTX 4060 已完成源码 worker 探测和真实协议推理：torch 2.6.0+cu124、transformers 5.15.0、CUDA 可用，程序生成的简单瓶形图得到 0.716 `bottle` 候选；未调用付费 API、未读取用户图片。
+- 全量源码门禁：Python 197 项（196 通过、1 个平台预期跳过）、前端 100/100、Vite production build、Rust/Tauri custom-protocol check、compileall、PowerShell 解析与 Git whitespace。设置页真实浏览器验收确认只有一层滚动、卡片和禁用态完整可见、控制台 0 error / 0 warning。
+- 源码 sidecar 合同升级为 `2026-08-30.2`。下一步先在提交后的干净工作区构建并验证真实 Windows runtime candidate，再重建主 sidecar，完成设置页/真实图片联调、便携目录、NSIS、快捷方式和 candidate-first 正式提升；本检查点仍未提升正式版。
+
 ### 阶段 8：可解释知识闭环与 Design DNA（P1，预计 12–20 小时）
 
 **目标**
@@ -1248,7 +1258,7 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 从 Phase 4 剩余门禁开始，不重复 Phase 0–3，也不退回历史 `vXX-fixes.css` 补丁路线。
-4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review 以及统一状态与冲突恢复均已进入正式便携版；R6 / Phase 7A-B 的名称/数量合同、逐图确认、中文查询映射、30 张 Open Images 扩展门禁与两级人工建议已在源码完成但尚未提升正式包。下一步从独立可选模型运行时/模型包合同继续，不要重复阈值扫描或把实验依赖塞入主 sidecar。
+4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review 以及统一状态与冲突恢复均已进入正式便携版；R6 / Phase 7A-B 的名称/数量合同、逐图确认、中文查询映射、30 张 Open Images 扩展门禁、两级人工建议以及独立可选运行时源码合同已经完成但尚未提升正式包。下一步从干净 Git 提交构建并验证真实 Windows runtime candidate，再做主 sidecar 与 candidate-first 正式提升；不要重复阈值扫描或把模型依赖塞入主 sidecar。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 

@@ -12,7 +12,7 @@ const DEFAULT_TIMEOUT_MS = 15000;
 // The first local grounding request must load the vision model into memory.
 // Keep the ordinary API budget tight, but give this one offline operation a
 // cold-start allowance so a successful inference is not reported as failed.
-const SEMANTIC_GROUNDING_TIMEOUT_MS = 60000;
+const SEMANTIC_GROUNDING_TIMEOUT_MS = 180000;
 
 function currentWindow() {
   if (!isTauriRuntime) return null;
@@ -137,6 +137,12 @@ export async function saveSettings(settings) {
     throw new Error(detail?.message || detail || `设置保存失败（HTTP ${resp.status}）`);
   }
   return resp.json();
+}
+export async function verifyGroundingPack() {
+  return fetchJSON('/api/grounding-pack/verify', {
+    method: 'POST',
+    timeoutMs: 180000,
+  });
 }
 export async function getAppConfig() { return isTauriRuntime ? invoke('get_app_config') : {}; }
 export async function setAppConfig(config) { return isTauriRuntime ? invoke('set_app_config', { config: config }) : config; }
