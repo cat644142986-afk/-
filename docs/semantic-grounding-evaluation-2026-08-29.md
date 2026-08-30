@@ -1,6 +1,6 @@
 # Product Atelier 智能选物自动定位合同与评测
 
-> 状态：R6 / Phase 7A-B 第七 Windows 候选检查点。独立可选 Windows GPU 运行包与轻量打包 sidecar 已完成真实识图联调；模型可信召回未过正式门槛，正式便携版仍未提升。
+> 状态：R6 / Phase 7A-B 第八模型对照检查点。独立可选 Windows GPU 运行包与轻量打包 sidecar 已完成真实识图联调；Grounding DINO、OWLv2、Florence-2 和双模型共识均未同时通过召回与难负例门禁，正式便携版仍未提升。
 
 ## 1. 已落地的产品边界
 
@@ -141,17 +141,21 @@ python tools\bootstrap_semantic_grounding.py --verify --destination "D:\ProductA
 
 当前实测证明它对受控英文的存在目标定位可用，但原生中文与无匹配都不合格，不能据此宣称适合 Product Atelier。
 
-后续对照候选：
+后续对照结果：
 
-- [Microsoft Florence-2](https://huggingface.co/microsoft/Florence-2-base)：MIT 许可，0.23B 基础模型支持短语定位、目标检测和区域描述，适合作为第二条小模型对照，但尚未接入。
+- [Google OWLv2](https://huggingface.co/google/owlv2-base-patch16-ensemble)：Apache-2.0、约 0.2B 参数。固定版本已在同一冻结集完成 RTX 4060 对照；热平均 266ms、峰值 reserved 870MB，框和数量优于当前可信层，但单阈值最多只把 no-match 提高到 80%，安全阈值下召回又降至 48.98%，不进入产品。
+- [Florence-2](https://huggingface.co/docs/transformers/v5.15.0/en/model_doc/florence2)：官方 Transformers 文档列出开放词汇检测任务。本轮采用 MIT 许可的 native base-ft 固定转换版，以原生类和 `trust_remote_code=False` 评测；热平均 147ms、峰值 reserved 660MB，但召回 75.51%、精度 84.09%、5/5 难负例均返回错误框，不进入产品。
+- Grounding DINO + OWLv2 的位置共识扫描可以把 5/5 no-match 全部安全弃权，但此时召回最高只有 69.39%，仍低于 75% 检查点目标。不能用增加第二模型的体积换一个仍不合格的结果。
 - [Meta SAM 2](https://github.com/facebookresearch/sam2)：Apache-2.0，可用于点选/框选后的蒙版修正；它不是文本定位器，不能替代 grounding。
+
+三模型和双模型共识的统一结果见 `docs/reports/semantic-grounding-model-comparison-rtx4060-2026-08-30.json`。微软原始 Florence-2 检查点在禁止远程代码时因 tokenizer 缺少原生处理器所需 image token 被加载门禁拦下；随后只使用 Transformers 官方文档采用的 native 转换家族完成对照，没有为跑通模型降低安全要求。
 
 ## 7. 下一门禁
 
 1. 已完成可审计查询映射、30 张真实照片/35 查询门禁和两级人工建议界面。后续扩展词表或数据集必须带固定用例，不能把联网翻译、自由生成或人工建议指标伪装成自动质量。
 2. 独立可选模型运行时/模型包已经完成真实 Windows candidate：主 sidecar 保持轻量，运行时和权重有独立版本、平台、全文件清单、哈希、健康探测、缺失回退和设置页状态；完整哈希、真实推理和打包 sidecar 联调均已通过。
-3. 对照第二存在性验证器或更强定位模型，目标是提高可信层召回并压低难负例建议。必须在同一冻结扩展集上比较，不能只展示成功图片。
-4. 为候选增加点选、增删目标和蒙版修正；定位稳定后再评估 SAM 类边缘修正。单图失败继续停留人工确认，不能让整批任务作废。
+3. 第二存在性验证器与不同架构对照已经完成，三种模型和双模型共识均未通过。暂停继续堆叠相似模型；后续只有在扩大负例合同或出现有明确拒识机制的候选时才重开模型选型。
+4. 当前唯一实施游标是为候选增加点选、增删目标和蒙版修正；先复用现有框约束分割链完成可恢复交互，再决定是否需要 SAM 类边缘修正。单图失败继续停留人工确认，不能让整批任务作废。
 5. 只有可选运行时/模型包、扩展集可信门禁、正式 sidecar 实测和完整 Windows candidate-first 门禁全部通过，才允许提升新正式便携版。源码界面可用不等于正式便携版已经获得自动定位能力。
 
 ## 8. 2026-08-30 独立可选运行时源码合同
@@ -170,3 +174,11 @@ python tools\bootstrap_semantic_grounding.py --verify --destination "D:\ProductA
 - 打包 worker 对程序生成瓶形图返回 1 个 `bottle`，置信度 0.7161。轻量主 sidecar 合同 `2026-08-30.2` 通过健康 smoke，并从设置、完整验证、中文 `瓶子 → bottle`、素材导入到外置 worker 推理完成隔离联调；结果按规则进入 1 条待采用建议、默认选中 0 个，退出后 worker 残留为 0。
 - 主 sidecar 仍只有 365,152,636 bytes，不包含可选 4GB GPU runtime 或 689MB 模型。全量回归为 Python 198 项（197 通过、1 个平台预期跳过）、前端 100/100、Vite build 与 Rust custom-protocol check 全绿。
 - 该结果证明交付结构和真实调度可用，不改变模型质量结论：冻结扩展集上的可信层召回仍为 46.94%，低于 75% 门槛。正式便携目录、NSIS 与桌面快捷方式保持上一正式版本；下一步必须比较更强定位/存在性验证方案并补用户修正能力，不能把“候选能运行”写成“模型已达到生产质量”。
+
+## 10. 2026-08-30 OWLv2 / Florence-2 独立对照
+
+- OWLv2 固定 `cfd3195...`、619,918,824-byte safetensors，9/9 文件 SHA-256 通过；Florence-2 native base-ft 固定 `0b03b6f...`、463,178,864-byte safetensors，12/12 文件 SHA-256 通过。两者均为 Git 外评测包，不会被应用自动下载，也未加入主 sidecar 或可选正式 runtime 支持清单。
+- OWLv2 在 0.10 线得到 85.71% 召回、85.71% 精度、88.57% 数量准确率、60% no-match；0.15 线仍有 1/5 难负例，0.50 才达到 100% no-match，但召回只剩 48.98%。最低真框 0.098、最高假框 0.6045，单阈值不可分。
+- Grounding DINO + OWLv2 的阈值与位置共识扫描在 no-match 100% 时最高为 69.39% 召回、97.14% 精度、71.43% 数量准确率；没有达到本检查点 75% 可信召回目标。
+- Florence-2 生成式开放词汇定位得到 75.51% 召回、84.09% 精度、62.86% 数量准确率、0% no-match。它没有校准检测置信度，且多目标时常只给一个框；速度和显存优势不能抵消拒识与数量失败。
+- 结论：OWLv2 和 Florence-2 都保留为可复现实验清单，不接入设置页、worker、正式包或快捷方式。下一步停止相似模型堆叠，转入用户点选、增删目标和蒙版修正；所有模型框继续只是候选，必须人工确认。

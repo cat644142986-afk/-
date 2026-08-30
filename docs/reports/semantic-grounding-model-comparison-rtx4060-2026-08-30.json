@@ -1,0 +1,104 @@
+{
+  "schema_version": "1.0",
+  "evaluated_at": "2026-08-30",
+  "source_checkpoint": "914e45c939255c06f3fdf08eba08f91f895ebd55",
+  "corpus": {
+    "id": "product-atelier-open-images-v7-validation-v1",
+    "licensed_photo_count": 30,
+    "query_count": 35,
+    "positive_target_count": 49,
+    "verified_no_match_query_count": 5,
+    "iou_threshold": 0.5
+  },
+  "machine": {
+    "os": "Windows 11",
+    "gpu": "NVIDIA GeForce RTX 4060",
+    "vram_mb": 8187.5,
+    "python": "3.12.10",
+    "torch": "2.6.0+cu124",
+    "transformers": "5.15.0"
+  },
+  "models": [
+    {
+      "adapter_id": "transformers-grounding-dino-local",
+      "artifact_id": "grounding-dino-tiny-a2bb814",
+      "policy": "raw candidates at threshold 0.40",
+      "recall": 0.9184,
+      "precision": 0.8654,
+      "exact_count_accuracy": 0.8,
+      "no_match_accuracy": 0.0,
+      "mean_matched_iou": 0.9664,
+      "cold_first_case_ms": 27304.68,
+      "hot_mean_ms": 611.72,
+      "peak_reserved_mb": 2980.0,
+      "passed": false,
+      "safe_policy": {
+        "threshold": 0.75,
+        "recall": 0.4694,
+        "precision": 1.0,
+        "no_match_accuracy": 1.0
+      }
+    },
+    {
+      "adapter_id": "transformers-owlv2-local-eval",
+      "artifact_id": "owlv2-base-patch16-ensemble-cfd3195",
+      "policy": "threshold 0.10 from a preserved 0.001 candidate run",
+      "recall": 0.8571,
+      "precision": 0.8571,
+      "exact_count_accuracy": 0.8857,
+      "no_match_accuracy": 0.6,
+      "mean_matched_iou": 0.9443,
+      "cold_first_case_ms": 12002.61,
+      "hot_mean_ms": 266.29,
+      "peak_reserved_mb": 870.0,
+      "passed": false,
+      "single_threshold_conclusion": "insufficient",
+      "safe_policy": {
+        "threshold": 0.5,
+        "recall": 0.4898,
+        "precision": 0.9231,
+        "no_match_accuracy": 1.0
+      }
+    },
+    {
+      "adapter_id": "transformers-florence2-local-eval",
+      "artifact_id": "florence-2-base-ft-native-0b03b6f",
+      "policy": "deterministic open-vocabulary generation; synthetic evaluator score 1.0 because the model exposes no calibrated detection confidence",
+      "recall": 0.7551,
+      "precision": 0.8409,
+      "exact_count_accuracy": 0.6286,
+      "no_match_accuracy": 0.0,
+      "mean_matched_iou": 0.9452,
+      "cold_first_case_ms": 12021.3,
+      "hot_mean_ms": 147.41,
+      "peak_reserved_mb": 660.0,
+      "passed": false
+    }
+  ],
+  "hybrid_probe": {
+    "models": [
+      "transformers-grounding-dino-local",
+      "transformers-owlv2-local-eval"
+    ],
+    "policy_family": "accept an OWLv2 box only when the two detectors also agree spatially; sweep detector thresholds and agreement IoU",
+    "best_zero_no_match_false_positive_result": {
+      "recall": 0.6939,
+      "precision": 0.9714,
+      "exact_count_accuracy": 0.7143,
+      "no_match_accuracy": 1.0
+    },
+    "target_minimum_recall": 0.75,
+    "passed": false
+  },
+  "rejected_checkpoint": {
+    "artifact_id": "florence-2-base-ft-f6c1a25",
+    "reason": "The original Microsoft checkpoint requires repository processing code. With trust_remote_code disabled, its legacy tokenizer lacks the native Florence2Processor image token and model loading is rejected. It was never evaluated or integrated."
+  },
+  "decision": {
+    "formal_integration": "rejected",
+    "reason": "None of the three architectures passes recall, precision, exact-count, and verified no-match gates together. Adding another similar detector is paused; the next product checkpoint is explicit point/add/remove/mask correction while every automatic result remains human-confirmed.",
+    "paid_api_calls": 0,
+    "user_images_read": false,
+    "formal_portable_changed": false
+  }
+}
