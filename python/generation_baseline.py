@@ -13,12 +13,18 @@ import os
 from typing import Any, Iterable, Mapping
 
 
-GENERATION_TRACE_CONTRACT_VERSION = "generation-baseline-2026-08-31.1"
+GENERATION_TRACE_CONTRACT_VERSION = "generation-baseline-2026-08-31.2"
 PROMPT_COMPILER_VERSION = "prompt_v1"
 PROMPT_V1 = "prompt_v1"
 PROMPT_V2 = "prompt_v2"
-SUPPORTED_PROMPT_VERSIONS = frozenset({PROMPT_V1, PROMPT_V2})
+PROMPT_V3 = "prompt_v3"
+SUPPORTED_PROMPT_VERSIONS = frozenset({PROMPT_V1, PROMPT_V2, PROMPT_V3})
 PROMPT_V2_FEATURE_ENV = "PRODUCT_ATELIER_ENABLE_PROMPT_V2"
+PROMPT_V3_FEATURE_ENV = "PRODUCT_ATELIER_ENABLE_PROMPT_V3"
+LEGACY_DOUBLE_PASS = "legacy_double_pass"
+SINGLE_PASS = "single_pass"
+SUPPORTED_GENERATION_STRATEGIES = frozenset({LEGACY_DOUBLE_PASS, SINGLE_PASS})
+SINGLE_PASS_FEATURE_ENV = "PRODUCT_ATELIER_ENABLE_SINGLE_PASS"
 PROVIDER_ADAPTER_VERSION = "lk-media-generate-v1"
 
 
@@ -63,11 +69,26 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def prompt_v2_enabled(environment: Mapping[str, str] | None = None) -> bool:
+def _environment_flag(
+    name: str,
+    environment: Mapping[str, str] | None = None,
+) -> bool:
     source = environment if environment is not None else os.environ
-    return str(source.get(PROMPT_V2_FEATURE_ENV, "")).strip().lower() in {
+    return str(source.get(name, "")).strip().lower() in {
         "1", "true", "yes", "on",
     }
+
+
+def prompt_v2_enabled(environment: Mapping[str, str] | None = None) -> bool:
+    return _environment_flag(PROMPT_V2_FEATURE_ENV, environment)
+
+
+def prompt_v3_enabled(environment: Mapping[str, str] | None = None) -> bool:
+    return _environment_flag(PROMPT_V3_FEATURE_ENV, environment)
+
+
+def single_pass_enabled(environment: Mapping[str, str] | None = None) -> bool:
+    return _environment_flag(SINGLE_PASS_FEATURE_ENV, environment)
 
 
 def normalize_prompt_version(
@@ -82,7 +103,142 @@ def normalize_prompt_version(
         raise ValueError(
             f"{PROMPT_V2} is disabled; enable {PROMPT_V2_FEATURE_ENV} only for an approved A/B"
         )
+    if version == PROMPT_V3 and not prompt_v3_enabled(environment):
+        raise ValueError(
+            f"{PROMPT_V3} is disabled; enable {PROMPT_V3_FEATURE_ENV} only for an approved A/B"
+        )
     return version
+
+
+def normalize_generation_strategy(
+    requested: Any,
+    *,
+    environment: Mapping[str, str] | None = None,
+    allow_existing_single_pass: bool = False,
+) -> str:
+    strategy = str(requested or LEGACY_DOUBLE_PASS).strip().lower()
+    if strategy not in SUPPORTED_GENERATION_STRATEGIES:
+        raise ValueError(f"unsupported generation strategy: {strategy}")
+    if (
+        strategy == SINGLE_PASS
+        and not allow_existing_single_pass
+        and not single_pass_enabled(environment)
+    ):
+        raise ValueError(
+            f"{SINGLE_PASS} is disabled; enable {SINGLE_PASS_FEATURE_ENV} only for an approved A/B"
+        )
+    return strategy
+
+
+def prompt_adapter_profile(model: str) -> dict[str, str]:
+    model_key = str(model or "").strip().lower()
+    if model_key.startswith("gemini-") and "image" in model_key:
+        return {
+            "id": "gemini-image-compact-v1",
+            "directive": "以参考图为主体结构依据，先保持产品身份一致，再完成场景修改",
+        }
+    if model_key.startswith("gpt-image-2") or model_key == "tt-image-2":
+        return {
+            "id": "gpt-image-2-compact-v1",
+            "directive": "按明确的自然语言约束编辑参考图，未点名的主体内容保持不变",
+        }
+    return {
+        "id": "generic-image-compact-v1",
+        "directive": "以参考图为主体依据，只执行列出的修改，不重构未点名内容",
+    }
+
+
+def _compile_prompt_v3(
+    *,
+    context: Mapping[str, Any] | None,
+    stage: str,
+) -> str:
+    """Compile a compact render plan without carrying the legacy word stack.
+
+    This candidate intentionally ignores ``template_prompt``. The original
+    template is still frozen in the trace, so an experiment can reproduce and
+    compare both candidates without silently mixing their instructions.
+    """
+    values = dict(context or {})
+    product_name = str(values.get("product_name") or "参考图中的产品").strip()
+    output_kind = str(values.get("output_kind") or "ecommerce-main").strip()
+    angle = str(values.get("angle") or "auto").strip()
+    platter = str(values.get("platter") or "auto").strip()
+    fidelity = max(0, min(int(values.get("fidelity", 40)), 100))
+    model_profile = prompt_adapter_profile(
+        str(values.get("model") or "")
+    )
+    stage_key = str(stage or "primary").lower()
+    user_request = str(
+        values.get("user_request") or values.get("adjustment_instruction") or ""
+    ).strip()
+
+    if "adjust" in stage_key:
+        objective = (
+            f"只对{product_name}执行：{user_request}"
+            if user_request
+            else f"只修正{product_name}的指定问题"
+        )
+    elif "refine" in stage_key or stage_key.startswith("2-"):
+        objective = f"只对{product_name}做轻度交付精修，正确内容保持不变"
+    else:
+        objective = f"将{product_name}制作成可直接交付的电商主图"
+
+    category = str(values.get("category") or "general").lower()
+    locks = values.get("intent_locks")
+    locks = locks if isinstance(locks, Mapping) else {}
+    hard_constraints = ["主体结构与数量", "品牌色与关键材质"]
+    if category == "packaging" or locks.get("packaging_text") or locks.get("logo"):
+        hard_constraints.append("包装轮廓、可见文字与品牌标志")
+
+    angle_rule = {
+        "keep": "保持原图角度和透视",
+        "front": "正面平视，包装正面清晰",
+        "45top": "约45度俯视",
+        "30side": "约30度斜侧视角",
+        "90top": "正俯视平铺",
+    }.get(angle, "选择可信的商业展示角度")
+    platter_rule = {
+        "keep": "保留原有器皿类型",
+        "remove": "移除器皿和托盘",
+    }.get(platter, "器皿处理服从产品类型，不增加无关容器")
+    allowed_change = (
+        "仅调整背景和光线" if fidelity <= 25
+        else "可轻调光影与构图" if fidelity <= 50
+        else "可增强材质与商业表现" if fidelity <= 75
+        else "可明显美化，但产品身份必须不变"
+    )
+    if values.get("source_cutoff"):
+        allowed_change += "；补全原图被裁切的主体边缘，不发明第二个产品"
+    output_spec = (
+        values.get("output_spec")
+        if isinstance(values.get("output_spec"), Mapping)
+        else {}
+    )
+    ratio = str(
+        output_spec.get("effective_ratio")
+        or output_spec.get("ratio")
+        or ""
+    ).strip()
+    resolution = str(
+        output_spec.get("requested_resolution")
+        or output_spec.get("size")
+        or ""
+    ).strip()
+    output_bits = [output_kind]
+    if ratio:
+        output_bits.append(ratio)
+    if resolution:
+        output_bits.append(resolution)
+
+    return "\n".join((
+        f"任务：{objective}。",
+        f"必须：保持{'、'.join(hard_constraints)}；主体完整不裁切。",
+        f"可调整：{allowed_change}；{platter_rule}。",
+        f"画面：{angle_rule}；纯白干净背景，柔和均匀光线，主体清晰居中。",
+        f"输出：{' / '.join(output_bits)}；边缘自然，透明和反光材质真实。",
+        f"执行方式：{model_profile['directive']}。",
+    ))
 
 
 def compile_prompt_version(
@@ -96,6 +252,8 @@ def compile_prompt_version(
     version = str(prompt_version or PROMPT_V1).strip().lower()
     if version == PROMPT_V1:
         return str(template_prompt)
+    if version == PROMPT_V3:
+        return _compile_prompt_v3(context=context, stage=stage)
     if version != PROMPT_V2:
         raise ValueError(f"unsupported prompt version: {version}")
 

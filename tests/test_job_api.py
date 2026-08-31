@@ -445,6 +445,105 @@ class DurableJobApiTests(unittest.TestCase):
                 )
                 self.network_request.assert_not_called()
 
+    def test_quality_candidates_are_rejected_before_provider_work_without_gates(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "quality-candidate-disabled.png", (80, 130, 190))
+            prompt_response = client.post("/api/jobs", json={
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "parameters": {
+                    "batch": 1,
+                    "product_name": "茶盒",
+                    "prompt_version": "prompt_v3",
+                },
+                "client_request_id": "prompt-v3-disabled",
+            })
+            self.assertEqual(prompt_response.status_code, 400, prompt_response.text)
+            self.assertIn("prompt_v3 is disabled", prompt_response.text)
+
+            strategy_response = client.post("/api/jobs", json={
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "parameters": {
+                    "batch": 1,
+                    "product_name": "茶盒",
+                    "generation_strategy": "single_pass",
+                },
+                "client_request_id": "single-pass-disabled",
+            })
+            self.assertEqual(strategy_response.status_code, 400, strategy_response.text)
+            self.assertIn("single_pass is disabled", strategy_response.text)
+            self.ai_mock.assert_not_called()
+            self.network_request.assert_not_called()
+
+    def test_prompt_v3_single_pass_is_compact_traceable_and_calls_provider_once(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                server.PROMPT_V3_FEATURE_ENV: "1",
+                server.SINGLE_PASS_FEATURE_ENV: "1",
+            },
+            clear=False,
+        ):
+            with self.live_client() as client:
+                source = self.import_asset(client, "quality-candidate.png", (180, 120, 70))
+                created = self.create_job(client, {
+                    "mode": "single",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "batch": 1,
+                        "product_name": "茶盒",
+                        "model": "gpt-image-2",
+                        "platter": "remove",
+                        "angle": "front",
+                        "output_ratio": "4:5",
+                        "output_resolution": "2k",
+                        "prompt_version": "prompt_v3",
+                        "generation_strategy": "single_pass",
+                    },
+                    "client_request_id": "prompt-v3-single-pass",
+                })
+                final = self.wait_for_job(created["job"]["id"])
+                self.assertEqual(final["status"], "completed")
+                self.assertEqual(final["parameters"]["prompt_version"], "prompt_v3")
+                self.assertEqual(
+                    final["parameters"]["generation_strategy"], "single_pass"
+                )
+                self.assertEqual(len(self.ai_calls), 1)
+
+                traces = client.get(
+                    f"/api/jobs/{final['id']}/traces"
+                ).json()["traces"]
+                providers = [
+                    item for item in traces if item["stage"].startswith("provider.image.")
+                ]
+                self.assertEqual(len(providers), 1)
+                self.assertFalse(any(
+                    item["stage"].startswith("prompt.refine") for item in traces
+                ))
+                skipped_refine = next(
+                    item for item in traces
+                    if item["stage"] == "generation.refine.1"
+                )
+                self.assertEqual(skipped_refine["status"], "skipped")
+                self.assertEqual(
+                    skipped_refine["output"]["billing"]["status"],
+                    "not-applicable",
+                )
+                primary = next(item for item in traces if item["stage"] == "prompt.primary")
+                self.assertIn("未点名的主体内容保持不变", primary["parameters"]["base_prompt"])
+                self.assertNotIn("8K超清", primary["parameters"]["base_prompt"])
+                self.assertIn("8K超清", primary["parameters"]["template_prompt"])
+                self.assertEqual(
+                    primary["parameters"]["prompt_adapter_profile"],
+                    "gpt-image-2-compact-v1",
+                )
+                self.assertEqual(
+                    primary["output"]["prompt_snapshot"]["prompt_version"],
+                    "prompt_v3",
+                )
+                self.network_request.assert_not_called()
+
     def test_explicit_output_spec_survives_job_snapshot_and_both_cloud_stages(self) -> None:
         with self.live_client() as client:
             source = self.import_asset(client, "portrait-spec.png", (90, 150, 210))

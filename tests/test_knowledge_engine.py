@@ -35,6 +35,60 @@ class KnowledgePathTests(unittest.TestCase):
 
 
 class KnowledgeMemoryContractTests(unittest.TestCase):
+    def test_prompt_v3_prunes_conflicts_and_enforces_rule_budgets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vault = Path(temp_dir) / "vault"
+            (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+            compiler = KnowledgeCompiler(vault)
+            source = {"id": "K-1", "title": "测试规则", "path": "K-1.md"}
+            bundle = {
+                "intent_lock_rules": [
+                    "严格保持包装文字",
+                    "严格保持品牌标志",
+                    "严格保持产品数量",
+                    "严格保持主体结构",
+                    "严格保持品牌色",
+                    "第六条应被预算裁剪",
+                ],
+                "positive_rules": [
+                    {"text": "保留器皿并优化摆盘", "source": source},
+                    {"text": "产品完整不裁切", "source": source},
+                    {"text": "白底保持纯净", "source": source},
+                    {"text": "材质反光自然", "source": source},
+                    {"text": "第五条超出数量预算", "source": source},
+                ],
+                "negative_rules": [
+                    {"text": "不要使用深色背景", "source": source},
+                    {"text": "不要增加装饰物", "source": source},
+                ],
+                "sources": [source],
+                "conflicts": [],
+            }
+            with patch.object(compiler, "compile", return_value=bundle):
+                result = compiler.enrich_prompt(
+                    "短执行计划",
+                    "模糊,文字,logo,水印",
+                    {
+                        "prompt_version": "prompt_v3",
+                        "category": "packaging",
+                        "platter": "remove",
+                        "background": "white-studio",
+                        "intent_locks": {"packaging_text": True, "logo": True},
+                    },
+                )
+
+            self.assertNotIn("保留器皿并优化摆盘", result["prompt"])
+            self.assertLessEqual(len(result["intent_lock_rules"]), 5)
+            self.assertLessEqual(len(result["positive_rules"]), 3)
+            self.assertLessEqual(len(result["negative_rules"]), 1)
+            self.assertIn("包装文字数字或品牌标志错误", result["negative_prompt"])
+            self.assertNotIn("模糊,文字,logo", result["negative_prompt"])
+            self.assertTrue(any(
+                item.get("reason") == "conflicts-with-task"
+                for item in result["ignored_rules"]
+            ))
+            self.assertEqual(result["sources"], [source])
+
     def test_memory_scope_priority_chooses_brand_then_category_then_designer(self) -> None:
         suggestions = [
             {

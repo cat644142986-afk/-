@@ -34,11 +34,17 @@ try:
     from job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from generation_baseline import (
         GENERATION_TRACE_CONTRACT_VERSION,
+        LEGACY_DOUBLE_PASS,
         PROMPT_COMPILER_VERSION,
         PROMPT_V2_FEATURE_ENV,
+        PROMPT_V3_FEATURE_ENV,
+        SINGLE_PASS,
+        SINGLE_PASS_FEATURE_ENV,
         capability_contract,
         compile_prompt_version,
+        normalize_generation_strategy,
         normalize_prompt_version,
+        prompt_adapter_profile,
         prompt_snapshot,
         unavailable_billing_evidence,
     )
@@ -89,11 +95,17 @@ except ImportError:  # Allows importing as python.server during local tests.
     from python.job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from python.generation_baseline import (
         GENERATION_TRACE_CONTRACT_VERSION,
+        LEGACY_DOUBLE_PASS,
         PROMPT_COMPILER_VERSION,
         PROMPT_V2_FEATURE_ENV,
+        PROMPT_V3_FEATURE_ENV,
+        SINGLE_PASS,
+        SINGLE_PASS_FEATURE_ENV,
         capability_contract,
         compile_prompt_version,
+        normalize_generation_strategy,
         normalize_prompt_version,
+        prompt_adapter_profile,
         prompt_snapshot,
         unavailable_billing_evidence,
     )
@@ -2643,6 +2655,32 @@ def _normalize_job_parameters(mode: str, parameters: dict) -> dict:
         normalized["prompt_version"] = normalize_prompt_version(
             normalized.get("prompt_version")
         )
+        if mode in {"single", "multi-file"}:
+            normalized["generation_strategy"] = normalize_generation_strategy(
+                normalized.get("generation_strategy")
+            )
+        elif mode == "group-split":
+            # ``refine=false`` was already a supported public contract before
+            # generation strategies were named. Preserve that route while a
+            # newly requested single-pass strategy remains experiment-gated.
+            if "refine" in normalized and not isinstance(normalized.get("refine"), bool):
+                raise ValueError("group-split refine must be a boolean")
+            existing_single_pass = (
+                "generation_strategy" not in normalized
+                and normalized.get("refine") is False
+            )
+            requested_strategy = (
+                SINGLE_PASS
+                if existing_single_pass
+                else normalized.get("generation_strategy")
+            )
+            normalized["generation_strategy"] = normalize_generation_strategy(
+                requested_strategy,
+                allow_existing_single_pass=existing_single_pass,
+            )
+            normalized["refine"] = (
+                normalized["generation_strategy"] == LEGACY_DOUBLE_PASS
+            )
     if mode == "cutout-batch":
         normalized.pop("output_ratio", None)
         normalized.pop("output_resolution", None)
@@ -4068,10 +4106,16 @@ def _record_job_prompt(
         "completed",
         compiled_prompt=prompt,
         applied_knowledge=applied_evidence,
+        ignored_fields=list((knowledge_bundle or {}).get("ignored_rules") or []),
         parameters={
             **dict(trace.get("parameters") or {}),
             "trace_contract_version": GENERATION_TRACE_CONTRACT_VERSION,
             "prompt_version": prompt_version,
+            "prompt_adapter_profile": (
+                prompt_adapter_profile(str(trace.get("model") or ""))["id"]
+                if prompt_version == "prompt_v3"
+                else "legacy-template"
+            ),
             "template_prompt": template_prompt,
             "base_prompt": base_prompt,
             "negative_prompt": negative_prompt,
@@ -4522,6 +4566,8 @@ def _job_knowledge_context(trace, **values):
         "designer_profile": trace.get("designer_profile", "default"),
         "brand_profile": trace.get("brand_profile", ""),
         "intent_locks": trace.get("intent_locks", {}),
+        "model": trace.get("model", ""),
+        "prompt_version": trace.get("prompt_version", PROMPT_COMPILER_VERSION),
         **values,
     }
     if isinstance(trace.get("brief"), dict):
@@ -4578,6 +4624,10 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
     params = dict(ctx.job.get("parameters") or {})
     mode = str(ctx.job["mode"])
     model = str(params.get("model") or "gpt-image-2")
+    generation_strategy = str(
+        params.get("generation_strategy") or LEGACY_DOUBLE_PASS
+    )
+    do_refine = generation_strategy == LEGACY_DOUBLE_PASS
     batch = int(params.get("variations" if mode == "multi-file" else "batch", 1))
     if batch < 1 or batch > 4:
         raise JobExecutionError("INVALID_VARIATION_COUNT", "Each source supports 1 to 4 variations")
@@ -4679,6 +4729,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             angle=angle,
             fidelity=fidelity,
             product_name=product_name,
+            output_spec=output_spec,
         )
         template_stage1_prompt = make_prompt(
             build_single_prompt(product_name, platter, product_type, angle), fidelity
@@ -4709,35 +4760,47 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             output_spec=output_spec,
             trace=trace,
         )
-        ctx.progress(0.05 + per * index + per * 0.36, {"phase": "cloud-refine", "variation": index + 1})
-        template_stage2_prompt = make_prompt(
-            build_stage2_prompt(product_name, platter, product_type, angle), fidelity
-        )
-        base_stage2_prompt = _compile_job_base_prompt(
-            trace, template_stage2_prompt, knowledge_context, f"refine-{index + 1}"
-        )
-        stage2 = KNOWLEDGE.enrich_prompt(
-            base_stage2_prompt, negative, knowledge_context
-        )
-        _record_job_prompt(
-            trace,
-            stage2["prompt"],
-            stage2["negative_prompt"],
-            f"refine-{index + 1}",
-            stage2,
-            base_prompt=base_stage2_prompt,
-            template_prompt=template_stage2_prompt,
-        )
-        generated = _cloud_job_call(
-            ctx,
-            stage2["prompt"],
-            generated,
-            model,
-            negative_prompt=stage2["negative_prompt"],
-            stage=f"2-{index + 1}",
-            output_spec=output_spec,
-            trace=trace,
-        )
+        if do_refine:
+            ctx.progress(0.05 + per * index + per * 0.36, {"phase": "cloud-refine", "variation": index + 1})
+            template_stage2_prompt = make_prompt(
+                build_stage2_prompt(product_name, platter, product_type, angle), fidelity
+            )
+            base_stage2_prompt = _compile_job_base_prompt(
+                trace, template_stage2_prompt, knowledge_context, f"refine-{index + 1}"
+            )
+            stage2 = KNOWLEDGE.enrich_prompt(
+                base_stage2_prompt, negative, knowledge_context
+            )
+            _record_job_prompt(
+                trace,
+                stage2["prompt"],
+                stage2["negative_prompt"],
+                f"refine-{index + 1}",
+                stage2,
+                base_prompt=base_stage2_prompt,
+                template_prompt=template_stage2_prompt,
+            )
+            generated = _cloud_job_call(
+                ctx,
+                stage2["prompt"],
+                generated,
+                model,
+                negative_prompt=stage2["negative_prompt"],
+                stage=f"2-{index + 1}",
+                output_spec=output_spec,
+                trace=trace,
+            )
+        else:
+            _record_execution_trace_safe(
+                trace,
+                f"generation.refine.{index + 1}",
+                "skipped",
+                parameters={"generation_strategy": generation_strategy},
+                output={
+                    "reason": "single_pass",
+                    "billing": {"status": "not-applicable", "amount": 0},
+                },
+            )
         main_image = _run_local_stage(
             trace,
             f"local.enhance.{index + 1}",
@@ -4775,6 +4838,8 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
     return outputs, {
         "product_name": product_name,
         "variation_count": batch,
+        "generation_strategy": generation_strategy,
+        "paid_image_stages": 2 if do_refine else 1,
         "output_spec": output_spec,
         "actual_main_dimensions": [
             {"width": output["width"], "height": output["height"]}
@@ -4831,6 +4896,8 @@ def _execute_adjustment_job(ctx, source_asset, image, stage_dir, trace):
         category=str(trace.get("category") or "general"),
         output_kind="result-adjustment",
         product_name=str(params.get("product_name") or "产品"),
+        user_request=instruction,
+        output_spec=output_spec,
     )
     negative = (
         NEG_BASE
@@ -4987,7 +5054,12 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
     params = dict(ctx.job.get("parameters") or {})
     model = str(params.get("model") or "gemini-3.1-flash-image-preview")
     platter_default = str(params.get("platter") or "auto")
-    do_refine = bool(params.get("refine", True))
+    generation_strategy = str(
+        params.get("generation_strategy") or (
+            LEGACY_DOUBLE_PASS if params.get("refine", True) else SINGLE_PASS
+        )
+    )
+    do_refine = generation_strategy == LEGACY_DOUBLE_PASS
     fidelity = max(0, min(int(params.get("fidelity", 35)), 100))
     angle = str(params.get("angle") or "auto")
     ctx.progress(0.03, {"phase": "vlm"})
@@ -5079,6 +5151,8 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             angle=angle,
             fidelity=fidelity,
             product_name=name,
+            source_cutoff=cutoff,
+            output_spec=output_spec,
         )
         ctx.progress(0.05 + index * per, {"phase": "cloud-primary", "product": index + 1})
         template_stage1_prompt = make_prompt(
@@ -5148,6 +5222,17 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
                 output_spec=output_spec,
                 trace=trace,
             )
+        else:
+            _record_execution_trace_safe(
+                trace,
+                f"generation.refine.product-{index + 1}",
+                "skipped",
+                parameters={"generation_strategy": generation_strategy},
+                output={
+                    "reason": "single_pass",
+                    "billing": {"status": "not-applicable", "amount": 0},
+                },
+            )
         main_image = _run_local_stage(
             trace,
             f"local.enhance.{index + 1}",
@@ -5191,6 +5276,8 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
         ))
     return outputs, {
         "detected_products": len(products),
+        "generation_strategy": generation_strategy,
+        "paid_image_stages_per_product": 2 if do_refine else 1,
         "refined": do_refine,
         "output_specs": output_specs,
         "actual_main_dimensions": [

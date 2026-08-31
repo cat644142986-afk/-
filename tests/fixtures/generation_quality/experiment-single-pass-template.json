@@ -1,27 +1,26 @@
 {
   "schema_version": "1.0",
-  "experiment_id": "r7-prompt-v1-v3-placeholder",
+  "experiment_id": "r7-single-vs-double-pass-placeholder",
   "status": "planned-not-authorized",
   "paid_execution_authorized": false,
-  "variable_under_test": "prompt_version",
+  "variable_under_test": "generation_strategy",
   "fixed_parameters": {
     "model": "must-be-frozen-before-authorization",
     "model_snapshot": "must-be-frozen-before-authorization",
+    "prompt_version": "prompt_v1",
     "output_ratio": "1:1",
     "output_resolution": "2k",
-    "generation_strategy": "legacy_double_pass",
-    "stage_count": 2,
     "fixture_manifest": "tests/fixtures/generation_quality/manifest.json"
   },
   "variants": [
     {
-      "id": "baseline-v1",
-      "changes": {"prompt_version": "prompt_v1"},
+      "id": "baseline-double-pass",
+      "changes": {"generation_strategy": "legacy_double_pass"},
       "artifact_refs": []
     },
     {
-      "id": "candidate-v3",
-      "changes": {"prompt_version": "prompt_v3"},
+      "id": "candidate-single-pass",
+      "changes": {"generation_strategy": "single_pass"},
       "artifact_refs": []
     }
   ],

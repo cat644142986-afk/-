@@ -21,6 +21,7 @@ from python.generation_quality_eval import (
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "tests" / "fixtures" / "generation_quality" / "manifest.json"
 EXPERIMENT_TEMPLATE = MANIFEST.parent / "experiment-template.json"
+SINGLE_PASS_EXPERIMENT_TEMPLATE = MANIFEST.parent / "experiment-single-pass-template.json"
 
 
 class GenerationQualityEvaluationTests(unittest.TestCase):
@@ -82,6 +83,18 @@ class GenerationQualityEvaluationTests(unittest.TestCase):
             {"allowed": False, "reason": "user_budget_authorization_required"},
         )
 
+        strategy_plan = json.loads(
+            SINGLE_PASS_EXPERIMENT_TEMPLATE.read_text(encoding="utf-8")
+        )
+        validated_strategy = validate_experiment_plan(strategy_plan)
+        self.assertEqual(
+            validated_strategy["variable_under_test"], "generation_strategy"
+        )
+        self.assertEqual(
+            paid_run_gate(strategy_plan),
+            {"allowed": False, "reason": "user_budget_authorization_required"},
+        )
+
     def test_authorized_paid_gate_stops_at_frozen_call_limit(self) -> None:
         plan = json.loads(EXPERIMENT_TEMPLATE.read_text(encoding="utf-8"))
         plan["status"] = "authorized"
@@ -122,12 +135,12 @@ class GenerationQualityEvaluationTests(unittest.TestCase):
         self.assertEqual(first_mapping, second_mapping)
         public_text = json.dumps(first_packet, ensure_ascii=False, sort_keys=True)
         self.assertNotIn("prompt_v1", public_text)
-        self.assertNotIn("prompt_v2", public_text)
+        self.assertNotIn("prompt_v3", public_text)
         self.assertNotIn("baseline-v1", public_text)
-        self.assertNotIn("candidate-v2", public_text)
+        self.assertNotIn("candidate-v3", public_text)
         private_text = json.dumps(first_mapping, ensure_ascii=False, sort_keys=True)
         self.assertIn("prompt_v1", private_text)
-        self.assertIn("prompt_v2", private_text)
+        self.assertIn("prompt_v3", private_text)
         self.assertEqual(len(first_mapping["mapping_sha256"]), 64)
 
     def test_experiment_rejects_a_variant_that_changes_multiple_variables(self) -> None:

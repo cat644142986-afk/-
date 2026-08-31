@@ -292,6 +292,183 @@ class KnowledgeCompiler:
         return result
 
     @staticmethod
+    def _v3_rule_conflicts(context: dict[str, Any], text: str) -> str:
+        """Return the task field that makes one soft rule unsafe to inject."""
+        compact = re.sub(r"\s+", "", str(text)).lower()
+        platter = str(context.get("platter", "auto")).lower()
+        if platter == "remove" and any(token in compact for token in (
+            "保留器皿", "保留盘", "保留托盘", "保持器皿",
+        )):
+            return "platter"
+        if platter == "keep" and any(token in compact for token in (
+            "移除器皿", "去除器皿", "无任何器皿", "不要器皿",
+        )):
+            return "platter"
+        angle = str(context.get("angle", "auto")).lower()
+        if angle == "keep" and any(token in compact for token in (
+            "45度", "俯拍", "俯视", "正面平视", "正俯视",
+        )):
+            return "angle"
+        background = str(context.get("background", "white-studio")).lower()
+        if background in {"white", "pure-white", "white-studio"} and any(
+            token in compact for token in ("深色背景", "暗色背景", "彩色背景")
+        ):
+            return "background"
+        locks = context.get("intent_locks")
+        locks = locks if isinstance(locks, dict) else {}
+        if locks.get("packaging_text") and any(token in compact for token in (
+            "去除文字", "无文字", "删除文字", "抹除文字",
+        )):
+            return "packaging_text"
+        if locks.get("logo") and any(token in compact for token in (
+            "去除logo", "无logo", "删除logo", "移除标志",
+        )):
+            return "logo"
+        return ""
+
+    @classmethod
+    def _select_v3_rules(
+        cls,
+        rules: list[dict[str, Any]],
+        context: dict[str, Any],
+        *,
+        count_limit: int,
+        character_budget: int,
+        kind: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        selected: list[dict[str, Any]] = []
+        ignored: list[dict[str, Any]] = []
+        used = 0
+        seen: set[str] = set()
+        for rule in rules:
+            text = str(rule.get("text", "")).strip()
+            key = re.sub(r"\W+", "", text).lower()
+            if not key or key in seen:
+                ignored.append({"kind": kind, "reason": "duplicate", "text": text})
+                continue
+            seen.add(key)
+            # Negative rules describe conditions to avoid, so a phrase such as
+            # "不要使用深色背景" supports a white-background task rather than
+            # conflicting with it. Task-conflict pruning applies to directives.
+            conflict_field = (
+                "" if kind == "negative_rule"
+                else cls._v3_rule_conflicts(context, text)
+            )
+            if conflict_field:
+                ignored.append({
+                    "kind": kind,
+                    "reason": "conflicts-with-task",
+                    "field": conflict_field,
+                    "text": text,
+                })
+                continue
+            if len(selected) >= count_limit:
+                ignored.append({"kind": kind, "reason": "count-budget", "text": text})
+                continue
+            if used + len(text) > character_budget:
+                ignored.append({"kind": kind, "reason": "character-budget", "text": text})
+                continue
+            selected.append(rule)
+            used += len(text)
+        return selected, ignored
+
+    @classmethod
+    def _compact_v3_bundle(
+        cls,
+        bundle: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        positives, ignored_positive = cls._select_v3_rules(
+            list(bundle.get("positive_rules") or []),
+            context,
+            count_limit=3,
+            character_budget=180,
+            kind="positive_rule",
+        )
+        negatives, ignored_negative = cls._select_v3_rules(
+            list(bundle.get("negative_rules") or []),
+            context,
+            count_limit=1,
+            character_budget=80,
+            kind="negative_rule",
+        )
+        locks: list[str] = []
+        ignored_locks: list[dict[str, Any]] = []
+        used_lock_chars = 0
+        for raw in bundle.get("intent_lock_rules") or []:
+            text = str(raw).strip()
+            if len(locks) >= 5:
+                ignored_locks.append({"kind": "intent_lock", "reason": "count-budget", "text": text})
+                continue
+            if used_lock_chars + len(text) > 180:
+                ignored_locks.append({"kind": "intent_lock", "reason": "character-budget", "text": text})
+                continue
+            locks.append(text)
+            used_lock_chars += len(text)
+
+        sources: list[dict[str, Any]] = []
+        seen_sources: set[str] = set()
+        for rule in positives + negatives:
+            source = rule.get("source") if isinstance(rule, dict) else None
+            if not isinstance(source, dict):
+                continue
+            source_key = str(source.get("id") or source.get("path") or source.get("title") or "")
+            if not source_key or source_key in seen_sources:
+                continue
+            seen_sources.add(source_key)
+            sources.append(source)
+
+        ignored = ignored_positive + ignored_negative + ignored_locks
+        conflicts = list(bundle.get("conflicts") or [])
+        for item in ignored:
+            if item.get("reason") == "conflicts-with-task":
+                conflicts.append({
+                    "field": item.get("field", "task"),
+                    "winner": "task",
+                    "message": "任务硬约束高于被裁剪的知识规则。",
+                })
+        return {
+            **bundle,
+            "intent_lock_rules": locks,
+            "positive_rules": positives,
+            "negative_rules": negatives,
+            "sources": sources,
+            "conflicts": conflicts,
+            "ignored_rules": ignored,
+            "rule_budget": {
+                "intent_locks": 5,
+                "positive_rules": 3,
+                "negative_rules": 1,
+                "lock_characters": 180,
+                "positive_characters": 180,
+                "negative_characters": 80,
+            },
+        }
+
+    @staticmethod
+    def _v3_negative_prompt(
+        context: dict[str, Any],
+        negative_rules: list[dict[str, Any]],
+    ) -> str:
+        locks = context.get("intent_locks")
+        locks = locks if isinstance(locks, dict) else {}
+        category = str(context.get("category", "general")).lower()
+        terms = ["主体结构或数量改变", "主体裁切或边缘残缺"]
+        if category == "packaging" or locks.get("packaging_text") or locks.get("logo"):
+            terms.append("包装文字数字或品牌标志错误")
+        else:
+            terms.append("伪文字或无关水印")
+        for rule in negative_rules:
+            text = str(rule.get("text", "")).strip().lstrip("❌").strip()
+            if text and text not in terms:
+                terms.append(text)
+            if len(terms) >= 4:
+                break
+        if len(terms) < 4:
+            terms.append("背景脏污或明显偏色")
+        return "，".join(terms[:4])
+
+    @staticmethod
     def _detect_conflicts(context: dict[str, Any], rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
         corpus = "\n".join(rule["text"] for rule in rules)
         conflicts: list[dict[str, Any]] = []
@@ -409,16 +586,27 @@ class KnowledgeCompiler:
         return rules[:5]
 
     def enrich_prompt(self, prompt: str, negative_prompt: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        context = dict(context or {})
         bundle = self.compile(context)
+        compact_v3 = str(context.get("prompt_version") or "").lower() == "prompt_v3"
+        if compact_v3:
+            bundle = self._compact_v3_bundle(bundle, context)
         positive_addition = "；".join(rule["text"] for rule in bundle["positive_rules"][:10])
         negative_addition = "，".join(rule["text"] for rule in bundle["negative_rules"][:10])
         lock_addition = "；".join(bundle["intent_lock_rules"])
         enriched_prompt = prompt
         if lock_addition:
-            enriched_prompt += f"。不可破坏约束（最高优先级）：{lock_addition}"
+            label = "最高优先" if compact_v3 else "不可破坏约束（最高优先级）"
+            enriched_prompt += f"。{label}：{lock_addition}"
         if positive_addition:
-            enriched_prompt += f"。知识库设计约束：{positive_addition}"
-        enriched_negative = "，".join(part for part in (negative_prompt, negative_addition) if part)
+            label = "相关知识" if compact_v3 else "知识库设计约束"
+            enriched_prompt += f"。{label}：{positive_addition}"
+        if compact_v3:
+            enriched_negative = self._v3_negative_prompt(
+                context, list(bundle.get("negative_rules") or [])
+            )
+        else:
+            enriched_negative = "，".join(part for part in (negative_prompt, negative_addition) if part)
         return {
             **bundle,
             "prompt": enriched_prompt,
