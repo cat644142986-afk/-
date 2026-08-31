@@ -7,7 +7,17 @@
   <title>Product Atelier</title>
   <script>
     try {
-      document.documentElement.dataset.theme = localStorage.getItem('pa-theme') || 'light';
+      const root = document.documentElement;
+      const storedTheme = localStorage.getItem('pa-theme-preference') || localStorage.getItem('pa-theme') || 'light';
+      const themePreference = ['light', 'dark', 'system'].includes(storedTheme) ? storedTheme : 'light';
+      const systemDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+      const motionPreference = localStorage.getItem('pa-motion') === 'reduced' ? 'reduced' : 'system';
+      const systemReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      root.dataset.themePreference = themePreference;
+      root.dataset.theme = themePreference === 'system' ? (systemDark ? 'dark' : 'light') : themePreference;
+      root.dataset.textScale = localStorage.getItem('pa-text-scale') === 'large' ? 'large' : 'standard';
+      root.dataset.contrast = localStorage.getItem('pa-contrast') === 'high' ? 'high' : 'standard';
+      root.dataset.motion = motionPreference === 'reduced' || systemReducedMotion ? 'reduced' : 'full';
       performance.mark('pa-html-start');
     } catch (_) {
       document.documentElement.dataset.theme = 'light';

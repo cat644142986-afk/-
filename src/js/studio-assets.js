@@ -236,7 +236,7 @@ export function createAssetManagerController({
         : `<button class="is-danger" type="button" data-asset-remove-id="${escapeHtml(assetId)}">移出</button>`;
       return `<article class="asset-manager-item ${checked ? 'is-checked' : ''}">
         <label class="asset-manager-item__check"><input type="checkbox" data-asset-select-id="${escapeHtml(assetId)}" ${checked ? 'checked' : ''} /><span aria-hidden="true">${checked ? '✓' : ''}</span><span class="sr-only">批量选择 ${escapeHtml(asset.name)}</span></label>
-        <img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" />
+        <img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" decoding="async" />
         <div class="asset-manager-item__copy"><strong title="${escapeHtml(asset.name)}">${escapeHtml(asset.name || '未命名素材')}</strong><small>${escapeHtml([dimensions, bytes, view === 'trash' ? '可恢复' : '当前素材域'].filter(Boolean).join(' · '))}</small></div>
         ${orderActions}<div class="asset-manager-item__actions">${taskAction}<button type="button" data-asset-reference-id="${escapeHtml(assetId)}">占用</button>${stateAction}</div>
       </article>`;

@@ -22,6 +22,14 @@ import {
   memorySuggestionsForFilter,
 } from './memory-governance.js';
 import {
+  DEFAULT_APPEARANCE,
+  appearanceSettingsHtml,
+  appearanceStatusCopy,
+  explicitThemeAfterToggle,
+  readAppearancePreferences,
+  resolveAppearancePreferences,
+} from './appearance.js';
+import {
   backendDecisionForSignal,
   comparisonTargetForItems,
   feedbackReceiptCopy,
@@ -799,21 +807,74 @@ function switchPage(page) {
   if (page === 'settings') settingsController.load();
 }
 
-function setupTheme() {
-  const saved = localStorage.getItem('pa-theme') || 'light';
-  document.documentElement.dataset.theme = saved;
-  const paint = () => {
-    const dark = document.documentElement.dataset.theme === 'dark';
+function setupAppearance() {
+  const groundingCard = $('.settings-card--grounding');
+  if (groundingCard && !$('.settings-card--appearance')) {
+    groundingCard.insertAdjacentHTML('beforebegin', appearanceSettingsHtml());
+    $('.settings-card__heading > span', groundingCard).textContent = '06';
+  }
+  const themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+  const motionMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let preferences = readAppearancePreferences(localStorage);
+
+  const persist = () => {
+    localStorage.setItem('pa-theme-preference', preferences.themePreference);
+    localStorage.setItem('pa-theme', preferences.themePreference === 'system' ? 'light' : preferences.themePreference);
+    localStorage.setItem('pa-text-scale', preferences.textScale);
+    localStorage.setItem('pa-contrast', preferences.contrast);
+    localStorage.setItem('pa-motion', preferences.motionPreference);
+  };
+  const apply = (announce = false) => {
+    const resolved = resolveAppearancePreferences(preferences, {
+      systemDark: themeMedia.matches,
+      systemReducedMotion: motionMedia.matches,
+    });
+    const root = document.documentElement;
+    root.dataset.themePreference = resolved.themePreference;
+    root.dataset.theme = resolved.theme;
+    root.dataset.textScale = resolved.textScale;
+    root.dataset.contrast = resolved.contrast;
+    root.dataset.motion = resolved.reducedMotion ? 'reduced' : 'full';
+    const dark = resolved.theme === 'dark';
     $('#theme-icon-moon').hidden = dark;
     $('#theme-icon-sun').hidden = !dark;
+    const toggle = $('#theme-toggle');
+    toggle.setAttribute('aria-label', `当前为${dark ? '深色' : '浅色'}主题，切换为${dark ? '浅色' : '深色'}主题`);
+    toggle.title = toggle.getAttribute('aria-label');
+    $$('input[name="appearance-theme"]').forEach((input) => { input.checked = input.value === resolved.themePreference; });
+    $$('input[name="appearance-text-scale"]').forEach((input) => { input.checked = input.value === resolved.textScale; });
+    $$('input[name="appearance-contrast"]').forEach((input) => { input.checked = input.value === resolved.contrast; });
+    $$('input[name="appearance-motion"]').forEach((input) => { input.checked = input.value === resolved.motionPreference; });
+    $('#appearance-status').textContent = appearanceStatusCopy(resolved);
+    if (announce) toast('界面外观已更新', 'success');
   };
-  paint();
+
   $('#theme-toggle').addEventListener('click', () => {
-    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem('pa-theme', next);
-    paint();
+    const resolved = resolveAppearancePreferences(preferences, { systemDark: themeMedia.matches });
+    preferences = { ...preferences, themePreference: explicitThemeAfterToggle(resolved.theme) };
+    persist();
+    apply(true);
   });
+  const bindChoice = (name, key) => {
+    $$(`input[name="${name}"]`).forEach((input) => input.addEventListener('change', () => {
+      if (!input.checked) return;
+      preferences = { ...preferences, [key]: input.value };
+      persist();
+      apply(true);
+    }));
+  };
+  bindChoice('appearance-theme', 'themePreference');
+  bindChoice('appearance-text-scale', 'textScale');
+  bindChoice('appearance-contrast', 'contrast');
+  bindChoice('appearance-motion', 'motionPreference');
+  $('#btn-reset-appearance').addEventListener('click', () => {
+    preferences = { ...DEFAULT_APPEARANCE };
+    persist();
+    apply(true);
+  });
+  themeMedia.addEventListener('change', () => { if (preferences.themePreference === 'system') apply(); });
+  motionMedia.addEventListener('change', () => { if (preferences.motionPreference === 'system') apply(); });
+  apply();
 }
 
 function clearSession(keepMode = true) {
@@ -1057,7 +1118,7 @@ function renderQueue() {
     const dimensions = asset.width && asset.height ? `${asset.width}×${asset.height}` : '已持久化';
     return `<article class="queue-item asset-card ${selected ? 'selected' : ''}">
       <button class="asset-card__select" type="button" data-asset-id="${escapeHtml(asset.id)}" aria-pressed="${selected}" aria-label="${selected ? '取消选择' : '选择'} ${escapeHtml(asset.name)}">
-        <span class="asset-card__visual"><img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" /><span class="asset-card__check" aria-hidden="true">${selected ? '✓' : '+'}</span></span>
+        <span class="asset-card__visual"><img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" decoding="async" /><span class="asset-card__check" aria-hidden="true">${selected ? '✓' : '+'}</span></span>
         <span class="asset-card__meta"><strong title="${escapeHtml(asset.name)}">${escapeHtml(asset.name || `素材 ${index + 1}`)}</strong><small>${escapeHtml(dimensions)}</small></span>
       </button>
       <button class="asset-card__remove" type="button" data-remove-asset-id="${escapeHtml(asset.id)}" aria-label="将 ${escapeHtml(asset.name)} 移入回收站" title="移入回收站"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/></svg></button>
@@ -2604,6 +2665,23 @@ function openDrawer(name) {
   const drawers = { assets: $('#asset-drawer'), advanced: $('#advanced-drawer'), intelligence: $('#intelligence-drawer'), jobs: $('#job-drawer') };
   const layer = drawers[name];
   if (!layer) return;
+  const drawer = $('.drawer', layer);
+  const heading = $('.drawer-head h2', layer);
+  const close = $('.drawer-close', layer);
+  const backdrop = $('.drawer-backdrop', layer);
+  if (drawer) {
+    drawer.setAttribute('role', 'dialog');
+    drawer.setAttribute('aria-modal', 'true');
+    if (heading) {
+      if (!heading.id) heading.id = `${name}-drawer-title`;
+      drawer.setAttribute('aria-labelledby', heading.id);
+    }
+  }
+  if (close && !close.getAttribute('aria-label')) close.setAttribute('aria-label', `关闭${heading?.textContent?.trim() || '抽屉'}`);
+  if (backdrop) {
+    backdrop.tabIndex = -1;
+    if (!backdrop.getAttribute('aria-label')) backdrop.setAttribute('aria-label', `关闭${heading?.textContent?.trim() || '抽屉'}`);
+  }
   drawerReturnFocus = document.activeElement;
   layer.hidden = false;
   if (name === 'jobs') {
@@ -3703,6 +3781,7 @@ function updateMemoryFilterControls() {
     const active = button.dataset.memoryFilter === state.memoryFilter;
     button.classList.toggle('is-active', active);
     button.setAttribute('aria-selected', active ? 'true' : 'false');
+    button.tabIndex = active ? 0 : -1;
   });
   Object.entries(counts).forEach(([filter, count]) => {
     const target = $(`[data-memory-filter-count="${filter}"]`);
@@ -4337,12 +4416,24 @@ function bindEvents() {
     renderSessionsDashboard();
   });
   $('#btn-refresh-memory').addEventListener('click', () => loadMemory());
-  $$('[data-memory-filter]').forEach((button) => button.addEventListener('click', () => {
-    state.memoryFilter = button.dataset.memoryFilter || 'pending';
-    state.memoryTargetSuggestionId = '';
-    renderMemoryQueue('');
-    $('#memory-list')?.focus?.({ preventScroll: true });
-  }));
+  const memoryFilters = $$('[data-memory-filter]');
+  memoryFilters.forEach((button, index) => {
+    button.addEventListener('click', () => {
+      state.memoryFilter = button.dataset.memoryFilter || 'pending';
+      state.memoryTargetSuggestionId = '';
+      renderMemoryQueue('');
+    });
+    button.addEventListener('keydown', (event) => {
+      const targets = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: memoryFilters.length - 1 };
+      if (!(event.key in targets)) return;
+      event.preventDefault();
+      const targetIndex = event.key === 'ArrowRight' || event.key === 'ArrowLeft'
+        ? (targets[event.key] + memoryFilters.length) % memoryFilters.length
+        : targets[event.key];
+      memoryFilters[targetIndex]?.focus();
+      memoryFilters[targetIndex]?.click();
+    });
+  });
   $('#workspace-sync-state').addEventListener('click', (event) => {
     const button = event.target.closest('[data-workspace-status-action="retry"]');
     const saveButton = event.target.closest('[data-workspace-status-action="retry-save"]');
@@ -4380,7 +4471,7 @@ function bindEvents() {
           : openLayer.id === 'settings-panel'
             ? openLayer
             : $('.drawer', openLayer);
-      const focusable = $$('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])', focusRoot).filter((element) => element.offsetParent !== null);
+      const focusable = $$('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [contenteditable="true"], [tabindex]:not([tabindex="-1"])', focusRoot).filter((element) => element.offsetParent !== null);
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -4458,7 +4549,7 @@ async function init() {
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
     API.reportStartupMilestone('first-paint');
   }));
-  setupTheme();
+  setupAppearance();
   bindEvents();
   workflowDock.sync();
   setupCompare();
