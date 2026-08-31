@@ -313,3 +313,16 @@ NSIS 已完成隔离安装、安装态双 smoke 与静默卸载，但没有 Auth
 本版没有 schema 迁移，知识建议的 revision、操作历史、redo、稍后状态和人工编辑元数据保存在既有 `proposed_value_json._governance` 中。回退到 `.1` 不需要转换账本，但旧版不会显示或操作新的治理历史，也不会将 `disabled` 状态作为完整治理对象。降级前应先结束本版创建的排队/运行任务、退出正式 EXE 与对应 sidecar，并为 `%APPDATA%\ProductAtelier` 和当前正式目录各保留一份新副本，再从目标提交重新走完整 candidate-first 发布流程；不要直接覆盖运行中的正式目录。
 
 本轮没有调用付费 VLM/生图、没有处理用户图片，也没有重建 NSIS。现存未签名 NSIS 仍绑定 `.4`，不能用于安装或恢复本检查点。
+
+## 2026-08-31 R9 外观与无障碍首批正式便携检查点
+
+- 正式 artifact 绑定提交：`652763764dcfeb559d99a96de8b866c829060472`
+- 正式 EXE / sidecar / manifest SHA-256：`720551F55B02FB713F51EFB9988C842285D7FBD40677C901A35EFFFFADEFD438` / `31DBA2DDBB2840E69C4CB4E50936DCFD95D6F65CAD4A11343FA6EC513224E1EC` / `1A98EF7AD616A3AEC06A35B4339A91DDC4DDEFF436902CB1212A35165D9C2C80`
+- 正式目录 tree SHA-256：`0C9931F810D178CDAEB0BB7233F5F1F9952A650A2A7F5CD4BFF58DB77634BA7F`
+- finalized 事务：`44e9c55a76824b5197ec89ef74b1abf3`
+- 上一 R8 正式目录备份：`D:\ProductAtelier-Backups\release-before-20260831-114143-652763764dcf`
+- promotion evidence SHA-256：`524FAA6411CB7C1D04F6A0783F761500AF91B50649C84EE340E98CFFE0511EE2`
+
+本检查点没有数据库迁移，新增外观偏好仅保存在本机 localStorage；回退到 R8 不需要转换 schema，但 R8 不显示主题跟随系统、舒适字号、高对比和减少动效设置。降级前先完成或取消排队/运行任务，退出正式 EXE 及其子 sidecar，为当前正式目录与 `%APPDATA%\ProductAtelier` 另留新副本，再从目标 Git 提交重走 `tools/dev.ps1`；不要覆盖运行中的正式目录。
+
+发布后的证据工具修复提交 `1f7b33a` 不改变正式 artifact。它只将截图从模糊标题匹配改为正式进程 ID，并在抓取前恢复/置前窗口；若回退源码，建议保留该工具修复，否则同名 Photoshop 文档可能再次污染验收截图。当前活动 transaction 文件不存在，桌面快捷方式目标与工作目录均指向正式便携目录。
