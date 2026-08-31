@@ -843,6 +843,63 @@ class AssetApiTests(unittest.TestCase):
         self.assertEqual(direct.status_code, 200, direct.text)
         self.assertEqual(direct.json()["source_results"], suggestion["source_results"])
 
+    def test_memory_governance_api_exposes_history_and_rejects_stale_edits(self) -> None:
+        suggestion = self.ledger.add_memory_suggestion(
+            "designer",
+            "composition.spacing",
+            {
+                "value": "generous",
+                "label": "偏好留白",
+                "directive": "同类任务优先保留克制留白",
+                "distinct_sessions": 2,
+                "contradiction_count": 0,
+            },
+            scope_id="default",
+            evidence=[{"feedback_id": "missing-old-feedback"}],
+            confidence=0.8,
+        )
+        edited = self.client.patch(
+            f"/api/memory/suggestions/{suggestion['id']}",
+            json={
+                "action": "edit",
+                "expected_revision": 1,
+                "label": "食品主图留白",
+                "directive": "食品主图优先保留安全留白，不让主体顶边",
+            },
+        )
+        self.assertEqual(edited.status_code, 200, edited.text)
+        self.assertEqual(edited.json()["governance"]["revision"], 2)
+        self.assertEqual(edited.json()["governance"]["history_count"], 1)
+
+        stale = self.client.patch(
+            f"/api/memory/suggestions/{suggestion['id']}",
+            json={"action": "reject", "expected_revision": 1},
+        )
+        self.assertEqual(stale.status_code, 409, stale.text)
+        self.assertEqual(stale.json()["detail"]["code"], "MEMORY_REVISION_CONFLICT")
+        self.assertEqual(
+            stale.json()["detail"]["current"]["governance"]["revision"], 2
+        )
+
+        approved = self.client.patch(
+            f"/api/memory/suggestions/{suggestion['id']}",
+            json={"action": "approve", "expected_revision": 2},
+        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+        self.assertEqual(approved.json()["status"], "approved")
+        disabled = self.client.patch(
+            f"/api/memory/suggestions/{suggestion['id']}",
+            json={"action": "disable", "expected_revision": 3},
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+        self.assertEqual(disabled.json()["status"], "disabled")
+        all_suggestions = self.client.get("/api/memory/suggestions?status=all")
+        self.assertEqual(all_suggestions.status_code, 200, all_suggestions.text)
+        self.assertIn(
+            suggestion["id"],
+            {item["id"] for item in all_suggestions.json()},
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -22,6 +22,70 @@ def _value_key(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+MEMORY_SCOPE_PRIORITY = {
+    "designer": 100,
+    "category": 200,
+    "brand": 300,
+    "project": 400,
+}
+
+
+def resolve_approved_memory_rules(
+    suggestions: list[dict[str, Any]],
+    context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Choose one approved value per rule using the documented scope priority."""
+    scope = dict(context or {})
+    category = str(scope.get("category") or "general").strip()
+    brand = str(scope.get("brand_profile") or "").strip()
+    project = str(scope.get("project_name") or "").strip()
+    designer = str(scope.get("designer_profile") or "default").strip()
+    winners: dict[str, dict[str, Any]] = {}
+    for item in suggestions:
+        if not isinstance(item, dict) or str(item.get("status") or "") != "approved":
+            continue
+        scope_type = str(item.get("scope_type") or "designer").strip()
+        scope_id = str(item.get("scope_id") or "").strip()
+        item_category = str(item.get("category") or "general").strip()
+        matches = {
+            "designer": scope_id in {"", "default", designer},
+            "category": bool(category and category != "general")
+            and (scope_id == category or item_category == category),
+            "brand": bool(brand) and scope_id == brand,
+            "project": bool(project) and scope_id == project,
+        }.get(scope_type, False)
+        if not matches:
+            continue
+        proposed = item.get("proposed_value")
+        proposed = proposed if isinstance(proposed, dict) else {}
+        directive = str(proposed.get("directive") or "").strip()
+        if not directive:
+            continue
+        rule_key = str(item.get("rule_key") or item.get("id") or "").strip()
+        candidate = {
+            "id": str(item.get("id") or rule_key),
+            "rule_key": rule_key,
+            "label": str(proposed.get("label") or rule_key or "已批准记忆反馈"),
+            "text": directive,
+            "scope_type": scope_type,
+            "scope_id": scope_id,
+            "category": item_category,
+            "priority": MEMORY_SCOPE_PRIORITY.get(scope_type, 0),
+            "created_at": str(item.get("created_at") or ""),
+        }
+        existing = winners.get(rule_key)
+        if existing is None or (
+            candidate["priority"], candidate["created_at"], candidate["id"]
+        ) > (
+            existing["priority"], existing["created_at"], existing["id"]
+        ):
+            winners[rule_key] = candidate
+    return sorted(
+        winners.values(),
+        key=lambda item: (-int(item["priority"]), item["rule_key"], item["id"]),
+    )
+
+
 class MemoryEngine:
     """Aggregate repeated feedback while preserving evidence and contradictions."""
 
@@ -175,6 +239,7 @@ class MemoryEngine:
                 "directive": claim["directive"],
                 "support_count": support_count,
                 "distinct_sessions": len(distinct_sessions),
+                "min_support": min_support,
                 "contradiction_count": contradiction_count,
                 "contradiction_examples": [
                     entry["feedback"].get("reason") for entry in contradiction_entries[:3]
@@ -233,7 +298,7 @@ class MemoryEngine:
         rows = list(feedback_rows) if feedback_rows is not None else self.ledger.list_feedback(limit=2000)
         if suggestions is None:
             suggestions = []
-            for status in ("pending", "approved", "rejected", "dismissed"):
+            for status in ("pending", "approved", "rejected", "dismissed", "disabled"):
                 suggestions.extend(self.ledger.list_memory_suggestions(status=status, limit=200))
         target_scope = self._scope(feedback)
         feedback_id = str(feedback.get("id") or "")

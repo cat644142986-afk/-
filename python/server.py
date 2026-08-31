@@ -28,6 +28,7 @@ try:
         DraftRevisionConflictError,
         IdempotencyConflictError,
         InvalidStatusTransitionError,
+        MemorySuggestionRevisionConflictError,
         idempotent_id,
     )
     from job_engine import JobEngine, JobExecutionError, JobProcessorResult
@@ -42,7 +43,7 @@ try:
         unavailable_billing_evidence,
     )
     from knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
-    from memory_engine import MemoryEngine
+    from memory_engine import MemoryEngine, resolve_approved_memory_rules
     from grounding_runtime import (
         bundled_model_manifest_path,
         grounding_pack_status,
@@ -82,6 +83,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         DraftRevisionConflictError,
         IdempotencyConflictError,
         InvalidStatusTransitionError,
+        MemorySuggestionRevisionConflictError,
         idempotent_id,
     )
     from python.job_engine import JobEngine, JobExecutionError, JobProcessorResult
@@ -96,7 +98,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         unavailable_billing_evidence,
     )
     from python.knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
-    from python.memory_engine import MemoryEngine
+    from python.memory_engine import MemoryEngine, resolve_approved_memory_rules
     from python.grounding_runtime import (
         bundled_model_manifest_path,
         grounding_pack_status,
@@ -204,7 +206,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-31.1"
+SIDECAR_CONTRACT_VERSION = "2026-08-31.2"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -2097,7 +2099,7 @@ def _enrich_result_reviews(reviews: list[dict]) -> list[dict]:
     feedback_rows = LEDGER.list_feedback(limit=2000)
     feedback_by_id = {str(item["id"]): item for item in feedback_rows}
     suggestions = []
-    for status in ("pending", "approved", "rejected", "dismissed"):
+    for status in ("pending", "approved", "rejected", "dismissed", "disabled"):
         suggestions.extend(LEDGER.list_memory_suggestions(status=status, limit=200))
     adjustment_jobs = {}
     if any(str(review.get("learning_action") or "") == "regenerate" for review in reviews):
@@ -3232,6 +3234,8 @@ async def compile_creation_session(session_id: str, data: dict | None = None):
         context.update({
             "mode": session.get("mode", "single"),
             "category": session.get("category", "general"),
+            "project_name": session.get("project_name", ""),
+            "designer_profile": session.get("designer_profile", "default"),
             "brand_profile": session.get("brand_profile", ""),
             "intent_locks": session.get("intent_locks") or {},
         })
@@ -3306,6 +3310,14 @@ async def record_creation_feedback(session_id: str, data: dict):
 
 @app.get("/api/memory/suggestions")
 async def list_memory_suggestions(status: str = "pending", limit: int = 50):
+    if status == "all":
+        suggestions = []
+        for current_status in ("pending", "approved", "disabled", "rejected", "dismissed"):
+            suggestions.extend(
+                LEDGER.list_memory_suggestions(status=current_status, limit=limit)
+            )
+        suggestions.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return _enrich_memory_suggestions(suggestions[:max(1, min(int(limit), 200))])
     return _enrich_memory_suggestions(
         LEDGER.list_memory_suggestions(status=status, limit=limit)
     )
@@ -3332,11 +3344,65 @@ async def synthesize_memory_suggestions():
 @app.post("/api/memory/suggestions/{suggestion_id}/review")
 async def review_memory_suggestion(suggestion_id: str, data: dict):
     try:
-        return LEDGER.review_memory_suggestion(suggestion_id, str(data.get("status", "")))
+        status = str(data.get("status", ""))
+        if data.get("expected_revision") is None:
+            result = LEDGER.review_memory_suggestion(suggestion_id, status)
+        else:
+            action = {
+                "approved": "approve",
+                "rejected": "reject",
+                "dismissed": "dismiss",
+            }.get(status, "")
+            result = LEDGER.govern_memory_suggestion(
+                suggestion_id,
+                action=action,
+                expected_revision=int(data["expected_revision"]),
+            )
+        return _enrich_memory_suggestions([result])[0]
+    except MemorySuggestionRevisionConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "MEMORY_REVISION_CONFLICT",
+                "message": str(exc),
+                "current": _enrich_memory_suggestions([exc.current])[0],
+            },
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.patch("/api/memory/suggestions/{suggestion_id}")
+async def govern_memory_suggestion(suggestion_id: str, data: dict):
+    try:
+        if data.get("expected_revision") is None:
+            raise ValueError("expected_revision is required")
+        result = LEDGER.govern_memory_suggestion(
+            suggestion_id,
+            action=str(data.get("action") or ""),
+            expected_revision=int(data["expected_revision"]),
+            label=data.get("label"),
+            directive=data.get("directive"),
+        )
+        return _enrich_memory_suggestions([result])[0]
+    except MemorySuggestionRevisionConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "MEMORY_REVISION_CONFLICT",
+                "message": str(exc),
+                "current": _enrich_memory_suggestions([exc.current])[0],
+            },
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_MEMORY_ACTION", "message": str(exc)},
+        )
 
 @app.get("/api/settings")
 async def get_app_settings():
@@ -3900,6 +3966,8 @@ def _job_trace_context(ctx):
         "brief": brief or session.get("brief", {}),
         "intent_locks": intent or session.get("intent_locks", {}),
         "category": session.get("category", "general"),
+        "project_name": session.get("project_name", ""),
+        "designer_profile": session.get("designer_profile", "default"),
         "brand_profile": session.get("brand_profile", ""),
         "model": str(parameters.get("model") or ""),
         "prompt_version": str(parameters.get("prompt_version") or PROMPT_COMPILER_VERSION),
@@ -4442,30 +4510,16 @@ def _approved_memory_rules(context: dict | None = None) -> list[dict]:
     prompt, so feedback cannot silently override formal knowledge.
     """
     try:
-        suggestions = LEDGER.list_memory_suggestions(status="approved", limit=50)
+        suggestions = LEDGER.list_memory_suggestions(status="approved", limit=200)
     except Exception:
         return []
-    scope = dict(context or {})
-    category = str(scope.get("category", "general"))
-    rules: list[dict] = []
-    for suggestion in suggestions:
-        proposal = suggestion.get("proposed_value") or {}
-        directive = str(proposal.get("directive") or proposal.get("label") or "").strip()
-        if not directive:
-            continue
-        scope_category = str(suggestion.get("category") or "general")
-        if scope_category not in ("general", category):
-            continue
-        rules.append({
-            "id": str(suggestion.get("rule_key") or suggestion.get("id") or ""),
-            "label": str(proposal.get("label") or "已批准记忆反馈"),
-            "text": directive,
-        })
-    return rules
+    return resolve_approved_memory_rules(suggestions, dict(context or {}))
 
 
 def _job_knowledge_context(trace, **values):
     context = {
+        "project_name": trace.get("project_name", ""),
+        "designer_profile": trace.get("designer_profile", "default"),
         "brand_profile": trace.get("brand_profile", ""),
         "intent_locks": trace.get("intent_locks", {}),
         **values,

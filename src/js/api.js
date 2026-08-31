@@ -427,7 +427,12 @@ export async function recordFeedback(sessionId, data) {
     body: JSON.stringify(data || {}),
   });
 }
-export async function getMemorySuggestions(status) { return fetchJSON('/api/memory/suggestions?status=' + encodeURIComponent(status || 'pending')); }
+export async function getMemorySuggestions(status, limit = 200) {
+  return fetchJSON(
+    '/api/memory/suggestions?status=' + encodeURIComponent(status || 'pending')
+      + '&limit=' + encodeURIComponent(Math.max(1, Math.min(Number(limit) || 200, 200))),
+  );
+}
 export async function getMemorySuggestion(id) {
   return fetchJSON('/api/memory/suggestions/' + encodeURIComponent(id));
 }
@@ -439,6 +444,13 @@ export async function reviewMemorySuggestion(id, status) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status: status }),
+  });
+}
+export async function governMemorySuggestion(id, data) {
+  return fetchJSON('/api/memory/suggestions/' + encodeURIComponent(id), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data || {}),
   });
 }
 

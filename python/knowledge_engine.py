@@ -334,10 +334,11 @@ class KnowledgeCompiler:
                     positive_count += 1
         positives = self._dedupe(positives, 10)
         negatives = self._dedupe(negatives, 14)
-        # User-approved memory suggestions are highest priority constraints. They are
-        # prepended to the positive rules so they survive the [:10] enrichment slice,
-        # and surfaced as a distinct source so the UI can show exactly what was applied.
+        # Scope-resolved memory rules are prepended so they survive the enrichment
+        # slice. Explicit task intent locks are still compiled separately as the
+        # highest-priority, non-overridable constraints.
         memory_sources: list[dict[str, Any]] = []
+        memory_rules: list[dict[str, Any]] = []
         for item in approved_memory:
             source = {
                 "id": item["id"],
@@ -345,9 +346,12 @@ class KnowledgeCompiler:
                 "path": "",
                 "relative_path": "记忆反馈/已批准",
             }
-            positives.insert(0, {"text": f"已批准记忆反馈：{item['text']}", "source": source})
+            memory_rules.append({
+                "text": f"已批准记忆反馈：{item['text']}",
+                "source": source,
+            })
             memory_sources.append(source)
-        positives = positives[:10]
+        positives = (memory_rules + positives)[:10]
         all_rules = positives + negatives
         sources = []
         seen_paths: set[str] = set()
@@ -399,6 +403,8 @@ class KnowledgeCompiler:
                 "id": str(item.get("id", "")).strip() or f"memory:{hash(text)}",
                 "label": str(item.get("label", "")).strip() or "已批准记忆反馈",
                 "text": text,
+                "scope_type": str(item.get("scope_type", "designer")),
+                "priority": str(item.get("priority", "")),
             })
         return rules[:5]
 

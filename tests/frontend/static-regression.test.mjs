@@ -444,6 +444,21 @@ test('approved feedback is shown as an applied rule, not only a count', () => {
   assert.match(app, /已应用 \$\{executionRules\} 条可检查执行规则/);
 });
 
+test('knowledge suggestions expose durable governance instead of one-way approval', () => {
+  assert.match(html, /data-memory-filter="pending"/);
+  assert.match(html, /data-memory-filter="approved"/);
+  assert.match(html, /data-memory-filter="disabled"/);
+  assert.match(app, /API\.governMemorySuggestion/);
+  assert.match(app, /expected_revision: Number\(item\.governance\?\.revision/);
+  assert.match(app, /memoryMutationsInFlight\.has\(id\)/);
+  assert.match(app, /MEMORY_REVISION_CONFLICT/);
+  assert.match(app, /memory-pending-count'\)\.textContent = String\(counts\.pending\)/);
+  assert.match(app, /data-memory-edit-form/);
+  assert.match(app, /data-memory-confirm="true"/);
+  assert.match(css, /\.memory-history-list/);
+  assert.match(css, /\.memory-edit-error/);
+});
+
 test('rendering a workspace queue must commit items before appending the add slot', () => {
   // Regression guard: the asset-card list must be written to #file-queue, otherwise
   // uploaded assets never render (no preview thumbnails) and the add-slot accumulates.

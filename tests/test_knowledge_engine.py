@@ -11,6 +11,7 @@ from python.knowledge_engine import (
     canonicalize_vault_path,
     default_vault_path,
 )
+from python.memory_engine import resolve_approved_memory_rules
 
 
 class KnowledgePathTests(unittest.TestCase):
@@ -34,6 +35,61 @@ class KnowledgePathTests(unittest.TestCase):
 
 
 class KnowledgeMemoryContractTests(unittest.TestCase):
+    def test_memory_scope_priority_chooses_brand_then_category_then_designer(self) -> None:
+        suggestions = [
+            {
+                "id": "designer-rule",
+                "status": "approved",
+                "scope_type": "designer",
+                "scope_id": "default",
+                "category": "general",
+                "rule_key": "lighting.softness",
+                "created_at": "2026-08-01",
+                "proposed_value": {"label": "个人柔光", "directive": "个人默认柔光"},
+            },
+            {
+                "id": "category-rule",
+                "status": "approved",
+                "scope_type": "category",
+                "scope_id": "food",
+                "category": "food",
+                "rule_key": "lighting.softness",
+                "created_at": "2026-08-02",
+                "proposed_value": {"label": "食品柔光", "directive": "食品使用均匀柔光"},
+            },
+            {
+                "id": "brand-rule",
+                "status": "approved",
+                "scope_type": "brand",
+                "scope_id": "PA Tea",
+                "category": "food",
+                "rule_key": "lighting.softness",
+                "created_at": "2026-08-03",
+                "proposed_value": {"label": "品牌硬光", "directive": "PA Tea 使用清晰硬光"},
+            },
+            {
+                "id": "disabled-brand-rule",
+                "status": "disabled",
+                "scope_type": "brand",
+                "scope_id": "PA Tea",
+                "category": "food",
+                "rule_key": "composition.spacing",
+                "proposed_value": {"label": "已停用", "directive": "不应参与执行"},
+            },
+        ]
+        brand_rules = resolve_approved_memory_rules(
+            suggestions, {"category": "food", "brand_profile": "PA Tea"}
+        )
+        self.assertEqual([item["id"] for item in brand_rules], ["brand-rule"])
+        category_rules = resolve_approved_memory_rules(
+            suggestions, {"category": "food", "brand_profile": "Other"}
+        )
+        self.assertEqual([item["id"] for item in category_rules], ["category-rule"])
+        designer_rules = resolve_approved_memory_rules(
+            suggestions, {"category": "general"}
+        )
+        self.assertEqual([item["id"] for item in designer_rules], ["designer-rule"])
+
     def test_approved_memory_rules_reach_prompt_and_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             vault = Path(temp_dir) / "vault"

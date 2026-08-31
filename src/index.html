@@ -186,7 +186,13 @@
             </section>
 
             <section class="memory-list-card">
-              <div class="panel-heading panel-heading--compact"><div><p class="eyebrow">REVIEW QUEUE</p><h2>待你确认的知识</h2><p>系统只能提出建议，批准后才会影响未来任务。</p></div><button class="secondary-button" id="btn-refresh-memory" type="button">刷新</button></div>
+              <div class="panel-heading panel-heading--compact"><div><p class="eyebrow">KNOWLEDGE GOVERNANCE</p><h2>知识建议治理</h2><p>待审核建议不会影响任务；已采用规则也可随时停用或撤销。</p></div><button class="secondary-button" id="btn-refresh-memory" type="button">刷新</button></div>
+              <div class="memory-filter-tabs" role="tablist" aria-label="筛选知识建议">
+                <button class="is-active" type="button" role="tab" aria-selected="true" data-memory-filter="pending">待审核 <span data-memory-filter-count="pending">0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-memory-filter="approved">已采用 <span data-memory-filter-count="approved">0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-memory-filter="disabled">已停用 <span data-memory-filter-count="disabled">0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-memory-filter="all">全部 <span data-memory-filter-count="all">0</span></button>
+              </div>
               <div class="memory-list" id="memory-list"><section class="status-panel status-panel--empty status-panel--fill" data-status-kind="empty" role="status" aria-live="polite" aria-atomic="true" aria-busy="false"><span class="status-panel__mark" aria-hidden="true">○</span><div class="status-panel__copy"><span class="status-panel__eyebrow">READY</span><strong>暂无待审核偏好</strong><p>完成结果评审后，重复模式会在这里出现。</p></div></section></div>
             </section>
 

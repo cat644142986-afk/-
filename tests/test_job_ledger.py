@@ -17,6 +17,7 @@ from python.atelier_ledger import (
     JOB_ITEM_STATUS_TRANSITIONS,
     JOB_STATUSES,
     JOB_STATUS_TRANSITIONS,
+    MemorySuggestionRevisionConflictError,
     validate_status_transition,
 )
 
@@ -72,6 +73,97 @@ class JobLedgerTests(unittest.TestCase):
         )
         self.assertTrue(created)
         return job
+
+    def test_memory_governance_is_versioned_reversible_and_conflict_safe(self) -> None:
+        created = self.ledger.add_memory_suggestion(
+            "designer",
+            "lighting.softness",
+            {
+                "value": "soft",
+                "label": "偏好柔光",
+                "directive": "同类任务优先使用柔和光线",
+                "distinct_sessions": 2,
+            },
+            scope_id="default",
+            confidence=0.82,
+        )
+        self.assertEqual(created["governance"]["revision"], 1)
+        self.assertEqual(created["governance"]["available_actions"][:4], [
+            "edit", "approve", "postpone", "reject",
+        ])
+
+        edited = self.ledger.govern_memory_suggestion(
+            created["id"],
+            action="edit",
+            expected_revision=1,
+            label="食品主图优先柔光",
+            directive="同类食品任务优先使用柔和、均匀的商业光线",
+        )
+        self.assertEqual(edited["status"], "pending")
+        self.assertEqual(edited["governance"]["revision"], 2)
+        self.assertTrue(edited["governance"]["manual_edit"])
+        self.assertEqual(
+            edited["proposed_value"]["directive"],
+            "同类食品任务优先使用柔和、均匀的商业光线",
+        )
+        with self.assertRaises(MemorySuggestionRevisionConflictError):
+            self.ledger.govern_memory_suggestion(
+                created["id"], action="reject", expected_revision=1
+            )
+
+        approved = self.ledger.govern_memory_suggestion(
+            created["id"], action="approve", expected_revision=2
+        )
+        self.assertEqual(approved["status"], "approved")
+        disabled = self.ledger.govern_memory_suggestion(
+            created["id"], action="disable", expected_revision=3
+        )
+        self.assertEqual(disabled["status"], "disabled")
+        self.assertEqual(self.ledger.list_memory_suggestions("approved"), [])
+
+        undone = self.ledger.govern_memory_suggestion(
+            created["id"], action="undo", expected_revision=4
+        )
+        self.assertEqual(undone["status"], "approved")
+        self.assertIn("redo", undone["governance"]["available_actions"])
+        redone = self.ledger.govern_memory_suggestion(
+            created["id"], action="redo", expected_revision=5
+        )
+        self.assertEqual(redone["status"], "disabled")
+        enabled = self.ledger.govern_memory_suggestion(
+            created["id"], action="enable", expected_revision=6
+        )
+        self.assertEqual(enabled["status"], "approved")
+        self.assertEqual(enabled["governance"]["revision"], 7)
+        self.assertEqual(len(self.ledger.list_memory_suggestions("approved")), 1)
+
+    def test_memory_postpone_is_durable_and_reversible(self) -> None:
+        created = self.ledger.add_memory_suggestion(
+            "designer",
+            "shadow.style",
+            {
+                "value": "natural",
+                "label": "偏好自然阴影",
+                "directive": "同类任务优先使用自然接触阴影",
+            },
+            scope_id="default",
+        )
+
+        postponed = self.ledger.govern_memory_suggestion(
+            created["id"], action="postpone", expected_revision=1
+        )
+
+        self.assertEqual(postponed["status"], "pending")
+        self.assertEqual(postponed["governance"]["last_action"], "postpone")
+        self.assertTrue(postponed["governance"]["postponed_at"])
+        self.assertNotIn("postpone", postponed["governance"]["available_actions"])
+        reopened = AtelierLedger(self.db_path).get_memory_suggestion(created["id"])
+        self.assertEqual(reopened["governance"]["revision"], 2)
+        restored = self.ledger.govern_memory_suggestion(
+            created["id"], action="undo", expected_revision=2
+        )
+        self.assertEqual(restored["status"], "pending")
+        self.assertIn("postpone", restored["governance"]["available_actions"])
 
     def test_create_job_persists_asset_inputs_and_survives_reopen(self) -> None:
         job = self.create_job()

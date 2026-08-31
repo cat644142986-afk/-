@@ -100,6 +100,14 @@ class DraftRevisionConflictError(ValueError):
     """Raised when a stale client attempts to overwrite a newer draft."""
 
 
+class MemorySuggestionRevisionConflictError(ValueError):
+    """Raised when a stale client attempts to govern a newer suggestion."""
+
+    def __init__(self, message: str, current: Mapping[str, Any]):
+        super().__init__(message)
+        self.current = dict(current)
+
+
 class AssetPurgeBlockedError(ValueError):
     """Raised when a workspace asset still has protected references."""
 
@@ -3724,8 +3732,18 @@ class AtelierLedger:
         evidence: list[Any] | None = None,
         confidence: float = 0,
     ) -> dict[str, Any]:
-        suggestion_id = new_id("mem")
         now = utc_now()
+        suggestion_id = new_id("mem")
+        proposed = dict(proposed_value) if isinstance(proposed_value, Mapping) else proposed_value
+        if isinstance(proposed, dict):
+            proposed["_governance"] = {
+                "revision": 1,
+                "last_action": "created",
+                "updated_at": now,
+                "manual_edit": False,
+                "history": [],
+                "redo": [],
+            }
         with self._connection() as connection:
             connection.execute(
                 """
@@ -3736,7 +3754,7 @@ class AtelierLedger:
                 """,
                 (
                     suggestion_id, scope_type, scope_id, category, rule_key,
-                    encode_json(current_value), encode_json(proposed_value),
+                    encode_json(current_value), encode_json(proposed),
                     encode_json(evidence or []), max(0.0, min(float(confidence), 1.0)), now,
                 ),
             )
@@ -3760,7 +3778,11 @@ class AtelierLedger:
         of evidence before the same rule can be proposed again.
         """
         evidence = list(evidence or [])
-        proposed_json = encode_json(proposed_value)
+        proposed_rule_value = (
+            proposed_value.get("value")
+            if isinstance(proposed_value, Mapping) and "value" in proposed_value
+            else proposed_value
+        )
         now = utc_now()
         with self._connection() as connection:
             row = connection.execute(
@@ -3773,14 +3795,45 @@ class AtelierLedger:
             ).fetchone()
             if row is not None:
                 existing = self._memory_row(row)
-                same_value = encode_json(existing.get("proposed_value")) == proposed_json
+                existing_proposed = existing.get("proposed_value")
+                existing_rule_value = (
+                    existing_proposed.get("value")
+                    if isinstance(existing_proposed, Mapping) and "value" in existing_proposed
+                    else existing_proposed
+                )
+                same_value = encode_json(existing_rule_value) == encode_json(proposed_rule_value)
                 if existing["status"] == "approved" and same_value:
                     return existing
-                if existing["status"] in {"rejected", "dismissed"} and same_value:
+                if existing["status"] in {"rejected", "dismissed", "disabled"} and same_value:
                     old_count = len(existing.get("evidence") or [])
                     if len(evidence) < old_count + 2:
                         return existing
                 if existing["status"] == "pending":
+                    incoming = (
+                        dict(proposed_value)
+                        if isinstance(proposed_value, Mapping)
+                        else proposed_value
+                    )
+                    governance = dict(existing.get("governance") or {})
+                    if isinstance(incoming, dict) and governance.get("manual_edit"):
+                        for field in ("label", "directive"):
+                            if isinstance(existing_proposed, Mapping) and existing_proposed.get(field):
+                                incoming[field] = existing_proposed[field]
+                    if isinstance(incoming, dict):
+                        current_snapshot = self._memory_snapshot(existing)
+                        history = list(governance.get("history") or [])
+                        history.append(current_snapshot)
+                        for derived_key in ("history_count", "redo_count", "available_actions"):
+                            governance.pop(derived_key, None)
+                        governance.update({
+                            "revision": int(governance.get("revision") or 1) + 1,
+                            "last_action": "evidence_refresh",
+                            "updated_at": now,
+                            "history": history[-50:],
+                            "redo": [],
+                        })
+                        governance.pop("postponed_at", None)
+                        incoming["_governance"] = governance
                     connection.execute(
                         """
                         UPDATE memory_suggestions
@@ -3789,7 +3842,7 @@ class AtelierLedger:
                         WHERE id = ?
                         """,
                         (
-                            encode_json(current_value), proposed_json, encode_json(evidence),
+                            encode_json(current_value), encode_json(incoming), encode_json(evidence),
                             max(0.0, min(float(confidence), 1.0)), now, existing["id"],
                         ),
                     )
@@ -3809,13 +3862,165 @@ class AtelierLedger:
     def review_memory_suggestion(self, suggestion_id: str, status: str) -> dict[str, Any]:
         if status not in {"approved", "rejected", "dismissed"}:
             raise ValueError("invalid memory suggestion status")
-        with self._connection() as connection:
-            cursor = connection.execute(
-                "UPDATE memory_suggestions SET status = ?, reviewed_at = ? WHERE id = ?",
-                (status, utc_now(), suggestion_id),
-            )
-            if cursor.rowcount == 0:
+        action = {
+            "approved": "approve",
+            "rejected": "reject",
+            "dismissed": "dismiss",
+        }[status]
+        return self.govern_memory_suggestion(suggestion_id, action=action)
+
+    @staticmethod
+    def _memory_snapshot(item: Mapping[str, Any]) -> dict[str, Any]:
+        proposed = item.get("proposed_value")
+        proposed = proposed if isinstance(proposed, Mapping) else {}
+        governance = item.get("governance")
+        governance = governance if isinstance(governance, Mapping) else {}
+        return {
+            "revision": int(governance.get("revision") or 1),
+            "label": str(proposed.get("label") or ""),
+            "directive": str(proposed.get("directive") or ""),
+            "status": str(item.get("status") or "pending"),
+            "reviewed_at": item.get("reviewed_at"),
+            "changed_at": str(governance.get("updated_at") or item.get("created_at") or ""),
+            "action": str(governance.get("last_action") or "created"),
+            "postponed_at": governance.get("postponed_at"),
+        }
+
+    def govern_memory_suggestion(
+        self,
+        suggestion_id: str,
+        *,
+        action: str,
+        expected_revision: int | None = None,
+        label: str | None = None,
+        directive: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply one reversible governance action without changing evidence."""
+        action = str(action or "").strip().lower()
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM memory_suggestions WHERE id = ?", (suggestion_id,)
+            ).fetchone()
+            if row is None:
                 raise KeyError(f"unknown suggestion: {suggestion_id}")
+            item = self._memory_row(row)
+            governance = dict(item.get("governance") or {})
+            revision = int(governance.get("revision") or 1)
+            if expected_revision is not None and int(expected_revision) != revision:
+                raise MemorySuggestionRevisionConflictError(
+                    f"memory suggestion {suggestion_id} is revision {revision}, not {expected_revision}",
+                    item,
+                )
+
+            status = str(item.get("status") or "pending")
+            transitions = {
+                "edit": {"pending"},
+                "approve": {"pending"},
+                "reject": {"pending"},
+                "postpone": {"pending"},
+                "dismiss": {"pending"},
+                "disable": {"approved"},
+                "enable": {"disabled"},
+                "reopen": {"rejected", "dismissed"},
+                "undo": {"pending", "approved", "rejected", "dismissed", "disabled"},
+                "redo": {"pending", "approved", "rejected", "dismissed", "disabled"},
+            }
+            if action not in transitions or status not in transitions[action]:
+                raise ValueError(f"invalid memory governance action {action!r} for status {status!r}")
+
+            proposed = dict(item.get("proposed_value") or {})
+            history = list(governance.get("history") or [])
+            redo = list(governance.get("redo") or [])
+            current_snapshot = self._memory_snapshot(item)
+            next_status = status
+            next_reviewed_at = item.get("reviewed_at")
+
+            if action == "undo":
+                if not history:
+                    raise ValueError("memory suggestion has no earlier version to restore")
+                target = dict(history.pop())
+                redo.append(current_snapshot)
+                proposed["label"] = str(target.get("label") or proposed.get("label") or "")
+                proposed["directive"] = str(
+                    target.get("directive") or proposed.get("directive") or ""
+                )
+                next_status = str(target.get("status") or "pending")
+                next_reviewed_at = target.get("reviewed_at")
+                if target.get("postponed_at"):
+                    governance["postponed_at"] = target["postponed_at"]
+                else:
+                    governance.pop("postponed_at", None)
+            elif action == "redo":
+                if not redo:
+                    raise ValueError("memory suggestion has no reverted version to restore")
+                target = dict(redo.pop())
+                history.append(current_snapshot)
+                proposed["label"] = str(target.get("label") or proposed.get("label") or "")
+                proposed["directive"] = str(
+                    target.get("directive") or proposed.get("directive") or ""
+                )
+                next_status = str(target.get("status") or "pending")
+                next_reviewed_at = target.get("reviewed_at")
+                if target.get("postponed_at"):
+                    governance["postponed_at"] = target["postponed_at"]
+                else:
+                    governance.pop("postponed_at", None)
+            else:
+                history.append(current_snapshot)
+                redo = []
+                if action == "edit":
+                    next_label = str(label if label is not None else proposed.get("label") or "").strip()
+                    next_directive = str(
+                        directive if directive is not None else proposed.get("directive") or ""
+                    ).strip()
+                    if not next_label or len(next_label) > 80:
+                        raise ValueError("memory suggestion label must contain 1 to 80 characters")
+                    if not next_directive or len(next_directive) > 600:
+                        raise ValueError("memory suggestion directive must contain 1 to 600 characters")
+                    if (
+                        next_label == str(proposed.get("label") or "")
+                        and next_directive == str(proposed.get("directive") or "")
+                    ):
+                        raise ValueError("memory suggestion edit did not change anything")
+                    proposed["label"] = next_label
+                    proposed["directive"] = next_directive
+                    governance["manual_edit"] = True
+                    next_reviewed_at = None
+                elif action == "postpone":
+                    governance["postponed_at"] = now
+                    next_reviewed_at = None
+                else:
+                    next_status = {
+                        "approve": "approved",
+                        "reject": "rejected",
+                        "dismiss": "dismissed",
+                        "disable": "disabled",
+                        "enable": "approved",
+                        "reopen": "pending",
+                    }[action]
+                    if action in {"approve", "reject", "dismiss", "reopen"}:
+                        governance.pop("postponed_at", None)
+                    next_reviewed_at = None if next_status == "pending" else now
+
+            governance.update({
+                "revision": revision + 1,
+                "last_action": action,
+                "updated_at": now,
+                "history": history[-50:],
+                "redo": redo[-50:],
+            })
+            for derived_key in ("history_count", "redo_count", "available_actions"):
+                governance.pop(derived_key, None)
+            proposed["_governance"] = governance
+            connection.execute(
+                """
+                UPDATE memory_suggestions
+                SET proposed_value_json = ?, status = ?, reviewed_at = ?
+                WHERE id = ?
+                """,
+                (encode_json(proposed), next_status, next_reviewed_at, suggestion_id),
+            )
         return self.get_memory_suggestion(suggestion_id)
 
     def dismiss_pending_memory_rule(
@@ -3828,15 +4033,23 @@ class AtelierLedger:
     ) -> int:
         """Withdraw an unreviewed candidate when new evidence becomes ambiguous."""
         with self._connection() as connection:
-            cursor = connection.execute(
+            rows = connection.execute(
                 """
-                UPDATE memory_suggestions SET status = 'dismissed', reviewed_at = ?
+                SELECT id FROM memory_suggestions
                 WHERE scope_type = ? AND scope_id = ? AND category = ?
                   AND rule_key = ? AND status = 'pending'
                 """,
-                (utc_now(), scope_type, scope_id, category, rule_key),
-            )
-            return int(cursor.rowcount)
+                (scope_type, scope_id, category, rule_key),
+            ).fetchall()
+        changed = 0
+        for row in rows:
+            try:
+                self.govern_memory_suggestion(str(row["id"]), action="dismiss")
+                changed += 1
+            except ValueError:
+                # A concurrent human decision wins over automatic withdrawal.
+                continue
+        return changed
 
     def get_session(self, session_id: str, *, include_timeline: bool = True) -> dict[str, Any]:
         with self._connection() as connection:
@@ -4058,6 +4271,41 @@ class AtelierLedger:
     def _memory_row(row: sqlite3.Row) -> dict[str, Any]:
         item = dict(row)
         item["current_value"] = decode_json(item.pop("current_value_json", "null"), None)
-        item["proposed_value"] = decode_json(item.pop("proposed_value_json", "null"), None)
+        proposed = decode_json(item.pop("proposed_value_json", "null"), None)
+        if isinstance(proposed, dict):
+            raw_governance = proposed.pop("_governance", {})
+        else:
+            raw_governance = {}
+        governance = dict(raw_governance) if isinstance(raw_governance, Mapping) else {}
+        try:
+            revision = max(1, int(governance.get("revision") or 1))
+        except (TypeError, ValueError):
+            revision = 1
+        history = [dict(entry) for entry in governance.get("history") or [] if isinstance(entry, Mapping)]
+        redo = [dict(entry) for entry in governance.get("redo") or [] if isinstance(entry, Mapping)]
+        status = str(item.get("status") or "pending")
+        available = {
+            "pending": ["edit", "approve", "reject"],
+            "approved": ["disable"],
+            "rejected": ["reopen"],
+            "dismissed": ["reopen"],
+            "disabled": ["enable"],
+        }.get(status, [])
+        if status == "pending" and not governance.get("postponed_at"):
+            available.insert(2, "postpone")
+        if history:
+            available.append("undo")
+        if redo:
+            available.append("redo")
+        governance.update({
+            "revision": revision,
+            "history": history,
+            "redo": redo,
+            "history_count": len(history),
+            "redo_count": len(redo),
+            "available_actions": available,
+        })
+        item["proposed_value"] = proposed
+        item["governance"] = governance
         item["evidence"] = decode_json(item.pop("evidence_json", "[]"), [])
         return item
