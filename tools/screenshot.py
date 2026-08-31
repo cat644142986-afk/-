@@ -6,6 +6,7 @@ Handles dual-monitor setups with mixed DPI scaling correctly.
 Usage:
   python screenshot.py                          # Capture full virtual screen
   python screenshot.py --window "Product Atelier"  # Capture specific window
+  python screenshot.py --pid 1234               # Capture the main window owned by a process
   python screenshot.py --window "Product Atelier" --pad 20  # Window with padding
   python screenshot.py --region x y w h         # Capture specific region (physical px)
   python screenshot.py -o path.png              # Save to specific path
@@ -16,6 +17,7 @@ import sys
 import os
 import argparse
 import ctypes
+import time
 from ctypes import wintypes
 from pathlib import Path
 
@@ -48,6 +50,7 @@ SM_XVIRTUALSCREEN = 76
 SM_YVIRTUALSCREEN = 77
 SM_CXVIRTUALSCREEN = 78
 SM_CYVIRTUALSCREEN = 79
+SW_RESTORE = 9
 
 # Fix stdout encoding for Chinese
 if sys.stdout.encoding != "utf-8":
@@ -117,6 +120,45 @@ def find_window(title_part):
     cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     user32.EnumWindows(cb(callback), 0)
     return results[0] if results else None
+
+
+def find_window_by_pid(process_id):
+    """Find a visible top-level window owned by a process."""
+    results = []
+
+    def callback(hwnd, lparam):
+        owner_pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner_pid))
+        if owner_pid.value != process_id or not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        title = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, title, length + 1)
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        if rect.right > rect.left and rect.bottom > rect.top:
+            results.append((hwnd, (rect.left, rect.top, rect.right, rect.bottom), title.value))
+        return True
+
+    cb = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows(cb(callback), 0)
+    return results[0] if results else None
+
+
+def activate_window(hwnd):
+    """Restore and raise a selected window before copying screen pixels."""
+    user32.ShowWindow(hwnd, SW_RESTORE)
+    user32.BringWindowToTop(hwnd)
+    user32.SetForegroundWindow(hwnd)
+    time.sleep(0.35)
+
+
+def get_window_rect(hwnd):
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    return rect.left, rect.top, rect.right, rect.bottom
 
 
 def list_windows():
@@ -240,6 +282,7 @@ def save_bmp(raw_data, w, h, output_path):
 def main():
     parser = argparse.ArgumentParser(description="DPI-Aware Screen Capture")
     parser.add_argument("--window", "-w", type=str, help="Capture window by title (partial match)")
+    parser.add_argument("--pid", type=int, help="Capture a visible top-level window owned by this process ID")
     parser.add_argument("--pad", type=int, default=0, help="Padding around window in px")
     parser.add_argument("--region", nargs=4, type=int, metavar=("X", "Y", "W", "H"), help="Capture region (physical px)")
     parser.add_argument("--monitor", "-m", type=int, help="Capture monitor by index (0,1,...)")
@@ -264,12 +307,27 @@ def main():
     # Determine capture region
     x, y, w, h = None, None, None, None
 
-    if args.window:
+    if args.pid is not None:
+        result = find_window_by_pid(args.pid)
+        if not result:
+            print(f"ERROR: No visible window found for process ID {args.pid}!")
+            sys.exit(1)
+        hwnd, _, title = result
+        activate_window(hwnd)
+        left, top, right, bottom = get_window_rect(hwnd)
+        x = left - args.pad
+        y = top - args.pad
+        w = (right - left) + args.pad * 2
+        h = (bottom - top) + args.pad * 2
+        print(f"Capturing process {args.pid} window: '{title}' at ({x},{y}) {w}x{h}")
+    elif args.window:
         result = find_window(args.window)
         if not result:
             print(f"ERROR: Window '{args.window}' not found!")
             sys.exit(1)
-        hwnd, (left, top, right, bottom), title = result
+        hwnd, _, title = result
+        activate_window(hwnd)
+        left, top, right, bottom = get_window_rect(hwnd)
         x = left - args.pad
         y = top - args.pad
         w = (right - left) + args.pad * 2

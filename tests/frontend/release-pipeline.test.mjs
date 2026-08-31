@@ -31,7 +31,20 @@ test('formal portable promotion is candidate-first and rollback-capable', () => 
   assert.match(script, /\$keepShortcutBackup = \$true/);
   assert.match(script, /published desktop shortcut does not target the finalized formal directory/i);
   assert.match(script, /-Quick and -SkipSidecar are not allowed/);
+  assert.match(script, /Start-Process \$TargetExe -WorkingDirectory \$PortableDir -PassThru/);
+  assert.match(script, /screenshotScript --pid \$finalAppProcess\.Id/);
   assert.doesNotMatch(script, /Build-Sidecar\.ps1"?\s+-DeployPortable/i);
+});
+
+test('release evidence captures the finalized app by process identity', () => {
+  const screenshot = read('tools/screenshot.py');
+
+  assert.match(screenshot, /def find_window_by_pid\(process_id\):/);
+  assert.match(screenshot, /GetWindowThreadProcessId/);
+  assert.match(screenshot, /owner_pid\.value != process_id/);
+  assert.match(screenshot, /parser\.add_argument\("--pid"/);
+  assert.match(screenshot, /ShowWindow\(hwnd, SW_RESTORE\)/);
+  assert.match(screenshot, /SetForegroundWindow\(hwnd\)/);
 });
 
 test('sidecar build cannot overwrite the formal portable release', () => {

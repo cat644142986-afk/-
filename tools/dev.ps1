@@ -423,8 +423,9 @@ try {
     }
 
     $finalAppLaunched = $false
+    $finalAppProcess = $null
     try {
-        Start-Process $TargetExe -WorkingDirectory $PortableDir
+        $finalAppProcess = Start-Process $TargetExe -WorkingDirectory $PortableDir -PassThru
         $finalAppLaunched = $true
         Write-Host "  Waiting $WaitSeconds seconds for the finalized app to start..." -ForegroundColor DarkGray
         Start-Sleep -Seconds $WaitSeconds
@@ -440,7 +441,7 @@ try {
                 if (Test-Path -LiteralPath $screenshotPath) {
                     Remove-Item -LiteralPath $screenshotPath -Force
                 }
-                & python.exe $screenshotScript --window "Product Atelier" --pad 30 -o $screenshotPath
+                & python.exe $screenshotScript --pid $finalAppProcess.Id --pad 30 -o $screenshotPath
                 $screenshotExitCode = $LASTEXITCODE
                 if ($screenshotExitCode -ne 0) { throw "Screenshot command exited with $screenshotExitCode" }
                 if (-not (Test-Path -LiteralPath $screenshotPath -PathType Leaf)) {
