@@ -530,6 +530,14 @@ class DurableJobApiTests(unittest.TestCase):
                     skipped_refine["output"]["billing"]["status"],
                     "not-applicable",
                 )
+                quality = next(
+                    item for item in traces if item["stage"] == "quality.final.1"
+                )
+                self.assertEqual(quality["status"], "completed")
+                self.assertFalse(quality["output"]["retry"]["authorized"])
+                self.assertIn(
+                    "reference_fidelity", quality["output"]["unverified_axes"]
+                )
                 primary = next(item for item in traces if item["stage"] == "prompt.primary")
                 self.assertIn("未点名的主体内容保持不变", primary["parameters"]["base_prompt"])
                 self.assertNotIn("8K超清", primary["parameters"]["base_prompt"])

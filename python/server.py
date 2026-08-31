@@ -48,6 +48,10 @@ try:
         prompt_snapshot,
         unavailable_billing_evidence,
     )
+    from generation_quality_gate import (
+        QUALITY_GATE_CONTRACT_VERSION,
+        evaluate_generation_quality,
+    )
     from knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from memory_engine import MemoryEngine, resolve_approved_memory_rules
     from grounding_runtime import (
@@ -108,6 +112,10 @@ except ImportError:  # Allows importing as python.server during local tests.
         prompt_adapter_profile,
         prompt_snapshot,
         unavailable_billing_evidence,
+    )
+    from python.generation_quality_gate import (
+        QUALITY_GATE_CONTRACT_VERSION,
+        evaluate_generation_quality,
     )
     from python.knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from python.memory_engine import MemoryEngine, resolve_approved_memory_rules
@@ -4620,6 +4628,58 @@ def _run_local_stage(trace, stage, operation, *, parameters=None):
     return value
 
 
+def _record_generation_quality(
+    trace,
+    stage,
+    image,
+    output_spec,
+    knowledge_context,
+):
+    """Record local quality evidence without changing the workflow outcome."""
+    started = time.perf_counter()
+    try:
+        report = evaluate_generation_quality(
+            image,
+            output_spec,
+            context=knowledge_context,
+        )
+    except Exception as exc:
+        _record_execution_trace_safe(
+            trace,
+            stage,
+            "failed",
+            parameters={"quality_gate_contract": QUALITY_GATE_CONTRACT_VERSION},
+            output={
+                "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
+                "retry": {
+                    "authorized": False,
+                    "reason": "quality-gate-evaluation-failed",
+                },
+            },
+            error_code="LOCAL_QUALITY_GATE_FAILED",
+            error_message=str(exc) or type(exc).__name__,
+        )
+        return None
+    report = {
+        **report,
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
+    }
+    _record_execution_trace_safe(
+        trace,
+        stage,
+        "completed",
+        parameters={
+            "quality_gate_contract": QUALITY_GATE_CONTRACT_VERSION,
+            "generation_strategy": str(
+                (trace.get("parameters") or {}).get("generation_strategy")
+                or LEGACY_DOUBLE_PASS
+            ),
+        },
+        output=report,
+    )
+    return report
+
+
 def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
     params = dict(ctx.job.get("parameters") or {})
     mode = str(ctx.job["mode"])
@@ -4761,6 +4821,14 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             trace=trace,
         )
         if do_refine:
+            _record_generation_quality(
+                trace,
+                f"quality.primary.{index + 1}",
+                generated,
+                output_spec,
+                knowledge_context,
+            )
+        if do_refine:
             ctx.progress(0.05 + per * index + per * 0.36, {"phase": "cloud-refine", "variation": index + 1})
             template_stage2_prompt = make_prompt(
                 build_stage2_prompt(product_name, platter, product_type, angle), fidelity
@@ -4806,6 +4874,13 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             f"local.enhance.{index + 1}",
             lambda: post_process_enhance(generated),
             parameters={"operation": "post-process-enhance"},
+        )
+        _record_generation_quality(
+            trace,
+            f"quality.final.{index + 1}",
+            main_image,
+            output_spec,
+            knowledge_context,
         )
         outputs.append(_run_local_stage(
             trace,
@@ -5190,6 +5265,14 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             trace=trace,
         )
         if do_refine:
+            _record_generation_quality(
+                trace,
+                f"quality.primary.product-{index + 1}",
+                generated,
+                output_spec,
+                knowledge_context,
+            )
+        if do_refine:
             ctx.progress(0.05 + index * per + per * 0.38, {"phase": "cloud-refine", "product": index + 1})
             template_stage2_prompt = make_prompt(
                 build_stage2_prompt(name, platter, product_type, angle), fidelity
@@ -5238,6 +5321,13 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             f"local.enhance.{index + 1}",
             lambda: post_process_enhance(generated),
             parameters={"operation": "post-process-enhance"},
+        )
+        _record_generation_quality(
+            trace,
+            f"quality.final.product-{index + 1}",
+            main_image,
+            output_spec,
+            knowledge_context,
         )
         safe_name = safe_stem(name, f"product-{index + 1}")
         outputs.append(_run_local_stage(
