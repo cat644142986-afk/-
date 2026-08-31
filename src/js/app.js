@@ -74,6 +74,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 let modalReturnFocus = null;
 let drawerReturnFocus = null;
+let reviewGuideReturnFocus = null;
 let semanticReturnFocus = null;
 let workspaceStatusTimer = null;
 const semanticCanvasState = {
@@ -999,7 +1000,11 @@ function switchMode(mode, preserveCurrent = true, loadDurable = true) {
   }
   state.assets = state.assetsByCollection[MODE_CONFIG[mode].collection] || [];
   const config = MODE_CONFIG[mode];
-  $$('.mode-button').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
+  $$('.mode-button').forEach((button) => {
+    const active = button.dataset.mode === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
   const input = $('#file-input');
   input.multiple = config.multiple;
   $('#upload-eyebrow').textContent = config.eyebrow;
@@ -2399,6 +2404,7 @@ function renderResults() {
     const active = button.dataset.rtab === state.resultTab;
     button.classList.toggle('active', active);
     button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
   });
   const items = getResultItems();
   if (!items.length) {
@@ -3326,6 +3332,20 @@ function renderReviewPanel(item) {
   }
 }
 
+function setReviewGuideOpen(open, { focus = false, restore = false } = {}) {
+  const guide = $('#review-guide');
+  const help = $('#btn-compare-help');
+  if (!guide || !help) return;
+  guide.hidden = !open;
+  help.setAttribute('aria-expanded', String(open));
+  if (open && focus) $('#btn-review-guide-done')?.focus();
+  if (!open && restore) {
+    const target = reviewGuideReturnFocus instanceof HTMLElement ? reviewGuideReturnFocus : help;
+    target.focus();
+  }
+  if (!open) reviewGuideReturnFocus = null;
+}
+
 function renderCompare() {
   const rail = $('#review-version-rail');
   const entries = resultReviewEntries();
@@ -3377,7 +3397,7 @@ function renderCompare() {
   $('.review-compare-toolbar').hidden = !has;
   $('#compare-empty').hidden = has;
   $('#compare-view').hidden = !has;
-  $('#review-guide').hidden = !has || currentCompare.guide_dismissed;
+  setReviewGuideOpen(has && !currentCompare.guide_dismissed);
   if (!has) {
     $('#compare-view').classList.remove('is-side-by-side', 'is-zoomed', 'is-panning');
     $('#compare-slider').hidden = false;
@@ -3442,6 +3462,12 @@ function setCompareTransform(compareState, persist = true) {
 function setupCompare() {
   const view = $('#compare-view');
   const slider = $('#compare-slider');
+  const guide = $('#review-guide');
+  const help = $('#btn-compare-help');
+  guide.setAttribute('role', 'dialog');
+  guide.setAttribute('aria-modal', 'false');
+  help.setAttribute('aria-controls', 'review-guide');
+  help.setAttribute('aria-expanded', String(!guide.hidden));
   let sliderDragging = false;
   let panDrag = null;
   const moveSlider = (clientX) => {
@@ -4280,9 +4306,22 @@ function bindEvents() {
   }));
   $('#btn-knowledge-card').addEventListener('click', () => openDrawer('intelligence'));
   $$('[data-close-drawer]').forEach((button) => button.addEventListener('click', () => closeDrawer(button.dataset.closeDrawer)));
-  $$('.result-tab').forEach((button) => button.addEventListener('click', () => {
-    selectResultVersion(0, button.dataset.rtab);
-  }));
+  const resultTabs = $$('.result-tab');
+  resultTabs.forEach((button, index) => {
+    button.addEventListener('click', () => {
+      selectResultVersion(0, button.dataset.rtab);
+    });
+    button.addEventListener('keydown', (event) => {
+      const targets = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: resultTabs.length - 1 };
+      if (!(event.key in targets)) return;
+      event.preventDefault();
+      const targetIndex = event.key === 'ArrowRight' || event.key === 'ArrowLeft'
+        ? (targets[event.key] + resultTabs.length) % resultTabs.length
+        : targets[event.key];
+      resultTabs[targetIndex]?.focus();
+      resultTabs[targetIndex]?.click();
+    });
+  });
   $('#viewer-prev').addEventListener('click', () => {
     const items = getResultItems();
     if (items.length) selectResultVersion((state.viewerIndex - 1 + items.length) % items.length);
@@ -4319,11 +4358,13 @@ function bindEvents() {
     setCompareTransform(reset, false);
     toast('对比位置与缩放已复位');
   });
-  $('#btn-compare-help').addEventListener('click', () => { $('#review-guide').hidden = false; });
+  $('#btn-compare-help').addEventListener('click', () => {
+    reviewGuideReturnFocus = document.activeElement;
+    setReviewGuideOpen(true, { focus: true });
+  });
   $('#btn-review-guide-done').addEventListener('click', () => {
     updateCompareState({ guide_dismissed: true });
-    $('#review-guide').hidden = true;
-    $('#review-version-rail [aria-pressed="true"]')?.focus();
+    setReviewGuideOpen(false, { restore: true });
   });
   $('#btn-review-edit').addEventListener('click', () => {
     const item = getResultItems()[state.viewerIndex];
@@ -4478,6 +4519,7 @@ function bindEvents() {
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
     if (event.key !== 'Escape') return;
+    if (!$('#review-guide').hidden) { setReviewGuideOpen(false, { restore: true }); return; }
     if (!$('#semantic-selection-modal').hidden) { closeSemanticSelection(); return; }
     if (!$('#img-modal').hidden) closeModal();
     if (!$('#advanced-drawer').hidden) closeDrawer('advanced');

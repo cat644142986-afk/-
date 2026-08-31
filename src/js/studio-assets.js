@@ -286,6 +286,7 @@ export function createAssetManagerController({
       const active = button.dataset.assetView === view;
       button.classList.toggle('active', active);
       button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
     });
     query('#asset-manager-search').value = search;
     query('#asset-manager-sort').value = sort;
@@ -458,14 +459,27 @@ export function createAssetManagerController({
   function bind() {
     if (bound) return;
     query('#btn-asset-manager').addEventListener('click', open);
-    queryAll('[data-asset-view]').forEach((button) => button.addEventListener('click', () => {
-      view = button.dataset.assetView;
-      search = '';
-      sort = 'custom';
-      visibleLimit = ASSET_PAGE_SIZE;
-      clearPurgeState();
-      render();
-    }));
+    const viewTabs = queryAll('[data-asset-view]');
+    viewTabs.forEach((button, index) => {
+      button.addEventListener('click', () => {
+        view = button.dataset.assetView;
+        search = '';
+        sort = 'custom';
+        visibleLimit = ASSET_PAGE_SIZE;
+        clearPurgeState();
+        render();
+      });
+      button.addEventListener('keydown', (event) => {
+        const targets = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: viewTabs.length - 1 };
+        if (!(event.key in targets)) return;
+        event.preventDefault();
+        const targetIndex = event.key === 'ArrowRight' || event.key === 'ArrowLeft'
+          ? (targets[event.key] + viewTabs.length) % viewTabs.length
+          : targets[event.key];
+        viewTabs[targetIndex]?.focus();
+        viewTabs[targetIndex]?.click();
+      });
+    });
     query('#asset-manager-search').addEventListener('input', (event) => { search = event.target.value.trim(); visibleLimit = ASSET_PAGE_SIZE; renderList(); });
     query('#asset-manager-sort').addEventListener('change', (event) => { sort = event.target.value; visibleLimit = ASSET_PAGE_SIZE; renderList(); });
     query('#asset-select-visible').addEventListener('click', () => {
