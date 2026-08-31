@@ -326,3 +326,16 @@ NSIS 已完成隔离安装、安装态双 smoke 与静默卸载，但没有 Auth
 本检查点没有数据库迁移，新增外观偏好仅保存在本机 localStorage；回退到 R8 不需要转换 schema，但 R8 不显示主题跟随系统、舒适字号、高对比和减少动效设置。降级前先完成或取消排队/运行任务，退出正式 EXE 及其子 sidecar，为当前正式目录与 `%APPDATA%\ProductAtelier` 另留新副本，再从目标 Git 提交重走 `tools/dev.ps1`；不要覆盖运行中的正式目录。
 
 发布后的证据工具修复提交 `1f7b33a` 不改变正式 artifact。它只将截图从模糊标题匹配改为正式进程 ID，并在抓取前恢复/置前窗口；若回退源码，建议保留该工具修复，否则同名 Photoshop 文档可能再次污染验收截图。当前活动 transaction 文件不存在，桌面快捷方式目标与工作目录均指向正式便携目录。
+
+## 2026-08-31 R9 键盘、对比度与 50/200 素材正式便携检查点
+
+- 正式 artifact 绑定提交：`107288d66675ff76276ec43b73a31c75ce865dfc`
+- 正式 EXE / sidecar / manifest SHA-256：`E5A1600C0C813EADD383462B077C9FA1AB6CA34A1A65967D304AA36FC18FE8FB` / `89731E10F4127CA8655C0182A4A3089F465BDA7E9CD9E305C336FC126FA2E62A` / `784095094C8BA377B8EBA1F6F771411FF453472E73C7983544E77216C8A5A556`
+- 正式目录 tree SHA-256：`EB44C2F9B20F5EBCAE7341EC67E9982F9BDEAA176C6821C5EF2D2F405846ED30`
+- finalized 事务：`a7e29720dc2247729fdce0567e2a1fa8`
+- 上一 R9 首批正式目录备份：`D:\ProductAtelier-Backups\release-before-20260831-170450-107288d66675`
+- promotion evidence SHA-256：`D41E00A41F45C64A495FB31CB41F39E4A7BB6A6F45B9C719F33D79C841990473`
+
+活动 transaction 文件不存在；候选与正式目录双 smoke 均确认 contract `2026-08-31.2`、schema v3、同一 Git/source fingerprint，桌面快捷方式已在 finalize 后更新。该版本没有数据库迁移；新增内容只影响前端呈现、键盘焦点与大列表渲染，回退到 R9 首批不需要转换账本，但会失去第二批对比度与页签键盘修复。
+
+若需降级，先完成或取消排队/运行任务，退出正式 EXE 及其 sidecar，为当前正式目录和 `%APPDATA%\ProductAtelier` 另留新副本，再从目标提交重走 `tools/dev.ps1`；不要直接覆盖运行中的正式目录。本轮外部备份只含前一正式应用目录，不含用户账本、Key、素材或成品。
