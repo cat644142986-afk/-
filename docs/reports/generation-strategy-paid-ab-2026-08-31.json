@@ -1,0 +1,107 @@
+{
+  "schema_version": "1.0",
+  "experiment_id": "r7-single-vs-double-pass-2026-08-31",
+  "executed_at": "2026-08-31",
+  "scope": {
+    "variable_under_test": "generation_strategy",
+    "fixed_prompt_version": "prompt_v1",
+    "fixed_model": "gpt-image-2",
+    "fixed_output_ratio": "1:1",
+    "fixed_output_resolution": "2k",
+    "fixed_fidelity_percent": 40,
+    "cases": [
+      "packaging-text-brand-procedural",
+      "multi-count-procedural",
+      "transparent-bottle-real"
+    ]
+  },
+  "authorization": {
+    "max_paid_calls": 9,
+    "calls_used": 8,
+    "planned_healthy_calls": 6,
+    "paid_vlm_calls": 0,
+    "actual_billing_amount": null,
+    "billing_status": "provider-response-does-not-expose-actual-charge"
+  },
+  "execution": {
+    "status": "completed-after-one-provider-retry",
+    "successful_calls": 7,
+    "failed_calls": 1,
+    "failed_stage": "transparent-bottle-real/refine",
+    "failure_type": "RuntimeError",
+    "failed_call_elapsed_ms": 25409.924,
+    "paired_success_timings_ms": {
+      "packaging-text-brand-procedural": {
+        "single_pass_first_usable": 47273.622,
+        "legacy_double_pass_complete": 99743.292
+      },
+      "multi-count-procedural": {
+        "single_pass_first_usable": 45468.755,
+        "legacy_double_pass_complete": 92279.888
+      },
+      "transparent-bottle-real": {
+        "single_pass_first_usable": 52770.337,
+        "legacy_double_pass_complete": 105518.399
+      }
+    },
+    "healthy_case_mean_ms": {
+      "single_pass_first_usable": 48504.238,
+      "legacy_double_pass_complete": 99180.526,
+      "single_pass_reduction_percent": 51.096
+    }
+  },
+  "blind_review_round_1": {
+    "review_rounds_completed": 1,
+    "required_rounds_for_formal_promotion": 2,
+    "score_scale": "0-5",
+    "mean_10_axis": {
+      "single_pass": 4.527,
+      "legacy_double_pass": 4.503
+    },
+    "mean_commercial_usability": {
+      "single_pass": 4.4,
+      "legacy_double_pass": 4.333
+    },
+    "directly_deliverable_rate": {
+      "single_pass": 1.0,
+      "legacy_double_pass": 1.0
+    },
+    "case_preference_after_unblinding": {
+      "packaging-text-brand-procedural": "legacy_double_pass-by-0.02",
+      "multi-count-procedural": "tie",
+      "transparent-bottle-real": "single_pass-by-0.09"
+    },
+    "interpretation": "No stable visual advantage was observed for the paid refine stage. The sample is directional only because it has three cases and one blind review round."
+  },
+  "deterministic_gate": {
+    "all_outputs": {
+      "width": 2048,
+      "height": 2048
+    },
+    "blocking_failures": 0,
+    "pass_outputs": 4,
+    "review_outputs": 2,
+    "review_detail": "Both transparent-bottle variants raised the same subject-border-contact warning; refinement did not clear it.",
+    "paid_retry_authorized_by_gate": false
+  },
+  "artifact_sha256": {
+    "packaging-text-brand-procedural": {
+      "single_pass": "5609f21fcafdfea6b2f92fbf453119b848338d35abfef5e2a959f12daa861938",
+      "legacy_double_pass": "dcbe9fc1ed2adb9493ce4395a2c100c07bf261f36e38bf66eae7ee452c611cea"
+    },
+    "multi-count-procedural": {
+      "single_pass": "cefa4b364dde9515c89bfb94d7e34289c203ff5bc7ff2bb1c1788114bf290ed8",
+      "legacy_double_pass": "5ff912a9d34353e07f22b50a5feb044f605d4f9ba3def0ed297b5fdb58ff8fab"
+    },
+    "transparent-bottle-real": {
+      "single_pass": "150f71a87b9733f4c8a39b2700960f7b8fce78f9a8209ace1b778db2f3b2022a",
+      "legacy_double_pass": "fa3cb924d538f535ce92a40f88cbe203d5b445b5012c330b4a133a5226af578e"
+    }
+  },
+  "decision": {
+    "formal_default_changed": false,
+    "candidate_status": "continue-validation",
+    "reason": "Single pass cut healthy first-usable latency and normal provider calls roughly in half without a measured quality loss, but the formal two-round/nine-case promotion gate is not complete.",
+    "next_experiment": "Run the second independent blind review, then expand only if it remains non-inferior. Prompt v3 must be tested separately after the strategy decision."
+  }
+}
