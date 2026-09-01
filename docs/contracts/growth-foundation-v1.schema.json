@@ -1,0 +1,464 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://productatelier.local/contracts/growth-foundation-v1.schema.json",
+  "title": "Product Atelier Growth Foundation v1",
+  "description": "G0 contract envelope for the isolated G1A prototype. It is not a production SQLite schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "canvas_document",
+    "masks",
+    "rois",
+    "product_profiles",
+    "quality_issues",
+    "recipes"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "growth-foundation-v1"
+    },
+    "canvas_document": {
+      "$ref": "#/$defs/CanvasDocument"
+    },
+    "masks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Mask"
+      }
+    },
+    "rois": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ROI"
+      }
+    },
+    "product_profiles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ProductProfile"
+      }
+    },
+    "quality_issues": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/QualityIssue"
+      }
+    },
+    "recipes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Recipe"
+      }
+    }
+  },
+  "$defs": {
+    "CanvasDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision",
+        "active_artboard_id",
+        "source_asset_ids",
+        "artboards",
+        "layers",
+        "operations",
+        "undo_cursor",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "active_artboard_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "source_asset_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+          }
+        },
+        "artboards": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/Artboard"
+          }
+        },
+        "layers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Layer"
+          }
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Operation"
+          }
+        },
+        "undo_cursor": {
+          "type": "integer",
+          "minimum": -1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "Artboard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "rect", "export"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "rect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "width", "height"],
+          "properties": {
+            "x": {"type": "number"},
+            "y": {"type": "number"},
+            "width": {"type": "number", "exclusiveMinimum": 0},
+            "height": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "export": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pixel_width", "pixel_height", "color_space"],
+          "properties": {
+            "pixel_width": {"type": "integer", "minimum": 1, "maximum": 32768},
+            "pixel_height": {"type": "integer", "minimum": 1, "maximum": 32768},
+            "color_space": {"enum": ["srgb", "display-p3"]}
+          }
+        }
+      }
+    },
+    "Layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "artboard_id",
+        "source",
+        "transform",
+        "z_index",
+        "visible",
+        "locked"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "artboard_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "id", "original_pixel_width", "original_pixel_height"],
+          "properties": {
+            "kind": {"enum": ["asset", "result"]},
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+            },
+            "proxy_ref": {
+              "type": "string",
+              "pattern": "^(proxy|fixture):[a-zA-Z0-9._:-]+$"
+            },
+            "original_pixel_width": {"type": "integer", "minimum": 1},
+            "original_pixel_height": {"type": "integer", "minimum": 1}
+          }
+        },
+        "transform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "scale_x", "scale_y", "rotation_degrees", "opacity"],
+          "properties": {
+            "x": {"type": "number"},
+            "y": {"type": "number"},
+            "scale_x": {"type": "number", "exclusiveMinimum": 0},
+            "scale_y": {"type": "number", "exclusiveMinimum": 0},
+            "rotation_degrees": {"type": "number", "minimum": -360, "maximum": 360},
+            "opacity": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "z_index": {"type": "integer", "minimum": 0},
+        "visible": {"type": "boolean"},
+        "locked": {"type": "boolean"}
+      }
+    },
+    "Operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "command_id",
+        "input_layer_ids",
+        "output_layer_id",
+        "roi_id",
+        "mask_id",
+        "product_profile_id",
+        "cost",
+        "status",
+        "created_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "command_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "input_layer_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+          }
+        },
+        "output_layer_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "roi_id": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "mask_id": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "product_profile_id": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "cost": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "confirmed_call_count",
+            "user_confirmation_required",
+            "automatic_paid_retry"
+          ],
+          "properties": {
+            "mode": {"enum": ["free", "paid"]},
+            "confirmed_call_count": {"type": "integer", "minimum": 0},
+            "user_confirmation_required": {"type": "boolean"},
+            "automatic_paid_retry": {"type": "boolean"}
+          }
+        },
+        "status": {"enum": ["planned", "running", "succeeded", "failed", "canceled"]},
+        "created_at": {"type": "string", "format": "date-time"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "cost": {
+                "properties": {"mode": {"const": "paid"}},
+                "required": ["mode"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "cost": {
+                "properties": {
+                  "confirmed_call_count": {"minimum": 1},
+                  "user_confirmation_required": {"const": true},
+                  "automatic_paid_retry": {"const": false}
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Mask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source_layer_id", "version", "storage_ref", "sha256", "pixel_width", "pixel_height"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+        "source_layer_id": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+        "version": {"type": "integer", "minimum": 1},
+        "storage_ref": {"type": "string", "pattern": "^(mask|fixture):[a-zA-Z0-9._:-]+$"},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "pixel_width": {"type": "integer", "minimum": 1},
+        "pixel_height": {"type": "integer", "minimum": 1}
+      }
+    },
+    "ROI": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source_layer_id", "normalized_rect", "writable"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+        "source_layer_id": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+        "normalized_rect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "width", "height"],
+          "properties": {
+            "x": {"type": "number", "minimum": 0, "maximum": 1},
+            "y": {"type": "number", "minimum": 0, "maximum": 1},
+            "width": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+            "height": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+          }
+        },
+        "writable": {"type": "boolean"}
+      }
+    },
+    "ProductProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sku", "revision", "category", "facts", "components", "approved_reference_ids"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+        "sku": {"type": "string", "minLength": 1, "maxLength": 120},
+        "revision": {"type": "integer", "minimum": 1},
+        "category": {"type": "string", "minLength": 1, "maxLength": 120},
+        "facts": {
+          "type": "object",
+          "additionalProperties": {"type": ["string", "number", "boolean"]}
+        },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "name", "policy"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+              "name": {"type": "string", "minLength": 1, "maxLength": 120},
+              "policy": {"enum": ["must_preserve", "optional", "allow_modify", "forbid_modify"]}
+            }
+          }
+        },
+        "approved_reference_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"}
+        }
+      }
+    },
+    "QualityIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "result_id", "code", "severity", "status", "evidence", "roi_id", "unverified_axes", "suggested_action"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+        "result_id": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+        "code": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+        "severity": {"enum": ["info", "warning", "blocking"]},
+        "status": {"enum": ["open", "resolved", "dismissed", "unverified"]},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 500},
+        "roi_id": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+        "unverified_axes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"}
+        },
+        "suggested_action": {"type": "string", "minLength": 1, "maxLength": 500}
+      }
+    },
+    "Recipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "revision", "product_profile_id", "steps", "quality_gate_codes", "outputs", "failure_policy"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "revision": {"type": "integer", "minimum": 1},
+        "product_profile_id": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["order", "command_id", "tool_contract_version", "paid", "requires_user_confirmation"],
+            "properties": {
+              "order": {"type": "integer", "minimum": 1},
+              "command_id": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+              "tool_contract_version": {"type": "string", "minLength": 1, "maxLength": 80},
+              "paid": {"type": "boolean"},
+              "requires_user_confirmation": {"type": "boolean"}
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"paid": {"const": true}}, "required": ["paid"]},
+                "then": {"properties": {"requires_user_confirmation": {"const": true}}}
+              }
+            ]
+          }
+        },
+        "quality_gate_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"}
+        },
+        "outputs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["role", "pixel_width", "pixel_height", "format"],
+            "properties": {
+              "role": {"type": "string", "pattern": "^[a-z][a-z0-9._:-]{2,127}$"},
+              "pixel_width": {"type": "integer", "minimum": 1, "maximum": 32768},
+              "pixel_height": {"type": "integer", "minimum": 1, "maximum": 32768},
+              "format": {"enum": ["jpeg", "png", "webp"]}
+            }
+          }
+        },
+        "failure_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["partial_success", "paid_retry"],
+          "properties": {
+            "partial_success": {"const": "preserve_succeeded_items"},
+            "paid_retry": {"const": "manual_confirmation_only"}
+          }
+        }
+      }
+    }
+  }
+}
