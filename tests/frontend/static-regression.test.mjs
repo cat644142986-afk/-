@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, assets, config, jobs, knowledge, memory, review, sessions, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
+const [app, api, assets, config, jobs, knowledge, memory, review, compare, sessions, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
@@ -14,6 +14,7 @@ const [app, api, assets, config, jobs, knowledge, memory, review, sessions, sett
   readFile(path.join(root, 'src/js/studio-knowledge.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-memory.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-review.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-compare.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-sessions.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-settings.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-shell.js'), 'utf8'),
@@ -467,12 +468,17 @@ test('result adjustment is a durable derived version instead of overwriting the 
 });
 
 test('result review persists A/B target, divider, zoom, pan, and first-use guidance', () => {
-  assert.match(app, /function updateCompareState\(patch, persist = true\)/);
-  assert.match(app, /secondary_result_asset_id/);
-  assert.match(app, /guide_dismissed/);
-  assert.match(app, /pan_x/);
-  assert.match(app, /setCompareTransform/);
-  assert.match(app, /scheduleWorkspaceDraftSave\(mode\)/);
+  assert.match(app, /createCompareController/);
+  assert.match(app, /compareController\.bind\(\)/);
+  assert.match(app, /compareController\.render\(\)/);
+  assert.doesNotMatch(app, /function (compareStateForMode|updateCompareState|renderCompare|syncComparePresentation|setComparePosition|setCompareTransform|setupCompare)/);
+  assert.match(compare, /function updateState\(patch, persist = true\)/);
+  assert.match(compare, /secondary_result_asset_id/);
+  assert.match(compare, /guide_dismissed/);
+  assert.match(compare, /pan_x/);
+  assert.match(compare, /function setTransform/);
+  assert.match(compare, /scheduleWorkspaceDraftSave\(mode\)/);
+  assert.match(compare, /pointercancel/);
   assert.match(css, /--compare-zoom/);
   assert.match(css, /\.review-guide/);
 });
@@ -480,7 +486,7 @@ test('result review persists A/B target, divider, zoom, pan, and first-use guida
 test('result review form and feedback receipt behavior live outside the page orchestrator', () => {
   assert.match(app, /createReviewController/);
   assert.match(app, /reviewController\.prepareFeedback\(item\)/);
-  assert.match(app, /reviewController\.renderPanel\(activeItem\)/);
+  assert.match(compare, /reviewController\.renderPanel\(activeItem\)/);
   assert.match(app, /reviewController\.activateDecision\(button\.dataset\.reviewDecision \|\| ''\)/);
   assert.doesNotMatch(app, /function (renderFeedbackState|prepareFeedbackForResult|clearReviewForm|renderReviewReasonTags|activateReviewDecision|renderReviewPanel)/);
   assert.match(review, /function prepareFeedback\(item\)/);

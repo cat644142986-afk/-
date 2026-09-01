@@ -37,16 +37,17 @@ test('tab groups use one tab stop and support arrow, Home, and End navigation', 
 });
 
 test('review help and preview layers expose predictable focus behavior', async () => {
-  const [html, app] = await Promise.all([
+  const [html, app, compare] = await Promise.all([
     readFile(path.join(root, 'src/index.html'), 'utf8'),
     readFile(path.join(root, 'src/js/app.js'), 'utf8'),
+    readFile(path.join(root, 'src/js/studio-compare.js'), 'utf8'),
   ]);
   assert.match(html, /id="modal-backdrop"[^>]+tabindex="-1"/);
-  assert.match(app, /guide\.setAttribute\('role', 'dialog'\)/);
-  assert.match(app, /help\.setAttribute\('aria-controls', 'review-guide'\)/);
-  assert.match(app, /setReviewGuideOpen\(true, \{ focus: true \}\)/);
-  assert.match(app, /setReviewGuideOpen\(false, \{ restore: true \}\)/);
-  assert.match(app, /if \(!\$\('#review-guide'\)\.hidden\) \{ setReviewGuideOpen\(false, \{ restore: true \}\); return; \}/);
+  assert.match(compare, /guide\.setAttribute\('role', 'dialog'\)/);
+  assert.match(compare, /help\.setAttribute\('aria-controls', 'review-guide'\)/);
+  assert.match(compare, /setGuideOpen\(true, \{ focus: true \}\)/);
+  assert.match(compare, /setGuideOpen\(false, \{ restore: true \}\)/);
+  assert.match(app, /if \(!\$\('#review-guide'\)\.hidden\) \{ compareController\.setGuideOpen\(false, \{ restore: true \}\); return; \}/);
 });
 
 test('key interface tokens preserve readable light and dark surface contrast', async () => {

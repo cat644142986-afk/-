@@ -1,7 +1,6 @@
 import * as API from './api.js';
 import {
   collectResultItems,
-  comparisonPresentation,
   createSubmissionSnapshot,
   itemCompletionProgress,
   jobCompletionProgress,
@@ -26,9 +25,7 @@ import {
 } from './appearance.js';
 import {
   backendDecisionForSignal,
-  comparisonTargetForItems,
   feedbackReceiptCopy,
-  normalizeCompareState,
   normalizeReviewReasonCodes,
   reviewReasonLabel,
   reviewStateForResult,
@@ -53,6 +50,7 @@ import { createWorkflowDockController } from './studio-shell.js';
 import { createKnowledgeController } from './studio-knowledge.js';
 import { createMemoryProjectionController } from './studio-memory.js';
 import { createReviewController } from './studio-review.js';
+import { createCompareController } from './studio-compare.js';
 import { createSessionsController, formatStudioTime } from './studio-sessions.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 import { statusPanelHtml } from './status-view.js';
@@ -72,7 +70,6 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 let modalReturnFocus = null;
 let drawerReturnFocus = null;
-let reviewGuideReturnFocus = null;
 let semanticReturnFocus = null;
 let workspaceStatusTimer = null;
 const semanticCanvasState = {
@@ -173,6 +170,22 @@ const reviewController = createReviewController({
   escapeHtml,
   activeFeedbackResultKey,
   discardPendingReviewRequest,
+});
+const compareController = createCompareController({
+  state,
+  query: $,
+  queryAll: $$,
+  escapeHtml,
+  resultDataUrl,
+  statusPanelHtml,
+  selectResultVersion,
+  reviewController,
+  snapshotFromDraft,
+  scheduleWorkspaceDraftSave,
+  switchPage,
+  toast,
+  windowRef: window,
+  documentRef: document,
 });
 window.ProductAtelier = { state };
 
@@ -3298,241 +3311,6 @@ async function confirmSemanticSelection() {
   }
 }
 
-function compareStateForMode(mode = state.currentMode) {
-  return normalizeCompareState(
-    state.modeSnapshots[mode]?.compare_state
-      || state.workspaceDrafts[mode]?.compare_state
-      || {},
-  );
-}
-
-function updateCompareState(patch, persist = true) {
-  const mode = state.currentMode;
-  const snapshot = state.modeSnapshots[mode]
-    || snapshotFromDraft(state.workspaceDrafts[mode] || {}, {});
-  const next = normalizeCompareState({
-    ...compareStateForMode(mode),
-    ...(patch || {}),
-  });
-  state.modeSnapshots[mode] = { ...snapshot, compare_state: next };
-  if (persist) scheduleWorkspaceDraftSave(mode);
-  return next;
-}
-
-function resultReviewEntries() {
-  return [
-    ...(state.results?.main || []).map((item, index) => ({ item, index, tab: 'main' })),
-    ...(state.results?.cutout || []).map((item, index) => ({ item, index, tab: 'cutout' })),
-  ].map((entry, order) => ({
-    ...entry,
-    label: entry.item.version_label || `结果 ${order + 1}`,
-  }));
-}
-
-function activeResultEntry(entries = resultReviewEntries()) {
-  return entries.find((entry) => (
-    entry.tab === state.resultTab && entry.index === state.viewerIndex
-  )) || null;
-}
-
-function setReviewGuideOpen(open, { focus = false, restore = false } = {}) {
-  const guide = $('#review-guide');
-  const help = $('#btn-compare-help');
-  if (!guide || !help) return;
-  guide.hidden = !open;
-  help.setAttribute('aria-expanded', String(open));
-  if (open && focus) $('#btn-review-guide-done')?.focus();
-  if (!open && restore) {
-    const target = reviewGuideReturnFocus instanceof HTMLElement ? reviewGuideReturnFocus : help;
-    target.focus();
-  }
-  if (!open) reviewGuideReturnFocus = null;
-}
-
-function renderCompare() {
-  const rail = $('#review-version-rail');
-  const entries = resultReviewEntries();
-  const active = activeResultEntry(entries);
-  rail.innerHTML = entries.length ? entries.map((entry) => {
-    const selected = entry === active;
-    const status = selected ? 'A · 当前' : (entry.item.is_parent_version ? '上一版' : '可对比');
-    return `<button class="review-version ${selected ? 'is-selected' : ''}" type="button" data-review-tab="${entry.tab}" data-review-index="${entry.index}" aria-pressed="${selected}"><img src="${escapeHtml(resultDataUrl(entry.item, entry.tab))}" alt="${escapeHtml(entry.label)}" /><strong>${escapeHtml(entry.label)}</strong><small>${status}</small></button>`;
-  }).join('') : statusPanelHtml('empty', { title: '等待结果版本', detail: '生成完成后可在这里选择 A。', compact: true });
-  $$('[data-review-tab]', rail).forEach((button) => button.addEventListener('click', () => {
-    state.editingFeedbackResultKey = '';
-    selectResultVersion(Number(button.dataset.reviewIndex || 0), button.dataset.reviewTab);
-    state.reviewReasonCodes = new Set();
-    state.reviewDecision = '';
-    renderCompare();
-  }));
-
-  const currentCompare = compareStateForMode();
-  const activeItem = active?.item || null;
-  const otherItems = entries.map((entry) => entry.item);
-  let referenceItem = comparisonTargetForItems(
-    otherItems,
-    activeItem?.asset_id,
-    currentCompare.secondary_result_asset_id,
-  );
-  if (!state.originalDataUrl && !referenceItem) {
-    referenceItem = otherItems.find((item) => String(item.asset_id) !== String(activeItem?.asset_id)) || null;
-  }
-  const referenceUrl = referenceItem
-    ? resultDataUrl(referenceItem, entries.find((entry) => entry.item === referenceItem)?.tab)
-    : state.originalDataUrl;
-  const activeUrl = activeItem ? resultDataUrl(activeItem, active.tab) : '';
-  const has = Boolean(referenceUrl && activeUrl);
-  state.compareData = has ? { original: referenceUrl, result: activeUrl } : null;
-
-  const target = $('#compare-target');
-  const targetOptions = [
-    ...(state.originalDataUrl ? [{ value: 'source', label: '原图' }] : []),
-    ...entries.filter((entry) => entry !== active).map((entry) => ({
-      value: entry.item.asset_id,
-      label: entry.label,
-    })),
-  ];
-  target.innerHTML = targetOptions.map((option) => (
-    `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`
-  )).join('');
-  target.disabled = targetOptions.length < 2;
-  target.value = referenceItem?.asset_id || 'source';
-  $('.review-compare-toolbar').hidden = !has;
-  $('#compare-empty').hidden = has;
-  $('#compare-view').hidden = !has;
-  setReviewGuideOpen(has && !currentCompare.guide_dismissed);
-  if (!has) {
-    $('#compare-view').classList.remove('is-side-by-side', 'is-zoomed', 'is-panning');
-    $('#compare-slider').hidden = false;
-    $('#compare-mode-note').hidden = true;
-    reviewController.renderPanel(activeItem);
-    return;
-  }
-
-  const original = $('#compare-img-original');
-  const result = $('#compare-img-result');
-  const activeLabel = active?.label || '当前版本';
-  const referenceLabel = referenceItem
-    ? (entries.find((entry) => entry.item === referenceItem)?.label || '另一版本')
-    : '原图';
-  $('#compare-label-before').textContent = `B · ${referenceLabel}`;
-  $('#compare-label-after').textContent = `A · ${activeLabel}`;
-  original.alt = `对比对象 B：${referenceLabel}`;
-  result.alt = `当前版本 A：${activeLabel}`;
-  const sync = () => syncComparePresentation(original, result);
-  original.onload = sync;
-  result.onload = sync;
-  original.src = referenceUrl;
-  result.src = activeUrl;
-  if (original.complete && result.complete) sync();
-  setComparePosition(currentCompare.divider, false);
-  setCompareTransform(currentCompare, false);
-  reviewController.renderPanel(activeItem);
-}
-
-function syncComparePresentation(original, result) {
-  if (!original?.naturalWidth || !result?.naturalWidth) return;
-  const presentation = comparisonPresentation(
-    { width: original.naturalWidth, height: original.naturalHeight },
-    { width: result.naturalWidth, height: result.naturalHeight },
-  );
-  const sideBySide = presentation === 'side-by-side';
-  $('#compare-view').classList.toggle('is-side-by-side', sideBySide);
-  $('#compare-slider').hidden = sideBySide;
-  $('#compare-mode-note').hidden = !sideBySide;
-  $('#compare-view').dataset.presentation = presentation;
-}
-
-function setComparePosition(percent, persist = true) {
-  const value = Math.max(3, Math.min(97, percent));
-  const view = $('#compare-view');
-  view.style.setProperty('--compare-slide', `${value}%`);
-  $('#compare-slider').setAttribute('aria-valuenow', String(Math.round(value)));
-  if (persist) updateCompareState({ divider: value });
-}
-
-function setCompareTransform(compareState, persist = true) {
-  const normalized = normalizeCompareState(compareState);
-  const view = $('#compare-view');
-  view.style.setProperty('--compare-zoom', String(normalized.zoom));
-  view.style.setProperty('--compare-pan-x', `${normalized.pan_x}%`);
-  view.style.setProperty('--compare-pan-y', `${normalized.pan_y}%`);
-  view.classList.toggle('is-zoomed', normalized.zoom > 1);
-  $('#compare-zoom-value').textContent = `${Math.round(normalized.zoom * 100)}%`;
-  if (persist) updateCompareState(normalized);
-}
-
-function setupCompare() {
-  const view = $('#compare-view');
-  const slider = $('#compare-slider');
-  const guide = $('#review-guide');
-  const help = $('#btn-compare-help');
-  guide.setAttribute('role', 'dialog');
-  guide.setAttribute('aria-modal', 'false');
-  help.setAttribute('aria-controls', 'review-guide');
-  help.setAttribute('aria-expanded', String(!guide.hidden));
-  let sliderDragging = false;
-  let panDrag = null;
-  const moveSlider = (clientX) => {
-    if (view.classList.contains('is-side-by-side')) return;
-    const rect = view.getBoundingClientRect();
-    if (rect.width) setComparePosition(((clientX - rect.left) / rect.width) * 100);
-  };
-  slider.addEventListener('pointerdown', (event) => {
-    sliderDragging = true;
-    slider.setPointerCapture(event.pointerId);
-    moveSlider(event.clientX);
-  });
-  slider.addEventListener('pointermove', (event) => { if (sliderDragging) moveSlider(event.clientX); });
-  slider.addEventListener('pointerup', () => { sliderDragging = false; });
-  slider.addEventListener('keydown', (event) => {
-    if (view.classList.contains('is-side-by-side')) return;
-    const current = Number(slider.getAttribute('aria-valuenow') || 50);
-    const delta = event.shiftKey ? 10 : 2;
-    if (event.key === 'ArrowLeft') { event.preventDefault(); setComparePosition(current - delta); }
-    if (event.key === 'ArrowRight') { event.preventDefault(); setComparePosition(current + delta); }
-    if (event.key === 'Home') { event.preventDefault(); setComparePosition(3); }
-    if (event.key === 'End') { event.preventDefault(); setComparePosition(97); }
-  });
-  view.addEventListener('pointerdown', (event) => {
-    if (event.target.closest('#compare-slider') || compareStateForMode().zoom <= 1) return;
-    const current = compareStateForMode();
-    panDrag = {
-      pointerId: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      panX: current.pan_x,
-      panY: current.pan_y,
-      active: false,
-    };
-    view.setPointerCapture(event.pointerId);
-  });
-  view.addEventListener('pointermove', (event) => {
-    if (!panDrag || panDrag.pointerId !== event.pointerId) return;
-    const rect = view.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    const deltaX = event.clientX - panDrag.x;
-    const deltaY = event.clientY - panDrag.y;
-    if (!panDrag.active && Math.hypot(deltaX, deltaY) < 4) return;
-    if (!panDrag.active) {
-      panDrag.active = true;
-      view.classList.add('is-panning');
-    }
-    setCompareTransform({
-      ...compareStateForMode(),
-      pan_x: panDrag.panX + (deltaX / rect.width) * 100,
-      pan_y: panDrag.panY + (deltaY / rect.height) * 100,
-    });
-  });
-  const endPan = (event) => {
-    if (!panDrag || panDrag.pointerId !== event.pointerId) return;
-    panDrag = null;
-    view.classList.remove('is-panning');
-  };
-  view.addEventListener('pointerup', endPan);
-  view.addEventListener('pointercancel', endPan);
-}
-
 async function openMemorySourceResult(source, button) {
   if (!source?.job_id || !source?.result_asset_id || button?.disabled) return;
   if (button) {
@@ -3822,47 +3600,12 @@ function bindEvents() {
     const items = getResultItems();
     if (items.length) selectResultVersion((state.viewerIndex + 1) % items.length);
   });
-  $('#btn-open-compare').addEventListener('click', () => { renderCompare(); switchPage('compare'); });
-  $('#btn-compare-back').addEventListener('click', () => switchPage('process'));
   $('#btn-review-why').addEventListener('click', () => openDrawer('intelligence'));
-  $('#compare-target').addEventListener('change', (event) => {
-    const value = String(event.target.value || 'source');
-    updateCompareState({ secondary_result_asset_id: value === 'source' ? '' : value });
-    renderCompare();
-  });
-  $('#btn-compare-zoom-out').addEventListener('click', () => {
-    const current = compareStateForMode();
-    const zoom = Math.max(1, Math.round((current.zoom - 0.25) * 100) / 100);
-    setCompareTransform({
-      ...current,
-      zoom,
-      pan_x: zoom === 1 ? 0 : current.pan_x,
-      pan_y: zoom === 1 ? 0 : current.pan_y,
-    });
-  });
-  $('#btn-compare-zoom-in').addEventListener('click', () => {
-    const current = compareStateForMode();
-    setCompareTransform({ ...current, zoom: Math.min(4, Math.round((current.zoom + 0.25) * 100) / 100) });
-  });
-  $('#btn-compare-reset').addEventListener('click', () => {
-    const reset = updateCompareState({ divider: 50, zoom: 1, pan_x: 0, pan_y: 0 });
-    setComparePosition(reset.divider, false);
-    setCompareTransform(reset, false);
-    toast('对比位置与缩放已复位');
-  });
-  $('#btn-compare-help').addEventListener('click', () => {
-    reviewGuideReturnFocus = document.activeElement;
-    setReviewGuideOpen(true, { focus: true });
-  });
-  $('#btn-review-guide-done').addEventListener('click', () => {
-    updateCompareState({ guide_dismissed: true });
-    setReviewGuideOpen(false, { restore: true });
-  });
   $('#btn-review-edit').addEventListener('click', () => {
     const item = getResultItems()[state.viewerIndex];
     state.editingFeedbackResultKey = activeFeedbackResultKey(item);
     state.reviewDecision = '';
-    renderCompare();
+    compareController.render();
     $('#review-options [data-review-decision]')?.focus();
   });
   $('#btn-review-summary-suggestion').addEventListener('click', (event) => {
@@ -3983,7 +3726,7 @@ function bindEvents() {
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
     if (event.key !== 'Escape') return;
-    if (!$('#review-guide').hidden) { setReviewGuideOpen(false, { restore: true }); return; }
+    if (!$('#review-guide').hidden) { compareController.setGuideOpen(false, { restore: true }); return; }
     if (!$('#semantic-selection-modal').hidden) { closeSemanticSelection(); return; }
     if (!$('#img-modal').hidden) closeModal();
     if (!$('#advanced-drawer').hidden) closeDrawer('advanced');
@@ -4058,7 +3801,7 @@ async function init() {
   setupAppearance();
   bindEvents();
   workflowDock.sync();
-  setupCompare();
+  compareController.bind();
   restoreWorkspaceState();
   restorePendingSubmission();
   restorePendingReviewRequests();
