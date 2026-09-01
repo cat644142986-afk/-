@@ -1523,6 +1523,15 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 发布事务 `57cbe6e6296a4b60b2fca54baaf654be` 已 `finalized`，事务文件和发布锁均已清除；上一正式版完整备份为 `D:\\ProductAtelier-Backups\\release-before-20260901-202012-76491016967e`，promotion evidence SHA-256 为 `A359DC610A600063F4F17F5FD933F1D7C5DE215559E21D2D54F7CA42D67312DC`。候选与正式目录的 sidecar、动态端口、manifest、schema v3、隔离账本和应用启动 smoke 均通过；正式健康接口返回 `ok`，桌面快捷方式、正式应用和正式 sidecar 进程均复核为新正式目录身份。
 - 下一执行游标：清点生产入口中仍残留的硬编码视觉 token，优先把确属品牌/语义层的重复颜色、阴影、圆角和间距统一到 `stable-ui.css` 现有 token；不得为了清零搜索结果机械替换图像遮罩、透明叠加、状态特效或第三方必需值。完成源码卫生门禁后关闭 G0，再进入 G1A 独立 Fabric.js 画布原型准备。
 
+### 2026-09-01 G0 生产视觉 token 源码卫生检查点
+
+- `stable-ui.css` 新增深色表面、反色文本、成功/警告状态、透明棋盘格和窗口三色的语义 token，并替换 Result Review、A/B 对比、Task Dock、智能选物和 Design DNA 中确属同一语义的重复常量。图像遮罩、状态特效和有意不同的局部值继续保持独立，没有为了清零搜索结果机械统一圆角、间距或透明度。
+- 语义选物 Canvas 的绘制颜色集中到冻结的 `SEMANTIC_CANVAS_PALETTE`；`app.js` 只读取该固定渲染调色板，不再在绘制函数中散落颜色常量。新增静态门禁锁定生产视觉常量的唯一声明位置，并补充调色板冻结与完整值合同测试。
+- 1440×900 隔离 Vite 验收页完成浅色与深色两轮真实浏览器检查：四个代表区域横向溢出均为 0，页面/Body 横向溢出均为 0，控制台 0 error / 0 warning；反色浮层为 `rgba(31, 36, 42, 0.84)`、成功色为 `rgb(39, 181, 82)`、智能选物确认色为 `rgb(137, 221, 163)`，窗口三色与透明棋盘格均命中语义 token。临时验收页和 Vite 服务已删除/停止，没有进入 Git。
+- 全量源码门禁通过：前端 132/132；Python 269 项（268 通过、1 项平台预期跳过）；Vite production build；Rust/Tauri locked custom-protocol check；Python compileall、全量 JavaScript syntax 和 Git whitespace。首次并行 Rust 检查恰逢 Vite 原子替换 `dist` 而读取到短暂缺失的图标，按正式发布顺序在稳定 `dist` 上重跑后通过，不是源码或构建产物缺陷。
+- 源码提交 `e8ea32e83505d85d8c9bf5de54ba2511209b2050` 已推送到当前分支。本检查点未调用付费 API、未处理用户图片、未读取或提交 API Key、用户 Prompt、SQLite 或 build 证据，也未改变正式便携目录、NSIS 或桌面快捷方式。
+- 下一执行游标：提交本计划检查点并以 candidate-first 链提升新的正式便携版；完成正式复验后审计 G0 的回滚点、测试数据隔离与九个最小增长合同草案。只有这些门禁具备可验证证据后才关闭 G0，并进入不修改正式 `src/`、不读取用户账本的 G1A Fabric.js 独立原型。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：
