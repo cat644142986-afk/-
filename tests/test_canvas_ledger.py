@@ -105,7 +105,7 @@ class CanvasLedgerTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_current_schema_preserves_immutable_canvas_versions_and_job_bindings(self) -> None:
-        self.assertEqual(SCHEMA_VERSION, 6)
+        self.assertEqual(SCHEMA_VERSION, 7)
         connection = sqlite3.connect(self.db_path)
         try:
             tables = {
@@ -265,6 +265,82 @@ class CanvasLedgerTests(unittest.TestCase):
         )
         self.assertIn("canvas_versions", references["blockers"])
 
+    def test_result_source_mutation_allows_empty_workspace_source_set(self) -> None:
+        first = self.ledger.save_canvas_document(
+            "single",
+            expected_revision=0,
+            client_request_id="canvas-source-mutation-base",
+            document=canvas_document(self.asset["id"]),
+        )
+        result = self.ledger.add_asset(
+            self.asset["session_id"],
+            "result_main",
+            parent_asset_id=self.asset["id"],
+            path=str(self.root / "local-result.png"),
+            name="local-result.png",
+            mime="image/png",
+            width=4096,
+            height=4096,
+            sha256="b" * 64,
+        )
+        changed = copy.deepcopy(first["document"])
+        layer = changed["layers"][0]
+        before_source = copy.deepcopy(layer["source"])
+        after_source = {
+            "kind": "result",
+            "id": result["id"],
+            "proxy_ref": "proxy:thumbnail:512",
+            "original_pixel_width": 4096,
+            "original_pixel_height": 4096,
+        }
+        layer["source"] = copy.deepcopy(after_source)
+        changed["source_asset_ids"] = []
+        changed["operations"] = [{
+            "id": "operation:local-source-swap",
+            "command_id": "command:local-edit-compose",
+            "input_layer_ids": ["layer:source"],
+            "output_layer_id": "layer:source",
+            "roi_id": "roi:local-source-swap",
+            "mask_id": "maskver:local-source-swap",
+            "product_profile_id": None,
+            "mutation": {
+                "target_layer_id": "layer:source",
+                "before": {
+                    "source": before_source,
+                    "transform": copy.deepcopy(layer["transform"]),
+                    "z_index": 0,
+                    "visible": True,
+                    "locked": False,
+                },
+                "after": {
+                    "source": after_source,
+                    "transform": copy.deepcopy(layer["transform"]),
+                    "z_index": 0,
+                    "visible": True,
+                    "locked": False,
+                },
+            },
+            "cost": {
+                "mode": "free",
+                "confirmed_call_count": 0,
+                "user_confirmation_required": False,
+                "automatic_paid_retry": False,
+            },
+            "status": "succeeded",
+            "created_at": "2026-09-02T01:00:00Z",
+        }]
+        changed["undo_cursor"] = 0
+        saved = self.ledger.save_canvas_document(
+            "single",
+            expected_revision=1,
+            client_request_id="canvas-source-mutation-result",
+            document=changed,
+        )
+        self.assertEqual(saved["document"]["source_asset_ids"], [])
+        self.assertEqual(
+            saved["document"]["layers"][0]["source"]["id"], result["id"]
+        )
+
     def test_job_snapshot_binds_the_exact_canvas_version_and_command(self) -> None:
         saved = self.ledger.save_canvas_document(
             "single",
@@ -304,7 +380,7 @@ class CanvasMigrationTests(unittest.TestCase):
     def test_v3_upgrade_creates_current_schema_and_a_queryable_v3_backup(self) -> None:
         create_v3_database(self.db_path)
         ledger = AtelierLedger(self.db_path)
-        self.assertEqual(ledger.stats()["schema_version"], 6)
+        self.assertEqual(ledger.stats()["schema_version"], 7)
         self.assertIsNotNone(ledger.last_migration_backup)
         backup = ledger.last_migration_backup
         assert backup is not None

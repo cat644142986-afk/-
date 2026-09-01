@@ -153,11 +153,168 @@ export function maskHasWritablePixels(definition) {
   return Array.from(definition?.strokes || []).some((stroke) => stroke.mode === 'include');
 }
 
+function candidateResult(value) {
+  const id = String(value?.asset_id || value?.id || '').trim();
+  const role = String(value?.role || '').trim();
+  const width = Number(value?.width);
+  const height = Number(value?.height);
+  if (!id || !role.startsWith('result_') || !Number.isInteger(width) || !Number.isInteger(height)) {
+    return null;
+  }
+  return {
+    ...value,
+    id,
+    asset_id: id,
+    role,
+    width,
+    height,
+    name: String(value?.name || `结果 ${id.slice(-8)}`),
+  };
+}
+
+export function expectedLocalEditCandidateSize(contract, layer) {
+  if (contract?.mode === 'outpaint') {
+    return {
+      width: integer(
+        contract?.outpaint?.output_width ?? contract?.outpaint?.output_size?.width,
+        '扩图输出宽度',
+        1,
+      ),
+      height: integer(
+        contract?.outpaint?.output_height ?? contract?.outpaint?.output_size?.height,
+        '扩图输出高度',
+        1,
+      ),
+    };
+  }
+  const fallback = sourceSize(layer);
+  return {
+    width: integer(contract?.source_size?.width ?? fallback.width, '候选宽度', 1),
+    height: integer(contract?.source_size?.height ?? fallback.height, '候选高度', 1),
+  };
+}
+
+export function compatibleLocalEditCandidates(currentResults, recentResults, contract, layer) {
+  const expected = expectedLocalEditCandidateSize(contract, layer);
+  const deduplicated = new Map();
+  [
+    ...Object.values(currentResults || {}).flatMap((items) => Array.from(items || [])),
+    ...Array.from(recentResults || []),
+  ].forEach((value) => {
+    const candidate = candidateResult(value);
+    if (
+      candidate
+      && candidate.width === expected.width
+      && candidate.height === expected.height
+      && !deduplicated.has(candidate.id)
+    ) deduplicated.set(candidate.id, candidate);
+  });
+  return [...deduplicated.values()];
+}
+
+export function defaultOutpaintConfig(layer) {
+  const size = sourceSize(layer);
+  const width = Math.min(32768, Math.max(size.width + 2, Math.ceil(size.width * 1.5)));
+  const height = Math.min(32768, Math.max(size.height + 2, Math.ceil(size.height * 1.5)));
+  return {
+    output_width: width,
+    output_height: height,
+    source_x: Math.floor((width - size.width) / 2),
+    source_y: Math.floor((height - size.height) / 2),
+    transition_width: 0,
+  };
+}
+
+export function normalizeOutpaintConfig(layer, value) {
+  const size = sourceSize(layer);
+  const config = {
+    output_width: integer(value?.output_width, '扩图输出宽度', 1),
+    output_height: integer(value?.output_height, '扩图输出高度', 1),
+    source_x: integer(value?.source_x, '原图 X'),
+    source_y: integer(value?.source_y, '原图 Y'),
+    transition_width: integer(
+      value?.transition_width,
+      '过渡带宽度',
+      0,
+      Math.floor(Math.min(size.width, size.height) / 2),
+    ),
+  };
+  if (
+    config.output_width < size.width
+    || config.output_height < size.height
+    || config.source_x + size.width > config.output_width
+    || config.source_y + size.height > config.output_height
+  ) throw new Error('原图必须完整放在扩图输出范围内');
+  if (
+    config.output_width === size.width
+    && config.output_height === size.height
+    && config.source_x === 0
+    && config.source_y === 0
+  ) throw new Error('扩图输出必须包含新增区域');
+  return config;
+}
+
+function sameRectValue(left, right) {
+  return ['x', 'y', 'width', 'height']
+    .every((key) => Number(left?.[key]) === Number(right?.[key]));
+}
+
+export function buildPaidOutpaintContract({
+  operationId,
+  canvasVersionId,
+  layer,
+  sourceSha256 = '',
+  sourcePixelSha256 = '',
+  roi,
+  outpaint,
+  confirmed = false,
+}) {
+  const normalized = normalizeOutpaintConfig(layer, outpaint);
+  if (!confirmed) throw new Error('请先确认本次扩图规格与调用次数');
+  const expectedRect = {
+    x: 0,
+    y: 0,
+    width: normalized.output_width,
+    height: normalized.output_height,
+  };
+  if (
+    !roi?.id
+    || roi.coordinate_space !== 'output-pixel'
+    || !sameRectValue(roi.rect, expectedRect)
+  ) throw new Error('扩图写入范围尚未冻结');
+  return {
+    schema_version: 1,
+    operation_id: String(operationId),
+    mode: 'outpaint',
+    source_canvas_version_id: String(canvasVersionId),
+    source_layer_id: String(layer.id),
+    source_sha256: String(sourceSha256).toUpperCase(),
+    source_pixel_sha256: String(sourcePixelSha256).toUpperCase(),
+    source_size: sourceSize(layer),
+    roi: {
+      id: String(roi.id),
+      coordinate_space: 'output-pixel',
+      rect: expectedRect,
+    },
+    mask: null,
+    strict_pixel_protection: true,
+    outpaint: normalized,
+    cost: {
+      mode: 'paid',
+      confirmed_call_count: 1,
+      user_confirmation_required: true,
+      user_confirmed: true,
+      automatic_paid_retry: false,
+    },
+  };
+}
+
 export function buildFreeLocalEditContract({
   operationId,
   canvasVersionId,
   layer,
-  sourceSha256,
+  sourceSha256 = '',
+  sourcePixelSha256 = '',
   roi,
   mask,
 }) {
@@ -171,6 +328,7 @@ export function buildFreeLocalEditContract({
     source_canvas_version_id: String(canvasVersionId),
     source_layer_id: String(layer.id),
     source_sha256: String(sourceSha256).toUpperCase(),
+    source_pixel_sha256: String(sourcePixelSha256).toUpperCase(),
     source_size: sourceSize(layer),
     roi: {
       id: String(roi.id),

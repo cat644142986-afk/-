@@ -26,7 +26,8 @@ def inpaint_contract(mask: Image.Image) -> dict:
         "mode": "inpaint",
         "source_canvas_version_id": "canvas-version:source-1",
         "source_layer_id": "layer:source",
-        "source_sha256": image_fingerprint(solid((6, 6), (220, 40, 30, 255))),
+        "source_sha256": "F" * 64,
+        "source_pixel_sha256": image_fingerprint(solid((6, 6), (220, 40, 30, 255))),
         "source_size": {"width": 6, "height": 6},
         "roi": {
             "id": "roi:local-edit-1",
@@ -58,7 +59,8 @@ def outpaint_contract(*, transition_width: int = 0) -> dict:
         "mode": "outpaint",
         "source_canvas_version_id": "canvas-version:source-1",
         "source_layer_id": "layer:source",
-        "source_sha256": image_fingerprint(solid((4, 4), (220, 40, 30, 255))),
+        "source_sha256": "E" * 64,
+        "source_pixel_sha256": image_fingerprint(solid((4, 4), (220, 40, 30, 255))),
         "source_size": {"width": 4, "height": 4},
         "roi": {
             "id": "roi:outpaint-1",
@@ -134,6 +136,21 @@ class LocalEditContractTests(unittest.TestCase):
             normalize_local_edit_contract(payload)
         self.assertEqual(retry.exception.code, "LOCAL_EDIT_AUTOMATIC_PAID_RETRY_FORBIDDEN")
 
+    def test_file_and_decoded_pixel_fingerprints_are_distinct_required_facts(self) -> None:
+        mask = Image.new("L", (6, 6), 0)
+        payload = inpaint_contract(mask)
+        normalized = normalize_local_edit_contract(payload)
+        self.assertEqual(normalized["source_sha256"], "F" * 64)
+        self.assertEqual(
+            normalized["source_pixel_sha256"],
+            image_fingerprint(solid((6, 6), (220, 40, 30, 255))),
+        )
+
+        missing_pixel = inpaint_contract(mask)
+        missing_pixel.pop("source_pixel_sha256")
+        with self.assertRaisesRegex(LocalEditContractError, "source_pixel_sha256"):
+            normalize_local_edit_contract(missing_pixel)
+
     def test_strict_inpaint_restores_every_pixel_outside_mask(self) -> None:
         source = solid((6, 6), (220, 40, 30, 255))
         candidate = solid((6, 6), (20, 80, 220, 255))
@@ -155,7 +172,8 @@ class LocalEditContractTests(unittest.TestCase):
         self.assertEqual(result.getpixel((4, 4)), (220, 40, 30, 255))
         self.assertEqual(receipt["outside_mask_changed_pixels"], 0)
         self.assertEqual(receipt["changed_pixels"], 4)
-        self.assertEqual(receipt["source_sha256"], original_fingerprint)
+        self.assertEqual(receipt["source_sha256"], "F" * 64)
+        self.assertEqual(receipt["source_pixel_sha256"], original_fingerprint)
         self.assertEqual(receipt["undo_source_sha256"], original_fingerprint)
         self.assertEqual(image_fingerprint(source), original_fingerprint)
 
@@ -196,7 +214,8 @@ class LocalEditContractTests(unittest.TestCase):
         self.assertEqual(receipt["protected_changed_pixels"], 0)
         self.assertEqual(receipt["transition_changed_pixels"], 0)
         self.assertEqual(receipt["new_area_changed_pixels"], 32)
-        self.assertEqual(receipt["source_sha256"], source_fingerprint)
+        self.assertEqual(receipt["source_sha256"], "E" * 64)
+        self.assertEqual(receipt["source_pixel_sha256"], source_fingerprint)
         self.assertEqual(receipt["undo_source_sha256"], source_fingerprint)
 
     def test_outpaint_transition_band_is_explicit_and_bounded(self) -> None:

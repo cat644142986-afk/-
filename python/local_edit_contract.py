@@ -162,6 +162,7 @@ def normalize_local_edit_contract(value: Mapping[str, Any]) -> dict[str, Any]:
         "source_canvas_version_id",
         "source_layer_id",
         "source_sha256",
+        "source_pixel_sha256",
         "source_size",
         "roi",
         "mask",
@@ -184,6 +185,12 @@ def normalize_local_edit_contract(value: Mapping[str, Any]) -> dict[str, Any]:
     source_sha256 = str(raw["source_sha256"] or "").upper()
     if re.fullmatch(r"[A-F0-9]{64}", source_sha256) is None:
         _fail("LOCAL_EDIT_CONTRACT_INVALID", "LocalEdit.source_sha256 is invalid")
+    source_pixel_sha256 = str(raw["source_pixel_sha256"] or "").upper()
+    if re.fullmatch(r"[A-F0-9]{64}", source_pixel_sha256) is None:
+        _fail(
+            "LOCAL_EDIT_CONTRACT_INVALID",
+            "LocalEdit.source_pixel_sha256 is invalid",
+        )
     mode = str(raw["mode"] or "").strip()
     if mode not in {"inpaint", "outpaint"}:
         _fail("LOCAL_EDIT_CONTRACT_INVALID", "LocalEdit.mode is unsupported")
@@ -296,6 +303,7 @@ def normalize_local_edit_contract(value: Mapping[str, Any]) -> dict[str, Any]:
         "source_canvas_version_id": source_canvas_version_id,
         "source_layer_id": source_layer_id,
         "source_sha256": source_sha256,
+        "source_pixel_sha256": source_pixel_sha256,
         "source_size": source_size,
         "roi": {
             "id": roi_id,
@@ -558,7 +566,8 @@ def apply_strict_inpaint(
     )
     if source.size != expected_size:
         _fail("LOCAL_EDIT_SOURCE_SIZE_MISMATCH", "原图像素尺寸与合同不一致")
-    if image_fingerprint(source) != normalized["source_sha256"]:
+    source_pixel_sha256 = image_fingerprint(source)
+    if source_pixel_sha256 != normalized["source_pixel_sha256"]:
         _fail("LOCAL_EDIT_SOURCE_FINGERPRINT_MISMATCH", "原图版本与冻结合同不一致")
     if candidate.size != expected_size:
         _fail("LOCAL_EDIT_CANDIDATE_SIZE_MISMATCH", "候选图像素尺寸与原图不一致")
@@ -583,11 +592,12 @@ def apply_strict_inpaint(
         "contract_schema_version": LOCAL_EDIT_CONTRACT_SCHEMA_VERSION,
         "operation_id": normalized["operation_id"],
         "mode": "inpaint",
-        "source_sha256": image_fingerprint(source),
+        "source_sha256": normalized["source_sha256"],
+        "source_pixel_sha256": source_pixel_sha256,
         "candidate_sha256": image_fingerprint(candidate),
         "mask_sha256": image_fingerprint(alpha),
         "output_sha256": image_fingerprint(result),
-        "undo_source_sha256": image_fingerprint(source),
+        "undo_source_sha256": source_pixel_sha256,
         "changed_pixels": _pixel_difference_count(source_rgba, result),
         "outside_mask_changed_pixels": _difference_count_in_mask(
             source_rgba, result, outside_mask
@@ -650,7 +660,8 @@ def apply_strict_outpaint(
     )
     if source.size != source_size:
         _fail("LOCAL_EDIT_SOURCE_SIZE_MISMATCH", "原图像素尺寸与合同不一致")
-    if image_fingerprint(source) != normalized["source_sha256"]:
+    source_pixel_sha256 = image_fingerprint(source)
+    if source_pixel_sha256 != normalized["source_pixel_sha256"]:
         _fail("LOCAL_EDIT_SOURCE_FINGERPRINT_MISMATCH", "原图版本与冻结合同不一致")
     outpaint = normalized["outpaint"]
     output_size = (outpaint["output_width"], outpaint["output_height"])
@@ -666,10 +677,11 @@ def apply_strict_outpaint(
         "contract_schema_version": LOCAL_EDIT_CONTRACT_SCHEMA_VERSION,
         "operation_id": normalized["operation_id"],
         "mode": "outpaint",
-        "source_sha256": image_fingerprint(source),
+        "source_sha256": normalized["source_sha256"],
+        "source_pixel_sha256": source_pixel_sha256,
         "candidate_sha256": image_fingerprint(candidate),
         "output_sha256": image_fingerprint(result),
-        "undo_source_sha256": image_fingerprint(source),
+        "undo_source_sha256": source_pixel_sha256,
         "protected_changed_pixels": _difference_count_in_mask(base, result, protected),
         "transition_changed_pixels": _difference_count_in_mask(base, result, transition),
         "new_area_changed_pixels": _difference_count_in_mask(base, result, new_area),

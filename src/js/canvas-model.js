@@ -145,16 +145,18 @@ export function addAssetLayer(document, asset, timestamp = new Date().toISOStrin
 }
 
 export function layerSnapshot(layer) {
-  return {
+  const snapshot = {
     transform: clone(layer.transform),
     z_index: layer.z_index,
     visible: layer.visible,
     locked: layer.locked,
   };
+  if (arguments[1]?.includeSource) snapshot.source = clone(layer.source);
+  return snapshot;
 }
 
 function mergeSnapshot(before, patch = {}) {
-  return {
+  const snapshot = {
     transform: {
       ...before.transform,
       ...(patch.transform || {}),
@@ -163,13 +165,25 @@ function mergeSnapshot(before, patch = {}) {
     visible: patch.visible ?? before.visible,
     locked: patch.locked ?? before.locked,
   };
+  if (before.source || patch.source) snapshot.source = clone(patch.source || before.source);
+  return snapshot;
 }
 
-function applySnapshot(layer, snapshot) {
+function recomputeSourceAssetIds(document) {
+  document.source_asset_ids = [...new Set(
+    document.layers
+      .filter((layer) => layer.source?.kind === 'asset')
+      .map((layer) => String(layer.source.id)),
+  )];
+}
+
+function applySnapshot(document, layer, snapshot) {
   layer.transform = clone(snapshot.transform);
   layer.z_index = snapshot.z_index;
   layer.visible = snapshot.visible;
   layer.locked = snapshot.locked;
+  if (snapshot.source) layer.source = clone(snapshot.source);
+  recomputeSourceAssetIds(document);
 }
 
 export function appendLayerMutation(
@@ -182,7 +196,7 @@ export function appendLayerMutation(
 ) {
   const layer = document.layers.find((item) => item.id === layerId);
   if (!layer) throw new Error(`Unknown layer: ${layerId}`);
-  const before = layerSnapshot(layer);
+  const before = layerSnapshot(layer, { includeSource: Boolean(patch?.source) });
   const after = mergeSnapshot(before, patch);
   const retained = document.operations.slice(0, document.undo_cursor + 1);
   const ordinal = retained.length + 1;
@@ -208,7 +222,7 @@ export function appendLayerMutation(
     status: 'succeeded',
     created_at: timestamp,
   };
-  applySnapshot(layer, after);
+  applySnapshot(document, layer, after);
   document.operations = [...retained, operation];
   document.undo_cursor = document.operations.length - 1;
   document.updated_at = timestamp;
@@ -220,7 +234,7 @@ export function undoCanvas(document, timestamp = new Date().toISOString()) {
   const operation = document.operations[document.undo_cursor];
   const layer = document.layers.find((item) => item.id === operation?.mutation?.target_layer_id);
   if (!layer) throw new Error('撤销目标图层已经不存在');
-  applySnapshot(layer, operation.mutation.before);
+  applySnapshot(document, layer, operation.mutation.before);
   document.undo_cursor -= 1;
   document.updated_at = timestamp;
   return operation;
@@ -232,7 +246,7 @@ export function redoCanvas(document, timestamp = new Date().toISOString()) {
   const operation = document.operations[nextIndex];
   const layer = document.layers.find((item) => item.id === operation?.mutation?.target_layer_id);
   if (!layer) throw new Error('重做目标图层已经不存在');
-  applySnapshot(layer, operation.mutation.after);
+  applySnapshot(document, layer, operation.mutation.after);
   document.undo_cursor = nextIndex;
   document.updated_at = timestamp;
   return operation;

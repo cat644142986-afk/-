@@ -27,6 +27,7 @@ os.environ["PRODUCT_ATELIER_KNOWLEDGE_BASE"] = str(
 from python import server  # noqa: E402
 from python.asset_store import AssetStore  # noqa: E402
 from python.atelier_ledger import AtelierLedger, SCHEMA_VERSION  # noqa: E402
+from python.local_edit_contract import image_fingerprint  # noqa: E402
 
 
 def png_bytes(color: tuple[int, int, int] = (220, 100, 40)) -> bytes:
@@ -1201,9 +1202,31 @@ class AssetApiTests(unittest.TestCase):
         self.assertTrue(replayed_spec.json()["replayed"])
         spec_id = spec.json()["id"]
         self.assertEqual(
+            spec.json()["contract"]["source_pixel_sha256"],
+            image_fingerprint(Image.new("RGB", (24, 18), (220, 100, 40))),
+        )
+        self.assertEqual(
             self.client.get(f"/api/local-edit-specs/{spec_id}").json()["contract"],
             spec.json()["contract"],
         )
+        latest_spec = self.client.get("/api/local-edit-specs/latest", params={
+            "canvas_version_id": saved.json()["current_version_id"],
+            "source_layer_id": "layer:api-local-edit-source",
+            "roi_id": roi_id,
+            "mask_version_id": mask_version_id,
+            "mode": "inpaint",
+        })
+        self.assertEqual(latest_spec.status_code, 200, latest_spec.text)
+        self.assertEqual(latest_spec.json()["spec"]["id"], spec_id)
+        missing_latest = self.client.get("/api/local-edit-specs/latest", params={
+            "canvas_version_id": saved.json()["current_version_id"],
+            "source_layer_id": "layer:api-local-edit-source",
+            "roi_id": roi_id,
+            "mask_version_id": "maskver:missing",
+            "mode": "inpaint",
+        })
+        self.assertEqual(missing_latest.status_code, 200, missing_latest.text)
+        self.assertIsNone(missing_latest.json()["spec"])
         invalid_contract = dict(contract)
         invalid_contract["source_sha256"] = "D" * 64
         invalid_spec = self.client.post("/api/local-edit-specs", json={
@@ -1213,6 +1236,16 @@ class AssetApiTests(unittest.TestCase):
         self.assertEqual(invalid_spec.status_code, 400, invalid_spec.text)
         self.assertEqual(
             invalid_spec.json()["detail"]["code"], "INVALID_LOCAL_EDIT_SPEC"
+        )
+        invalid_pixel_contract = dict(contract)
+        invalid_pixel_contract["source_pixel_sha256"] = "D" * 64
+        invalid_pixel_spec = self.client.post("/api/local-edit-specs", json={
+            "client_request_id": "api-local-edit-spec-wrong-pixels",
+            "contract": invalid_pixel_contract,
+        })
+        self.assertEqual(invalid_pixel_spec.status_code, 400, invalid_pixel_spec.text)
+        self.assertEqual(
+            invalid_pixel_spec.json()["detail"]["code"], "INVALID_LOCAL_EDIT_SPEC"
         )
 
         command = self.client.post(
@@ -1241,11 +1274,296 @@ class AssetApiTests(unittest.TestCase):
         self.assertEqual(trace.status_code, 200, trace.text)
         self.assertEqual(trace.json()["trace"]["local_edit_spec_id"], spec_id)
 
+        candidate_path = self.output_dir / "local-edit-candidate.png"
+        Image.new("RGB", (24, 18), (30, 120, 230)).save(candidate_path, "PNG")
+        candidate = self.ledger.add_asset(
+            self.ledger.get_asset(source["id"])["session_id"],
+            "result_main",
+            parent_asset_id=source["id"],
+            path=str(candidate_path),
+            name=candidate_path.name,
+            mime="image/png",
+            width=24,
+            height=18,
+            sha256=server._file_sha256(candidate_path),
+            metadata={"output_root": str(self.output_dir)},
+        )
+        compose_payload = {
+            "local_edit_spec_id": spec_id,
+            "candidate_asset_id": candidate["id"],
+            "expected_canvas_revision": 1,
+            "client_request_id": "api-local-edit-compose-1",
+        }
+        composed = self.client.post(
+            "/api/workspaces/single/local-edit/compose", json=compose_payload
+        )
+        self.assertEqual(composed.status_code, 200, composed.text)
+        composition = composed.json()
+        self.assertFalse(composition["replayed"])
+        self.assertEqual(composition["result_asset"]["role"], "result_local_edit")
+        self.assertEqual(composition["canvas"]["current_revision"], 2)
+        result_id = composition["result_asset_id"]
+        layer = composition["canvas"]["document"]["layers"][0]
+        self.assertEqual(layer["source"]["kind"], "result")
+        self.assertEqual(layer["source"]["id"], result_id)
+        result_content = self.client.get(f"/api/assets/{result_id}/content")
+        self.assertEqual(result_content.status_code, 200, result_content.text)
+        with Image.open(io.BytesIO(result_content.content)) as result_image:
+            self.assertEqual(result_image.getpixel((23, 17))[:3], (220, 100, 40))
+            self.assertEqual(result_image.getpixel((4, 5))[:3], (30, 120, 230))
+
+        result_files_before_replay = list(self.output_dir.rglob("result-*.png"))
+        replayed_compose = self.client.post(
+            "/api/workspaces/single/local-edit/compose", json=compose_payload
+        )
+        self.assertEqual(replayed_compose.status_code, 200, replayed_compose.text)
+        self.assertTrue(replayed_compose.json()["replayed"])
+        self.assertEqual(replayed_compose.json()["result_asset_id"], result_id)
+        self.assertEqual(
+            list(self.output_dir.rglob("result-*.png")), result_files_before_replay
+        )
+        stale_compose = self.client.post(
+            "/api/workspaces/single/local-edit/compose",
+            json={**compose_payload, "client_request_id": "api-local-edit-compose-stale"},
+        )
+        self.assertEqual(stale_compose.status_code, 409, stale_compose.text)
+        self.assertEqual(
+            stale_compose.json()["detail"]["code"], "CANVAS_REVISION_CONFLICT"
+        )
+        conflicting_compose = self.client.post(
+            "/api/workspaces/single/local-edit/compose",
+            json={**compose_payload, "expected_canvas_revision": 0},
+        )
+        self.assertEqual(conflicting_compose.status_code, 409, conflicting_compose.text)
+        self.assertEqual(
+            conflicting_compose.json()["detail"]["code"], "IDEMPOTENCY_CONFLICT"
+        )
+
+        second_roi_payload = {
+            **roi_payload,
+            "expected_canvas_revision": 2,
+            "client_request_id": "api-local-edit-roi-2",
+        }
+        second_roi = self.client.post("/api/canvas-rois", json=second_roi_payload)
+        self.assertEqual(second_roi.status_code, 200, second_roi.text)
+        second_mask = self.client.put(
+            f"/api/canvas-rois/{second_roi.json()['id']}/mask",
+            json={
+                **mask_payload,
+                "client_request_id": "api-local-edit-mask-2",
+            },
+        )
+        self.assertEqual(second_mask.status_code, 200, second_mask.text)
+        second_contract = {
+            **contract,
+            "operation_id": "operation:api-local-edit-2",
+            "source_canvas_version_id": composition["canvas"]["current_version_id"],
+            "source_sha256": composition["result_asset"]["sha256"],
+            "roi": {
+                **contract["roi"],
+                "id": second_roi.json()["id"],
+            },
+            "mask": {
+                **contract["mask"],
+                "id": second_mask.json()["version"]["id"],
+                "roi_id": second_roi.json()["id"],
+                "sha256": second_mask.json()["version"]["pixel_sha256"],
+            },
+        }
+        second_spec = self.client.post(
+            "/api/local-edit-specs",
+            json={
+                "client_request_id": "api-local-edit-spec-2",
+                "contract": second_contract,
+            },
+        )
+        self.assertEqual(second_spec.status_code, 200, second_spec.text)
+        self.assertEqual(
+            second_spec.json()["contract"]["source_pixel_sha256"],
+            composition["receipt"]["output_sha256"],
+        )
+        second_candidate_path = self.output_dir / "local-edit-candidate-2.png"
+        Image.new("RGB", (24, 18), (40, 190, 90)).save(second_candidate_path, "PNG")
+        second_candidate = self.ledger.add_asset(
+            self.ledger.get_asset(source["id"])["session_id"],
+            "result_main",
+            parent_asset_id=result_id,
+            path=str(second_candidate_path),
+            name=second_candidate_path.name,
+            mime="image/png",
+            width=24,
+            height=18,
+            sha256=server._file_sha256(second_candidate_path),
+            metadata={"output_root": str(self.output_dir)},
+        )
+        second_composed = self.client.post(
+            "/api/workspaces/single/local-edit/compose",
+            json={
+                "local_edit_spec_id": second_spec.json()["id"],
+                "candidate_asset_id": second_candidate["id"],
+                "expected_canvas_revision": 2,
+                "client_request_id": "api-local-edit-compose-2",
+            },
+        )
+        self.assertEqual(second_composed.status_code, 200, second_composed.text)
+        second_composition = second_composed.json()
+        self.assertEqual(second_composition["canvas"]["current_revision"], 3)
+        self.assertEqual(
+            second_composition["receipt"]["source_pixel_sha256"],
+            composition["receipt"]["output_sha256"],
+        )
+        second_operations = second_composition["canvas"]["document"]["operations"]
+        self.assertEqual(len(second_operations), 2)
+        self.assertEqual(
+            second_operations[-1]["mutation"]["before"]["source"]["id"], result_id
+        )
+        self.assertEqual(
+            second_operations[-1]["mutation"]["after"]["source"]["id"],
+            second_composition["result_asset_id"],
+        )
+        second_content = self.client.get(
+            f"/api/assets/{second_composition['result_asset_id']}/content"
+        )
+        self.assertEqual(second_content.status_code, 200, second_content.text)
+        with Image.open(io.BytesIO(second_content.content)) as second_image:
+            self.assertEqual(second_image.getpixel((23, 17))[:3], (220, 100, 40))
+            self.assertEqual(second_image.getpixel((4, 5))[:3], (40, 190, 90))
+
         missing = self.client.get("/api/local-edit-specs/editspec_missing")
         self.assertEqual(missing.status_code, 404, missing.text)
         self.assertEqual(
             missing.json()["detail"]["code"], "LOCAL_EDIT_SPEC_NOT_FOUND"
         )
+
+    def test_outpaint_api_preserves_source_placement_rotation_and_pixel_receipt(self) -> None:
+        source = self.client.post(
+            "/api/assets/import?collection=product",
+            files={"file": ("outpaint-source.png", png_bytes(), "image/png")},
+        ).json()
+        document = local_edit_canvas_payload(source["id"])
+        document["layers"][0]["transform"] = {
+            "x": 50,
+            "y": 40,
+            "scale_x": 0.5,
+            "scale_y": 0.75,
+            "rotation_degrees": 90,
+            "opacity": 1,
+        }
+        saved = self.client.put(
+            "/api/workspaces/single/canvas",
+            json={
+                "expected_revision": 0,
+                "client_request_id": "api-outpaint-canvas-1",
+                "document": document,
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+
+        roi = self.client.post(
+            "/api/canvas-rois",
+            json={
+                "canvas_document_id": document["id"],
+                "expected_canvas_revision": 1,
+                "source_layer_id": "layer:api-local-edit-source",
+                "coordinate_space": "output-pixel",
+                "rect": {"x": 0, "y": 0, "width": 32, "height": 24},
+                "purpose": "outpaint",
+                "client_request_id": "api-outpaint-roi-1",
+            },
+        )
+        self.assertEqual(roi.status_code, 200, roi.text)
+        contract = {
+            "schema_version": 1,
+            "operation_id": "operation:api-outpaint-1",
+            "mode": "outpaint",
+            "source_canvas_version_id": saved.json()["version"]["id"],
+            "source_layer_id": "layer:api-local-edit-source",
+            "source_sha256": source["sha256"],
+            "source_size": {"width": 24, "height": 18},
+            "roi": {
+                "id": roi.json()["id"],
+                "coordinate_space": "output-pixel",
+                "rect": {"x": 0, "y": 0, "width": 32, "height": 24},
+            },
+            "mask": None,
+            "strict_pixel_protection": True,
+            "outpaint": {
+                "output_width": 32,
+                "output_height": 24,
+                "source_x": 4,
+                "source_y": 3,
+                "transition_width": 1,
+            },
+            "cost": {
+                "mode": "paid",
+                "confirmed_call_count": 1,
+                "user_confirmation_required": True,
+                "user_confirmed": True,
+                "automatic_paid_retry": False,
+            },
+        }
+        spec = self.client.post(
+            "/api/local-edit-specs",
+            json={"client_request_id": "api-outpaint-spec-1", "contract": contract},
+        )
+        self.assertEqual(spec.status_code, 200, spec.text)
+        restored_spec = self.client.get("/api/local-edit-specs/latest", params={
+            "canvas_version_id": saved.json()["current_version_id"],
+            "source_layer_id": "layer:api-local-edit-source",
+            "roi_id": roi.json()["id"],
+            "mode": "outpaint",
+        })
+        self.assertEqual(restored_spec.status_code, 200, restored_spec.text)
+        self.assertEqual(restored_spec.json()["spec"]["id"], spec.json()["id"])
+
+        candidate_path = self.output_dir / "outpaint-candidate.png"
+        Image.new("RGB", (32, 24), (30, 120, 230)).save(candidate_path, "PNG")
+        candidate = self.ledger.add_asset(
+            self.ledger.get_asset(source["id"])["session_id"],
+            "result_main",
+            parent_asset_id=source["id"],
+            path=str(candidate_path),
+            name=candidate_path.name,
+            mime="image/png",
+            width=32,
+            height=24,
+            sha256=server._file_sha256(candidate_path),
+            metadata={"output_root": str(self.output_dir)},
+        )
+        composed = self.client.post(
+            "/api/workspaces/single/local-edit/compose",
+            json={
+                "local_edit_spec_id": spec.json()["id"],
+                "candidate_asset_id": candidate["id"],
+                "expected_canvas_revision": 1,
+                "client_request_id": "api-outpaint-compose-1",
+            },
+        )
+        self.assertEqual(composed.status_code, 200, composed.text)
+        payload = composed.json()
+        self.assertEqual(payload["canvas"]["current_revision"], 2)
+        self.assertEqual(payload["result_asset"]["width"], 32)
+        self.assertEqual(payload["result_asset"]["height"], 24)
+        self.assertEqual(payload["receipt"]["protected_changed_pixels"], 0)
+        self.assertEqual(payload["receipt"]["new_area_changed_pixels"], 336)
+        self.assertGreater(payload["receipt"]["transition_changed_pixels"], 0)
+        layer = payload["canvas"]["document"]["layers"][0]
+        self.assertEqual(layer["source"]["original_pixel_width"], 32)
+        self.assertEqual(layer["source"]["original_pixel_height"], 24)
+        self.assertAlmostEqual(layer["transform"]["x"], 52.25)
+        self.assertAlmostEqual(layer["transform"]["y"], 38.0)
+        self.assertEqual(layer["transform"]["rotation_degrees"], 90)
+        self.assertEqual(
+            payload["canvas"]["document"]["artboards"][0]["rect"],
+            {"x": 0, "y": 0, "width": 24, "height": 18},
+        )
+        content = self.client.get(f"/api/assets/{payload['result_asset_id']}/content")
+        self.assertEqual(content.status_code, 200, content.text)
+        with Image.open(io.BytesIO(content.content)) as result:
+            self.assertEqual(result.size, (32, 24))
+            self.assertEqual(result.getpixel((0, 0))[:3], (30, 120, 230))
+            self.assertEqual(result.getpixel((4, 3))[:3], (30, 120, 230))
+            self.assertEqual(result.getpixel((5, 4))[:3], (220, 100, 40))
 
     def test_product_profile_api_versions_constraints_and_command_binding(self) -> None:
         source = self.client.post(

@@ -91,6 +91,13 @@ try:
         grounding_adapter_from_pack,
     )
     from semantic_query import resolve_semantic_query
+    from local_edit_contract import (
+        LocalEditContractError,
+        apply_strict_inpaint,
+        apply_strict_outpaint,
+        image_fingerprint,
+        render_canvas_mask_definition,
+    )
     from storage_paths import (
         OutputRootError,
         canonicalize_output_root,
@@ -169,6 +176,13 @@ except ImportError:  # Allows importing as python.server during local tests.
         grounding_adapter_from_pack,
     )
     from python.semantic_query import resolve_semantic_query
+    from python.local_edit_contract import (
+        LocalEditContractError,
+        apply_strict_inpaint,
+        apply_strict_outpaint,
+        image_fingerprint,
+        render_canvas_mask_definition,
+    )
     from python.storage_paths import (
         OutputRootError,
         canonicalize_output_root,
@@ -586,6 +600,7 @@ def ledger_complete_task(context, results):
                     mime=mimetypes.guess_type(path)[0] or ("image/png" if role.endswith("cutout") else "image/jpeg"),
                     width=width,
                     height=height,
+                    sha256=_file_sha256(Path(path)) if path else "",
                     metadata={"generation_id": generation_id},
                 )
                 asset_ids.append(asset["id"])
@@ -1700,7 +1715,7 @@ def result_asset_response(asset: dict) -> dict:
 
 
 def _resolve_result_asset_path(asset: dict) -> Path:
-    if asset.get("role") not in {"result_main", "result_cutout"}:
+    if not str(asset.get("role") or "").startswith("result_"):
         raise AssetAccessError("Asset is not an exported generation result", code="ASSET_NOT_FOUND")
     candidate = Path(str(asset.get("path", ""))).resolve(strict=False)
     allowed_roots = _configured_output_roots()
@@ -1721,7 +1736,67 @@ def _resolve_result_asset_path(asset: dict) -> Path:
         raise AssetAccessError("Generation result file is unavailable", code="ASSET_FILE_MISSING") from exc
     if not resolved.is_file() or not any(resolved.is_relative_to(root) for root in roots):
         raise AssetAccessError("Generation result path is outside the allowed root")
+    expected_sha256 = str(asset.get("sha256") or "").lower()
+    if not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
+        raise AssetAccessError(
+            "Generation result has no valid content hash",
+            code="ASSET_HASH_MISMATCH",
+        )
+    if _file_sha256(resolved) != expected_sha256:
+        raise AssetAccessError(
+            "Generation result content hash does not match",
+            code="ASSET_HASH_MISMATCH",
+        )
     return resolved
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _authoritative_local_edit_contract(contract: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    candidate = dict(contract or {})
+    version_id = str(candidate.get("source_canvas_version_id") or "")
+    layer_id = str(candidate.get("source_layer_id") or "")
+    version = LEDGER.get_canvas_document_version(version_id)
+    layer = next(
+        (
+            item for item in version.get("document", {}).get("layers", [])
+            if str(item.get("id") or "") == layer_id
+        ),
+        None,
+    )
+    if layer is None:
+        raise KeyError(f"unknown canvas layer: {layer_id}")
+    source = dict(layer.get("source") or {})
+    path = _resolve_canvas_source_path(source)
+    file_sha256 = _file_sha256(path).upper()
+    try:
+        with Image.open(path) as opened:
+            opened.load()
+            image = opened.copy()
+    except (OSError, ValueError) as exc:
+        raise ValueError("local edit source image cannot be decoded") from exc
+    pixel_sha256 = image_fingerprint(image)
+    supplied_file = str(candidate.get("source_sha256") or "").strip().upper()
+    supplied_pixel = str(candidate.get("source_pixel_sha256") or "").strip().upper()
+    if supplied_file and supplied_file != file_sha256:
+        raise ValueError("local edit source file fingerprint does not match the bound file")
+    if supplied_pixel and supplied_pixel != pixel_sha256:
+        raise ValueError("local edit source pixel fingerprint does not match the decoded source")
+    expected_size = {
+        "width": int(source.get("original_pixel_width") or 0),
+        "height": int(source.get("original_pixel_height") or 0),
+    }
+    if image.size != (expected_size["width"], expected_size["height"]):
+        raise ValueError("local edit source dimensions do not match the canvas layer")
+    candidate["source_sha256"] = file_sha256
+    candidate["source_pixel_sha256"] = pixel_sha256
+    return candidate, pixel_sha256
 
 
 def _thumbnail_for_path(path: Path, max_size: int = 512) -> bytes:
@@ -1960,7 +2035,7 @@ async def get_workspace_asset(asset_id: str):
         asset = LEDGER.get_asset(asset_id)
         if asset.get("role") == "workspace_source":
             return workspace_asset_response(LEDGER.get_workspace_asset(asset_id))
-        if asset.get("role") in {"result_main", "result_cutout"}:
+        if str(asset.get("role") or "").startswith("result_"):
             return result_asset_response(asset)
         raise KeyError(f"asset is not externally readable: {asset_id}")
     except KeyError as exc:
@@ -2073,6 +2148,16 @@ class CanvasMaskSaveRequest(BaseModel):
 class LocalEditSpecCreateRequest(BaseModel):
     client_request_id: str
     contract: dict[str, Any]
+
+    class Config:
+        extra = "forbid"
+
+
+class LocalEditComposeRequest(BaseModel):
+    local_edit_spec_id: str
+    candidate_asset_id: str
+    expected_canvas_revision: int = Field(ge=0)
+    client_request_id: str
 
     class Config:
         extra = "forbid"
@@ -2742,8 +2827,13 @@ async def get_canvas_mask_version(version_id: str):
 @app.post("/api/local-edit-specs")
 async def create_local_edit_spec(request: LocalEditSpecCreateRequest):
     try:
+        contract, source_pixel_sha256 = await run_in_threadpool(
+            _authoritative_local_edit_contract,
+            request.contract,
+        )
         return LEDGER.create_local_edit_spec(
-            contract=request.contract,
+            contract=contract,
+            source_pixel_sha256=source_pixel_sha256,
             client_request_id=request.client_request_id,
         )
     except (
@@ -2759,6 +2849,31 @@ async def create_local_edit_spec(request: LocalEditSpecCreateRequest):
         )
 
 
+@app.get("/api/local-edit-specs/latest")
+async def find_latest_local_edit_spec(
+    canvas_version_id: str,
+    source_layer_id: str,
+    roi_id: str,
+    mode: str,
+    mask_version_id: str | None = None,
+):
+    try:
+        spec = LEDGER.find_local_edit_spec(
+            canvas_document_version_id=canvas_version_id,
+            source_layer_id=source_layer_id,
+            roi_id=roi_id,
+            mask_version_id=mask_version_id,
+            mode=mode,
+        )
+        return {"spec": spec}
+    except ValueError as exc:
+        raise_local_edit_http_error(
+            exc,
+            invalid_code="INVALID_LOCAL_EDIT_SPEC_LOOKUP",
+            not_found_code="LOCAL_EDIT_SPEC_NOT_FOUND",
+        )
+
+
 @app.get("/api/local-edit-specs/{spec_id}")
 async def get_local_edit_spec(spec_id: str):
     try:
@@ -2768,6 +2883,194 @@ async def get_local_edit_spec(spec_id: str):
             exc,
             invalid_code="INVALID_LOCAL_EDIT_SPEC",
             not_found_code="LOCAL_EDIT_SPEC_NOT_FOUND",
+        )
+
+
+def _local_edit_composition_response(mode: str, composition: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **composition,
+        "result_asset": result_asset_response(
+            LEDGER.get_asset(str(composition["result_asset_id"]))
+        ),
+        "canvas": LEDGER.get_canvas_document(mode),
+    }
+
+
+def _replay_local_edit_composition(
+    mode: str,
+    request: LocalEditComposeRequest,
+) -> dict[str, Any] | None:
+    prior = LEDGER.get_local_edit_composition_by_request(request.client_request_id)
+    if prior is None:
+        return None
+    receipt = dict(prior.get("receipt") or {})
+    if (
+        str(prior.get("local_edit_spec_id") or "") != request.local_edit_spec_id
+        or str(prior.get("candidate_asset_id") or "") != request.candidate_asset_id
+        or str(receipt.get("workflow_mode") or "") != mode
+        or str(receipt.get("mode") or "") not in {"inpaint", "outpaint"}
+        or int(receipt.get("source_canvas_revision", -1))
+        != request.expected_canvas_revision
+    ):
+        raise IdempotencyConflictError(
+            "client_request_id already belongs to a different local edit composition"
+        )
+    spec = LEDGER.get_local_edit_spec(request.local_edit_spec_id)
+    if str(spec.get("contract", {}).get("mode") or "") != str(receipt.get("mode") or ""):
+        raise IdempotencyConflictError("stored local edit composition has inconsistent mode")
+    return _local_edit_composition_response(mode, prior)
+
+
+def _execute_local_edit_compose(
+    mode: str,
+    request: LocalEditComposeRequest,
+) -> dict[str, Any]:
+    replayed = _replay_local_edit_composition(mode, request)
+    if replayed is not None:
+        return replayed
+
+    spec = LEDGER.get_local_edit_spec(request.local_edit_spec_id)
+    contract = dict(spec.get("contract") or {})
+    version = LEDGER.get_canvas_document_version(
+        str(spec.get("canvas_document_version_id") or "")
+    )
+    layer = next(
+        (
+            item for item in version.get("document", {}).get("layers", [])
+            if str(item.get("id") or "") == str(spec.get("source_layer_id") or "")
+        ),
+        None,
+    )
+    if layer is None:
+        raise KeyError(f"unknown local edit source layer: {spec.get('source_layer_id')}")
+    source_path = _resolve_canvas_source_path(dict(layer.get("source") or {}))
+    candidate_asset = LEDGER.get_asset(request.candidate_asset_id)
+    candidate_path = _resolve_result_asset_path(candidate_asset)
+    try:
+        with Image.open(source_path) as opened:
+            opened.load()
+            source = opened.copy()
+        with Image.open(candidate_path) as opened:
+            opened.load()
+            candidate = opened.copy()
+    except (OSError, ValueError) as exc:
+        raise LocalEditContractError(
+            "LOCAL_EDIT_IMAGE_INVALID", "局部编辑源图或候选图无法解码"
+        ) from exc
+
+    if contract.get("mode") == "inpaint":
+        mask_version = LEDGER.get_canvas_mask_version(
+            str(contract.get("mask", {}).get("id") or "")
+        )
+        mask = render_canvas_mask_definition(
+            mask_version["definition"], contract["roi"]["rect"]
+        )
+        composed, receipt = apply_strict_inpaint(source, candidate, mask, contract)
+    elif contract.get("mode") == "outpaint":
+        composed, receipt = apply_strict_outpaint(source, candidate, contract)
+    else:
+        raise LocalEditContractError(
+            "LOCAL_EDIT_MODE_MISMATCH", "冻结规格不属于局部编辑或扩图"
+        )
+
+    output_root = _validate_output_root(_RUNTIME_OUTPUT_ROOT, test_write=True)
+    request_digest = hashlib.sha256(request.client_request_id.encode("utf-8")).hexdigest()
+    stage_dir = OUTPUT_DIR / "_local_edit_stage" / uuid.uuid4().hex
+    stage_path = stage_dir / "result.png"
+    date_part = datetime.now().strftime("%Y-%m-%d")
+    target_dir = (
+        output_root
+        / date_part
+        / "05_局部处理"
+        / f"编辑-{request_digest[:16]}"
+    )
+    target_path = target_dir / f"result-{uuid.uuid4().hex[:12]}.png"
+    stage_dir.mkdir(parents=True, exist_ok=False)
+    published = False
+    try:
+        composed.save(stage_path, "PNG")
+        file_sha256 = _file_sha256(stage_path)
+        publish_staged_file(stage_path, target_path)
+        published = True
+        composition = LEDGER.commit_local_edit_composition(
+            mode,
+            local_edit_spec_id=request.local_edit_spec_id,
+            candidate_asset_id=request.candidate_asset_id,
+            expected_canvas_revision=request.expected_canvas_revision,
+            client_request_id=request.client_request_id,
+            result={
+                "path": str(target_path),
+                "name": target_path.name,
+                "mime": "image/png",
+                "width": composed.width,
+                "height": composed.height,
+                "sha256": file_sha256,
+                "pixel_sha256": image_fingerprint(composed),
+                "candidate_pixel_sha256": image_fingerprint(candidate),
+                "metadata": {"output_root": str(output_root)},
+            },
+            receipt=receipt,
+        )
+        committed_path = Path(str(composition["result_asset"].get("path") or ""))
+        if composition.get("replayed") and committed_path != target_path:
+            target_path.unlink(missing_ok=True)
+            published = False
+        return _local_edit_composition_response(mode, composition)
+    except Exception:
+        if published:
+            committed = LEDGER.get_local_edit_composition_by_request(
+                request.client_request_id
+            )
+            committed_path = None
+            if committed is not None:
+                try:
+                    committed_path = Path(
+                        str(LEDGER.get_asset(committed["result_asset_id"])["path"])
+                    )
+                except (KeyError, TypeError):
+                    committed_path = None
+            if committed_path != target_path:
+                target_path.unlink(missing_ok=True)
+        raise
+    finally:
+        stage_path.unlink(missing_ok=True)
+        try:
+            stage_dir.rmdir()
+        except OSError:
+            pass
+        try:
+            target_dir.rmdir()
+        except OSError:
+            pass
+
+
+@app.post("/api/workspaces/{mode}/local-edit/compose")
+async def compose_local_edit(mode: str, request: LocalEditComposeRequest):
+    try:
+        return await run_in_threadpool(_execute_local_edit_compose, mode, request)
+    except AssetStoreError as exc:
+        raise_asset_http_error(exc)
+    except OutputRootError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "message": exc.message},
+        )
+    except LocalEditContractError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "message": str(exc)},
+        )
+    except (
+        CanvasRevisionConflictError,
+        IdempotencyConflictError,
+        KeyError,
+        sqlite3.IntegrityError,
+        ValueError,
+    ) as exc:
+        raise_local_edit_http_error(
+            exc,
+            invalid_code="INVALID_LOCAL_EDIT_COMPOSITION",
+            not_found_code="LOCAL_EDIT_COMPOSITION_REFERENCE_NOT_FOUND",
         )
 
 

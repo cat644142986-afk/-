@@ -38,10 +38,14 @@ import {
 import {
   appendMaskStroke,
   buildFreeLocalEditContract,
+  buildPaidOutpaintContract,
   cloneMaskDefinition,
+  compatibleLocalEditCandidates,
   createMaskDefinition,
+  defaultOutpaintConfig,
   invertMaskDefinition,
   maskHasWritablePixels,
+  normalizeOutpaintConfig,
   normalizeSourceRoi,
   roiFromSceneDrag,
   sceneRectFromSourceRoi,
@@ -55,6 +59,7 @@ const REQUIRED_MUTATION_COMMANDS = new Set([
   'command:transform-layer',
   'command:toggle-layer',
   'command:toggle-layer-lock',
+  'command:local-edit-compose',
 ]);
 const EMPTY_ARTBOARD = Object.freeze({
   id: 'artboard:main',
@@ -124,8 +129,9 @@ function createRequestId(prefix = 'canvas-save') {
   return `${prefix}:${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function blankLocalEditState() {
+function blankLocalEditState(mode = 'inpaint') {
   return {
+    mode,
     hydrated: false,
     loading: false,
     saving: false,
@@ -136,6 +142,15 @@ function blankLocalEditState() {
     savedDefinition: null,
     dirtyMask: false,
     spec: null,
+    specRequest: null,
+    roiRequest: null,
+    outpaint: null,
+    outpaintConfirmed: false,
+    recentCandidates: [],
+    candidatesHydrated: false,
+    candidateLoading: false,
+    candidateId: '',
+    composeRequest: null,
     error: '',
   };
 }
@@ -176,10 +191,12 @@ export function createCanvasController({
 } = {}) {
   const entries = new Map();
   const objectByLayer = new Map();
+  const assetDetails = new Map();
   let currentMode = 'single';
   let currentView = 'quick';
   let activePanel = 'layers';
   let activeTool = 'select';
+  let localEditMode = 'inpaint';
   let canvas = null;
   let fabricRuntime = null;
   let resizeObserver = null;
@@ -191,6 +208,8 @@ export function createCanvasController({
   let lastPanPoint = null;
   let toolBeforeSpace = null;
   let localPointer = null;
+  let historySyncing = false;
+  let suppressSelectionCleared = false;
   let bound = false;
 
   function entryFor(mode = currentMode) {
@@ -203,7 +222,23 @@ export function createCanvasController({
   }
 
   function assetById(assetId) {
-    return assets().find((asset) => String(asset.id) === String(assetId)) || null;
+    const target = String(assetId || '');
+    const currentResult = Object.values(state.results || {})
+      .flatMap((items) => Array.from(items || []))
+      .find((asset) => String(asset.id || asset.asset_id || '') === target);
+    return assets().find((asset) => String(asset.id) === target)
+      || currentResult
+      || assetDetails.get(target)
+      || null;
+  }
+
+  async function ensureLayerSourceAsset(layer) {
+    const assetId = String(layer?.source?.id || '');
+    const existing = assetById(assetId);
+    if (!assetId || existing?.sha256 || existing?.blob?.sha256) return existing;
+    const asset = await api.getAsset(assetId, { timeoutMs: 10000 });
+    assetDetails.set(assetId, asset);
+    return asset;
   }
 
   function activeDocument() {
@@ -224,16 +259,16 @@ export function createCanvasController({
     return asset?.name || `素材 ${String(layer?.source?.id || '').slice(-8)}`;
   }
 
-  function localEditKey(entry = entryFor(), layerId = selectedLayerId) {
+  function localEditKey(entry = entryFor(), layerId = selectedLayerId, mode = localEditMode) {
     if (!entry.currentVersionId || !layerId) return '';
-    return `${entry.currentVersionId}|${layerId}`;
+    return `${entry.currentVersionId}|${layerId}|${mode}`;
   }
 
   function localEditState({ create = true } = {}) {
     const entry = entryFor();
     const key = localEditKey(entry);
     if (!key) return null;
-    if (!entry.localEdits.has(key) && create) entry.localEdits.set(key, blankLocalEditState());
+    if (!entry.localEdits.has(key) && create) entry.localEdits.set(key, blankLocalEditState(localEditMode));
     return entry.localEdits.get(key) || null;
   }
 
@@ -249,7 +284,10 @@ export function createCanvasController({
     return Boolean(
       layer
       && !layer.locked
-      && Math.abs(Number(layer.transform.rotation_degrees || 0)) < 0.0001
+      && (
+        localEditMode === 'outpaint'
+        || Math.abs(Number(layer.transform.rotation_degrees || 0)) < 0.0001
+      )
       && entryFor().document
       && entryFor().currentVersionId
       && !entryFor().dirty
@@ -275,28 +313,144 @@ export function createCanvasController({
     });
   }
 
+  function ensureOutpaintDraft(local = localEditState(), layer = activeLayer()) {
+    if (local && layer && !local.outpaint) local.outpaint = defaultOutpaintConfig(layer);
+    return local?.outpaint || null;
+  }
+
+  function writeOutpaintInputs(config) {
+    const values = config || {
+      output_width: '',
+      output_height: '',
+      source_x: '',
+      source_y: '',
+      transition_width: 0,
+    };
+    query('#local-edit-outpaint-width').value = String(values.output_width ?? '');
+    query('#local-edit-outpaint-height').value = String(values.output_height ?? '');
+    query('#local-edit-outpaint-x').value = String(values.source_x ?? '');
+    query('#local-edit-outpaint-y').value = String(values.source_y ?? '');
+    query('#local-edit-outpaint-transition').value = String(values.transition_width ?? 0);
+  }
+
+  function outpaintFromInputs(layer = activeLayer()) {
+    return normalizeOutpaintConfig(layer, {
+      output_width: Number(query('#local-edit-outpaint-width').value),
+      output_height: Number(query('#local-edit-outpaint-height').value),
+      source_x: Number(query('#local-edit-outpaint-x').value),
+      source_y: Number(query('#local-edit-outpaint-y').value),
+      transition_width: Number(query('#local-edit-outpaint-transition').value),
+    });
+  }
+
+  function localEditCandidateOptions(local = localEditState({ create: false }), layer = activeLayer()) {
+    if (!local?.spec || !layer) return [];
+    try {
+      return compatibleLocalEditCandidates(
+        state.results,
+        local.recentCandidates,
+        local.spec.contract,
+        layer,
+      );
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function updateLocalEditCandidates(local, layer, busy) {
+    const select = query('#local-edit-candidate');
+    const preview = query('#local-edit-candidate-preview');
+    const candidates = localEditCandidateOptions(local, layer);
+    const selected = candidates.some((item) => item.id === local?.candidateId)
+      ? local.candidateId
+      : candidates[0]?.id || '';
+    if (local) local.candidateId = selected;
+    select.innerHTML = candidates.length
+      ? candidates.map((candidate) => (
+        `<option value="${escapeHtml(candidate.id)}">${escapeHtml(candidate.name)} · ${candidate.width} × ${candidate.height}</option>`
+      )).join('')
+      : '<option value="">暂无兼容候选</option>';
+    select.value = selected;
+    select.disabled = !local?.spec || !candidates.length || busy;
+    query('#local-edit-candidate-count').textContent = `${candidates.length} 个`;
+    query('#local-edit-refresh-candidates').disabled = !local?.spec || busy;
+    query('#local-edit-apply').disabled = !local?.spec || !selected || busy;
+    const candidate = candidates.find((item) => item.id === selected) || null;
+    preview.hidden = !candidate;
+    if (candidate) {
+      const image = query('#local-edit-candidate-image');
+      const previewUrl = candidate.preview_url || candidate.thumbnail_url || '';
+      if (previewUrl) image.src = previewUrl;
+      else image.removeAttribute('src');
+      query('#local-edit-candidate-name').textContent = candidate.name;
+      query('#local-edit-candidate-detail').textContent = `${candidate.width} × ${candidate.height} px · ${candidate.role}`;
+    }
+  }
+
   function updateLocalEditPanel() {
     const entry = entryFor();
     const layer = activeLayer();
     const local = localEditState({ create: false });
+    const isOutpaint = localEditMode === 'outpaint';
     const layerReady = localEditLayerReady(layer);
     const roiReady = Boolean(local?.roi && sameRect(local.roi.rect, local.draftRect));
     const maskSaved = Boolean(local?.mask?.version?.id && !local.dirtyMask);
     const writableMask = Boolean(local?.definition && maskHasWritablePixels(local.definition));
-    const busy = Boolean(local?.loading || local?.saving);
+    const busy = Boolean(local?.loading || local?.saving || local?.candidateLoading);
+    let outpaint = null;
+    let outpaintValid = false;
+    if (isOutpaint && layer && local) {
+      outpaint = ensureOutpaintDraft(local, layer);
+      try {
+        outpaint = normalizeOutpaintConfig(layer, outpaint);
+        outpaintValid = true;
+      } catch (_) { /* the inline status below reports the stored validation error */ }
+    }
 
-    query('#local-edit-roi-fields').disabled = !layerReady || busy;
-    query('#local-edit-mask-fields').disabled = !layerReady || !roiReady || busy;
+    queryAll('[data-local-edit-mode]').forEach((button) => {
+      const active = button.dataset.localEditMode === localEditMode;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    queryAll('[data-local-edit-section]').forEach((section) => {
+      section.hidden = section.dataset.localEditSection !== localEditMode;
+    });
+
+    query('#local-edit-roi-fields').disabled = isOutpaint || !layerReady || busy;
+    query('#local-edit-mask-fields').disabled = isOutpaint || !layerReady || !roiReady || busy;
+    query('#local-edit-outpaint-fields').disabled = !isOutpaint || !layerReady || busy;
     queryAll('[data-local-edit-requires-layer]').forEach((button) => {
-      button.disabled = !layerReady || busy;
+      button.disabled = isOutpaint || !layerReady || busy;
     });
     queryAll('[data-local-edit-requires-roi]').forEach((button) => {
-      button.disabled = !layerReady || !roiReady || busy;
+      button.disabled = isOutpaint || !layerReady || !roiReady || busy;
     });
-    query('#local-edit-prepare').disabled = !maskSaved || !writableMask || busy;
+    query('#local-edit-prepare').disabled = isOutpaint || !maskSaved || !writableMask || busy || Boolean(local?.spec);
+    query('#local-edit-prepare-outpaint').disabled = !isOutpaint
+      || !outpaintValid
+      || !local?.outpaintConfirmed
+      || busy
+      || Boolean(local?.spec);
+    query('#local-edit-compose-fields').disabled = !local?.spec || busy;
 
     if (local?.draftRect) writeRoiInputs(local.draftRect);
     else if (!layer) writeRoiInputs(null);
+    if (isOutpaint) {
+      writeOutpaintInputs(outpaint);
+      const sourceWidth = Number(layer?.source?.original_pixel_width || 0);
+      const sourceHeight = Number(layer?.source?.original_pixel_height || 0);
+      const maxTransition = Math.max(0, Math.floor(Math.min(sourceWidth, sourceHeight) / 2));
+      query('#local-edit-outpaint-transition').max = String(maxTransition);
+      query('#local-edit-outpaint-transition-output').textContent = `${Number(outpaint?.transition_width || 0)} px`;
+      query('#local-edit-outpaint-confirm').checked = Boolean(local?.outpaintConfirmed);
+      query('#local-edit-outpaint-output-summary').textContent = outpaintValid
+        ? `${outpaint.output_width} × ${outpaint.output_height} px · 原图位于 ${outpaint.source_x}, ${outpaint.source_y}`
+        : '扩图规格需要修正';
+      query('#local-edit-outpaint-write-summary').textContent = outpaintValid
+        ? `允许写入新增区域与 ${outpaint.transition_width} px 过渡带；原画板保持 ${activeArtboard().export.pixel_width} × ${activeArtboard().export.pixel_height} px`
+        : '原图必须完整位于输出范围内，且输出需包含新增区域';
+      query('#local-edit-outpaint-cost-summary').textContent = '扩图生成预算：1 次调用 · 冻结规格不会发起调用';
+    }
     const brushRadius = Number(query('#local-edit-brush-radius').value || 24);
     query('#local-edit-brush-radius-output').textContent = `${brushRadius} px`;
     const feather = Number(local?.definition?.feather_radius ?? query('#local-edit-feather').value ?? 0);
@@ -305,27 +459,73 @@ export function createCanvasController({
     queryAll('[data-local-edit-base]').forEach((button) => {
       button.classList.toggle('is-active', button.dataset.localEditBase === local?.definition?.base);
     });
+    updateLocalEditCandidates(local, layer, busy);
 
-    if (!layer) setLocalEditStatus('idle', '请选择一个图层', '局部编辑尚未开始');
-    else if (!entry.currentVersionId) setLocalEditStatus('dirty', '请先保存画布', '局部选区必须绑定不可变画布版本');
-    else if (entry.dirty) setLocalEditStatus('dirty', '正在保存画布修改', '新画布版本生成后再继续局部编辑');
-    else if (layer.locked) setLocalEditStatus('idle', '图层已锁定', '解锁后才能创建局部选区');
-    else if (Math.abs(Number(layer.transform.rotation_degrees || 0)) >= 0.0001) {
+    if (!layer) setLocalEditStatus('idle', '请选择一个图层', isOutpaint ? '扩图规格尚未开始' : '局部编辑尚未开始');
+    else if (!entry.currentVersionId) setLocalEditStatus('dirty', '请先保存画布', '处理规格必须绑定不可变画布版本');
+    else if (entry.dirty) setLocalEditStatus('dirty', '正在保存画布修改', '新画布版本生成后再继续处理');
+    else if (layer.locked) setLocalEditStatus('idle', '图层已锁定', '解锁后才能创建处理规格');
+    else if (!isOutpaint && Math.abs(Number(layer.transform.rotation_degrees || 0)) >= 0.0001) {
       setLocalEditStatus('error', '暂不支持旋转图层', '将旋转恢复为 0° 后再框选');
-    } else if (local?.loading) setLocalEditStatus('saving', '正在恢复局部编辑', '读取当前版本的最新选区与蒙版');
+    } else if (local?.loading) setLocalEditStatus('saving', '正在恢复处理规格', isOutpaint ? '读取当前版本的扩图范围' : '读取当前版本的最新选区与蒙版');
+    else if (local?.candidateLoading) setLocalEditStatus('saving', '正在读取候选结果', '合并当前结果与本模式的近期任务结果');
     else if (local?.saving) setLocalEditStatus('saving', '正在写入本地账本', '操作完成前不会覆盖已有版本');
-    else if (local?.error) setLocalEditStatus('error', '局部编辑未完成', local.error);
+    else if (local?.error) setLocalEditStatus('error', isOutpaint ? '扩图规格未完成' : '局部编辑未完成', local.error);
+    else if (isOutpaint && local?.spec) {
+      const count = localEditCandidateOptions(local, layer).length;
+      setLocalEditStatus('saved', '扩图规格已冻结', `1 次调用已确认 · ${count} 个兼容候选`);
+    }
+    else if (isOutpaint && !local?.outpaintConfirmed) setLocalEditStatus('ready', '核对扩图影响', '确认输出规格、写入范围与 1 次调用');
+    else if (isOutpaint) setLocalEditStatus('saved', '扩图规格可以冻结', '冻结只写入本地账本，不会发起模型调用');
     else if (!local?.draftRect) setLocalEditStatus('idle', '框选局部区域', '选择框选工具后在图层上拖动');
     else if (!roiReady) setLocalEditStatus('dirty', '选区尚未保存', '核对原图像素坐标后保存不可变 ROI');
     else if (!local.mask) setLocalEditStatus('ready', '选区已保存', '填满选区或使用保留画笔创建蒙版');
     else if (local.dirtyMask) setLocalEditStatus('dirty', '蒙版有未保存修改', '保存后才可冻结本地编辑规格');
-    else if (local.spec) setLocalEditStatus('saved', '本地编辑规格已冻结', `零调用 · ${local.spec.id}`);
+    else if (local.spec) {
+      const count = localEditCandidateOptions(local, layer).length;
+      setLocalEditStatus('saved', '本地编辑规格已冻结', `零调用 · ${count} 个兼容候选`);
+    }
     else setLocalEditStatus('saved', '蒙版版本已保存', `revision ${local.mask.current_revision} · 可冻结零费用规格`);
+  }
+
+  async function ensureLocalEditCandidates(force = false) {
+    const local = localEditState({ create: false });
+    if (!local?.spec || local.candidateLoading || (!force && local.candidatesHydrated)) {
+      updateLocalEditPanel();
+      return;
+    }
+    local.candidateLoading = true;
+    local.error = '';
+    updateLocalEditPanel();
+    try {
+      const response = await api.getWorkspace(currentMode, { timeoutMs: 12000 });
+      const candidates = Array.from(response?.recent_results || []);
+      await Promise.all(candidates.map(async (candidate) => {
+        try {
+          candidate.preview_url = await api.getAssetThumbnailUrl(candidate.id, 160);
+        } catch (_) { /* candidate remains selectable without a preview */ }
+      }));
+      local.recentCandidates = candidates;
+      local.candidatesHydrated = true;
+      const available = localEditCandidateOptions(local);
+      if (!available.some((item) => item.id === local.candidateId)) {
+        local.candidateId = available[0]?.id || '';
+        local.composeRequest = null;
+      }
+    } catch (error) {
+      if (!localEditCandidateOptions(local).length) {
+        local.error = formatApiError(error, '无法读取本模式的近期候选结果');
+      }
+    } finally {
+      local.candidateLoading = false;
+      updateLocalEditPanel();
+    }
   }
 
   async function ensureLocalEditHydrated(force = false) {
     const entry = entryFor();
     const layer = activeLayer();
+    const mode = localEditMode;
     const key = localEditKey(entry);
     if (!layer || !key) {
       updateLocalEditPanel();
@@ -341,17 +541,20 @@ export function createCanvasController({
     local.error = '';
     updateLocalEditPanel();
     try {
+      await ensureLayerSourceAsset(layer);
+      if (token !== entry.localEditLoadToken || key !== localEditKey(entry)) return;
       const response = await api.getCanvasRois(entry.currentVersionId, layer.id, { timeoutMs: 10000 });
       if (token !== entry.localEditLoadToken || key !== localEditKey(entry)) return;
-      const roi = Array.from(response?.rois || [])[0] || null;
+      const roi = Array.from(response?.rois || [])
+        .find((item) => item.purpose === mode) || null;
       local.roi = roi;
       local.draftRect = roi ? { ...roi.rect } : null;
       local.mask = null;
-      local.definition = roi ? createMaskDefinition(layer) : null;
+      local.definition = mode === 'inpaint' && roi ? createMaskDefinition(layer) : null;
       local.savedDefinition = null;
       local.dirtyMask = false;
       local.spec = null;
-      if (roi) {
+      if (mode === 'inpaint' && roi) {
         try {
           local.mask = await api.getCanvasMask(roi.id, { timeoutMs: 10000 });
           local.definition = cloneMaskDefinition(local.mask.version.definition);
@@ -360,14 +563,33 @@ export function createCanvasController({
           if (error?.status !== 404) throw error;
         }
       }
+      if (roi && (mode === 'outpaint' || local.mask?.version?.id)) {
+        const latest = await api.getLatestLocalEditSpec({
+          canvasVersionId: entry.currentVersionId,
+          sourceLayerId: layer.id,
+          roiId: roi.id,
+          mode,
+          maskVersionId: local.mask?.version?.id || '',
+        }, { timeoutMs: 10000 });
+        local.spec = latest?.spec || null;
+        if (mode === 'outpaint' && local.spec?.contract?.outpaint) {
+          local.outpaint = normalizeOutpaintConfig(layer, local.spec.contract.outpaint);
+          local.outpaintConfirmed = Boolean(local.spec.contract.cost?.user_confirmed);
+        }
+      }
+      if (mode === 'outpaint') ensureOutpaintDraft(local, layer);
       local.hydrated = true;
+      renderLayerList();
     } catch (error) {
-      local.error = formatApiError(error, '无法恢复当前图层的局部编辑记录');
+      local.error = formatApiError(error, mode === 'outpaint'
+        ? '无法恢复当前图层的扩图规格'
+        : '无法恢复当前图层的局部编辑记录');
     } finally {
       local.loading = false;
       if (token === entry.localEditLoadToken && key === localEditKey(entry)) {
         updateLocalEditPanel();
         renderLocalEditOverlay();
+        if (local.spec) ensureLocalEditCandidates();
       }
     }
   }
@@ -634,8 +856,8 @@ export function createCanvasController({
     const redo = query('#canvas-redo');
     const canUndo = Boolean(document && document.undo_cursor >= 0);
     const canRedo = Boolean(document && document.undo_cursor + 1 < document.operations.length);
-    undo.disabled = !canUndo || entryFor().saving || entryFor().blocked;
-    redo.disabled = !canRedo || entryFor().saving || entryFor().blocked;
+    undo.disabled = !canUndo || entryFor().saving || entryFor().blocked || historySyncing;
+    redo.disabled = !canRedo || entryFor().saving || entryFor().blocked || historySyncing;
     undo.dataset.historyUnavailable = String(!canUndo);
     redo.dataset.historyUnavailable = String(!canRedo);
   }
@@ -729,10 +951,25 @@ export function createCanvasController({
     }
   }
 
+  function setLocalEditMode(mode) {
+    const next = mode === 'outpaint' ? 'outpaint' : 'inpaint';
+    if (next === localEditMode) return;
+    localEditMode = next;
+    localPointer = null;
+    setTool('select');
+    updateLocalEditPanel();
+    renderLocalEditOverlay();
+    ensureLocalEditHydrated();
+  }
+
   function syncObjectFromLayer(layerId) {
     const layer = activeDocument()?.layers?.find((item) => item.id === layerId);
     const object = objectByLayer.get(layerId);
     if (!layer || !object || !canvas) return;
+    if (String(object.get('sourceAssetId') || '') !== String(layer.source.id)) {
+      reloadObjectFromLayer(layerId);
+      return;
+    }
     const scale = layerObjectScale(layer, object.width, object.height);
     object.set({
       left: layer.transform.x,
@@ -748,6 +985,29 @@ export function createCanvasController({
     object.setCoords();
     canvas.moveObjectTo(object, layer.z_index + 1);
     if (layer.locked && canvas.getActiveObject() === object) canvas.discardActiveObject();
+    canvas.requestRenderAll();
+  }
+
+  async function reloadObjectFromLayer(layerId) {
+    const layer = activeDocument()?.layers?.find((item) => item.id === layerId);
+    if (!layer || !canvas) return;
+    const requestedSourceId = String(layer.source.id);
+    const replacement = await fabricObjectForLayer(layer);
+    const currentLayer = activeDocument()?.layers?.find((item) => item.id === layerId);
+    if (!currentLayer || String(currentLayer.source.id) !== requestedSourceId || !canvas) return;
+    const previous = objectByLayer.get(layerId);
+    const selectedBeforeReload = selectedLayerId === layerId;
+    suppressSelectionCleared = true;
+    try {
+      if (previous) canvas.remove(previous);
+      objectByLayer.set(layerId, replacement);
+      canvas.add(replacement);
+      canvas.moveObjectTo(replacement, currentLayer.z_index + 1);
+      if (selectedBeforeReload && !currentLayer.locked) canvas.setActiveObject(replacement);
+    } finally {
+      suppressSelectionCleared = false;
+    }
+    renderLocalEditOverlay();
     canvas.requestRenderAll();
   }
 
@@ -774,6 +1034,10 @@ export function createCanvasController({
   function setTool(tool) {
     const allowed = new Set(['select', 'pan', 'roi', 'brush-include', 'brush-exclude']);
     const requested = allowed.has(tool) ? tool : 'select';
+    if (localEditMode === 'outpaint' && (requested === 'roi' || requested.startsWith('brush-'))) {
+      updateLocalEditPanel();
+      return;
+    }
     if (requested === 'roi' && !localEditLayerReady()) {
       updateLocalEditPanel();
       return;
@@ -828,6 +1092,10 @@ export function createCanvasController({
   function renderLocalEditOverlay() {
     if (!canvas || !fabricRuntime) return;
     removeLocalEditObjects();
+    if (localEditMode !== 'inpaint') {
+      canvas.requestRenderAll();
+      return;
+    }
     const layer = activeLayer();
     const local = localEditState({ create: false });
     if (!layer || !local?.draftRect) {
@@ -1039,6 +1307,8 @@ export function createCanvasController({
     try {
       local.draftRect = roiFromInputs();
       local.spec = null;
+      local.specRequest = null;
+      local.roiRequest = null;
       local.error = '';
       updateLocalEditPanel();
       renderLocalEditOverlay();
@@ -1075,7 +1345,7 @@ export function createCanvasController({
     local.error = '';
     updateLocalEditPanel();
     try {
-      const roi = await api.createCanvasRoi({
+      local.roiRequest = local.roiRequest || {
         canvas_document_id: entry.document.id,
         expected_canvas_revision: entry.currentRevision,
         source_layer_id: layer.id,
@@ -1083,7 +1353,8 @@ export function createCanvasController({
         rect: normalizeSourceRoi(layer, rect),
         purpose: 'inpaint',
         client_request_id: createRequestId('roi-create'),
-      }, { timeoutMs: 12000 });
+      };
+      const roi = await api.createCanvasRoi(local.roiRequest, { timeoutMs: 12000 });
       local.roi = roi;
       local.draftRect = { ...roi.rect };
       local.mask = null;
@@ -1091,6 +1362,7 @@ export function createCanvasController({
       local.savedDefinition = null;
       local.dirtyMask = false;
       local.spec = null;
+      local.specRequest = null;
       local.hydrated = true;
       setTool('brush-include');
     } catch (error) {
@@ -1111,6 +1383,7 @@ export function createCanvasController({
       local.definition = mutation(current);
       local.dirtyMask = true;
       local.spec = null;
+      local.specRequest = null;
       local.error = '';
     } catch (error) {
       local.error = error.message || '蒙版修改失败';
@@ -1148,6 +1421,7 @@ export function createCanvasController({
       local.savedDefinition = cloneMaskDefinition(local.mask.version.definition);
       local.dirtyMask = false;
       local.spec = null;
+      local.specRequest = null;
     } catch (error) {
       local.error = formatApiError(error, '蒙版版本未能写入本地账本');
       if (error?.detail?.code === 'CANVAS_MASK_REVISION_CONFLICT') {
@@ -1173,34 +1447,186 @@ export function createCanvasController({
       || local.dirtyMask
       || !maskHasWritablePixels(local.definition)
     ) return;
-    if (!/^[a-f0-9]{64}$/i.test(String(sourceSha256))) {
-      local.error = '原始素材缺少可验证的 SHA-256，无法冻结编辑规格';
-      updateLocalEditPanel();
-      return;
-    }
     local.saving = true;
     local.error = '';
+    let prepared = false;
     updateLocalEditPanel();
     try {
-      const operationId = createRequestId('operation-local-edit');
-      const contract = buildFreeLocalEditContract({
-        operationId,
-        canvasVersionId: entry.currentVersionId,
-        layer,
-        sourceSha256,
-        roi: local.roi,
-        mask: local.mask,
-      });
-      local.spec = await api.createLocalEditSpec({
+      local.specRequest = local.specRequest || {
         client_request_id: createRequestId('local-edit-spec'),
-        contract,
-      }, { timeoutMs: 12000 });
+        contract: buildFreeLocalEditContract({
+          operationId: createRequestId('operation-local-edit'),
+          canvasVersionId: entry.currentVersionId,
+          layer,
+          sourceSha256,
+          sourcePixelSha256: '',
+          roi: local.roi,
+          mask: local.mask,
+        }),
+      };
+      local.spec = await api.createLocalEditSpec(local.specRequest, { timeoutMs: 12000 });
+      local.candidatesHydrated = false;
+      local.composeRequest = null;
+      prepared = true;
       toast('本地编辑规格已冻结，不会产生模型调用费用', 'success');
     } catch (error) {
       local.error = formatApiError(error, '本地编辑规格冻结失败');
     } finally {
       local.saving = false;
       updateLocalEditPanel();
+    }
+    if (prepared) await ensureLocalEditCandidates(true);
+  }
+
+  function invalidateOutpaintSpec(local) {
+    local.roi = null;
+    local.draftRect = null;
+    local.spec = null;
+    local.roiRequest = null;
+    local.specRequest = null;
+    local.composeRequest = null;
+    local.candidatesHydrated = false;
+    local.candidateId = '';
+    local.outpaintConfirmed = false;
+  }
+
+  function updateOutpaintDraftFromInputs() {
+    const local = localEditState();
+    const layer = activeLayer();
+    if (!local || !layer || localEditMode !== 'outpaint') return false;
+    try {
+      local.outpaint = outpaintFromInputs(layer);
+      invalidateOutpaintSpec(local);
+      local.error = '';
+      updateLocalEditPanel();
+      return true;
+    } catch (error) {
+      local.error = error.message || '扩图规格无效';
+      updateLocalEditPanel();
+      return false;
+    }
+  }
+
+  function confirmOutpaintSpec(confirmed) {
+    const local = localEditState();
+    if (!local || localEditMode !== 'outpaint') return;
+    local.outpaintConfirmed = Boolean(confirmed);
+    local.error = '';
+    updateLocalEditPanel();
+  }
+
+  async function prepareOutpaintSpec() {
+    const entry = entryFor();
+    const layerId = selectedLayerId;
+    const local = localEditState();
+    if (!local || !local.outpaintConfirmed || local.spec || local.saving) return;
+    let outpaint;
+    try {
+      outpaint = outpaintFromInputs(activeLayer());
+    } catch (error) {
+      local.error = error.message || '扩图规格无效';
+      updateLocalEditPanel();
+      return;
+    }
+    if (entry.dirty && !await saveMode(currentMode)) return;
+    entry.localEditLoadToken += 1;
+    const layer = activeDocument()?.layers?.find((item) => item.id === layerId);
+    const source = assetById(layer?.source?.id);
+    const sourceSha256 = source?.sha256 || source?.blob?.sha256 || '';
+    if (!layer || !sourceSha256 || !entry.currentVersionId) return;
+    local.saving = true;
+    local.error = '';
+    let prepared = false;
+    updateLocalEditPanel();
+    try {
+      const rect = {
+        x: 0,
+        y: 0,
+        width: outpaint.output_width,
+        height: outpaint.output_height,
+      };
+      if (!local.roi || !sameRect(local.roi.rect, rect)) {
+        local.roiRequest = local.roiRequest || {
+          canvas_document_id: entry.document.id,
+          expected_canvas_revision: entry.currentRevision,
+          source_layer_id: layer.id,
+          coordinate_space: 'output-pixel',
+          rect,
+          purpose: 'outpaint',
+          client_request_id: createRequestId('outpaint-roi-create'),
+        };
+        local.roi = await api.createCanvasRoi(local.roiRequest, { timeoutMs: 12000 });
+        local.draftRect = { ...local.roi.rect };
+      }
+      local.specRequest = local.specRequest || {
+        client_request_id: createRequestId('outpaint-spec'),
+        contract: buildPaidOutpaintContract({
+          operationId: createRequestId('operation-outpaint'),
+          canvasVersionId: entry.currentVersionId,
+          layer,
+          sourceSha256,
+          sourcePixelSha256: '',
+          roi: local.roi,
+          outpaint,
+          confirmed: true,
+        }),
+      };
+      local.spec = await api.createLocalEditSpec(local.specRequest, { timeoutMs: 12000 });
+      local.outpaint = normalizeOutpaintConfig(layer, local.spec.contract.outpaint);
+      local.candidatesHydrated = false;
+      local.composeRequest = null;
+      prepared = true;
+      toast('扩图规格已冻结；当前没有发起模型调用', 'success');
+    } catch (error) {
+      local.error = formatApiError(error, '扩图规格冻结失败');
+    } finally {
+      local.saving = false;
+      updateLocalEditPanel();
+    }
+    if (prepared) await ensureLocalEditCandidates(true);
+  }
+
+  function selectLocalEditCandidate(candidateId) {
+    const local = localEditState({ create: false });
+    if (!local?.spec) return;
+    local.candidateId = String(candidateId || '');
+    local.composeRequest = null;
+    local.error = '';
+    updateLocalEditPanel();
+  }
+
+  async function applyLocalEditCandidate() {
+    const entry = entryFor();
+    const local = localEditState({ create: false });
+    const candidate = localEditCandidateOptions(local)
+      .find((item) => item.id === local?.candidateId);
+    if (!local?.spec || !candidate || local.saving || local.candidateLoading) return;
+    if (entry.dirty && !await saveMode(currentMode)) return;
+    const request = local.composeRequest || {
+      local_edit_spec_id: local.spec.id,
+      candidate_asset_id: candidate.id,
+      expected_canvas_revision: entry.currentRevision,
+      client_request_id: createRequestId('local-edit-compose'),
+    };
+    local.composeRequest = request;
+    local.saving = true;
+    local.error = '';
+    updateLocalEditPanel();
+    try {
+      const response = await api.composeLocalEdit(currentMode, request, { timeoutMs: 120000 });
+      entry.localEditLoadToken += 1;
+      applyCanvasResponse(currentMode, response.canvas, { rebuildCanvas: true });
+      local.composeRequest = null;
+      setTool('select');
+      setSaveState('saved', '画布已保存', `revision ${response.canvas.current_revision}`);
+      toast(response.replayed ? '局部编辑结果已从账本恢复' : '局部编辑结果已应用到画布', 'success');
+    } catch (error) {
+      local.error = formatApiError(error, '候选结果未能应用到画布');
+      if (error?.detail?.code === 'CANVAS_REVISION_CONFLICT') entry.blocked = true;
+    } finally {
+      local.saving = false;
+      updateLocalEditPanel();
+      updateHistoryControls();
     }
   }
 
@@ -1277,6 +1703,7 @@ export function createCanvasController({
         padding: 4,
       });
       image.set('layerId', layer.id);
+      image.set('sourceAssetId', layer.source.id);
       return image;
     } catch (_) {
       const placeholder = new Rect({
@@ -1299,6 +1726,7 @@ export function createCanvasController({
         evented: !layer.locked,
       });
       placeholder.set('layerId', layer.id);
+      placeholder.set('sourceAssetId', layer.source.id);
       return placeholder;
     }
   }
@@ -1307,10 +1735,16 @@ export function createCanvasController({
     if (!canvas || currentView !== 'canvas') return;
     const { Rect } = fabricRuntime;
     const token = ++buildToken;
+    const selectedBeforeBuild = selectedLayerId;
     renderCanvasLoading(true);
     setCanvasDimensions();
-    canvas.discardActiveObject();
-    canvas.clear();
+    suppressSelectionCleared = true;
+    try {
+      canvas.discardActiveObject();
+      canvas.clear();
+    } finally {
+      suppressSelectionCleared = false;
+    }
     objectByLayer.clear();
     const artboard = activeArtboard();
     const artboardObject = new Rect({
@@ -1344,7 +1778,7 @@ export function createCanvasController({
     renderLocalEditOverlay();
     canvas.requestRenderAll();
     fitArtboard();
-    if (selectedLayerId) setSelectedLayer(selectedLayerId);
+    if (selectedBeforeBuild) setSelectedLayer(selectedBeforeBuild);
     renderCanvasLoading(false);
     updateDocumentMeta();
     setInteractionDisabled(entryFor().saving || entryFor().blocked);
@@ -1370,7 +1804,7 @@ export function createCanvasController({
       if (id) setSelectedLayer(id);
     });
     canvas.on('selection:cleared', () => {
-      if (activeTool !== 'select') return;
+      if (suppressSelectionCleared || activeTool !== 'select') return;
       selectedLayerId = '';
       renderLayerList();
       updateSelectionPanel();
@@ -1488,26 +1922,49 @@ export function createCanvasController({
     }, 'command:transform-layer');
   }
 
-  function undo() {
-    const document = activeDocument();
-    if (!document || entryFor().saving || entryFor().blocked) return;
-    const operation = undoCanvas(document);
-    if (!operation) return;
-    syncObjectFromLayer(operation.mutation.target_layer_id);
-    renderLists();
-    updateHistoryControls();
-    scheduleSave();
+  function operationReplacesLayerSource(operation) {
+    return String(operation?.mutation?.before?.source?.id || '')
+      !== String(operation?.mutation?.after?.source?.id || '');
   }
 
-  function redo() {
+  async function syncHistoryMutation(operation) {
+    if (operationReplacesLayerSource(operation)) {
+      await reloadObjectFromLayer(operation.mutation.target_layer_id);
+    } else syncObjectFromLayer(operation.mutation.target_layer_id);
+  }
+
+  async function undo() {
     const document = activeDocument();
-    if (!document || entryFor().saving || entryFor().blocked) return;
-    const operation = redoCanvas(document);
+    if (!document || entryFor().saving || entryFor().blocked || historySyncing) return;
+    const operation = undoCanvas(document);
     if (!operation) return;
-    syncObjectFromLayer(operation.mutation.target_layer_id);
+    historySyncing = true;
     renderLists();
     updateHistoryControls();
     scheduleSave();
+    try {
+      await syncHistoryMutation(operation);
+    } finally {
+      historySyncing = false;
+      updateHistoryControls();
+    }
+  }
+
+  async function redo() {
+    const document = activeDocument();
+    if (!document || entryFor().saving || entryFor().blocked || historySyncing) return;
+    const operation = redoCanvas(document);
+    if (!operation) return;
+    historySyncing = true;
+    renderLists();
+    updateHistoryControls();
+    scheduleSave();
+    try {
+      await syncHistoryMutation(operation);
+    } finally {
+      historySyncing = false;
+      updateHistoryControls();
+    }
   }
 
   async function setView(view) {
@@ -1566,6 +2023,7 @@ export function createCanvasController({
     if (!bound) return;
     renderAssetList();
     renderLayerList();
+    updateLocalEditPanel();
   }
 
   function bind() {
@@ -1575,6 +2033,9 @@ export function createCanvasController({
     queryAll('[data-studio-view]').forEach((button) => button.addEventListener('click', () => setView(button.dataset.studioView)));
     queryAll('[data-canvas-panel]').forEach((button) => button.addEventListener('click', () => {
       setActivePanel(button.dataset.canvasPanel);
+    }));
+    queryAll('[data-local-edit-mode]').forEach((button) => button.addEventListener('click', () => {
+      setLocalEditMode(button.dataset.localEditMode);
     }));
     queryAll('[data-canvas-tool]').forEach((button) => button.addEventListener('click', () => setTool(button.dataset.canvasTool)));
     query('#canvas-undo').addEventListener('click', undo);
@@ -1605,6 +2066,21 @@ export function createCanvasController({
     query('#local-edit-restore').addEventListener('click', restoreLocalMask);
     query('#local-edit-save-mask').addEventListener('click', saveLocalMask);
     query('#local-edit-prepare').addEventListener('click', prepareLocalEditSpec);
+    queryAll('#local-edit-outpaint-width, #local-edit-outpaint-height, #local-edit-outpaint-x, #local-edit-outpaint-y').forEach((input) => {
+      input.addEventListener('change', updateOutpaintDraftFromInputs);
+    });
+    query('#local-edit-outpaint-transition').addEventListener('input', updateOutpaintDraftFromInputs);
+    query('#local-edit-outpaint-confirm').addEventListener('change', (event) => {
+      confirmOutpaintSpec(event.currentTarget.checked);
+    });
+    query('#local-edit-prepare-outpaint').addEventListener('click', prepareOutpaintSpec);
+    query('#local-edit-candidate').addEventListener('change', (event) => {
+      selectLocalEditCandidate(event.target.value);
+    });
+    query('#local-edit-refresh-candidates').addEventListener('click', () => {
+      ensureLocalEditCandidates(true);
+    });
+    query('#local-edit-apply').addEventListener('click', applyLocalEditCandidate);
     query('#canvas-layer-more').addEventListener('click', () => {
       layerVisibleLimit += CANVAS_PAGE_SIZE;
       renderLayerList();

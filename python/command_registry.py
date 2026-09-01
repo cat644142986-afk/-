@@ -94,6 +94,18 @@ _COMMANDS: tuple[dict[str, Any], ...] = (
         "existing_quick_mode": False,
         "supports_canvas": True,
     },
+    {
+        "id": "command:local-edit-compose",
+        "label": "应用局部编辑",
+        "mode": None,
+        "engine_key": "canvas-local",
+        "min_sources": 0,
+        "max_sources": 0,
+        "cost_policy": "contract-confirmed",
+        "execution_kind": "canvas-mutation",
+        "existing_quick_mode": False,
+        "supports_canvas": True,
+    },
 )
 
 _BY_ID = {command["id"]: command for command in _COMMANDS}

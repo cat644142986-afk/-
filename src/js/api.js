@@ -279,8 +279,8 @@ export async function importFolderSources(folderPath) {
     timeoutMs: 120000,
   });
 }
-export async function getAsset(assetId) {
-  return fetchJSON('/api/assets/' + encodeURIComponent(assetId));
+export async function getAsset(assetId, options = {}) {
+  return fetchJSON('/api/assets/' + encodeURIComponent(assetId), options);
 }
 export async function getAssetContentUrl(assetId) {
   return absoluteApiUrl('/api/assets/' + encodeURIComponent(assetId) + '/content');
@@ -415,6 +415,32 @@ export async function createLocalEditSpec(payload, options = {}) {
 
 export async function getLocalEditSpec(specId, options = {}) {
   return fetchJSON('/api/local-edit-specs/' + encodeURIComponent(specId), options);
+}
+
+export async function getLatestLocalEditSpec({
+  canvasVersionId,
+  sourceLayerId,
+  roiId,
+  mode,
+  maskVersionId = '',
+}, options = {}) {
+  const params = new URLSearchParams({
+    canvas_version_id: String(canvasVersionId),
+    source_layer_id: String(sourceLayerId),
+    roi_id: String(roiId),
+    mode: String(mode),
+  });
+  if (maskVersionId) params.set('mask_version_id', String(maskVersionId));
+  return fetchJSON('/api/local-edit-specs/latest?' + params.toString(), options);
+}
+
+export async function composeLocalEdit(mode, payload, options = {}) {
+  return fetchJSON('/api/workspaces/' + encodeURIComponent(mode) + '/local-edit/compose', {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
 }
 
 export async function getCommands(options = {}) {

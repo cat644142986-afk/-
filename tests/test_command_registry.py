@@ -41,6 +41,7 @@ class CommandRegistryTests(unittest.TestCase):
                 "command:transform-layer",
                 "command:toggle-layer",
                 "command:toggle-layer-lock",
+                "command:local-edit-compose",
             },
         )
 

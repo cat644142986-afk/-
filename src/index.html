@@ -187,19 +187,35 @@
                   <button class="canvas-list-more" id="canvas-asset-more" type="button" hidden>加载下一段素材</button>
                 </section>
                 <section class="canvas-panel canvas-local-edit-panel" id="canvas-panel-local-edit" role="tabpanel" hidden>
+                  <div class="local-edit-mode" role="group" aria-label="局部处理方式"><button class="is-active" type="button" data-local-edit-mode="inpaint" aria-pressed="true">局部修改</button><button type="button" data-local-edit-mode="outpaint" aria-pressed="false">向外扩图</button></div>
                   <div class="local-edit-state" id="local-edit-state" data-kind="idle" role="status" aria-live="polite" aria-atomic="true"><span></span><div><strong id="local-edit-state-title">请选择一个图层</strong><small id="local-edit-state-detail">局部编辑尚未开始</small></div></div>
-                  <fieldset class="local-edit-fieldset" id="local-edit-roi-fields" disabled>
+                  <fieldset class="local-edit-fieldset" id="local-edit-roi-fields" data-local-edit-section="inpaint" disabled>
                     <legend>像素选区</legend>
                     <div class="local-edit-grid"><label>X<input id="local-edit-roi-x" type="number" min="0" step="1" inputmode="numeric" /></label><label>Y<input id="local-edit-roi-y" type="number" min="0" step="1" inputmode="numeric" /></label><label>宽<input id="local-edit-roi-width" type="number" min="1" step="1" inputmode="numeric" /></label><label>高<input id="local-edit-roi-height" type="number" min="1" step="1" inputmode="numeric" /></label></div>
                     <button class="local-edit-primary" id="local-edit-save-roi" type="button">保存选区</button>
                   </fieldset>
-                  <fieldset class="local-edit-fieldset" id="local-edit-mask-fields" disabled>
+                  <fieldset class="local-edit-fieldset" id="local-edit-mask-fields" data-local-edit-section="inpaint" disabled>
                     <legend>蒙版</legend>
                     <div class="local-edit-segment" role="group" aria-label="蒙版初始范围"><button type="button" data-local-edit-base="full">填满选区</button><button type="button" data-local-edit-base="empty">清空选区</button></div>
                     <div class="local-edit-sliders"><label for="local-edit-brush-radius"><span>画笔半径</span><output id="local-edit-brush-radius-output">24 px</output></label><input id="local-edit-brush-radius" type="range" min="1" max="256" step="1" value="24" /><label for="local-edit-feather"><span>边缘柔化</span><output id="local-edit-feather-output">0 px</output></label><input id="local-edit-feather" type="range" min="0" max="64" step="1" value="0" /></div>
                     <div class="local-edit-actions"><button id="local-edit-invert" type="button"><i data-lucide="flip-horizontal-2" aria-hidden="true"></i>反选</button><button id="local-edit-restore" type="button"><i data-lucide="rotate-ccw" aria-hidden="true"></i>恢复</button></div>
                     <button class="local-edit-primary" id="local-edit-save-mask" type="button">保存蒙版版本</button>
                     <button class="local-edit-secondary" id="local-edit-prepare" type="button" disabled>冻结本地编辑规格</button>
+                  </fieldset>
+                  <fieldset class="local-edit-fieldset" id="local-edit-outpaint-fields" data-local-edit-section="outpaint" hidden disabled>
+                    <legend>扩图规格</legend>
+                    <div class="local-edit-grid"><label>输出宽<input id="local-edit-outpaint-width" type="number" min="1" max="32768" step="1" inputmode="numeric" /></label><label>输出高<input id="local-edit-outpaint-height" type="number" min="1" max="32768" step="1" inputmode="numeric" /></label><label>原图 X<input id="local-edit-outpaint-x" type="number" min="0" max="32768" step="1" inputmode="numeric" /></label><label>原图 Y<input id="local-edit-outpaint-y" type="number" min="0" max="32768" step="1" inputmode="numeric" /></label></div>
+                    <div class="local-edit-sliders"><label for="local-edit-outpaint-transition"><span>接缝过渡带</span><output id="local-edit-outpaint-transition-output">0 px</output></label><input id="local-edit-outpaint-transition" type="range" min="0" max="64" step="1" value="0" /></div>
+                    <div class="local-edit-impact" role="status" aria-live="polite"><strong id="local-edit-outpaint-output-summary">等待选择图层</strong><small id="local-edit-outpaint-write-summary">原画板与未授权像素保持锁定</small><small id="local-edit-outpaint-cost-summary">扩图生成预算：1 次调用</small></div>
+                    <label class="local-edit-confirm"><input id="local-edit-outpaint-confirm" type="checkbox" /><span><strong>确认当前输出规格与 1 次调用</strong><small>失败不会自动增加付费重试</small></span></label>
+                    <button class="local-edit-secondary" id="local-edit-prepare-outpaint" type="button" disabled>冻结扩图规格</button>
+                  </fieldset>
+                  <fieldset class="local-edit-fieldset" id="local-edit-compose-fields" disabled>
+                    <legend>候选结果</legend>
+                    <label class="local-edit-candidate-label" for="local-edit-candidate"><span>兼容当前像素规格</span><output id="local-edit-candidate-count">0 个</output></label>
+                    <select id="local-edit-candidate" aria-label="选择局部编辑候选结果"><option value="">暂无兼容候选</option></select>
+                    <div class="local-edit-candidate-preview" id="local-edit-candidate-preview" hidden><img id="local-edit-candidate-image" alt="" /><div><strong id="local-edit-candidate-name"></strong><small id="local-edit-candidate-detail"></small></div></div>
+                    <div class="local-edit-actions"><button id="local-edit-refresh-candidates" type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i>刷新结果</button><button class="local-edit-primary" id="local-edit-apply" type="button" disabled>应用到画布</button></div>
                   </fieldset>
                 </section>
               </aside>

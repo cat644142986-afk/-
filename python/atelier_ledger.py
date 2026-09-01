@@ -40,7 +40,7 @@ except ImportError:
     )
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 CANVAS_DOCUMENT_SCHEMA_VERSION = 1
 PRODUCT_PROFILE_SCHEMA_VERSION = 1
 CANVAS_COORDINATE_SYSTEM = {
@@ -360,6 +360,24 @@ V6_REQUIRED_TRIGGERS = frozenset({
     "trg_local_edit_specs_no_delete",
 })
 
+V7_TABLE_COLUMNS = {
+    "local_edit_compositions": frozenset({
+        "id", "local_edit_spec_id", "candidate_asset_id", "result_asset_id",
+        "canvas_document_version_id", "client_request_id", "request_fingerprint",
+        "receipt_json", "receipt_sha256", "created_at",
+    }),
+}
+
+V7_REQUIRED_INDEXES = frozenset({
+    "idx_local_edit_compositions_spec",
+    "idx_local_edit_compositions_candidate",
+})
+
+V7_REQUIRED_TRIGGERS = frozenset({
+    "trg_local_edit_compositions_no_update",
+    "trg_local_edit_compositions_no_delete",
+})
+
 V1_SCHEMA_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS ledger_meta (
@@ -639,11 +657,42 @@ def _validate_layer_snapshot(value: Any, label: str) -> None:
         value,
         label=label,
         required={"transform", "z_index", "visible", "locked"},
+        optional={"source"},
     )
     _validate_layer_transform(snapshot["transform"], f"{label}.transform")
     _canvas_integer(snapshot["z_index"], f"{label}.z_index", minimum=0)
     if not isinstance(snapshot["visible"], bool) or not isinstance(snapshot["locked"], bool):
         raise ValueError(f"{label} visibility and lock fields must be booleans")
+    if "source" in snapshot:
+        _validate_layer_source(snapshot["source"], f"{label}.source")
+
+
+def _validate_layer_source(value: Any, label: str) -> dict[str, Any]:
+    source = _canvas_object(
+        value,
+        label=label,
+        required={
+            "kind", "id", "proxy_ref", "original_pixel_width",
+            "original_pixel_height",
+        },
+    )
+    if source["kind"] not in {"asset", "result"}:
+        raise ValueError(f"{label}.kind is unsupported")
+    _canvas_id(source["id"], f"{label}.id")
+    proxy_match = _CANVAS_PROXY_PATTERN.fullmatch(str(source["proxy_ref"] or ""))
+    if proxy_match is None or not 64 <= int(proxy_match.group(2)) <= 4096:
+        raise ValueError(f"{label}.proxy_ref is not rebuildable")
+    _canvas_integer(
+        source["original_pixel_width"],
+        f"{label}.original_pixel_width",
+        minimum=1,
+    )
+    _canvas_integer(
+        source["original_pixel_height"],
+        f"{label}.original_pixel_height",
+        minimum=1,
+    )
+    return source
 
 
 def normalize_canvas_document(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -668,8 +717,8 @@ def normalize_canvas_document(value: Mapping[str, Any]) -> dict[str, Any]:
     )
 
     source_asset_ids = document["source_asset_ids"]
-    if not isinstance(source_asset_ids, list) or not source_asset_ids:
-        raise ValueError("CanvasDocument.source_asset_ids must be a non-empty list")
+    if not isinstance(source_asset_ids, list):
+        raise ValueError("CanvasDocument.source_asset_ids must be a list")
     normalized_source_ids = [
         _canvas_id(item, "CanvasDocument.source_asset_ids item") for item in source_asset_ids
     ]
@@ -732,32 +781,10 @@ def normalize_canvas_document(value: Mapping[str, Any]) -> dict[str, Any]:
         layer_ids.add(layer_id)
         if _canvas_id(layer["artboard_id"], f"{label}.artboard_id") not in artboard_ids:
             raise ValueError(f"{label} references a missing artboard")
-        source = _canvas_object(
-            layer["source"],
-            label=f"{label}.source",
-            required={
-                "kind", "id", "proxy_ref", "original_pixel_width",
-                "original_pixel_height",
-            },
-        )
-        if source["kind"] not in {"asset", "result"}:
-            raise ValueError(f"{label}.source.kind is unsupported")
-        source_id = _canvas_id(source["id"], f"{label}.source.id")
+        source = _validate_layer_source(layer["source"], f"{label}.source")
+        source_id = str(source["id"])
         if source["kind"] == "asset":
             asset_layer_sources.add(source_id)
-        proxy_match = _CANVAS_PROXY_PATTERN.fullmatch(str(source["proxy_ref"] or ""))
-        if proxy_match is None or not 64 <= int(proxy_match.group(2)) <= 4096:
-            raise ValueError(f"{label}.source.proxy_ref is not rebuildable")
-        _canvas_integer(
-            source["original_pixel_width"],
-            f"{label}.source.original_pixel_width",
-            minimum=1,
-        )
-        _canvas_integer(
-            source["original_pixel_height"],
-            f"{label}.source.original_pixel_height",
-            minimum=1,
-        )
         _validate_layer_transform(layer["transform"], f"{label}.transform")
         _canvas_integer(layer["z_index"], f"{label}.z_index", minimum=0)
         if not isinstance(layer["visible"], bool) or not isinstance(layer["locked"], bool):
@@ -1588,6 +1615,59 @@ class AtelierLedger:
             issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
         return issues
 
+    @classmethod
+    def _v7_objects_present(cls, connection: sqlite3.Connection) -> bool:
+        tables = cls._table_names(connection)
+        if tables.intersection(V7_TABLE_COLUMNS):
+            return True
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        return bool(triggers.intersection(V7_REQUIRED_TRIGGERS))
+
+    @classmethod
+    def _v7_contract_issues(cls, connection: sqlite3.Connection) -> list[str]:
+        issues: list[str] = []
+        tables = cls._table_names(connection)
+        for table, required_columns in V7_TABLE_COLUMNS.items():
+            if table not in tables:
+                issues.append(f"missing table {table}")
+                continue
+            actual_columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing_columns = sorted(required_columns - actual_columns)
+            if missing_columns:
+                issues.append(f"{table} missing columns: {', '.join(missing_columns)}")
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        missing_indexes = sorted(V7_REQUIRED_INDEXES - indexes)
+        if missing_indexes:
+            issues.append(f"missing indexes: {', '.join(missing_indexes)}")
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        missing_triggers = sorted(V7_REQUIRED_TRIGGERS - triggers)
+        if missing_triggers:
+            issues.append(f"missing triggers: {', '.join(missing_triggers)}")
+        integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
+        if integrity_rows != ["ok"]:
+            issues.append(f"integrity_check failed: {'; '.join(integrity_rows[:3])}")
+        foreign_key_rows = list(connection.execute("PRAGMA foreign_key_check"))
+        if foreign_key_rows:
+            issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
+        return issues
+
     def _migration_backup_path(self, version: int) -> Path:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         return self.db_path.with_name(
@@ -2341,6 +2421,55 @@ class AtelierLedger:
                 """
             )
 
+    @staticmethod
+    def _migrate_v6_to_v7(connection: sqlite3.Connection) -> None:
+        """Add one immutable receipt for every atomic local-edit composition."""
+        connection.execute(
+            """
+            CREATE TABLE local_edit_compositions (
+                id TEXT PRIMARY KEY,
+                local_edit_spec_id TEXT NOT NULL,
+                candidate_asset_id TEXT NOT NULL,
+                result_asset_id TEXT NOT NULL UNIQUE,
+                canvas_document_version_id TEXT NOT NULL UNIQUE,
+                client_request_id TEXT NOT NULL UNIQUE,
+                request_fingerprint TEXT NOT NULL,
+                receipt_json TEXT NOT NULL,
+                receipt_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(local_edit_spec_id)
+                    REFERENCES local_edit_specs(id) ON DELETE RESTRICT,
+                FOREIGN KEY(candidate_asset_id)
+                    REFERENCES assets(id) ON DELETE RESTRICT,
+                FOREIGN KEY(result_asset_id)
+                    REFERENCES assets(id) ON DELETE RESTRICT,
+                FOREIGN KEY(canvas_document_version_id)
+                    REFERENCES canvas_document_versions(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX idx_local_edit_compositions_spec "
+            "ON local_edit_compositions(local_edit_spec_id, created_at)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_local_edit_compositions_candidate "
+            "ON local_edit_compositions(candidate_asset_id, created_at)"
+        )
+        for trigger_name, action in (
+            ("trg_local_edit_compositions_no_update", "UPDATE"),
+            ("trg_local_edit_compositions_no_delete", "DELETE"),
+        ):
+            connection.execute(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {action} ON local_edit_compositions
+                BEGIN
+                    SELECT RAISE(ABORT, 'local edit compositions are immutable');
+                END
+                """
+            )
+
     def _ensure_schema(self) -> None:
         with self._schema_lock:
             # Probe the version without changing journal mode. An older app must
@@ -2462,6 +2591,23 @@ class AtelierLedger:
                                     else:
                                         self._migrate_v5_to_v6(connection)
                                     current_version = 6
+                                elif current_version == 6:
+                                    if self._v7_objects_present(connection):
+                                        issues = self._v7_contract_issues(connection)
+                                        if issues:
+                                            raise PartialSchemaError(
+                                                "Detected an incomplete v7 ledger while schema metadata says v6; "
+                                                "the database was not changed. Restore the automatic backup or "
+                                                f"repair these objects first: {' | '.join(issues)}"
+                                            )
+                                        repair = "recovered complete v7 schema with stale v6 metadata"
+                                        self.last_schema_repair = (
+                                            f"{self.last_schema_repair}; {repair}"
+                                            if self.last_schema_repair else repair
+                                        )
+                                    else:
+                                        self._migrate_v6_to_v7(connection)
+                                    current_version = 7
                                 else:
                                     raise LedgerSchemaError(
                                         f"No migration path from schema v{current_version}"
@@ -3956,13 +4102,64 @@ class AtelierLedger:
             raise KeyError(f"unknown local edit spec: {spec_id}")
         return self._local_edit_spec_row(row)
 
+    def find_local_edit_spec(
+        self,
+        *,
+        canvas_document_version_id: str,
+        source_layer_id: str,
+        roi_id: str,
+        mask_version_id: str | None,
+        mode: str,
+    ) -> dict[str, Any] | None:
+        normalized_mode = str(mode or "").strip()
+        if normalized_mode not in {"inpaint", "outpaint"}:
+            raise ValueError("local edit mode must be inpaint or outpaint")
+        if normalized_mode == "inpaint" and not str(mask_version_id or "").strip():
+            raise ValueError("inpaint spec lookup requires a mask version")
+        if normalized_mode == "outpaint" and mask_version_id is not None:
+            raise ValueError("outpaint spec lookup cannot include a mask version")
+        params: list[Any] = [
+            str(canvas_document_version_id),
+            str(source_layer_id),
+            str(roi_id),
+            normalized_mode,
+        ]
+        mask_clause = "mask_version_id IS NULL"
+        if mask_version_id is not None:
+            mask_clause = "mask_version_id = ?"
+            params.append(str(mask_version_id))
+        with self._connection() as connection:
+            row = connection.execute(
+                f"""
+                SELECT *
+                FROM local_edit_specs
+                WHERE canvas_document_version_id = ?
+                  AND source_layer_id = ?
+                  AND roi_id = ?
+                  AND mode = ?
+                  AND {mask_clause}
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+        return self._local_edit_spec_row(row) if row is not None else None
+
     def create_local_edit_spec(
         self,
         *,
         contract: Mapping[str, Any],
+        source_pixel_sha256: str,
         client_request_id: str,
     ) -> dict[str, Any]:
         normalized = normalize_local_edit_contract(contract)
+        authoritative_pixel_sha256 = str(source_pixel_sha256 or "").upper()
+        if re.fullmatch(r"[A-F0-9]{64}", authoritative_pixel_sha256) is None:
+            raise ValueError("source_pixel_sha256 must be an authoritative SHA-256 digest")
+        if normalized["source_pixel_sha256"] != authoritative_pixel_sha256:
+            raise ValueError(
+                "local edit source pixel fingerprint does not match the decoded source"
+            )
         request_id = str(client_request_id or "").strip()
         spec_id = idempotent_id("editspec", request_id)
         stored_json = canonical_json(normalized)
@@ -4012,20 +4209,30 @@ class AtelierLedger:
                     raise ValueError("local edit source size does not match the canvas layer")
                 source_asset = connection.execute(
                     """
-                    SELECT b.sha256 FROM assets a
-                    JOIN asset_blobs b ON b.id = a.blob_id
+                    SELECT a.role, a.sha256, b.sha256 AS blob_sha256
+                    FROM assets a
+                    LEFT JOIN asset_blobs b ON b.id = a.blob_id
                     WHERE a.id = ?
                     """,
                     (str(source["id"]),),
                 ).fetchone()
                 if source_asset is None:
                     raise KeyError(f"unknown local edit source asset: {source['id']}")
+                source_role = str(source_asset["role"] or "")
+                if source["kind"] == "asset" and source_role != "workspace_source":
+                    raise ValueError("local edit asset source is not a workspace source")
+                if source["kind"] == "result" and not source_role.startswith("result_"):
+                    raise ValueError("local edit result source is not a result asset")
+                stored_file_sha256 = str(
+                    source_asset["blob_sha256"]
+                    if source_role == "workspace_source"
+                    else source_asset["sha256"]
+                ).upper()
                 if (
-                    str(source_asset["sha256"]).upper()
-                    != str(normalized["source_sha256"]).upper()
+                    stored_file_sha256 != str(normalized["source_sha256"]).upper()
                 ):
                     raise ValueError(
-                        "local edit source fingerprint does not match the canvas layer asset"
+                        "local edit source file fingerprint does not match the canvas layer asset"
                     )
                 roi = connection.execute(
                     "SELECT * FROM canvas_rois WHERE id = ?", (normalized["roi"]["id"],)
@@ -4096,6 +4303,456 @@ class AtelierLedger:
                 ).fetchone()
                 assert row is not None
         return self._local_edit_spec_row(row, replayed=replayed)
+
+    @staticmethod
+    def _local_edit_composition_row(
+        row: sqlite3.Row | Mapping[str, Any], *, replayed: bool = False
+    ) -> dict[str, Any]:
+        item = dict(row)
+        item["receipt"] = decode_json(item.pop("receipt_json", "{}"), {})
+        item.pop("request_fingerprint", None)
+        item["replayed"] = replayed
+        return item
+
+    @staticmethod
+    def _local_edit_result_source(
+        result_asset_id: str,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        return {
+            "kind": "result",
+            "id": result_asset_id,
+            "proxy_ref": "proxy:thumbnail:512",
+            "original_pixel_width": width,
+            "original_pixel_height": height,
+        }
+
+    @staticmethod
+    def _local_edit_layer_snapshot(layer: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "source": json.loads(canonical_json(layer["source"])),
+            "transform": json.loads(canonical_json(layer["transform"])),
+            "z_index": int(layer["z_index"]),
+            "visible": bool(layer["visible"]),
+            "locked": bool(layer["locked"]),
+        }
+
+    @staticmethod
+    def _outpaint_result_transform(
+        transform: Mapping[str, Any],
+        outpaint: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        result = json.loads(canonical_json(transform))
+        source_x = float(outpaint["source_x"])
+        source_y = float(outpaint["source_y"])
+        scale_x = float(result["scale_x"])
+        scale_y = float(result["scale_y"])
+        radians = math.radians(float(result["rotation_degrees"]))
+        offset_x = source_x * scale_x
+        offset_y = source_y * scale_y
+        result["x"] = float(result["x"]) - (
+            offset_x * math.cos(radians) - offset_y * math.sin(radians)
+        )
+        result["y"] = float(result["y"]) - (
+            offset_x * math.sin(radians) + offset_y * math.cos(radians)
+        )
+        return result
+
+    @staticmethod
+    def _validate_local_edit_receipt(
+        receipt: Mapping[str, Any],
+        *,
+        contract: Mapping[str, Any],
+        candidate_pixel_sha256: str,
+        result_pixel_sha256: str,
+    ) -> dict[str, Any]:
+        if not isinstance(receipt, Mapping):
+            raise ValueError("local edit receipt must be an object")
+        normalized = json.loads(canonical_json(receipt))
+        required = {
+            "contract_schema_version", "operation_id", "mode", "source_sha256",
+            "source_pixel_sha256", "candidate_sha256", "output_sha256",
+            "undo_source_sha256", "automatic_paid_retry",
+        }
+        missing = sorted(required - set(normalized))
+        if missing:
+            raise ValueError(f"local edit receipt is missing fields: {', '.join(missing)}")
+        expected = {
+            "operation_id": str(contract["operation_id"]),
+            "mode": str(contract["mode"]),
+            "source_sha256": str(contract["source_sha256"]),
+            "source_pixel_sha256": str(contract["source_pixel_sha256"]),
+            "candidate_sha256": candidate_pixel_sha256,
+            "output_sha256": result_pixel_sha256,
+            "undo_source_sha256": str(contract["source_pixel_sha256"]),
+        }
+        for field, value in expected.items():
+            if str(normalized.get(field) or "").upper() != str(value).upper():
+                raise ValueError(f"local edit receipt {field} does not match its inputs")
+        if normalized["automatic_paid_retry"] is not False:
+            raise ValueError("local edit receipt cannot authorize an automatic paid retry")
+        if contract["mode"] == "inpaint":
+            if int(normalized.get("outside_mask_changed_pixels", -1)) != 0:
+                raise ValueError("local edit receipt reports changed protected pixels")
+            if str(normalized.get("mask_sha256") or "").upper() != str(
+                contract["mask"]["sha256"]
+            ).upper():
+                raise ValueError("local edit receipt mask does not match its specification")
+        elif int(normalized.get("protected_changed_pixels", -1)) != 0:
+            raise ValueError("outpaint receipt reports changed protected pixels")
+        return normalized
+
+    def _before_local_edit_composition_commit(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        """Internal fault-injection point used by transaction regression tests."""
+
+    def get_local_edit_composition(self, composition_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM local_edit_compositions WHERE id = ?",
+                (str(composition_id),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown local edit composition: {composition_id}")
+        return self._local_edit_composition_row(row)
+
+    def get_local_edit_composition_by_request(
+        self, client_request_id: str
+    ) -> dict[str, Any] | None:
+        request_id = str(client_request_id or "").strip()
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM local_edit_compositions WHERE client_request_id = ?",
+                (request_id,),
+            ).fetchone()
+        return self._local_edit_composition_row(row, replayed=True) if row else None
+
+    def commit_local_edit_composition(
+        self,
+        mode: str,
+        *,
+        local_edit_spec_id: str,
+        candidate_asset_id: str,
+        expected_canvas_revision: int,
+        client_request_id: str,
+        result: Mapping[str, Any],
+        receipt: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically publish local-edit lineage, its result asset and canvas version."""
+        if mode not in WORKFLOW_DRAFT_IDS:
+            raise ValueError(f"unsupported workflow mode: {mode}")
+        spec_id = str(local_edit_spec_id or "").strip()
+        candidate_id = str(candidate_asset_id or "").strip()
+        if not spec_id or not candidate_id:
+            raise ValueError("local_edit_spec_id and candidate_asset_id are required")
+        expected_revision = _canvas_integer(
+            expected_canvas_revision, "expected_canvas_revision", minimum=0
+        )
+        request_id = str(client_request_id or "").strip()
+        composition_id = idempotent_id("composition", request_id)
+        request_payload = {
+            "mode": mode,
+            "local_edit_spec_id": spec_id,
+            "candidate_asset_id": candidate_id,
+            "expected_canvas_revision": expected_revision,
+        }
+        fingerprint = hashlib.sha256(
+            canonical_json(request_payload).encode("utf-8")
+        ).hexdigest()
+        internal_request_id = "local-compose:" + hashlib.sha256(
+            request_id.encode("utf-8")
+        ).hexdigest()
+        version_id = idempotent_id("canvasver", internal_request_id)
+        result_id = idempotent_id("ast", "result:" + internal_request_id)
+        result_value = dict(result or {})
+        result_path = str(result_value.get("path") or "").strip()
+        if not result_path:
+            raise ValueError("local edit result path is required")
+        width = _canvas_integer(result_value.get("width"), "result.width", minimum=1)
+        height = _canvas_integer(result_value.get("height"), "result.height", minimum=1)
+        file_sha256 = str(result_value.get("sha256") or "").lower()
+        pixel_sha256 = str(result_value.get("pixel_sha256") or "").upper()
+        candidate_pixel_sha256 = str(
+            result_value.get("candidate_pixel_sha256") or ""
+        ).upper()
+        if re.fullmatch(r"[a-f0-9]{64}", file_sha256) is None:
+            raise ValueError("local edit result file SHA-256 is invalid")
+        for label, digest in (
+            ("result pixel", pixel_sha256),
+            ("candidate pixel", candidate_pixel_sha256),
+        ):
+            if re.fullmatch(r"[A-F0-9]{64}", digest) is None:
+                raise ValueError(f"local edit {label} SHA-256 is invalid")
+        replayed = False
+
+        with self._immediate_connection() as connection:
+            prior = connection.execute(
+                "SELECT * FROM local_edit_compositions WHERE client_request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if prior is not None:
+                if str(prior["request_fingerprint"]) != fingerprint:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different local edit composition"
+                    )
+                composition_row = prior
+                replayed = True
+            else:
+                spec_row = connection.execute(
+                    "SELECT * FROM local_edit_specs WHERE id = ?", (spec_id,)
+                ).fetchone()
+                if spec_row is None:
+                    raise KeyError(f"unknown local edit spec: {spec_id}")
+                contract = decode_json(spec_row["contract_json"], {})
+                if not contract:
+                    raise LedgerSchemaError(f"local edit spec {spec_id} has no contract")
+                candidate = connection.execute(
+                    "SELECT * FROM assets WHERE id = ?", (candidate_id,)
+                ).fetchone()
+                if candidate is None:
+                    raise KeyError(f"unknown local edit candidate asset: {candidate_id}")
+                if not str(candidate["role"] or "").startswith("result_"):
+                    raise ValueError("local edit candidate is not a result asset")
+                expected_size = contract["source_size"]
+                if contract["mode"] == "outpaint":
+                    expected_size = {
+                        "width": contract["outpaint"]["output_width"],
+                        "height": contract["outpaint"]["output_height"],
+                    }
+                if (
+                    int(candidate["width"] or 0) != int(expected_size["width"])
+                    or int(candidate["height"] or 0) != int(expected_size["height"])
+                ):
+                    raise ValueError("local edit candidate dimensions do not match the contract")
+                if (width, height) != (
+                    int(expected_size["width"]), int(expected_size["height"])
+                ):
+                    raise ValueError("local edit result dimensions do not match the contract")
+                normalized_receipt = self._validate_local_edit_receipt(
+                    receipt,
+                    contract=contract,
+                    candidate_pixel_sha256=candidate_pixel_sha256,
+                    result_pixel_sha256=pixel_sha256,
+                )
+
+                source_version_id = str(spec_row["canvas_document_version_id"])
+                source_version = connection.execute(
+                    "SELECT * FROM canvas_document_versions WHERE id = ?",
+                    (source_version_id,),
+                ).fetchone()
+                if source_version is None:
+                    raise LedgerSchemaError(
+                        f"local edit spec {spec_id} has no canvas version"
+                    )
+                document_row = connection.execute(
+                    """
+                    SELECT c.* FROM canvas_documents c
+                    JOIN workflow_drafts d ON d.id = c.draft_id
+                    WHERE c.id = ? AND d.mode = ?
+                    """,
+                    (source_version["document_id"], mode),
+                ).fetchone()
+                if document_row is None:
+                    raise ValueError("local edit spec belongs to a different workflow")
+                current_revision = int(document_row["current_revision"])
+                if (
+                    current_revision != expected_revision
+                    or str(document_row["current_version_id"]) != source_version_id
+                ):
+                    raise CanvasRevisionConflictError(
+                        f"canvas {document_row['id']} is revision {current_revision}, "
+                        f"not the frozen local edit revision {expected_revision}",
+                        {
+                            "id": str(document_row["id"]),
+                            "revision": current_revision,
+                            "version_id": document_row["current_version_id"],
+                        },
+                    )
+                source_document = decode_json(source_version["document_json"], {})
+                source_layer = next(
+                    (
+                        layer for layer in source_document.get("layers") or []
+                        if str(layer.get("id") or "") == str(spec_row["source_layer_id"])
+                    ),
+                    None,
+                )
+                if source_layer is None:
+                    raise LedgerSchemaError(
+                        f"local edit spec {spec_id} has no source layer"
+                    )
+                source_asset_id = str(source_layer["source"]["id"])
+                source_asset = connection.execute(
+                    "SELECT id FROM assets WHERE id = ?", (source_asset_id,)
+                ).fetchone()
+                if source_asset is None:
+                    raise KeyError(f"unknown local edit source asset: {source_asset_id}")
+
+                now = utc_now()
+                next_document = json.loads(canonical_json(source_document))
+                layer = next(
+                    item for item in next_document["layers"]
+                    if str(item["id"]) == str(spec_row["source_layer_id"])
+                )
+                before = self._local_edit_layer_snapshot(layer)
+                layer["source"] = self._local_edit_result_source(
+                    result_id, width, height
+                )
+                if contract["mode"] == "outpaint":
+                    layer["transform"] = self._outpaint_result_transform(
+                        layer["transform"], contract["outpaint"]
+                    )
+                after = self._local_edit_layer_snapshot(layer)
+                retained = list(next_document["operations"])[
+                    : int(next_document["undo_cursor"]) + 1
+                ]
+                retained.append({
+                    "id": str(contract["operation_id"]),
+                    "command_id": "command:local-edit-compose",
+                    "input_layer_ids": [str(layer["id"])],
+                    "output_layer_id": str(layer["id"]),
+                    "roi_id": str(spec_row["roi_id"]),
+                    "mask_id": (
+                        str(spec_row["mask_version_id"])
+                        if spec_row["mask_version_id"] is not None else None
+                    ),
+                    "product_profile_id": None,
+                    "mutation": {
+                        "target_layer_id": str(layer["id"]),
+                        "before": before,
+                        "after": after,
+                    },
+                    "cost": {
+                        "mode": str(contract["cost"]["mode"]),
+                        "confirmed_call_count": int(
+                            contract["cost"]["confirmed_call_count"]
+                        ),
+                        "user_confirmation_required": bool(
+                            contract["cost"]["user_confirmation_required"]
+                        ),
+                        "automatic_paid_retry": False,
+                    },
+                    "status": "succeeded",
+                    "created_at": now,
+                })
+                next_document["operations"] = retained
+                next_document["undo_cursor"] = len(retained) - 1
+                next_document["source_asset_ids"] = list(dict.fromkeys(
+                    str(item["source"]["id"])
+                    for item in next_document["layers"]
+                    if item["source"]["kind"] == "asset"
+                ))
+                next_document["revision"] = expected_revision
+                next_document["updated_at"] = now
+                normalized_document = normalize_canvas_document(next_document)
+                stored_document = json.loads(canonical_json(normalized_document))
+                next_revision = expected_revision + 1
+                stored_document["revision"] = next_revision
+                stored_document["created_at"] = str(document_row["created_at"])
+                stored_document["updated_at"] = now
+                stored_json = canonical_json(stored_document)
+                document_sha256 = hashlib.sha256(stored_json.encode("utf-8")).hexdigest()
+
+                receipt_value = {
+                    **normalized_receipt,
+                    "workflow_mode": mode,
+                    "source_canvas_revision": expected_revision,
+                    "local_edit_spec_id": spec_id,
+                    "candidate_asset_id": candidate_id,
+                    "result_asset_id": result_id,
+                    "canvas_document_version_id": version_id,
+                }
+                receipt_json = canonical_json(receipt_value)
+                receipt_sha256 = hashlib.sha256(receipt_json.encode("utf-8")).hexdigest()
+                result_metadata = {
+                    **(
+                        result_value.get("metadata")
+                        if isinstance(result_value.get("metadata"), dict) else {}
+                    ),
+                    "local_edit_composition_id": composition_id,
+                    "local_edit_spec_id": spec_id,
+                    "candidate_asset_id": candidate_id,
+                    "pixel_sha256": pixel_sha256,
+                    "receipt_sha256": receipt_sha256,
+                }
+                connection.execute(
+                    """
+                    INSERT INTO assets(
+                        id, session_id, parent_asset_id, role, kind, path, name,
+                        mime, width, height, sha256, metadata_json, created_at
+                    ) VALUES(?, ?, ?, 'result_local_edit', 'image', ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        result_id, candidate["session_id"], source_asset_id,
+                        result_path,
+                        str(result_value.get("name") or Path(result_path).name),
+                        str(result_value.get("mime") or "image/png"),
+                        width, height, file_sha256, encode_json(result_metadata), now,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO canvas_document_versions(
+                        id, document_id, revision, parent_version_id,
+                        client_request_id, request_fingerprint, document_json,
+                        document_sha256, created_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        version_id, document_row["id"], next_revision, source_version_id,
+                        internal_request_id, fingerprint, stored_json, document_sha256, now,
+                    ),
+                )
+                for document_layer in stored_document["layers"]:
+                    source = document_layer["source"]
+                    connection.execute(
+                        """
+                        INSERT INTO canvas_version_sources(
+                            version_id, layer_id, source_kind, source_asset_id,
+                            proxy_ref, original_pixel_width, original_pixel_height
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            version_id, document_layer["id"], source["kind"], source["id"],
+                            source["proxy_ref"], source["original_pixel_width"],
+                            source["original_pixel_height"],
+                        ),
+                    )
+                connection.execute(
+                    """
+                    UPDATE canvas_documents
+                    SET current_version_id = ?, current_revision = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (version_id, next_revision, now, document_row["id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO local_edit_compositions(
+                        id, local_edit_spec_id, candidate_asset_id, result_asset_id,
+                        canvas_document_version_id, client_request_id,
+                        request_fingerprint, receipt_json, receipt_sha256, created_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        composition_id, spec_id, candidate_id, result_id, version_id,
+                        request_id, fingerprint, receipt_json, receipt_sha256, now,
+                    ),
+                )
+                self._before_local_edit_composition_commit(connection)
+                composition_row = connection.execute(
+                    "SELECT * FROM local_edit_compositions WHERE id = ?",
+                    (composition_id,),
+                ).fetchone()
+                assert composition_row is not None
+
+        item = self._local_edit_composition_row(
+            composition_row, replayed=replayed
+        )
+        item["result_asset"] = self.get_asset(item["result_asset_id"])
+        item["canvas"] = self.get_canvas_document(mode)
+        return item
 
     @staticmethod
     def _product_profile_version_row(

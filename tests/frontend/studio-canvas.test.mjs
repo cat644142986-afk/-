@@ -21,8 +21,13 @@ import {
 import {
   appendMaskStroke,
   buildFreeLocalEditContract,
+  buildPaidOutpaintContract,
+  compatibleLocalEditCandidates,
   createMaskDefinition,
+  defaultOutpaintConfig,
+  expectedLocalEditCandidateSize,
   invertMaskDefinition,
+  normalizeOutpaintConfig,
   normalizeSourceRoi,
   roiFromSceneDrag,
   sceneRectFromSourceRoi,
@@ -103,6 +108,36 @@ test('editing after undo truncates the redo branch without mutating a clone', ()
   assert.equal(layer.transform.x, 30);
   assert.equal(original.layers[0].transform.x, originalX);
   assert.notEqual(original.layers[0].transform.x, layer.transform.x);
+});
+
+test('source replacement undo and redo recalculate authoritative asset references', () => {
+  const document = createCanvasDocument('single', asset('asset:first', 1200, 800));
+  const layer = document.layers[0];
+  appendLayerMutation(document, layer.id, {
+    source: {
+      kind: 'result',
+      id: 'ast_local_result',
+      proxy_ref: 'proxy:thumbnail:512',
+      original_pixel_width: 1200,
+      original_pixel_height: 800,
+    },
+  }, 'command:local-edit-compose', '2026-09-02T01:00:00.000Z', 'operation:local-compose');
+
+  assert.equal(layer.source.kind, 'result');
+  assert.equal(layer.source.id, 'ast_local_result');
+  assert.deepEqual(document.source_asset_ids, []);
+  assert.equal(document.operations[0].mutation.before.source.id, 'asset:first');
+  assert.equal(document.operations[0].mutation.after.source.id, 'ast_local_result');
+
+  undoCanvas(document);
+  assert.equal(layer.source.kind, 'asset');
+  assert.equal(layer.source.id, 'asset:first');
+  assert.deepEqual(document.source_asset_ids, ['asset:first']);
+
+  redoCanvas(document);
+  assert.equal(layer.source.kind, 'result');
+  assert.equal(layer.source.id, 'ast_local_result');
+  assert.deepEqual(document.source_asset_ids, []);
 });
 
 test('Fabric proxy scaling round-trips the authoritative original-pixel transform', () => {
@@ -197,13 +232,90 @@ test('manual mask keeps reversible base, brush, inverse, feather, and free spec 
     canvasVersionId: 'canvasver:test',
     layer,
     sourceSha256: 'b'.repeat(64),
+    sourcePixelSha256: 'c'.repeat(64),
     roi,
     mask,
   });
   assert.equal(contract.mask.id, 'maskver:test');
   assert.equal(contract.mask.sha256, 'A'.repeat(64));
+  assert.equal(contract.source_sha256, 'B'.repeat(64));
+  assert.equal(contract.source_pixel_sha256, 'C'.repeat(64));
   assert.equal(contract.cost.mode, 'free');
   assert.equal(contract.cost.automatic_paid_retry, false);
+});
+
+test('local edit candidates merge current and recoverable results under the frozen pixel contract', () => {
+  const layer = createCanvasDocument('single', asset('asset:first', 1200, 800)).layers[0];
+  const contract = { mode: 'inpaint', source_size: { width: 1200, height: 800 } };
+  const current = {
+    main: [
+      { asset_id: 'ast_current', role: 'result_main', width: 1200, height: 800, name: '当前结果' },
+      { asset_id: 'ast_wrong_size', role: 'result_main', width: 1024, height: 1024, name: '尺寸不符' },
+    ],
+  };
+  const recent = [
+    { id: 'ast_current', role: 'result_main', width: 1200, height: 800, name: '重复结果' },
+    { id: 'ast_recoverable', role: 'result_local_edit', width: 1200, height: 800, name: '历史结果' },
+    { id: 'ast_source', role: 'workspace_source', width: 1200, height: 800, name: '非结果素材' },
+  ];
+  assert.deepEqual(expectedLocalEditCandidateSize(contract, layer), { width: 1200, height: 800 });
+  assert.deepEqual(
+    compatibleLocalEditCandidates(current, recent, contract, layer).map((item) => item.id),
+    ['ast_current', 'ast_recoverable'],
+  );
+  assert.deepEqual(expectedLocalEditCandidateSize({
+    mode: 'outpaint',
+    outpaint: { output_width: 1600, output_height: 1200 },
+  }, layer), { width: 1600, height: 1200 });
+});
+
+test('outpaint freezes explicit output placement transition and one paid call without retry', () => {
+  const layer = createCanvasDocument('single', asset('asset:first', 1200, 800)).layers[0];
+  const defaults = defaultOutpaintConfig(layer);
+  assert.deepEqual(defaults, {
+    output_width: 1800,
+    output_height: 1200,
+    source_x: 300,
+    source_y: 200,
+    transition_width: 0,
+  });
+  const normalized = normalizeOutpaintConfig(layer, {
+    ...defaults,
+    transition_width: 32,
+  });
+  const roi = {
+    id: 'roi:outpaint',
+    coordinate_space: 'output-pixel',
+    rect: { x: 0, y: 0, width: 1800, height: 1200 },
+  };
+  const contract = buildPaidOutpaintContract({
+    operationId: 'operation:outpaint',
+    canvasVersionId: 'canvasver:one',
+    layer,
+    sourceSha256: 'b'.repeat(64),
+    sourcePixelSha256: 'c'.repeat(64),
+    roi,
+    outpaint: normalized,
+    confirmed: true,
+  });
+  assert.equal(contract.mode, 'outpaint');
+  assert.deepEqual(contract.outpaint, normalized);
+  assert.equal(contract.mask, null);
+  assert.equal(contract.cost.mode, 'paid');
+  assert.equal(contract.cost.confirmed_call_count, 1);
+  assert.equal(contract.cost.user_confirmed, true);
+  assert.equal(contract.cost.automatic_paid_retry, false);
+  assert.throws(
+    () => buildPaidOutpaintContract({
+      operationId: 'operation:unconfirmed',
+      canvasVersionId: 'canvasver:one',
+      layer,
+      roi,
+      outpaint: normalized,
+      confirmed: false,
+    }),
+    /确认本次扩图规格/,
+  );
 });
 
 test('production canvas uses SQLite APIs and is wired into the Studio lifecycle', () => {
@@ -216,6 +328,8 @@ test('production canvas uses SQLite APIs and is wired into the Studio lifecycle'
   assert.match(apiSource, /export async function getCanvasRois\(/);
   assert.match(apiSource, /export async function saveCanvasMask\(/);
   assert.match(apiSource, /export async function createLocalEditSpec\(/);
+  assert.match(apiSource, /export async function getLatestLocalEditSpec\(/);
+  assert.match(apiSource, /export async function composeLocalEdit\(mode/);
   assert.match(apiSource, /export async function executeCommand\(commandId/);
   assert.match(apiSource, /import\.meta\.env\?\.DEV/);
   assert.match(apiSource, /\['127\.0\.0\.1', 'localhost', '::1'\]/);
@@ -231,9 +345,22 @@ test('production canvas uses SQLite APIs and is wired into the Studio lifecycle'
   assert.match(htmlSource, /data-studio-view="canvas"/);
   assert.match(htmlSource, /id="studio-fabric-canvas"/);
   assert.match(controllerSource, /api\.getCanvasRois\(entry\.currentVersionId, layer\.id/);
-  assert.match(controllerSource, /api\.createCanvasRoi\(\{/);
+  assert.match(controllerSource, /api\.createCanvasRoi\(local\.roiRequest/);
   assert.match(controllerSource, /api\.saveCanvasMask\(local\.roi\.id/);
-  assert.match(controllerSource, /api\.createLocalEditSpec\(\{/);
+  assert.match(controllerSource, /api\.createLocalEditSpec\(local\.specRequest/);
+  assert.match(controllerSource, /api\.getLatestLocalEditSpec\(\{/);
+  assert.match(controllerSource, /api\.composeLocalEdit\(currentMode, request/);
+  assert.match(controllerSource, /buildPaidOutpaintContract\(\{/);
+  assert.match(controllerSource, /purpose: 'outpaint'/);
+  assert.match(controllerSource, /localEditMode === 'outpaint'/);
+  assert.match(controllerSource, /api\.getWorkspace\(currentMode/);
+  assert.match(controllerSource, /api\.getAsset\(assetId/);
+  assert.match(controllerSource, /const assetDetails = new Map\(\)/);
+  assert.match(controllerSource, /reloadObjectFromLayer\(operation\.mutation\.target_layer_id\)/);
+  assert.match(controllerSource, /const selectedBeforeBuild = selectedLayerId/);
+  assert.match(controllerSource, /const selectedBeforeReload = selectedLayerId === layerId/);
+  assert.match(controllerSource, /if \(suppressSelectionCleared \|\| activeTool !== 'select'\) return/);
+  assert.match(controllerSource, /setSaveState\('saved', '画布已保存', `revision \$\{response\.canvas\.current_revision\}`\)/);
   assert.match(controllerSource, /dataset\.localEditBase/);
   assert.match(controllerSource, /key === 'r' \? 'roi'/);
   assert.match(controllerSource, /key === 'b' \? 'brush-include'/);
@@ -241,6 +368,12 @@ test('production canvas uses SQLite APIs and is wired into the Studio lifecycle'
   assert.match(controllerSource, /objectRole', 'local-edit-roi'/);
   assert.match(htmlSource, /id="canvas-panel-local-edit"/);
   assert.match(htmlSource, /id="local-edit-save-mask"/);
+  assert.match(htmlSource, /id="local-edit-candidate"/);
+  assert.match(htmlSource, /id="local-edit-apply"/);
+  assert.match(htmlSource, /data-local-edit-mode="outpaint"/);
+  assert.match(htmlSource, /id="local-edit-outpaint-width"/);
+  assert.match(htmlSource, /id="local-edit-outpaint-confirm"/);
+  assert.match(htmlSource, /id="local-edit-prepare-outpaint"/);
   assert.match(htmlSource, /role="status" aria-live="polite" aria-atomic="true"/);
 });
 
