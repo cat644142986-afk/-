@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-02<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `fb1468bb8a518b043ae26bfb0cc5021de7874bed`，contract `2026-09-02.2`、SQLite schema v5、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出和 `ProductProfile` 商品档案均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1 与 G2 已完成并正式发布，当前执行游标为 G3 ROI / Mask / 精准局部处理与扩图合同和失败测试。情境式创作副驾仅在 G3 完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `fb1468bb8a518b043ae26bfb0cc5021de7874bed`，contract `2026-09-02.2`、SQLite schema v5、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出和 `ProductProfile` 商品档案均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1 与 G2 已完成并正式发布。G3 已完成严格像素合同与源码 schema v6 不可变 ROI / Mask / LocalEditSpec 账本，尚未进入 sidecar API、Studio 界面或正式便携版；当前执行游标为本地 API 和手动画框/蒙版底座。情境式创作副驾仅在 G3 完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1626,6 +1626,15 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 费用合同区分 `free / paid`。付费局部编辑必须在执行前冻结并确认调用次数；`automatic_paid_retry` 只允许为 `false`，任何失败都不会自动追加付费调用。未知字段、越界 ROI、越界 Mask、空 Mask、尺寸不符、指纹不符和无新增区域的伪扩图均 fail-closed。
 - 8 项新增专项测试先因实现不存在失败，再在实现后通过；连同旧画布与命令专项共 17/17。全量 Python 318 项通过、1 项平台预期跳过，前端 148/148；新增模块在弃用警告视为错误的模式下也通过。测试只使用内存合成像素，不读取正式账本、用户图片、Prompt 或 Key，不调用网络、模型或付费 API。
 - 当前只完成合同和像素安全内核，尚未接入 schema、sidecar API、Studio 画布或正式包，不能误报为用户可见的局部编辑。下一执行游标：设计并先用失败测试冻结 schema v6 的不可变 ROI、Mask 版本和 LocalEditSpec，要求请求幂等、版本绑定、历史不可改写、素材引用保护及 v5→v6 可恢复迁移；随后再接本地 API 和画布手动选区。
+
+### 2026-09-02 G3 schema v6 不可变局部编辑账本检查点
+
+- 源码账本升至 schema v6，新增 `canvas_rois / canvas_masks / canvas_mask_versions / local_edit_specs`。ROI、Mask 版本和 LocalEditSpec 使用幂等请求身份；ROI、Mask 历史版本与 spec 由数据库触发器禁止改写或删除，Mask 只保存可重建矢量定义、定义哈希和像素哈希，不保存 Base64、机器路径或用户图片。
+- v5→v6 使用现有外部备份和单事务迁移链；完整 v6 结构但 marker 仍为 v5 时安全修复 marker，部分 v6 对象、缺表/缺列/缺索引/缺触发器、迁移中断或未来版本继续 fail-closed。测试证明失败迁移不遗留半套对象，v5 备份保持可查询。
+- LocalEditSpec 创建时同时验证画布版本、源图层、原始像素尺寸、源素材 SHA-256、ROI 坐标与用途、Mask 版本/ROI/像素指纹。任务快照新增 `local_edit_spec_id`，要求 spec、画布版本、操作 ID、ROI、Mask 和任务源素材同属一条血缘；幂等重放比较 exact spec，不能把旧 key 换绑到另一个局部编辑。执行 trace 只能从任务快照继承同一 spec，调用方没有独立覆盖入口。
+- 新增测试覆盖未知 Mask 字段、矢量点越界、源图指纹不符、跨 ROI Mask、过期画布、任务操作不符、任务重放换绑、trace 继承、完整/部分迁移识别和事务回滚。专项 48/48；全量 Python 327 项通过、1 项平台预期跳过；前端 148/148、Vite production build、Rust/Tauri `custom-protocol` check、Python compileall 与 `git diff --check` 均通过。
+- 本检查点未读取正式 SQLite、用户图片、Prompt、Key 或 build 证据目录，未调用网络、模型或付费 API；正式便携目录仍是 `fb1468b` / contract `2026-09-02.2` / schema v5，不能误报为 schema v6 已发布。
+- 下一执行游标：先冻结并实现 sidecar 的 ROI、Mask 版本与 LocalEditSpec 本地 API，要求结构化 400/404/409、请求幂等、乐观并发和无付费副作用；随后把画布矩形 ROI、画笔保留/删除、反选、边缘调整、蒙版预览与恢复接入同一 API。API 和 UI 均完成前不构建正式候选，不启动 Agent、模型下载或付费调用。
 
 ## 11. 下一位开发者的执行入口
 

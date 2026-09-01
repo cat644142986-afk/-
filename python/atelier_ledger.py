@@ -26,8 +26,19 @@ try:
 except ImportError:
     from .command_registry import command_for_mode, get_command
 
+try:
+    from local_edit_contract import (
+        normalize_canvas_mask_definition,
+        normalize_local_edit_contract,
+    )
+except ImportError:
+    from .local_edit_contract import (
+        normalize_canvas_mask_definition,
+        normalize_local_edit_contract,
+    )
 
-SCHEMA_VERSION = 5
+
+SCHEMA_VERSION = 6
 CANVAS_DOCUMENT_SCHEMA_VERSION = 1
 PRODUCT_PROFILE_SCHEMA_VERSION = 1
 CANVAS_COORDINATE_SYSTEM = {
@@ -299,6 +310,52 @@ V5_REQUIRED_TRIGGERS = frozenset({
     "trg_product_profile_versions_no_delete",
     "trg_product_profile_assets_no_update",
     "trg_product_profile_assets_no_delete",
+})
+
+V6_TABLE_COLUMNS = {
+    "canvas_rois": frozenset({
+        "id", "canvas_document_version_id", "source_layer_id",
+        "coordinate_space", "x", "y", "width", "height", "purpose",
+        "client_request_id", "request_fingerprint", "created_at",
+    }),
+    "canvas_masks": frozenset({
+        "id", "roi_id", "current_version_id", "current_revision",
+        "created_at", "updated_at",
+    }),
+    "canvas_mask_versions": frozenset({
+        "id", "mask_id", "revision", "parent_version_id",
+        "client_request_id", "request_fingerprint", "definition_json",
+        "definition_sha256", "pixel_sha256", "created_at",
+    }),
+    "local_edit_specs": frozenset({
+        "id", "operation_id", "canvas_document_version_id", "source_layer_id",
+        "roi_id", "mask_version_id", "mode", "client_request_id",
+        "request_fingerprint", "contract_json", "contract_sha256", "created_at",
+    }),
+}
+
+V6_JOB_SNAPSHOT_COLUMNS = frozenset({"local_edit_spec_id"})
+V6_EXECUTION_TRACE_COLUMNS = frozenset({"local_edit_spec_id"})
+
+V6_REQUIRED_INDEXES = frozenset({
+    "idx_canvas_rois_canvas_version",
+    "idx_canvas_rois_layer",
+    "idx_canvas_masks_roi",
+    "idx_canvas_mask_versions_mask",
+    "idx_local_edit_specs_canvas_version",
+    "idx_local_edit_specs_roi",
+    "idx_local_edit_specs_mask",
+    "idx_job_snapshots_local_edit",
+    "idx_execution_traces_local_edit",
+})
+
+V6_REQUIRED_TRIGGERS = frozenset({
+    "trg_canvas_rois_no_update",
+    "trg_canvas_rois_no_delete",
+    "trg_canvas_mask_versions_no_update",
+    "trg_canvas_mask_versions_no_delete",
+    "trg_local_edit_specs_no_update",
+    "trg_local_edit_specs_no_delete",
 })
 
 V1_SCHEMA_STATEMENTS = (
@@ -1450,6 +1507,85 @@ class AtelierLedger:
             issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
         return issues
 
+    @classmethod
+    def _v6_objects_present(cls, connection: sqlite3.Connection) -> bool:
+        tables = cls._table_names(connection)
+        if tables.intersection(V6_TABLE_COLUMNS):
+            return True
+        for table, expected in (
+            ("job_snapshots", V6_JOB_SNAPSHOT_COLUMNS),
+            ("execution_traces", V6_EXECUTION_TRACE_COLUMNS),
+        ):
+            if table in tables:
+                columns = {
+                    str(row[1])
+                    for row in connection.execute(f"PRAGMA table_info({table})")
+                }
+                if columns.intersection(expected):
+                    return True
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        return bool(triggers.intersection(V6_REQUIRED_TRIGGERS))
+
+    @classmethod
+    def _v6_contract_issues(cls, connection: sqlite3.Connection) -> list[str]:
+        issues: list[str] = []
+        tables = cls._table_names(connection)
+        for table, required_columns in V6_TABLE_COLUMNS.items():
+            if table not in tables:
+                issues.append(f"missing table {table}")
+                continue
+            actual_columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing_columns = sorted(required_columns - actual_columns)
+            if missing_columns:
+                issues.append(f"{table} missing columns: {', '.join(missing_columns)}")
+
+        for table, required_columns in (
+            ("job_snapshots", V6_JOB_SNAPSHOT_COLUMNS),
+            ("execution_traces", V6_EXECUTION_TRACE_COLUMNS),
+        ):
+            if table not in tables:
+                issues.append(f"missing table {table}")
+                continue
+            actual_columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing_columns = sorted(required_columns - actual_columns)
+            if missing_columns:
+                issues.append(f"{table} missing columns: {', '.join(missing_columns)}")
+
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        missing_indexes = sorted(V6_REQUIRED_INDEXES - indexes)
+        if missing_indexes:
+            issues.append(f"missing indexes: {', '.join(missing_indexes)}")
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        missing_triggers = sorted(V6_REQUIRED_TRIGGERS - triggers)
+        if missing_triggers:
+            issues.append(f"missing triggers: {', '.join(missing_triggers)}")
+        integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
+        if integrity_rows != ["ok"]:
+            issues.append(f"integrity_check failed: {'; '.join(integrity_rows[:3])}")
+        foreign_key_rows = list(connection.execute("PRAGMA foreign_key_check"))
+        if foreign_key_rows:
+            issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
+        return issues
+
     def _migration_backup_path(self, version: int) -> Path:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         return self.db_path.with_name(
@@ -2047,6 +2183,162 @@ class AtelierLedger:
                 """
             )
 
+    @staticmethod
+    def _migrate_v5_to_v6(connection: sqlite3.Connection) -> None:
+        """Add immutable ROI, mask-version, and local-edit specification facts."""
+        connection.execute(
+            """
+            CREATE TABLE canvas_rois (
+                id TEXT PRIMARY KEY,
+                canvas_document_version_id TEXT NOT NULL,
+                source_layer_id TEXT NOT NULL,
+                coordinate_space TEXT NOT NULL
+                    CHECK(coordinate_space IN ('source-pixel', 'output-pixel')),
+                x INTEGER NOT NULL CHECK(x >= 0),
+                y INTEGER NOT NULL CHECK(y >= 0),
+                width INTEGER NOT NULL CHECK(width > 0),
+                height INTEGER NOT NULL CHECK(height > 0),
+                purpose TEXT NOT NULL CHECK(purpose IN ('inpaint', 'outpaint')),
+                client_request_id TEXT NOT NULL UNIQUE,
+                request_fingerprint TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(canvas_document_version_id)
+                    REFERENCES canvas_document_versions(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE canvas_masks (
+                id TEXT PRIMARY KEY,
+                roi_id TEXT NOT NULL,
+                current_version_id TEXT,
+                current_revision INTEGER NOT NULL DEFAULT 0 CHECK(current_revision >= 0),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(roi_id) REFERENCES canvas_rois(id) ON DELETE RESTRICT,
+                FOREIGN KEY(current_version_id)
+                    REFERENCES canvas_mask_versions(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE canvas_mask_versions (
+                id TEXT PRIMARY KEY,
+                mask_id TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                parent_version_id TEXT,
+                client_request_id TEXT NOT NULL UNIQUE,
+                request_fingerprint TEXT NOT NULL,
+                definition_json TEXT NOT NULL,
+                definition_sha256 TEXT NOT NULL,
+                pixel_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(mask_id) REFERENCES canvas_masks(id) ON DELETE RESTRICT,
+                FOREIGN KEY(parent_version_id)
+                    REFERENCES canvas_mask_versions(id) ON DELETE RESTRICT,
+                UNIQUE(mask_id, revision)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE local_edit_specs (
+                id TEXT PRIMARY KEY,
+                operation_id TEXT NOT NULL UNIQUE,
+                canvas_document_version_id TEXT NOT NULL,
+                source_layer_id TEXT NOT NULL,
+                roi_id TEXT NOT NULL,
+                mask_version_id TEXT,
+                mode TEXT NOT NULL CHECK(mode IN ('inpaint', 'outpaint')),
+                client_request_id TEXT NOT NULL UNIQUE,
+                request_fingerprint TEXT NOT NULL,
+                contract_json TEXT NOT NULL,
+                contract_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(canvas_document_version_id)
+                    REFERENCES canvas_document_versions(id) ON DELETE RESTRICT,
+                FOREIGN KEY(roi_id) REFERENCES canvas_rois(id) ON DELETE RESTRICT,
+                FOREIGN KEY(mask_version_id)
+                    REFERENCES canvas_mask_versions(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            "ALTER TABLE job_snapshots ADD COLUMN local_edit_spec_id TEXT "
+            "REFERENCES local_edit_specs(id) ON DELETE RESTRICT"
+        )
+        connection.execute(
+            "ALTER TABLE execution_traces ADD COLUMN local_edit_spec_id TEXT "
+            "REFERENCES local_edit_specs(id) ON DELETE RESTRICT"
+        )
+        for statement in (
+            "CREATE INDEX idx_canvas_rois_canvas_version "
+            "ON canvas_rois(canvas_document_version_id)",
+            "CREATE INDEX idx_canvas_rois_layer "
+            "ON canvas_rois(canvas_document_version_id, source_layer_id)",
+            "CREATE UNIQUE INDEX idx_canvas_masks_roi ON canvas_masks(roi_id)",
+            "CREATE INDEX idx_canvas_mask_versions_mask "
+            "ON canvas_mask_versions(mask_id, revision DESC)",
+            "CREATE INDEX idx_local_edit_specs_canvas_version "
+            "ON local_edit_specs(canvas_document_version_id)",
+            "CREATE INDEX idx_local_edit_specs_roi ON local_edit_specs(roi_id)",
+            "CREATE INDEX idx_local_edit_specs_mask ON local_edit_specs(mask_version_id)",
+            "CREATE INDEX idx_job_snapshots_local_edit "
+            "ON job_snapshots(local_edit_spec_id)",
+            "CREATE INDEX idx_execution_traces_local_edit "
+            "ON execution_traces(local_edit_spec_id)",
+        ):
+            connection.execute(statement)
+        for trigger_name, table, action, message in (
+            (
+                "trg_canvas_rois_no_update",
+                "canvas_rois",
+                "UPDATE",
+                "canvas ROIs are immutable",
+            ),
+            (
+                "trg_canvas_rois_no_delete",
+                "canvas_rois",
+                "DELETE",
+                "canvas ROIs are immutable",
+            ),
+            (
+                "trg_canvas_mask_versions_no_update",
+                "canvas_mask_versions",
+                "UPDATE",
+                "canvas mask versions are immutable",
+            ),
+            (
+                "trg_canvas_mask_versions_no_delete",
+                "canvas_mask_versions",
+                "DELETE",
+                "canvas mask versions are immutable",
+            ),
+            (
+                "trg_local_edit_specs_no_update",
+                "local_edit_specs",
+                "UPDATE",
+                "local edit specifications are immutable",
+            ),
+            (
+                "trg_local_edit_specs_no_delete",
+                "local_edit_specs",
+                "DELETE",
+                "local edit specifications are immutable",
+            ),
+        ):
+            connection.execute(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {action} ON {table}
+                BEGIN
+                    SELECT RAISE(ABORT, '{message}');
+                END
+                """
+            )
+
     def _ensure_schema(self) -> None:
         with self._schema_lock:
             # Probe the version without changing journal mode. An older app must
@@ -2151,6 +2443,23 @@ class AtelierLedger:
                                     else:
                                         self._migrate_v4_to_v5(connection)
                                     current_version = 5
+                                elif current_version == 5:
+                                    if self._v6_objects_present(connection):
+                                        issues = self._v6_contract_issues(connection)
+                                        if issues:
+                                            raise PartialSchemaError(
+                                                "Detected an incomplete v6 ledger while schema metadata says v5; "
+                                                "the database was not changed. Restore the automatic backup or "
+                                                f"repair these objects first: {' | '.join(issues)}"
+                                            )
+                                        repair = "recovered complete v6 schema with stale v5 metadata"
+                                        self.last_schema_repair = (
+                                            f"{self.last_schema_repair}; {repair}"
+                                            if self.last_schema_repair else repair
+                                        )
+                                    else:
+                                        self._migrate_v5_to_v6(connection)
+                                    current_version = 6
                                 else:
                                     raise LedgerSchemaError(
                                         f"No migration path from schema v{current_version}"
@@ -3196,6 +3505,508 @@ class AtelierLedger:
         return self._canvas_result(document_row, version_row, replayed=replayed)
 
     @staticmethod
+    def _canvas_roi_row(
+        row: sqlite3.Row | Mapping[str, Any], *, replayed: bool = False
+    ) -> dict[str, Any]:
+        item = dict(row)
+        item["rect"] = {
+            "x": int(item.pop("x")),
+            "y": int(item.pop("y")),
+            "width": int(item.pop("width")),
+            "height": int(item.pop("height")),
+        }
+        item.pop("request_fingerprint", None)
+        item["replayed"] = replayed
+        return item
+
+    def get_canvas_roi(self, roi_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM canvas_rois WHERE id = ?", (str(roi_id),)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown canvas ROI: {roi_id}")
+        return self._canvas_roi_row(row)
+
+    def create_canvas_roi(
+        self,
+        *,
+        canvas_document_id: str,
+        expected_canvas_revision: int,
+        source_layer_id: str,
+        coordinate_space: str,
+        rect: Mapping[str, Any],
+        purpose: str,
+        client_request_id: str,
+    ) -> dict[str, Any]:
+        document_id = _canvas_id(canvas_document_id, "canvas_document_id")
+        expected_revision = _canvas_integer(
+            expected_canvas_revision, "expected_canvas_revision", minimum=0
+        )
+        layer_id = _canvas_id(source_layer_id, "source_layer_id")
+        coordinate_space = str(coordinate_space or "").strip()
+        purpose = str(purpose or "").strip()
+        if purpose not in {"inpaint", "outpaint"}:
+            raise ValueError("canvas ROI purpose must be inpaint or outpaint")
+        expected_space = "source-pixel" if purpose == "inpaint" else "output-pixel"
+        if coordinate_space != expected_space:
+            raise ValueError(f"{purpose} ROI must use {expected_space} coordinates")
+        rect_value = _canvas_object(
+            rect,
+            label="canvas ROI rect",
+            required={"x", "y", "width", "height"},
+        )
+        normalized_rect = {
+            "x": _canvas_integer(rect_value["x"], "canvas ROI rect.x", minimum=0),
+            "y": _canvas_integer(rect_value["y"], "canvas ROI rect.y", minimum=0),
+            "width": _canvas_integer(
+                rect_value["width"], "canvas ROI rect.width", minimum=1, maximum=32768
+            ),
+            "height": _canvas_integer(
+                rect_value["height"], "canvas ROI rect.height", minimum=1, maximum=32768
+            ),
+        }
+        request_id = str(client_request_id or "").strip()
+        roi_id = idempotent_id("roi", request_id)
+        request_payload = {
+            "canvas_document_id": document_id,
+            "expected_canvas_revision": expected_revision,
+            "source_layer_id": layer_id,
+            "coordinate_space": coordinate_space,
+            "rect": normalized_rect,
+            "purpose": purpose,
+        }
+        fingerprint = hashlib.sha256(
+            canonical_json(request_payload).encode("utf-8")
+        ).hexdigest()
+        replayed = False
+
+        with self._immediate_connection() as connection:
+            prior = connection.execute(
+                "SELECT * FROM canvas_rois WHERE client_request_id = ?", (request_id,)
+            ).fetchone()
+            if prior is not None:
+                if str(prior["request_fingerprint"]) != fingerprint:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different canvas ROI"
+                    )
+                row = prior
+                replayed = True
+            else:
+                canvas = connection.execute(
+                    "SELECT * FROM canvas_documents WHERE id = ?", (document_id,)
+                ).fetchone()
+                if canvas is None:
+                    raise KeyError(f"unknown canvas document: {document_id}")
+                current_revision = int(canvas["current_revision"])
+                if current_revision != expected_revision:
+                    raise CanvasRevisionConflictError(
+                        f"canvas {document_id} is revision {current_revision}, "
+                        f"not {expected_revision}",
+                        {
+                            "id": document_id,
+                            "revision": current_revision,
+                            "version_id": canvas["current_version_id"],
+                        },
+                    )
+                version_id = str(canvas["current_version_id"])
+                version = connection.execute(
+                    "SELECT document_json FROM canvas_document_versions WHERE id = ?",
+                    (version_id,),
+                ).fetchone()
+                if version is None:
+                    raise LedgerSchemaError(f"canvas {document_id} has no current version")
+                document = decode_json(version["document_json"], {})
+                layer = next(
+                    (item for item in document.get("layers") or [] if item.get("id") == layer_id),
+                    None,
+                )
+                if layer is None:
+                    raise KeyError(f"unknown canvas layer: {layer_id}")
+                if purpose == "inpaint":
+                    source = layer["source"]
+                    if (
+                        normalized_rect["x"] + normalized_rect["width"]
+                        > int(source["original_pixel_width"])
+                        or normalized_rect["y"] + normalized_rect["height"]
+                        > int(source["original_pixel_height"])
+                    ):
+                        raise ValueError("inpaint ROI exceeds the source pixel bounds")
+                now = utc_now()
+                connection.execute(
+                    """
+                    INSERT INTO canvas_rois(
+                        id, canvas_document_version_id, source_layer_id,
+                        coordinate_space, x, y, width, height, purpose,
+                        client_request_id, request_fingerprint, created_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        roi_id, version_id, layer_id, coordinate_space,
+                        normalized_rect["x"], normalized_rect["y"],
+                        normalized_rect["width"], normalized_rect["height"], purpose,
+                        request_id, fingerprint, now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM canvas_rois WHERE id = ?", (roi_id,)
+                ).fetchone()
+                assert row is not None
+        return self._canvas_roi_row(row, replayed=replayed)
+
+    @staticmethod
+    def _canvas_mask_version_row(
+        row: sqlite3.Row | Mapping[str, Any],
+    ) -> dict[str, Any]:
+        item = dict(row)
+        item["definition"] = decode_json(item.pop("definition_json", "{}"), {})
+        item.pop("request_fingerprint", None)
+        return item
+
+    @classmethod
+    def _canvas_mask_result(
+        cls,
+        mask_row: sqlite3.Row | Mapping[str, Any],
+        version_row: sqlite3.Row | Mapping[str, Any],
+        *,
+        replayed: bool,
+    ) -> dict[str, Any]:
+        return {
+            "id": str(mask_row["id"]),
+            "roi_id": str(mask_row["roi_id"]),
+            "current_revision": int(mask_row["current_revision"]),
+            "current_version_id": mask_row["current_version_id"],
+            "version": cls._canvas_mask_version_row(version_row),
+            "replayed": replayed,
+        }
+
+    def list_canvas_mask_versions(
+        self, mask_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        with self._connection() as connection:
+            mask = connection.execute(
+                "SELECT id FROM canvas_masks WHERE id = ?", (str(mask_id),)
+            ).fetchone()
+            if mask is None:
+                raise KeyError(f"unknown canvas mask: {mask_id}")
+            rows = connection.execute(
+                """
+                SELECT * FROM canvas_mask_versions
+                WHERE mask_id = ?
+                ORDER BY revision DESC
+                LIMIT ?
+                """,
+                (str(mask_id), limit),
+            ).fetchall()
+        return [self._canvas_mask_version_row(row) for row in rows]
+
+    def save_canvas_mask(
+        self,
+        *,
+        roi_id: str,
+        expected_revision: int,
+        definition: Mapping[str, Any],
+        pixel_sha256: str,
+        client_request_id: str,
+    ) -> dict[str, Any]:
+        roi_id = _canvas_id(roi_id, "roi_id")
+        expected_revision = _canvas_integer(
+            expected_revision, "expected_revision", minimum=0
+        )
+        normalized = normalize_canvas_mask_definition(definition)
+        pixel_digest = str(pixel_sha256 or "").upper()
+        if re.fullmatch(r"[A-F0-9]{64}", pixel_digest) is None:
+            raise ValueError("pixel_sha256 must be a SHA-256 digest")
+        request_id = str(client_request_id or "").strip()
+        version_id = idempotent_id("maskver", request_id)
+        mask_id = idempotent_id("mask", roi_id)
+        fingerprint = hashlib.sha256(canonical_json({
+            "roi_id": roi_id,
+            "expected_revision": expected_revision,
+            "definition": normalized,
+            "pixel_sha256": pixel_digest,
+        }).encode("utf-8")).hexdigest()
+        replayed = False
+
+        with self._immediate_connection() as connection:
+            prior = connection.execute(
+                "SELECT * FROM canvas_mask_versions WHERE client_request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if prior is not None:
+                if str(prior["request_fingerprint"]) != fingerprint:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different canvas mask save"
+                    )
+                mask_row = connection.execute(
+                    "SELECT * FROM canvas_masks WHERE id = ?", (prior["mask_id"],)
+                ).fetchone()
+                if mask_row is None or str(mask_row["roi_id"]) != roi_id:
+                    raise IdempotencyConflictError(
+                        "client_request_id belongs to a different canvas mask"
+                    )
+                version_row = prior
+                replayed = True
+            else:
+                roi = connection.execute(
+                    "SELECT * FROM canvas_rois WHERE id = ?", (roi_id,)
+                ).fetchone()
+                if roi is None:
+                    raise KeyError(f"unknown canvas ROI: {roi_id}")
+                if normalized["coordinate_space"] != str(roi["coordinate_space"]):
+                    raise ValueError("mask coordinate space must match its ROI")
+                if str(roi["purpose"]) != "inpaint":
+                    raise ValueError("outpaint write masks are derived locally")
+                source = connection.execute(
+                    """
+                    SELECT original_pixel_width, original_pixel_height
+                    FROM canvas_version_sources
+                    WHERE version_id = ? AND layer_id = ?
+                    """,
+                    (roi["canvas_document_version_id"], roi["source_layer_id"]),
+                ).fetchone()
+                if source is None:
+                    raise LedgerSchemaError("ROI source layer is missing from its canvas version")
+                if (
+                    normalized["width"] != int(source["original_pixel_width"])
+                    or normalized["height"] != int(source["original_pixel_height"])
+                ):
+                    raise ValueError("mask dimensions must match the ROI source layer")
+
+                mask_row = connection.execute(
+                    "SELECT * FROM canvas_masks WHERE roi_id = ?", (roi_id,)
+                ).fetchone()
+                if mask_row is None:
+                    if expected_revision != 0:
+                        raise CanvasRevisionConflictError(
+                            f"canvas mask for {roi_id} is revision 0, not {expected_revision}",
+                            {"id": None, "revision": 0, "version_id": None},
+                        )
+                    parent_version_id = None
+                    created_at = utc_now()
+                else:
+                    current_revision = int(mask_row["current_revision"])
+                    if current_revision != expected_revision:
+                        raise CanvasRevisionConflictError(
+                            f"canvas mask {mask_row['id']} is revision {current_revision}, "
+                            f"not {expected_revision}",
+                            {
+                                "id": str(mask_row["id"]),
+                                "revision": current_revision,
+                                "version_id": mask_row["current_version_id"],
+                            },
+                        )
+                    parent_version_id = mask_row["current_version_id"]
+                    created_at = str(mask_row["created_at"])
+                next_revision = expected_revision + 1
+                now = utc_now()
+                definition_json = canonical_json(normalized)
+                definition_sha256 = hashlib.sha256(
+                    definition_json.encode("utf-8")
+                ).hexdigest().upper()
+                if mask_row is None:
+                    connection.execute(
+                        """
+                        INSERT INTO canvas_masks(
+                            id, roi_id, current_version_id, current_revision,
+                            created_at, updated_at
+                        ) VALUES(?, ?, NULL, 0, ?, ?)
+                        """,
+                        (mask_id, roi_id, created_at, now),
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO canvas_mask_versions(
+                        id, mask_id, revision, parent_version_id,
+                        client_request_id, request_fingerprint, definition_json,
+                        definition_sha256, pixel_sha256, created_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        version_id, mask_id, next_revision, parent_version_id,
+                        request_id, fingerprint, definition_json, definition_sha256,
+                        pixel_digest, now,
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE canvas_masks
+                    SET current_version_id = ?, current_revision = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (version_id, next_revision, now, mask_id),
+                )
+                mask_row = connection.execute(
+                    "SELECT * FROM canvas_masks WHERE id = ?", (mask_id,)
+                ).fetchone()
+                version_row = connection.execute(
+                    "SELECT * FROM canvas_mask_versions WHERE id = ?", (version_id,)
+                ).fetchone()
+                assert mask_row is not None and version_row is not None
+        return self._canvas_mask_result(mask_row, version_row, replayed=replayed)
+
+    @staticmethod
+    def _local_edit_spec_row(
+        row: sqlite3.Row | Mapping[str, Any], *, replayed: bool = False
+    ) -> dict[str, Any]:
+        item = dict(row)
+        item["contract"] = decode_json(item.pop("contract_json", "{}"), {})
+        item.pop("request_fingerprint", None)
+        item["replayed"] = replayed
+        return item
+
+    def get_local_edit_spec(self, spec_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM local_edit_specs WHERE id = ?", (str(spec_id),)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown local edit spec: {spec_id}")
+        return self._local_edit_spec_row(row)
+
+    def create_local_edit_spec(
+        self,
+        *,
+        contract: Mapping[str, Any],
+        client_request_id: str,
+    ) -> dict[str, Any]:
+        normalized = normalize_local_edit_contract(contract)
+        request_id = str(client_request_id or "").strip()
+        spec_id = idempotent_id("editspec", request_id)
+        stored_json = canonical_json(normalized)
+        contract_sha256 = hashlib.sha256(stored_json.encode("utf-8")).hexdigest().upper()
+        fingerprint = hashlib.sha256(canonical_json({
+            "client_request_id": request_id,
+            "contract": normalized,
+        }).encode("utf-8")).hexdigest()
+        replayed = False
+
+        with self._immediate_connection() as connection:
+            prior = connection.execute(
+                "SELECT * FROM local_edit_specs WHERE client_request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if prior is not None:
+                if str(prior["request_fingerprint"]) != fingerprint:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different local edit spec"
+                    )
+                row = prior
+                replayed = True
+            else:
+                version_id = normalized["source_canvas_version_id"]
+                version = connection.execute(
+                    "SELECT * FROM canvas_document_versions WHERE id = ?", (version_id,)
+                ).fetchone()
+                if version is None:
+                    raise KeyError(f"unknown canvas document version: {version_id}")
+                document = decode_json(version["document_json"], {})
+                layer = next(
+                    (
+                        item for item in document.get("layers") or []
+                        if item.get("id") == normalized["source_layer_id"]
+                    ),
+                    None,
+                )
+                if layer is None:
+                    raise KeyError(
+                        f"unknown canvas layer: {normalized['source_layer_id']}"
+                    )
+                source = layer["source"]
+                if normalized["source_size"] != {
+                    "width": int(source["original_pixel_width"]),
+                    "height": int(source["original_pixel_height"]),
+                }:
+                    raise ValueError("local edit source size does not match the canvas layer")
+                source_asset = connection.execute(
+                    """
+                    SELECT b.sha256 FROM assets a
+                    JOIN asset_blobs b ON b.id = a.blob_id
+                    WHERE a.id = ?
+                    """,
+                    (str(source["id"]),),
+                ).fetchone()
+                if source_asset is None:
+                    raise KeyError(f"unknown local edit source asset: {source['id']}")
+                if (
+                    str(source_asset["sha256"]).upper()
+                    != str(normalized["source_sha256"]).upper()
+                ):
+                    raise ValueError(
+                        "local edit source fingerprint does not match the canvas layer asset"
+                    )
+                roi = connection.execute(
+                    "SELECT * FROM canvas_rois WHERE id = ?", (normalized["roi"]["id"],)
+                ).fetchone()
+                if roi is None:
+                    raise KeyError(f"unknown canvas ROI: {normalized['roi']['id']}")
+                stored_rect = {
+                    "x": int(roi["x"]),
+                    "y": int(roi["y"]),
+                    "width": int(roi["width"]),
+                    "height": int(roi["height"]),
+                }
+                if (
+                    str(roi["canvas_document_version_id"]) != version_id
+                    or str(roi["source_layer_id"]) != normalized["source_layer_id"]
+                    or str(roi["coordinate_space"])
+                    != normalized["roi"]["coordinate_space"]
+                    or stored_rect != normalized["roi"]["rect"]
+                    or str(roi["purpose"]) != normalized["mode"]
+                ):
+                    raise ValueError("local edit contract does not match its immutable ROI")
+
+                mask_version_id: str | None = None
+                if normalized["mode"] == "inpaint":
+                    mask_version_id = str(normalized["mask"]["id"])
+                    mask_version = connection.execute(
+                        """
+                        SELECT v.*, m.roi_id
+                        FROM canvas_mask_versions v
+                        JOIN canvas_masks m ON m.id = v.mask_id
+                        WHERE v.id = ?
+                        """,
+                        (mask_version_id,),
+                    ).fetchone()
+                    if mask_version is None:
+                        raise KeyError(f"unknown canvas mask version: {mask_version_id}")
+                    if str(mask_version["roi_id"]) != str(roi["id"]):
+                        raise ValueError("mask version and local edit spec must use the same ROI")
+                    if (
+                        str(mask_version["pixel_sha256"]).upper()
+                        != str(normalized["mask"]["sha256"]).upper()
+                    ):
+                        raise ValueError("mask pixel fingerprint does not match its version")
+                duplicate_operation = connection.execute(
+                    "SELECT id FROM local_edit_specs WHERE operation_id = ?",
+                    (normalized["operation_id"],),
+                ).fetchone()
+                if duplicate_operation is not None:
+                    raise ValueError("local edit operation_id already exists")
+                now = utc_now()
+                connection.execute(
+                    """
+                    INSERT INTO local_edit_specs(
+                        id, operation_id, canvas_document_version_id, source_layer_id,
+                        roi_id, mask_version_id, mode, client_request_id,
+                        request_fingerprint, contract_json, contract_sha256, created_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        spec_id, normalized["operation_id"], version_id,
+                        normalized["source_layer_id"], roi["id"], mask_version_id,
+                        normalized["mode"], request_id, fingerprint, stored_json,
+                        contract_sha256, now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM local_edit_specs WHERE id = ?", (spec_id,)
+                ).fetchone()
+                assert row is not None
+        return self._local_edit_spec_row(row, replayed=replayed)
+
+    @staticmethod
     def _product_profile_version_row(
         row: sqlite3.Row | Mapping[str, Any],
     ) -> dict[str, Any]:
@@ -3684,6 +4495,93 @@ class AtelierLedger:
                 "SELECT 1 FROM asset_blobs WHERE sha256 = ?", (sha256,)
             ).fetchone() is not None
 
+    @staticmethod
+    def _validate_local_edit_job_binding(
+        connection: sqlite3.Connection,
+        *,
+        local_edit_spec_id: str,
+        canvas_document_version_id: str | None,
+        canvas_operation_id: str | None,
+        source_asset_ids: Iterable[str],
+    ) -> None:
+        spec = connection.execute(
+            "SELECT * FROM local_edit_specs WHERE id = ?",
+            (local_edit_spec_id,),
+        ).fetchone()
+        if spec is None:
+            raise KeyError(f"unknown local edit spec: {local_edit_spec_id}")
+        if canvas_document_version_id is None:
+            raise ValueError("local edit spec requires an exact canvas version")
+        if str(spec["canvas_document_version_id"]) != canvas_document_version_id:
+            raise ValueError("local edit spec and job must use the same canvas version")
+        if str(spec["operation_id"]) != str(canvas_operation_id or ""):
+            raise ValueError("local edit spec and job must use the same canvas operation")
+
+        roi = connection.execute(
+            "SELECT * FROM canvas_rois WHERE id = ?",
+            (str(spec["roi_id"]),),
+        ).fetchone()
+        if roi is None:
+            raise LedgerSchemaError(f"local edit spec {local_edit_spec_id} has no ROI")
+        if (
+            str(roi["canvas_document_version_id"]) != canvas_document_version_id
+            or str(roi["source_layer_id"]) != str(spec["source_layer_id"])
+            or str(roi["purpose"]) != str(spec["mode"])
+        ):
+            raise LedgerSchemaError(
+                f"local edit spec {local_edit_spec_id} has inconsistent ROI lineage"
+            )
+
+        contract = decode_json(spec["contract_json"], {})
+        expected_mask_version_id = (
+            str(contract.get("mask", {}).get("id") or "") or None
+            if isinstance(contract.get("mask"), Mapping)
+            else None
+        )
+        stored_mask_version_id = str(spec["mask_version_id"] or "") or None
+        if expected_mask_version_id != stored_mask_version_id:
+            raise LedgerSchemaError(
+                f"local edit spec {local_edit_spec_id} has inconsistent mask lineage"
+            )
+        if stored_mask_version_id is not None:
+            mask = connection.execute(
+                """
+                SELECT v.id, m.roi_id
+                FROM canvas_mask_versions v
+                JOIN canvas_masks m ON m.id = v.mask_id
+                WHERE v.id = ?
+                """,
+                (stored_mask_version_id,),
+            ).fetchone()
+            if mask is None or str(mask["roi_id"]) != str(roi["id"]):
+                raise LedgerSchemaError(
+                    f"local edit spec {local_edit_spec_id} has inconsistent mask ROI"
+                )
+
+        version = connection.execute(
+            "SELECT document_json FROM canvas_document_versions WHERE id = ?",
+            (canvas_document_version_id,),
+        ).fetchone()
+        if version is None:
+            raise LedgerSchemaError(
+                f"local edit spec {local_edit_spec_id} has no canvas version"
+            )
+        document = decode_json(version["document_json"], {})
+        layer = next(
+            (
+                item for item in document.get("layers") or []
+                if item.get("id") == str(spec["source_layer_id"])
+            ),
+            None,
+        )
+        if layer is None:
+            raise LedgerSchemaError(
+                f"local edit spec {local_edit_spec_id} has no source layer"
+            )
+        source_asset_id = str(layer.get("source", {}).get("id") or "")
+        if source_asset_id not in {str(asset_id) for asset_id in source_asset_ids}:
+            raise ValueError("local edit source asset must be included in the job sources")
+
     def create_job(
         self,
         mode: str,
@@ -3701,6 +4599,7 @@ class AtelierLedger:
         canvas_operation_id: str | None = None,
         product_profile_id: str | None = None,
         expected_product_profile_revision: int | None = None,
+        local_edit_spec_id: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
         source_asset_ids = [str(asset_id) for asset_id in source_asset_ids]
         if mode not in {"single", "multi-file", "group-split", "cutout-batch"}:
@@ -3747,6 +4646,14 @@ class AtelierLedger:
                 "expected_product_profile_revision",
                 minimum=1,
             )
+        local_edit_spec_id = str(local_edit_spec_id or "").strip() or None
+        if local_edit_spec_id is not None:
+            if len(local_edit_spec_id) > 200:
+                raise ValueError("local_edit_spec_id is too long")
+            if canvas_document_id is None:
+                raise ValueError("local edit spec requires canvas_document_id")
+            if canvas_operation_id is None:
+                raise ValueError("local edit spec requires canvas_operation_id")
         idempotency_key = str(idempotency_key).strip()
         if len(idempotency_key) > 200:
             raise ValueError("idempotency key is too long")
@@ -3826,6 +4733,14 @@ class AtelierLedger:
                                 },
                             )
                         product_profile_version_id = str(requested_profile_version["id"])
+                    if local_edit_spec_id is not None:
+                        self._validate_local_edit_job_binding(
+                            connection,
+                            local_edit_spec_id=local_edit_spec_id,
+                            canvas_document_version_id=canvas_document_version_id,
+                            canvas_operation_id=canvas_operation_id,
+                            source_asset_ids=source_asset_ids,
+                        )
                     same_request = (
                         str(existing["mode"]) == mode
                         and decode_json(existing["parameters_json"], {}) == parameters
@@ -3840,6 +4755,8 @@ class AtelierLedger:
                         and (snapshot["canvas_operation_id"] or None) == canvas_operation_id
                         and (snapshot["product_profile_version_id"] or None)
                         == product_profile_version_id
+                        and (snapshot["local_edit_spec_id"] or None)
+                        == local_edit_spec_id
                     )
                     if not same_request:
                         raise IdempotencyConflictError(
@@ -3909,6 +4826,14 @@ class AtelierLedger:
                             },
                         )
                     product_profile_version_id = str(profile["current_version_id"])
+                if local_edit_spec_id is not None:
+                    self._validate_local_edit_job_binding(
+                        connection,
+                        local_edit_spec_id=local_edit_spec_id,
+                        canvas_document_version_id=canvas_document_version_id,
+                        canvas_operation_id=canvas_operation_id,
+                        source_asset_ids=source_asset_ids,
+                    )
                 placeholders = ",".join("?" for _ in source_asset_ids)
                 rows = connection.execute(
                     f"""
@@ -3971,9 +4896,9 @@ class AtelierLedger:
                         source_asset_ids_json, brief_json, intent_json,
                         parameters_json, knowledge_refs_json, ui_context_json,
                         command_id, canvas_document_version_id, canvas_operation_id,
-                        product_profile_version_id,
+                        product_profile_version_id, local_edit_spec_id,
                         created_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         job_id,
@@ -3995,6 +4920,7 @@ class AtelierLedger:
                         canvas_document_version_id,
                         canvas_operation_id,
                         product_profile_version_id,
+                        local_edit_spec_id,
                         now,
                     ),
                 )
@@ -4052,6 +4978,7 @@ class AtelierLedger:
                             "canvas_document_version_id": canvas_document_version_id,
                             "canvas_operation_id": canvas_operation_id,
                             "product_profile_version_id": product_profile_version_id,
+                            "local_edit_spec_id": local_edit_spec_id,
                         }),
                         now,
                     ),
@@ -5413,6 +6340,7 @@ class AtelierLedger:
                 snapshot = connection.execute(
                     "SELECT command_id, canvas_document_version_id, canvas_operation_id, "
                     "product_profile_version_id "
+                    ", local_edit_spec_id "
                     "FROM job_snapshots WHERE job_id = ?",
                     (job_id,),
                 ).fetchone()
@@ -5423,6 +6351,7 @@ class AtelierLedger:
                     "canvas_document_version_id": snapshot["canvas_document_version_id"],
                     "canvas_operation_id": snapshot["canvas_operation_id"],
                     "product_profile_version_id": snapshot["product_profile_version_id"],
+                    "local_edit_spec_id": snapshot["local_edit_spec_id"],
                 })
             else:
                 candidate.update({
@@ -5430,6 +6359,7 @@ class AtelierLedger:
                     "canvas_document_version_id": None,
                     "canvas_operation_id": None,
                     "product_profile_version_id": None,
+                    "local_edit_spec_id": None,
                 })
             existing_row = connection.execute(
                 "SELECT * FROM execution_traces WHERE id = ?", (trace_id,)
@@ -5474,8 +6404,8 @@ class AtelierLedger:
                     ignored_fields_json, model, parameters_json, output_json,
                     error_code, error_message, command_id,
                     canvas_document_version_id, canvas_operation_id,
-                    product_profile_version_id, created_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    product_profile_version_id, local_edit_spec_id, created_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trace_id, job_id, job_item_id, generation_id, stage, status,
@@ -5486,7 +6416,8 @@ class AtelierLedger:
                     candidate["error_code"], candidate["error_message"],
                     candidate["command_id"], candidate["canvas_document_version_id"],
                     candidate["canvas_operation_id"],
-                    candidate["product_profile_version_id"], now,
+                    candidate["product_profile_version_id"],
+                    candidate["local_edit_spec_id"], now,
                 ),
             )
             row = connection.execute(
@@ -6031,6 +6962,8 @@ class AtelierLedger:
                     "canvas_document_versions", "canvas_version_sources",
                     "product_profiles", "product_profile_versions",
                     "product_profile_version_assets",
+                    "canvas_rois", "canvas_masks", "canvas_mask_versions",
+                    "local_edit_specs",
                 )
             }
             counts["sessions"] = connection.execute(

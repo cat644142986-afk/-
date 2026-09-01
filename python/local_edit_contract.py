@@ -12,6 +12,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 
 LOCAL_EDIT_CONTRACT_SCHEMA_VERSION = 1
+CANVAS_MASK_DEFINITION_SCHEMA_VERSION = 1
 _ID_PATTERN = re.compile(r"^[a-z][a-z0-9._:-]{2,127}$")
 _MAX_DIMENSION = 32768
 
@@ -308,6 +309,121 @@ def normalize_local_edit_contract(value: Mapping[str, Any]) -> dict[str, Any]:
     if normalized_outpaint is not None:
         normalized["outpaint"] = normalized_outpaint
     return normalized
+
+
+def normalize_canvas_mask_definition(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate a rebuildable vector mask definition without embedded image bytes."""
+    raw = _object(
+        value,
+        label="CanvasMaskDefinition",
+        required={
+            "schema_version",
+            "coordinate_space",
+            "width",
+            "height",
+            "base",
+            "strokes",
+            "feather_radius",
+        },
+    )
+    if raw["schema_version"] != CANVAS_MASK_DEFINITION_SCHEMA_VERSION:
+        _fail(
+            "LOCAL_EDIT_MASK_DEFINITION_INVALID",
+            "CanvasMaskDefinition.schema_version is unsupported",
+        )
+    coordinate_space = str(raw["coordinate_space"] or "").strip()
+    if coordinate_space not in {"source-pixel", "output-pixel"}:
+        _fail(
+            "LOCAL_EDIT_MASK_DEFINITION_INVALID",
+            "CanvasMaskDefinition.coordinate_space is unsupported",
+        )
+    width = _integer(raw["width"], "CanvasMaskDefinition.width", minimum=1)
+    height = _integer(raw["height"], "CanvasMaskDefinition.height", minimum=1)
+    base = str(raw["base"] or "").strip()
+    if base not in {"empty", "full"}:
+        _fail(
+            "LOCAL_EDIT_MASK_DEFINITION_INVALID",
+            "CanvasMaskDefinition.base must be empty or full",
+        )
+    feather_radius = _integer(
+        raw["feather_radius"],
+        "CanvasMaskDefinition.feather_radius",
+        maximum=256,
+    )
+    strokes = raw["strokes"]
+    if not isinstance(strokes, list) or len(strokes) > 200:
+        _fail(
+            "LOCAL_EDIT_MASK_DEFINITION_INVALID",
+            "CanvasMaskDefinition.strokes must contain at most 200 strokes",
+        )
+    normalized_strokes: list[dict[str, Any]] = []
+    total_points = 0
+    for stroke_index, stroke_value in enumerate(strokes):
+        stroke = _object(
+            stroke_value,
+            label=f"CanvasMaskDefinition.strokes[{stroke_index}]",
+            required={"mode", "radius", "points"},
+        )
+        mode = str(stroke["mode"] or "").strip()
+        if mode not in {"include", "exclude"}:
+            _fail(
+                "LOCAL_EDIT_MASK_DEFINITION_INVALID",
+                f"CanvasMaskDefinition.strokes[{stroke_index}].mode is unsupported",
+            )
+        radius = _integer(
+            stroke["radius"],
+            f"CanvasMaskDefinition.strokes[{stroke_index}].radius",
+            minimum=1,
+            maximum=2048,
+        )
+        points = stroke["points"]
+        if not isinstance(points, list) or not points or len(points) > 4096:
+            _fail(
+                "LOCAL_EDIT_MASK_DEFINITION_INVALID",
+                f"CanvasMaskDefinition.strokes[{stroke_index}].points is invalid",
+            )
+        total_points += len(points)
+        if total_points > 20000:
+            _fail(
+                "LOCAL_EDIT_MASK_DEFINITION_INVALID",
+                "CanvasMaskDefinition contains too many points",
+            )
+        normalized_points: list[dict[str, int]] = []
+        for point_index, point_value in enumerate(points):
+            point = _object(
+                point_value,
+                label=(
+                    f"CanvasMaskDefinition.strokes[{stroke_index}]"
+                    f".points[{point_index}]"
+                ),
+                required={"x", "y"},
+            )
+            normalized_points.append({
+                "x": _integer(
+                    point["x"],
+                    f"CanvasMaskDefinition.strokes[{stroke_index}].points[{point_index}].x",
+                    maximum=width - 1,
+                ),
+                "y": _integer(
+                    point["y"],
+                    f"CanvasMaskDefinition.strokes[{stroke_index}].points[{point_index}].y",
+                    maximum=height - 1,
+                ),
+            })
+        normalized_strokes.append({
+            "mode": mode,
+            "radius": radius,
+            "points": normalized_points,
+        })
+    return {
+        "schema_version": CANVAS_MASK_DEFINITION_SCHEMA_VERSION,
+        "coordinate_space": coordinate_space,
+        "width": width,
+        "height": height,
+        "base": base,
+        "strokes": normalized_strokes,
+        "feather_radius": feather_radius,
+    }
 
 
 def image_fingerprint(image: Image.Image) -> str:

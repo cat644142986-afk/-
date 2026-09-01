@@ -104,8 +104,8 @@ class CanvasLedgerTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_schema_v5_preserves_immutable_canvas_versions_and_job_bindings(self) -> None:
-        self.assertEqual(SCHEMA_VERSION, 5)
+    def test_current_schema_preserves_immutable_canvas_versions_and_job_bindings(self) -> None:
+        self.assertEqual(SCHEMA_VERSION, 6)
         connection = sqlite3.connect(self.db_path)
         try:
             tables = {
@@ -304,7 +304,7 @@ class CanvasMigrationTests(unittest.TestCase):
     def test_v3_upgrade_creates_current_schema_and_a_queryable_v3_backup(self) -> None:
         create_v3_database(self.db_path)
         ledger = AtelierLedger(self.db_path)
-        self.assertEqual(ledger.stats()["schema_version"], 5)
+        self.assertEqual(ledger.stats()["schema_version"], 6)
         self.assertIsNotNone(ledger.last_migration_backup)
         backup = ledger.last_migration_backup
         assert backup is not None
