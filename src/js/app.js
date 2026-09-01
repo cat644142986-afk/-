@@ -56,6 +56,7 @@ import {
 } from './studio-jobs.js';
 import { createSettingsController } from './studio-settings.js';
 import { createWorkflowDockController } from './studio-shell.js';
+import { createSessionsController, formatStudioTime } from './studio-sessions.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 import { statusPanelHtml } from './status-view.js';
 import {
@@ -127,6 +128,24 @@ const assetManager = createAssetManagerController({
   toggleAssetSelection,
   toast,
   openDrawer,
+});
+const sessionsController = createSessionsController({
+  api: API,
+  state,
+  query: $,
+  queryAll: $$,
+  modeConfig: MODE_CONFIG,
+  resultIdsForJob,
+  jobCounts,
+  openJobResults,
+  openJobWorkspace,
+  applyTaskKnowledgeBundle,
+  knowledgeBundleFromEvidence,
+  openDrawer,
+  toast,
+  formatApiError,
+  statusPanelHtml,
+  escapeHtml,
 });
 window.ProductAtelier = { state };
 
@@ -814,7 +833,7 @@ function switchPage(page) {
   $('#page-title').textContent = config.title;
   $('#page-subtitle').textContent = config.subtitle;
   if (page !== 'process') workflowDock.close(false);
-  if (page === 'history') loadSessions();
+  if (page === 'history') sessionsController.load();
   if (page === 'memory') loadMemory();
   if (page === 'settings') settingsController.load();
 }
@@ -2131,7 +2150,7 @@ function renderJobs(force = false) {
       return `<article class="job-card job-card--${escapeHtml(status.tone)}" data-job-id="${escapeHtml(job.id)}" tabindex="-1">
         <header><span><i class="job-card__icon">${icon}</i><small>${escapeHtml(MODE_CONFIG[job.mode]?.badge || '创作任务')} · ${escapeHtml(status.label)}</small><strong>${escapeHtml(job.title || MODE_CONFIG[job.mode]?.label || '创作任务')}</strong></span><span class="job-status job-status--${escapeHtml(status.tone)}">${counts.completed}/${counts.total}</span></header>
         <div class="job-progress"><span><i style="width:${progress}%"></i></span><strong>${progressCopy}</strong></div>
-        <div class="job-counts"><span>${counts.total} 项</span><span>${counts.completed} 成功</span><span>${counts.failed} 失败</span><span>${counts.canceled} 取消</span><span>成功率 ${counts.successRate === null ? '—' : `${counts.successRate}%`}</span><time>${escapeHtml(formatTime(job.updated_at || job.created_at))}</time></div>
+        <div class="job-counts"><span>${counts.total} 项</span><span>${counts.completed} 成功</span><span>${counts.failed} 失败</span><span>${counts.canceled} 取消</span><span>成功率 ${counts.successRate === null ? '—' : `${counts.successRate}%`}</span><time>${escapeHtml(formatStudioTime(job.updated_at || job.created_at))}</time></div>
         <p class="job-outcome"><i></i><span>${escapeHtml(outcome)}</span></p>
         ${items ? `<ul class="job-items ${itemsExpanded ? 'is-expanded' : ''}">${items}</ul>` : ''}
         ${(job.items || []).length > Math.max(5, visibleItems.length) || itemsExpanded ? `<button class="job-items-toggle" type="button" data-job-action="toggle-items" data-job-id="${escapeHtml(job.id)}" aria-expanded="${itemsExpanded}">${itemsExpanded ? '收起项目' : `查看全部 ${(job.items || []).length} 项`}</button>` : ''}
@@ -3618,136 +3637,6 @@ function setupCompare() {
   view.addEventListener('pointercancel', endPan);
 }
 
-function formatTime(value) {
-  if (!value) return '—';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
-
-function sessionProjectName(session) {
-  return String(session?.project_name || '').trim() || '未归类项目';
-}
-
-function sessionStatusCopy(status) {
-  return ({ completed: '已完成', partial: '部分完成', processing: '处理中', draft: '草稿', failed: '需要处理', canceled: '已取消' })[status] || '已保存';
-}
-
-function sessionActionCopy(session) {
-  if (['failed', 'partial'].includes(session.status)) return '处理';
-  if (session.status === 'completed') return '查看';
-  return '继续';
-}
-
-function sessionJob(sessionId) {
-  const matches = state.jobs.filter((job) => String(job.session_id || '') === String(sessionId || ''));
-  return matches.find((job) => resultIdsForJob(job).length) || matches[0] || null;
-}
-
-async function openSessionFromHistory(sessionId) {
-  try {
-    const session = await API.getSession(sessionId);
-    const job = sessionJob(sessionId);
-    if (job) {
-      if (resultIdsForJob(job).length) await openJobResults(job.id);
-      else await openJobWorkspace(job);
-      return;
-    }
-    const generations = session.generations || [];
-    const generation = generations[generations.length - 1];
-    state.currentSessionId = session.id || '';
-    applyTaskKnowledgeBundle(knowledgeBundleFromEvidence({
-      brief: session.brief || {},
-      generation,
-    }));
-    openDrawer('intelligence');
-    toast('这条旧会话没有任务快照，已打开可追溯证据');
-  } catch (error) {
-    toast(`无法恢复会话：${formatApiError(error, '本地创作账本暂不可用')}`, 'error');
-  }
-}
-
-function renderSessionTimeline(session) {
-  const steps = $$('#history-timeline span');
-  const hasAssets = Number(session?.asset_count || 0) > 0;
-  const hasDirection = Boolean(session?.brief?.objective || session?.brief?.user_request);
-  const hasReview = Number(session?.feedback_count || 0) > 0;
-  const hasKnowledge = state.sessionPendingKnowledgeCount > 0;
-  const states = [hasAssets, hasDirection, hasReview, hasKnowledge];
-  const current = states.findIndex((done) => !done);
-  steps.forEach((step, index) => {
-    step.classList.toggle('is-done', states[index]);
-    step.classList.toggle('is-current', index === current || (current < 0 && index === steps.length - 1));
-  });
-  $('#history-memory-copy').textContent = session
-    ? `${MODE_CONFIG[session.mode]?.label || '创作工作流'}已保留素材、参数、任务和评审证据。`
-    : '素材、参数、任务和评审证据相互独立，随时可以继续。';
-}
-
-function renderSessionsDashboard() {
-  const grid = $('#history-grid');
-  const recentCard = $('#sessions-recent-card');
-  const toggle = $('#btn-toggle-history');
-  const filter = state.sessionProjectFilter;
-  const sessions = filter === 'all'
-    ? state.sessions
-    : state.sessions.filter((session) => sessionProjectName(session) === filter);
-  const projectTitle = filter === 'all' ? '全部创作项目' : filter;
-  $('#history-project-title').textContent = projectTitle;
-  $('#history-session-count').textContent = String(sessions.length);
-  $('#history-result-count').textContent = String(sessions.reduce((sum, session) => sum + Number(session.generation_count || 0), 0));
-  $('#history-pending-count').textContent = String(state.sessionPendingKnowledgeCount);
-  const completed = sessions.filter((session) => session.status === 'completed').length;
-  $('#history-complete-rate').textContent = sessions.length ? `${Math.round((completed / sessions.length) * 100)}%` : '0%';
-  renderSessionTimeline(sessions[0] || null);
-  const canExpand = sessions.length > 6;
-  if (!canExpand) state.sessionShowAll = false;
-  recentCard.classList.toggle('is-expanded', state.sessionShowAll);
-  toggle.hidden = !canExpand;
-  toggle.textContent = state.sessionShowAll ? '收起列表' : `查看全部 ${sessions.length} 个`;
-  toggle.setAttribute('aria-expanded', String(state.sessionShowAll));
-  if (!sessions.length) {
-    grid.innerHTML = statusPanelHtml('empty', { title: '还没有创作现场', detail: '完成第一项任务后，现场会自动保存在这里。', fill: true });
-    return;
-  }
-  const visibleSessions = state.sessionShowAll ? sessions : sessions.slice(0, 6);
-  grid.innerHTML = visibleSessions.map((session) => {
-    const job = sessionJob(session.id);
-    const counts = job ? jobCounts(job) : null;
-    const progress = counts ? `${counts.completed}/${counts.total} 项完成` : `${Number(session.generation_count || 0)} 个版本`;
-    const summary = `${MODE_CONFIG[session.mode]?.label || '创作任务'} · ${progress} · ${sessionStatusCopy(session.status)}`;
-    return `<button class="session-card" type="button" data-session-id="${escapeHtml(session.id)}"><span class="session-card__color" aria-hidden="true"></span><span class="session-card__copy"><strong>${escapeHtml(session.title || sessionProjectName(session))}</strong><small>${escapeHtml(summary)} · ${escapeHtml(formatTime(session.updated_at))}</small></span><span class="session-card__action">${sessionActionCopy(session)}</span><span class="session-card__chevron" aria-hidden="true">›</span></button>`;
-  }).join('');
-  $$('.session-card', grid).forEach((card) => card.addEventListener('click', () => openSessionFromHistory(card.dataset.sessionId)));
-}
-
-async function loadSessions() {
-  const grid = $('#history-grid');
-  grid.innerHTML = statusPanelHtml('loading', { title: '正在读取创作账本', detail: '正在恢复最近项目与任务现场。', fill: true });
-  try {
-    const [sessions, suggestions] = await Promise.all([
-      API.getSessions(60),
-      API.getMemorySuggestions('pending').catch(() => []),
-    ]);
-    state.sessions = Array.isArray(sessions) ? sessions : [];
-    state.sessionPendingKnowledgeCount = Array.isArray(suggestions) ? suggestions.length : 0;
-    const projectFilter = $('#history-project-filter');
-    const projects = [...new Set(state.sessions.map(sessionProjectName))];
-    const available = state.sessionProjectFilter === 'all' || projects.includes(state.sessionProjectFilter);
-    if (!available) state.sessionProjectFilter = 'all';
-    projectFilter.innerHTML = `<option value="all">全部项目</option>${projects.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
-    projectFilter.value = state.sessionProjectFilter;
-    renderSessionsDashboard();
-  } catch (error) {
-    grid.innerHTML = statusPanelHtml('offline', {
-      title: '创作账本暂时离线',
-      detail: formatApiError(error, '本地创作账本暂不可用'),
-      fill: true,
-      action: { label: '重新读取', attribute: 'data-history-status-action', value: 'retry' },
-    });
-    $('[data-history-status-action="retry"]', grid)?.addEventListener('click', loadSessions);
-  }
-}
-
 function selectMemoryNode(node) {
   if (!node) return;
   $$('[data-memory-node]').forEach((item) => item.classList.toggle('is-selected', item === node));
@@ -4537,16 +4426,7 @@ function bindEvents() {
     openMemorySuggestion(state.feedbackSuggestionId || $('#btn-feedback-suggestion').dataset.suggestionId);
   });
   $('#btn-result-next').addEventListener('click', completeCurrentWorkspace);
-  $('#btn-refresh-history').addEventListener('click', loadSessions);
-  $('#history-project-filter').addEventListener('change', (event) => {
-    state.sessionProjectFilter = event.target.value || 'all';
-    state.sessionShowAll = false;
-    renderSessionsDashboard();
-  });
-  $('#btn-toggle-history').addEventListener('click', () => {
-    state.sessionShowAll = !state.sessionShowAll;
-    renderSessionsDashboard();
-  });
+  sessionsController.bind();
   $('#btn-refresh-memory').addEventListener('click', () => loadMemory());
   const memoryFilters = $$('[data-memory-filter]');
   memoryFilters.forEach((button, index) => {

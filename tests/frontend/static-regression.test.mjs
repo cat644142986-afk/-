@@ -5,12 +5,13 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, assets, config, jobs, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
+const [app, api, assets, config, jobs, sessions, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-config.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-jobs.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-sessions.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-settings.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-shell.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-state.js'), 'utf8'),
@@ -312,8 +313,12 @@ test('production sessions, task center, and result review use the approved infor
   assert.match(html, /id="compare-target"/);
   assert.match(html, /id="review-reason-tags"/);
   assert.match(html, /id="review-guide"/);
-  assert.match(app, /function renderSessionsDashboard\(\)/);
-  assert.match(app, /async function openSessionFromHistory\(sessionId\)/);
+  assert.match(app, /createSessionsController/);
+  assert.match(app, /sessionsController\.bind\(\)/);
+  assert.match(app, /sessionsController\.load\(\)/);
+  assert.doesNotMatch(app, /function (renderSessionsDashboard|openSessionFromHistory|loadSessions)/);
+  assert.match(sessions, /function render\(\)/);
+  assert.match(sessions, /async function open\(sessionId\)/);
   assert.match(app, /function jobFailureCopy\(item\)/);
   assert.match(app, /PRODUCT_DETECTION_FAILED: '商品识别返回格式异常，尚未开始生图/);
   assert.match(app, /PERMANENT_JOB_ERRORS/);
@@ -325,7 +330,7 @@ test('production sessions, task center, and result review use the approved infor
 });
 
 test('core production status copy remains Chinese-first', () => {
-  assert.match(app, /completed: '已完成'/);
+  assert.match(sessions, /completed: '已完成'/);
   assert.match(app, /INVALID_SOURCE_IMAGE: '源文件已经损坏/);
   assert.match(app, /只重试失败项/);
   assert.doesNotMatch(app, /\$\{session\.status \|\| 'draft'\}/);
