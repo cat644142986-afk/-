@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-01<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `76491016967e1d13ca85de61a5a65f8154423a2f`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8：无限画布为核心方向，情境式创作副驾仅在画布、SKU 与局部处理底座完成后进入条件式阶段；常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `911b352713e91f5da1caf8072b5618cba49af852`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8：无限画布为核心方向，情境式创作副驾仅在画布、SKU 与局部处理底座完成后进入条件式阶段；常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1530,7 +1530,9 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 1440×900 隔离 Vite 验收页完成浅色与深色两轮真实浏览器检查：四个代表区域横向溢出均为 0，页面/Body 横向溢出均为 0，控制台 0 error / 0 warning；反色浮层为 `rgba(31, 36, 42, 0.84)`、成功色为 `rgb(39, 181, 82)`、智能选物确认色为 `rgb(137, 221, 163)`，窗口三色与透明棋盘格均命中语义 token。临时验收页和 Vite 服务已删除/停止，没有进入 Git。
 - 全量源码门禁通过：前端 132/132；Python 269 项（268 通过、1 项平台预期跳过）；Vite production build；Rust/Tauri locked custom-protocol check；Python compileall、全量 JavaScript syntax 和 Git whitespace。首次并行 Rust 检查恰逢 Vite 原子替换 `dist` 而读取到短暂缺失的图标，按正式发布顺序在稳定 `dist` 上重跑后通过，不是源码或构建产物缺陷。
 - 源码提交 `e8ea32e83505d85d8c9bf5de54ba2511209b2050` 已推送到当前分支。本检查点未调用付费 API、未处理用户图片、未读取或提交 API Key、用户 Prompt、SQLite 或 build 证据，也未改变正式便携目录、NSIS 或桌面快捷方式。
-- 下一执行游标：提交本计划检查点并以 candidate-first 链提升新的正式便携版；完成正式复验后审计 G0 的回滚点、测试数据隔离与九个最小增长合同草案。只有这些门禁具备可验证证据后才关闭 G0，并进入不修改正式 `src/`、不读取用户账本的 G1A Fabric.js 独立原型。
+- 记录源码检查点的总计划提交 `911b352713e91f5da1caf8072b5618cba49af852` 已按 candidate-first Windows 发布链进入正式便携目录。正式 EXE / sidecar / manifest SHA-256 分别为 `DB448C5F9B266D804190803FB22C40D6C172938AE5240F7EFE34D2B9AADB76A9`、`71DE2195F81779887CD5257C1B7E05DED10A112D4B424C2CCA2965D843A10E68`、`19FCD817C44BE1A3692D662A6E0F2CE1AA7D59A84A26C56382898BA8CB748551`；正式目录为 1747 个文件、271 个目录、375682710 bytes，tree SHA-256 为 `0D05AC8D2FCAB6B5CC637107471BD17FB2FDEA51B2195050C7089BABC9701BB2`，source fingerprint 为 `870AA34920719DB6A2FF73F6C153D7C7E93EB401C1F3672E72AB3A15D23FE699`。
+- 发布事务 `d6b7416153ff4d7ca45646734b24c75b` 已 `finalized`，事务文件和发布锁均已清除；上一正式版完整备份为 `D:\\ProductAtelier-Backups\\release-before-20260901-205458-911b352713e9`，promotion evidence SHA-256 为 `E9BE71071C2026A478DA950CD4FBDCEEFFCFDE332A1B1E88BB52973AFEC50678`。候选与正式目录双 smoke 均通过；最终正式应用和 sidecar 从正式目录运行，动态端口 `62199` 的健康接口返回 `ok`、manifest `ok`、schema v3，桌面快捷方式目标/工作目录均为正式目录。最终窗口截图 SHA-256 为 `A5F8B325805498BD15DCE171DCDD3DBBDA3F9870C57042B0830A501DCFDF2756`，目视无黑屏、白边、内容遮挡或圆角漏底。
+- 下一执行游标：审计 G0 的回滚点、测试数据隔离与九个最小增长合同草案。只有这些门禁具备可验证证据后才关闭 G0，并进入不修改正式 `src/`、不读取用户账本的 G1A Fabric.js 独立原型。
 
 ## 11. 下一位开发者的执行入口
 
