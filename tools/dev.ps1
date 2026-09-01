@@ -284,9 +284,9 @@ try {
     Write-Host "[9/11] Smoking the isolated candidate..." -ForegroundColor Yellow
     & "$PSScriptRoot\Test-Portable.ps1" -PortableDir $CandidateDir -ExpectedGitCommit $BuildHead
     & "$PSScriptRoot\Test-Portable-App.ps1" -PortableDir $CandidateDir -ExpectedGitCommit $BuildHead
-    & python.exe (Join-Path $PSScriptRoot "test_schema_v4_candidate.py") `
+    & python.exe (Join-Path $PSScriptRoot "verify_packaged_schema_upgrade.py") `
         --sidecar-dir (Join-Path $CandidateDir "python-server")
-    if ($LASTEXITCODE -ne 0) { throw "Packaged schema v4-to-v5 migration gate failed" }
+    if ($LASTEXITCODE -ne 0) { throw "Packaged schema upgrade and local-edit gate failed" }
 
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $resolvedBackupRoot = [System.IO.Path]::GetFullPath($BackupRoot)
