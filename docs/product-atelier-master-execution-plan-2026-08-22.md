@@ -1451,7 +1451,16 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 高级参数现提供人工“主要材质”证据和默认关闭的“包装与多件约束优化”。未指定、透明/半透明、高反光或混合材质均显示安全原因并禁用优化；只有用户明确选择不透明材质并勾选后，才以 `prompt_version_source=user` 请求 v3，后端继续根据结构化收益信号做最终回退。
 - 选择已贯通三种生图工作流的独立草稿、刷新恢复、任务快照和历史任务恢复；批量抠图不参与 Prompt 路由。旧任务默认 `unknown + prompt_v1`；用户关闭后的显式 v1 不会被旧 fallback 重新打开。无 user source 的 v3 仍在供应商调用前被拒绝，v2 实验门禁不变。
 - 1280×720、760×650、浅色和深色隔离浏览器实测无横向溢出，帮助文本、禁用态和状态说明均完整，控制台无错误。源码门禁通过 Python 261 项（260 通过、1 项平台预期跳过）、前端 117/117、Vite、Rust/Tauri、compileall 和 Git whitespace。
-- 本检查点没有读取用户图片、调用供应商或增加自动重做，也尚未提升正式便携目录、NSIS 和桌面快捷方式。下一游标是提交并推送源码后执行 candidate-first Windows 正式便携门禁，再回到 R9 剩余 DPI/键盘/工作集与遗留样式收口。
+- 本检查点没有读取用户图片、调用供应商或增加自动重做。源码提交 `2903b697c33ed4873e509ad5d447327c39066163` 随后已按 candidate-first Windows 发布链进入正式便携目录并更新桌面快捷方式；NSIS 未重建。正式发布身份和恢复证据见下一节。
+
+### 2026-09-01 材质路由 UI 正式便携检查点
+
+- 正式 artifact 提交为 `2903b697c33ed4873e509ad5d447327c39066163`；正式目录为 `D:\ProductAtelier-Desktop\release\ProductAtelier-Portable`。sidecar contract 为 `2026-08-31.2`，generation trace contract 为 `generation-baseline-2026-09-01.3`，数据库 schema 为 v3。
+- 正式 EXE / sidecar / manifest SHA-256 分别为 `11B59057CFE7211292EE32C641141F71A09AF85690AD91AC5F8410F308E8AA51`、`29B4833BC8785D3F9FAC0588EA731439E0A7EBB04738EC9F2C5E945EECF1AAAD`、`7A45600265F435EB11CE8261127C7A9A08A3B6FE0EE9A0D6D406E961C2D64CF2`；source fingerprint 为 `870AA34920719DB6A2FF73F6C153D7C7E93EB401C1F3672E72AB3A15D23FE699`。
+- 正式目录包含 1747 个文件、271 个目录、375681686 bytes，tree SHA-256 为 `E9D4BF76F1E3B905646E4C9B3CC2AB4B83F50886FCE80C61C71C32575780685F`。事务 `ae3dc73cbd034e1bb7bf909f650bda2e` 已 `finalized`，活动事务已清除。
+- 上一正式目录完整备份为 `D:\ProductAtelier-Backups\release-before-20260901-154428-2903b697c33e`；promotion evidence SHA-256 为 `BADFA66DC104E526EEB053E9A3FA5DF4574888BEC8C08D5AAA322618A031AC2A`。桌面快捷方式已更新到正式目录并启动正式应用。
+- 候选构建、候选 smoke、外部备份、事务换位、正式目录 smoke 和按正式 EXE 进程捕获截图均已完成。没有读取用户图片、调用 VLM/生图接口、触发自动付费重做或重建 NSIS。
+- 当前唯一执行游标为 R9 最终收口：正式 WebView 的 100/125/150% DPI × 关键窗口尺寸 × 浅色/深色/高对比截图矩阵；带真实历史结果的隔离账本键盘路径；原生 WebView 工作集；历史 `style.css`/补丁归档与剩余 token 统一。材质路由和 UI 不再重复实现。
 
 ## 11. 下一位开发者的执行入口
 
@@ -1460,7 +1469,7 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 从 Phase 4 剩余门禁开始，不重复 Phase 0–3，也不退回历史 `vXX-fixes.css` 补丁路线。
-4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理，以及 R9 两批外观/无障碍/大素材渲染优化均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。材质感知 Prompt 路由、人工结构化材质证据和显式 UI 安全回退已完成源码门禁，但尚未进入正式便携版。下一质量游标是 candidate-first Windows 正式便携提升；之后回到 R9 的正式 WebView DPI/截图矩阵、真实结果页键盘复验、原生工作集记录和遗留样式/token 收口。不要重复已完成功能，不要继续堆叠相似检测器或把模型依赖塞入主 sidecar。
+4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理、R9 两批外观/无障碍/大素材渲染优化，以及材质感知 Prompt 路由、人工结构化材质证据和显式 UI 安全回退均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。下一质量游标只剩 R9 的正式 WebView DPI/截图矩阵、真实结果页键盘复验、原生工作集记录和遗留样式/token 收口。不要重复已完成功能，不要继续堆叠相似检测器或把模型依赖塞入主 sidecar。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 

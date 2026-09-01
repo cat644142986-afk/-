@@ -96,7 +96,7 @@ generation trace 合同升级为 `generation-baseline-2026-09-01.3`，固定记�
 
 材质与优化选择已贯通三种生图工作流的独立草稿、刷新恢复、任务不可变快照和历史任务恢复；批量抠图继续忽略 Prompt 路由。旧草稿没有字段时恢复为“未指定 + 关闭”，显式保存 v1 会覆盖旧内存中的 v3 状态，不会因残留 fallback 再次打开。没有 `prompt_version_source=user` 的 v3 API 请求仍受实验门禁拒绝，v2 门禁不变。
 
-隔离开发账本中的真实界面验收覆盖 1280×720 与 760×650、浅色与深色主题；抽屉无横向溢出，持久帮助文本完整回流，禁用态、状态文本和原生表单语义可读，控制台 0 error / 0 warning。全量门禁为 Python 261 项（260 通过、1 项平台预期跳过）、前端 117/117、Vite production build、Rust/Tauri locked custom-protocol check、compileall 与 Git whitespace 全绿。整个过程没有读取用户图片或调用供应商；本检查点尚未提升正式便携版。
+隔离开发账本中的真实界面验收覆盖 1280×720 与 760×650、浅色与深色主题；抽屉无横向溢出，持久帮助文本完整回流，禁用态、状态文本和原生表单语义可读，控制台 0 error / 0 warning。全量门禁为 Python 261 项（260 通过、1 项平台预期跳过）、前端 117/117、Vite production build、Rust/Tauri locked custom-protocol check、compileall 与 Git whitespace 全绿。整个过程没有读取用户图片或调用供应商；源码检查点随后已按本文末尾的新正式发布记录进入便携版。
 
 ## 本地质量检查 trace（2026-08-31）
 
@@ -131,3 +131,13 @@ LK 响应仍没有返回逐调用实际金额，失败调用是否计费也无�
 正式 EXE、sidecar、manifest 与目录 tree SHA-256 分别为 `A2736D7FC053C5EAB20E04214499586C24A5E4458F60ADEFCD11DD0E8E30A5DC`、`26CF20FF286EFEE74096BF18C8FF89A9904FF2FB369B2D099C5AA7F80DA53381`、`9C163ADD7C8A87657E6ADB538E3EC9F3FE455AC58B595953D1715833678D5223` 和 `CF07D4317D6FEEC5EE936C851ABA0F5F5BE54A45F4405BC7E3A480CFAF8BEDBA`；source fingerprint 为 `AA08DDF0762CF3AF71F8AE687DAF34AC4133C1AC8D44CCD679B8EF28BFCFF34C`。promotion evidence SHA-256 为 `BCF7D27AB8A3D64B5E776BB6FBC5929E69AC5AD4080CCC83FEDBE4D647EA9F7F`。正式应用和单一 sidecar 正从桌面正式入口运行，动态端口 `64731` 的健康接口返回 `ok`、manifest `ok`、schema v3；桌面快捷方式目标和工作目录均为正式便携目录。最终截图 SHA-256 为 `24580B7F510569D28794C26C3459243A2C82F2D965AFD84A97DDD686CD631510`。
 
 本轮未重建 NSIS；现存未签名安装候选仍属于 `.4`。不要把它描述为 `2026-08-31.1` 安装包或公开分发包。
+
+## 材质路由 UI 正式便携门禁（2026-09-01）
+
+源码提交 `2903b697c33ed4873e509ad5d447327c39066163` 已通过 candidate-first Windows 发布链进入 `D:\ProductAtelier-Desktop\release\ProductAtelier-Portable`。因此用户从桌面正式入口打开的软件已经包含“主要材质”和“包装与多件约束优化”，不再只是源码能力。正式默认仍为 `prompt_v1 + legacy_double_pass`；只有人工选择不透明材质并明确开启优化时才请求 v3，后端仍可按结构化收益信号回退，失败不会自动付费重做。
+
+正式 sidecar contract 为 `2026-08-31.2`，generation trace contract 为 `generation-baseline-2026-09-01.3`，数据库 schema 为 v3。正式 EXE、sidecar、manifest 与目录 tree SHA-256 分别为 `11B59057CFE7211292EE32C641141F71A09AF85690AD91AC5F8410F308E8AA51`、`29B4833BC8785D3F9FAC0588EA731439E0A7EBB04738EC9F2C5E945EECF1AAAD`、`7A45600265F435EB11CE8261127C7A9A08A3B6FE0EE9A0D6D406E961C2D64CF2` 和 `E9D4BF76F1E3B905646E4C9B3CC2AB4B83F50886FCE80C61C71C32575780685F`；source fingerprint 为 `870AA34920719DB6A2FF73F6C153D7C7E93EB401C1F3672E72AB3A15D23FE699`。
+
+发布事务 `ae3dc73cbd034e1bb7bf909f650bda2e` 已 `finalized`；上一正式目录完整备份位于 `D:\ProductAtelier-Backups\release-before-20260901-154428-2903b697c33e`。promotion evidence SHA-256 为 `BADFA66DC104E526EEB053E9A3FA5DF4574888BEC8C08D5AAA322618A031AC2A`，桌面快捷方式已更新并启动正式应用。发布门禁复用了本节源码全量测试，并完成 PyInstaller 候选、候选 smoke、外部备份、正式目录换位、正式 smoke 与进程级截图；未读取用户图片，未调用 VLM 或生图供应商，也未重建或冒充新的 NSIS 安装包。
+
+下一执行游标回到 R9 最终收口：正式 WebView 多 DPI/多主题截图矩阵、带真实历史结果的隔离账本键盘复验、原生 WebView 工作集记录，以及未被生产入口引用的历史样式与剩余 token 清理。
