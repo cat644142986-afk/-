@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 from python.atelier_ledger import AtelierLedger  # noqa: E402
 
 
-def _create_v3_database(path: Path) -> None:
+def _create_v4_database(path: Path) -> None:
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
     try:
@@ -37,6 +37,8 @@ def _create_v3_database(path: Path) -> None:
         AtelierLedger._write_schema_version(connection, 2)
         AtelierLedger._migrate_v2_to_v3(connection)
         AtelierLedger._write_schema_version(connection, 3)
+        AtelierLedger._migrate_v3_to_v4(connection)
+        AtelierLedger._write_schema_version(connection, 4)
         connection.commit()
     finally:
         connection.close()
@@ -48,11 +50,128 @@ def _free_port() -> int:
         return int(listener.getsockname()[1])
 
 
-def _get_json(port: int, path: str, *, timeout: float = 3.0) -> Any:
-    with urllib.request.urlopen(
-        f"http://127.0.0.1:{port}{path}", timeout=timeout
-    ) as response:
+def _request_json(
+    port: int,
+    path: str,
+    *,
+    method: str = "GET",
+    payload: Any | None = None,
+    body: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 3.0,
+) -> Any:
+    request_headers = dict(headers or {})
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request_headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=body,
+        headers=request_headers,
+        method=method,
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _get_json(port: int, path: str, *, timeout: float = 3.0) -> Any:
+    return _request_json(port, path, timeout=timeout)
+
+
+def _import_reference(port: int, path: Path) -> dict[str, Any]:
+    boundary = f"ProductAtelierCandidate{time.time_ns():x}"
+    body = b"".join(
+        (
+            f"--{boundary}\r\n".encode("ascii"),
+            b'Content-Disposition: form-data; name="file"; filename="candidate-reference.png"\r\n',
+            b"Content-Type: image/png\r\n\r\n",
+            path.read_bytes(),
+            f"\r\n--{boundary}--\r\n".encode("ascii"),
+        )
+    )
+    result = _request_json(
+        port,
+        "/api/assets/import?collection=product",
+        method="POST",
+        body=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        timeout=15,
+    )
+    if not isinstance(result, dict) or not result.get("id"):
+        raise RuntimeError("candidate asset import returned an invalid response")
+    return result
+
+
+def _product_profile(reference_id: str, *, revision: int = 0) -> dict[str, Any]:
+    return {
+        "id": "profile:candidate-transparent-bottle",
+        "schema_version": 1,
+        "sku": "CANDIDATE-BOTTLE-500",
+        "name": "Candidate transparent bottle",
+        "revision": revision,
+        "category": "beverage",
+        "specification": {
+            "display": "500 ml x 1 bottle",
+            "net_content": "500 ml",
+            "unit_count": 1,
+            "attributes": [],
+        },
+        "components": [
+            {
+                "id": "component:candidate-bottle",
+                "name": "Transparent bottle",
+                "role": "core",
+                "policy": "must_preserve",
+                "quantity": 1,
+            },
+            {
+                "id": "component:candidate-label",
+                "name": "Packaging label",
+                "role": "label",
+                "policy": "forbid_modify",
+                "quantity": 1,
+            },
+        ],
+        "materials": [
+            {
+                "component_id": "component:candidate-bottle",
+                "material": "PET",
+                "finish": "glossy",
+                "transparent": True,
+            }
+        ],
+        "brand_colors": [{"name": "Brand coral", "value": "#E86E4B"}],
+        "packaging_texts": [
+            {
+                "id": "text:candidate-brand",
+                "component_id": "component:candidate-label",
+                "content": "CANDIDATE BRAND",
+                "policy": "exact_preserve",
+            }
+        ],
+        "logos": [
+            {
+                "id": "logo:candidate-primary",
+                "component_id": "component:candidate-label",
+                "name": "Candidate primary logo",
+                "policy": "exact_preserve",
+            }
+        ],
+        "platform_specs": [
+            {
+                "platform": "marketplace",
+                "role": "main-image",
+                "pixel_width": 1024,
+                "pixel_height": 1024,
+                "format": "png",
+                "safe_area_percent": 5,
+            }
+        ],
+        "selection_mode": "full_composition",
+        "approved_reference_ids": [reference_id],
+        "created_at": "2026-09-02T00:00:00Z",
+        "updated_at": "2026-09-02T00:00:00Z",
+    }
 
 
 def _wait_for_health(process: subprocess.Popen[bytes], port: int) -> dict[str, Any]:
@@ -140,7 +259,7 @@ def _sha256(path: Path) -> str:
 
 @contextmanager
 def _temporary_data_dir():
-    prefix = "ProductAtelier-v3-v4-candidate-"
+    prefix = "ProductAtelier-v4-v5-candidate-"
     path = Path(tempfile.mkdtemp(prefix=prefix)).resolve()
     temp_root = Path(tempfile.gettempdir()).resolve()
     if path.parent != temp_root or not path.name.startswith(prefix):
@@ -193,9 +312,9 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
     with _temporary_data_dir() as data_dir:
         ledger_path = data_dir / "atelier.sqlite3"
         log_path = data_dir / "candidate.log"
-        _create_v3_database(ledger_path)
-        if _schema_version(ledger_path) != 3:
-            raise RuntimeError("isolated source ledger is not schema v3")
+        _create_v4_database(ledger_path)
+        if _schema_version(ledger_path) != 4:
+            raise RuntimeError("isolated source ledger is not schema v4")
 
         first_process: subprocess.Popen[bytes] | None = None
         second_process: subprocess.Popen[bytes] | None = None
@@ -205,15 +324,39 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             )
             first_commands = _get_json(first_port, "/api/commands")
             first_canvas = _get_json(first_port, "/api/workspaces/single/canvas")
+            initial_profiles = _get_json(first_port, "/api/product-profiles")
+            reference = _import_reference(
+                first_port,
+                ROOT / "tests" / "fixtures" / "generation_quality" / "generated"
+                / "packaging-text-brand.png",
+            )
+            profile = _product_profile(str(reference["id"]))
+            save_payload = {
+                "expected_revision": 0,
+                "client_request_id": "candidate-profile-save-v1",
+                "profile": profile,
+            }
+            first_profile = _request_json(
+                first_port,
+                f"/api/product-profiles/{profile['id']}",
+                method="PUT",
+                payload=save_payload,
+            )
+            replayed_profile = _request_json(
+                first_port,
+                f"/api/product-profiles/{profile['id']}",
+                method="PUT",
+                payload=save_payload,
+            )
         finally:
             _stop_owned_process(first_process)
 
-        backups = sorted(data_dir.glob("atelier.sqlite3.backup-v3-*.sqlite3"))
+        backups = sorted(data_dir.glob("atelier.sqlite3.backup-v4-*.sqlite3"))
         if len(backups) != 1:
-            raise RuntimeError(f"expected one v3 migration backup, found {len(backups)}")
+            raise RuntimeError(f"expected one v4 migration backup, found {len(backups)}")
         backup = backups[0]
-        if _schema_version(backup) != 3 or _schema_version(ledger_path) != 5:
-            raise RuntimeError("candidate did not preserve v3 backup and migrate to v5")
+        if _schema_version(backup) != 4 or _schema_version(ledger_path) != 5:
+            raise RuntimeError("candidate did not preserve v4 backup and migrate to v5")
 
         try:
             second_process, second_port, second_health = _start_candidate(
@@ -221,11 +364,29 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             )
             second_commands = _get_json(second_port, "/api/commands")
             second_canvas = _get_json(second_port, "/api/workspaces/single/canvas")
+            restored_profile = _get_json(
+                second_port, f"/api/product-profiles/{profile['id']}"
+            )
+            changed_profile = dict(restored_profile["profile"])
+            changed_profile["selection_mode"] = "core_only"
+            second_profile = _request_json(
+                second_port,
+                f"/api/product-profiles/{profile['id']}",
+                method="PUT",
+                payload={
+                    "expected_revision": 1,
+                    "client_request_id": "candidate-profile-save-v2",
+                    "profile": changed_profile,
+                },
+            )
+            profile_versions = _get_json(
+                second_port, f"/api/product-profiles/{profile['id']}/versions"
+            )
         finally:
             _stop_owned_process(second_process)
 
         backups_after_restart = sorted(
-            data_dir.glob("atelier.sqlite3.backup-v3-*.sqlite3")
+            data_dir.glob("atelier.sqlite3.backup-v4-*.sqlite3")
         )
         if backups_after_restart != backups:
             raise RuntimeError("idempotent v5 restart created another migration backup")
@@ -256,25 +417,43 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             "replayed": False,
         }
         if first_canvas != empty_canvas or second_canvas != empty_canvas:
-            raise RuntimeError("empty v3 workspace unexpectedly restored a canvas")
+            raise RuntimeError("empty v4 workspace unexpectedly restored a canvas")
+        if initial_profiles != {"profiles": [], "count": 0}:
+            raise RuntimeError("migrated v4 ledger unexpectedly contains product profiles")
+        if int(first_profile.get("profile", {}).get("revision", 0)) != 1:
+            raise RuntimeError("candidate product profile API did not create revision 1")
+        if not replayed_profile.get("replayed"):
+            raise RuntimeError("candidate product profile API did not replay idempotently")
+        if int(restored_profile.get("profile", {}).get("revision", 0)) != 1:
+            raise RuntimeError("candidate restart did not restore product profile revision 1")
+        if int(second_profile.get("profile", {}).get("revision", 0)) != 2:
+            raise RuntimeError("candidate product profile API did not create revision 2")
+        revisions = [
+            int(item.get("revision", 0))
+            for item in profile_versions.get("versions", [])
+        ]
+        if revisions != [2, 1]:
+            raise RuntimeError("candidate product profile history is not immutable and ordered")
 
         return {
             "status": "passed",
             "contract_version": manifest["contract_version"],
-            "schema_before": 3,
-            "schema_after": 4,
+            "schema_before": 4,
+            "schema_after": 5,
             "backup_count_after_restart": len(backups_after_restart),
             "backup_sha256": _sha256(backup),
             "command_contract": second_commands["contract_version"],
             "command_count": len(second_commands["commands"]),
             "empty_canvas_response": "stable-empty-envelope",
+            "product_profile_api": "create-replay-restart-version-history",
+            "product_profile_revisions": revisions,
             "manifest_tracks_command_registry": True,
         }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Verify a packaged schema-v4 sidecar against an isolated v3 ledger."
+        description="Verify a packaged schema-v5 sidecar against an isolated v4 ledger."
     )
     parser.add_argument(
         "--sidecar-dir",

@@ -19,6 +19,14 @@ import portable_release  # noqa: E402
 
 
 class PortableReleaseTests(unittest.TestCase):
+    def test_formal_entrypoint_runs_schema_migration_gate_before_promotion(self) -> None:
+        script = (ROOT / "tools" / "dev.ps1").read_text(encoding="utf-8-sig")
+        candidate_smoke = script.index('Write-Host "[9/11] Smoking the isolated candidate..."')
+        migration_gate = script.index('"test_schema_v4_candidate.py"')
+        promotion = script.index('Write-Host "[10/11] Backing up and promoting')
+        self.assertLess(candidate_smoke, migration_gate)
+        self.assertLess(migration_gate, promotion)
+
     commit = "a" * 40
 
     def setUp(self) -> None:

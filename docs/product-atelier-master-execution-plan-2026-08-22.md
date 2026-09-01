@@ -1609,6 +1609,8 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 多错误表单已补齐可聚焦错误总览、逐项跳转、行内错误、`aria-invalid` 和 `aria-describedby`；真实空表单的 5 个错误均可宣布并聚焦对应字段。正式 WebView 稳定等待测试改用受控时钟，消除机器调度误差造成的偶发轮询次数失败，没有弱化生产稳定时长判断。
 - 最终源码门禁为 Python 309 项（308 通过、1 项平台预期跳过）；前端 `147/147`；Vite production build；Rust/Tauri locked custom-protocol check；Python compileall、56 个 Git 跟踪或本轮新增 JS/ESM 语法、41 个 JSON 解析、Git whitespace 与 `npm audit --omit=dev` 0 漏洞全部通过。
 - 本检查点只使用 `%TEMP%\ProductAtelier-G2-UI-20260902` 隔离数据和 Git 测试素材；未读取正式账本、用户图片、用户 Prompt 或 API Key，未调用付费 API、生图或 VLM，未修改正式便携目录、NSIS、桌面快捷方式或本机 build 证据。正式 artifact 继续保持 `674feb92109c5115b0efb111b017ab6298fc7267`、contract `2026-09-02.1`、schema v4。
+- 正式发布前审计发现 `tools/test_schema_v4_candidate.py` 虽已要求 schema v5 manifest，但仍从 v3 直迁并错误报告 `schema_after=4`，且 `tools/dev.ps1` 没有在正式换位前调用该专项门禁。现已校正为隔离 v4→v5、唯一 v4 备份和重启幂等验证，并通过打包 sidecar 的真实 HTTP API 完成商品档案 v1 创建、幂等重放、重启恢复、v2 升版及 `[v2, v1]` 不可变历史；正式入口在候选双 smoke 后、备份提升前强制执行该门禁，静态回归锁定顺序。
+- 修正后的打包 sidecar 专项实跑通过：contract `2026-09-02.2`、schema `4→5`、重启后仍只有 1 份 v4 备份、7 个统一命令、稳定空画布 envelope 和商品档案版本历史均符合合同；全量 Python 更新为 310 项（309 通过、1 项平台预期跳过）。测试只使用临时账本和 Git 测试 PNG，临时进程与数据均已清理，正式目录尚未改变。
 - 下一执行游标：提交并推送本源码检查点；随后从干净 Git 身份构建完整 schema v5 Windows 候选，执行候选迁移/重启、候选双 smoke、正式 WebView/DPI、外部完整备份、身份绑定提升、正式目录双 smoke、快捷方式和最终界面复验。任何正式复验失败都回滚，不进入 G3。
 
 ## 11. 下一位开发者的执行入口
