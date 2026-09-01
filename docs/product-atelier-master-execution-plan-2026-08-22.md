@@ -1482,6 +1482,13 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 发布事务 `0aba612f8c074c848346fa2451ecb4f9` 已 `finalized`，活动事务文件已清除；上一正式目录完整备份为 `D:\ProductAtelier-Backups\release-before-20260901-181722-580023d778b0`，promotion evidence SHA-256 为 `6AC63BD4261F40A47008DB385F41D971316B42E2E91A9C58ED517829D47B09BE`。候选与正式目录的 sidecar、动态端口、manifest、schema v3 和隔离账本 smoke 均通过；桌面快捷方式已指向新正式目录并从该路径启动。
 - 下一执行游标：继续从 jobs / review / knowledge 中选择下一个低耦合边界拆分，每刀保持行为不变并用现有回归锁定，不一次性重写 Studio。
 
+### 2026-09-01 G0 成长投影控制器源码检查点
+
+- 新增 `studio-memory.js`，将成长页的投影渲染、节点选择、动效回放和事件绑定移出主编排文件；`app.js` 仅保留控制器创建与调用，从 4582 行降为 4487 行，不保留第二套 `selectMemoryNode / replayMemoryMotion / renderMemoryProjection` 实现。
+- 将投影节点的中文计数与审核边界抽为 `memoryProjectionDetails`，新增独立单测锁定“未批准前不参与未来生成”；静态回归同时锁定主文件只通过控制器使用成长投影。
+- 源码提交 `19c0df26a7bf41659c75d68521e9da24748a8c58` 完成。门禁为前端 122/122、Python 269 项（268 通过、1 项平台预期跳过）、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall 和 Git whitespace 全绿。
+- 本检查点未改动成长账本、知识治理、结果评审、生图参数或 SQLite 合同；未读取用户图片、Prompt、SQLite 或 API Key，未连接付费供应商。下一步按 candidate-first Windows 发布链提升该检查点，再继续拆分 review / knowledge 低耦合边界。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：
