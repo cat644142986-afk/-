@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-01<br>
-> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R8 已关闭。R6 的名称/数量确认、人工候选修正、蒙版预览与画笔恢复已经进入正式便携版；实验自动定位模型最高安全召回仍只有 69.39%，继续不进入正式包。R7 已新增“出图质量硬伤”优先续作：保留 `prompt_v1` 和旧双阶段基线，默认关闭的紧凑 `prompt_v3`、知识规则预算/冲突裁剪、独立 `single_pass` 策略及只读本地质量检查 trace 已形成源码候选，generation trace contract 为 `generation-baseline-2026-08-31.2`。3 输入付费单变量实测与两轮盲评已经完成：单次策略平均首个可用结果 48.50 秒，双阶段平均完成 99.18 秒；第一轮 10 轴分数近似打平，第二轮用户盲选偏好为单次 1 组、双阶段 2 组，未观察到任何一方稳定质量领先。显式“完整双阶段 / 快速单次”已完成源码、快照、API、trace 与桌面浏览器断点验收，默认仍是双阶段；artifact 提交 `f0dc544` 已通过完整门禁、候选/正式双 smoke 和 candidate-first 正式便携提升。R8 的完整可逆知识治理保持不变。R9 首批外观与无障碍能力已完成 Windows candidate-first 正式提升；sidecar contract 仍为 `2026-08-31.2`。扩至 9 输入需重新授权预算，`prompt_v3` 单独验证，只有真实指标通过才接“检测失败才定向修复”。R9 剩余审计顺延，AI Agent 方案继续暂缓<br>
+> 当前状态：Phase 0–3 已完成；R0、R0A 与 R1–R8 已关闭。R6 的名称/数量确认、人工候选修正、蒙版预览与画笔恢复已经进入正式便携版；实验自动定位模型最高安全召回仍只有 69.39%，继续不进入正式包。R7 已新增“出图质量硬伤”优先续作：保留 `prompt_v1` 和旧双阶段基线，默认关闭的紧凑 `prompt_v3`、知识规则预算/冲突裁剪、独立 `single_pass` 策略及只读本地质量检查 trace 已形成源码候选，generation trace contract 为 `generation-baseline-2026-08-31.2`。3 输入付费单变量实测与两轮盲评已经完成：单次策略平均首个可用结果 48.50 秒，双阶段平均完成 99.18 秒；第一轮 10 轴分数近似打平，第二轮用户盲选偏好为单次 1 组、双阶段 2 组，未观察到任何一方稳定质量领先。显式“完整双阶段 / 快速单次”已进入正式版，默认仍是双阶段。2026-09-01 又关闭了单产品识别响应非严格 JSON 导致任务失败且界面显示“100%”的问题：解析器容忍代码围栏与前后说明文字，单产品仅在识别不可用时按参考图主体安全继续且不追加识别调用，合照仍在生图前失败关闭；失败终态统一显示“已结束”。正式 artifact 提交 `39ca4e5` 已通过完整门禁、候选/正式双 smoke 和 candidate-first 提升。R8 的完整可逆知识治理保持不变。R9 首批外观与无障碍能力已完成 Windows candidate-first 正式提升；sidecar contract 仍为 `2026-08-31.2`。扩至 9 输入需重新授权预算，`prompt_v3` 单独验证，只有真实指标通过才接“检测失败才定向修复”。R9 剩余审计顺延，AI Agent 方案继续暂缓<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1407,6 +1407,17 @@ UI 不会被拖到最后才处理：阶段 1 冻结设计，阶段 4 落地正�
 完整发布门禁通过 Python 235 项（另 1 项按设计跳过）、前端 115 项、Vite、Rust/Tauri、候选与正式目录双 smoke，正式截图按 EXE PID 捕获正确窗口。本批没有调用付费 API、没有处理用户图片、没有 schema 迁移；桌面快捷方式已更新到本检查点。
 
 R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正式 WebView 对四个工作流、结果评审、任务中心和成长页做 100/125/150% DPI × 关键窗口尺寸 × 浅色/深色/高对比截图矩阵；在有真实历史结果的隔离副本中走完结果页键盘路径；记录原生 WebView 工作集而不是用浏览器控制协议的耗时冒充内存；最后清理或归档未被入口引用的 `style.css`/历史补丁并统一剩余 token。现存未签名 NSIS 仍绑定 `.4`，不能用于安装或恢复本检查点。
+
+### 2026-09-01 单产品识别异常恢复正式便携检查点
+
+- 现场任务 `job_f2a975d335f5483f85b83aab2fab6c89` 的源图为有效 1016×1425 PNG；失败发生在 `vlm.detect`，日志根因是 `JSONDecodeError`，trace 中没有 `provider.image`，因此不是源图损坏，也不是快速单次策略导致，且未进入付费生图阶段。
+- VLM 解析现在接受严格 JSON、Markdown JSON 围栏、消息文本分段和 JSON 前后附带说明文字；无法解析时只保存经过脱敏的内容类型、字符数、摘要哈希和短预览，避免密钥或长数据进入诊断。
+- 单产品任务在 `PRODUCT_DETECTION_FAILED` 时使用中性名称“参考图中的主要产品”继续既定生图策略，写入 `recognition_fallback` 与 `vlm.fallback` trace，明确 `extra_provider_call=false`。这不会自动重试 VLM，也不会增加一次识别成本；用户点击历史任务的“单独重试”后才会执行其已选择的实际生图流程。
+- 合照拆分继续 fail-closed：识别失败、数量不符或结构无效时在任何图片生成调用前终止，避免把整张合照误当一个产品并浪费额度。
+- 任务中心为该错误提供明确中文原因；失败、部分失败、中断和取消的任务不再显示误导性的“100%”，统一显示“已结束”，同时保留“单独重试 / 只重试失败项”。
+- 发布门禁通过 Python 252 项（1 项平台预期跳过）、前端 116/116、Vite production build、Rust/Tauri custom-protocol release、候选与正式目录双 smoke。本轮没有调用付费 VLM/生图接口。
+- 正式 artifact 提交为 `39ca4e59aeb1077c1367ecf2ed7496a4549bc1df`；正式 EXE / sidecar / manifest SHA-256 分别为 `E360A7E4329EBCA900D92B7F30FAEF08CBE1E0D4D7443B438D862CE35EFDC14B`、`079EC520515372D0C38D26D152AD72DEC95746E9DBB0E6D7CEC27D3672FCD896`、`064DC8C6C28DB0A2F4600531E07E01D20247F32F6EC53096FE79AF4740D5A095`；正式目录 tree SHA-256 为 `E0ED16332EDB63FAF2A25CFF2058A6CFDEF273CCA722325774DBEDE811CDEEE84`。
+- 已 finalized 事务 `65fbdba328b642ee879021ce248cbae8`；上一正式目录备份为 `D:\ProductAtelier-Backups\release-before-20260901-101926-39ca4e59aeb1`，promotion evidence SHA-256 为 `262B0410833E3EB73806B8044E0C42E12261CBEF23E744B31EC5B2F3A0C615F4`。桌面快捷方式、正式应用和单一 sidecar 均指向正式目录，动态端口 `57220` 的 `/api/health` 返回 status `ok`、manifest `ok`、schema v3 与相同 Git 提交。
 
 ## 11. 下一位开发者的执行入口
 

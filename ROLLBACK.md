@@ -354,3 +354,15 @@ NSIS 已完成隔离安装、安装态双 smoke 与静默卸载，但没有 Auth
 活动 transaction 文件不存在；隔离候选与正式目录双 smoke 均确认同一 Git、contract、schema 与 source fingerprint，桌面快捷方式目标/工作目录及正在运行的应用/sidecar 都指向正式便携目录。正式默认仍为 `prompt_v1 + legacy_double_pass`；用户可在单产品和多文件任务中显式选择 `single_pass`，来源会冻结为 `generation_strategy_source=user`。
 
 本检查点没有数据库 schema 迁移，但旧正式版不会放行新建的用户单次任务。若需降级，先完成或取消使用 `single_pass` 的排队/运行任务，退出正式 EXE 及其 sidecar，并为当前正式目录和 `%APPDATA%\ProductAtelier` 另留新副本，再从目标提交重走 candidate-first 发布链；不要直接覆盖运行中的正式目录。本轮未重建 NSIS，也未在发布过程中调用付费 VLM/生图或处理用户图片。
+
+## 2026-09-01 单产品识别异常恢复正式便携检查点
+
+- 正式 artifact 绑定提交：`39ca4e59aeb1077c1367ecf2ed7496a4549bc1df`
+- 正式 EXE / sidecar / manifest SHA-256：`E360A7E4329EBCA900D92B7F30FAEF08CBE1E0D4D7443B438D862CE35EFDC14B` / `079EC520515372D0C38D26D152AD72DEC95746E9DBB0E6D7CEC27D3672FCD896` / `064DC8C6C28DB0A2F4600531E07E01D20247F32F6EC53096FE79AF4740D5A095`
+- source fingerprint：`21B510E6EF4213E6865721FD527E2B38A346FF9F11D66466784F6BAC56A3A430`
+- 正式目录 tree SHA-256：`E0ED16332EDB63FAF2A25CFF2058A6CFDEF273CCA722325774DBEDE811CDEEE84`
+- finalized 事务：`65fbdba328b642ee879021ce248cbae8`
+- 上一正式目录完整备份：`D:\ProductAtelier-Backups\release-before-20260901-101926-39ca4e59aeb1`
+- promotion evidence SHA-256：`262B0410833E3EB73806B8044E0C42E12261CBEF23E744B31EC5B2F3A0C615F4`
+
+本检查点没有 schema 迁移。回退到 `f0dc544` 不需要转换账本，但旧版再次遇到非严格 VLM JSON 时会让单产品任务在生图前失败，并把失败终态显示为 100%。降级前先完成或取消排队/运行任务，退出正式 EXE 与对应 sidecar，为当前正式目录和 `%APPDATA%\ProductAtelier` 另留副本，再从目标提交重走 candidate-first 发布链；不要直接覆盖运行中的正式目录。回退不应删除现有失败任务与 trace，它们是诊断证据。本轮未重建 NSIS，也未调用付费 VLM/生图。
