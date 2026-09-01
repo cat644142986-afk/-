@@ -543,6 +543,49 @@ class DurableJobApiTests(unittest.TestCase):
                 skipped_refine["output"]["billing"]["status"], "not-applicable"
             )
 
+    def test_user_selected_prompt_v3_is_public_but_material_routed(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "user-selected-prompt-v3.png", (145, 95, 55))
+            created = self.create_job(client, {
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "parameters": {
+                    "batch": 1,
+                    "product_name": "茶盒",
+                    "model": "gpt-image-2",
+                    "prompt_version": "prompt_v3",
+                    "prompt_version_source": "user",
+                    "generation_strategy": "single_pass",
+                    "generation_strategy_source": "user",
+                    "brief": {
+                        "material_profile": "opaque",
+                        "intent_locks": {"packaging_text": True},
+                    },
+                    "intent_locks": {"packaging_text": True},
+                },
+                "client_request_id": "user-selected-prompt-v3",
+            })
+            final = self.wait_for_job(created["job"]["id"])
+
+            self.assertEqual(final["status"], "completed")
+            self.assertEqual(final["parameters"]["prompt_version"], "prompt_v3")
+            self.assertEqual(final["parameters"]["prompt_version_source"], "user")
+            generation = server.LEDGER.get_generation(
+                final["items"][0]["generation_id"]
+            )
+            self.assertEqual(generation["prompt_version"], "prompt_v3")
+            traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
+            primary = next(item for item in traces if item["stage"] == "prompt.primary")
+            self.assertEqual(
+                primary["parameters"]["prompt_route"]["reason"],
+                "eligible-opaque-structured",
+            )
+            self.assertEqual(
+                primary["parameters"]["prompt_version_requested"], "prompt_v3"
+            )
+            self.assertEqual(self.ai_mock.call_count, 1)
+            self.network_request.assert_not_called()
+
     def test_prompt_v3_single_pass_is_compact_traceable_and_calls_provider_once(self) -> None:
         with mock.patch.dict(
             os.environ,

@@ -420,6 +420,20 @@ test('generation flow exposes an honest per-task single or double pass choice', 
   assert.match(css, /\.dock-field-row \{[^}]*grid-template-columns:/);
 });
 
+test('material routing is an explicit durable choice with safe defaults', () => {
+  assert.match(html, /<label for="param-material-profile">主要材质/);
+  assert.match(html, /id="param-material-profile"[^>]*aria-describedby="material-profile-help"/);
+  assert.match(html, /value="unknown" selected>未指定 · 稳定基线/);
+  assert.match(html, /id="param-compact-prompt"[^>]*aria-describedby="material-route-status"[^>]*disabled/);
+  assert.match(app, /material_profile: getMaterialProfile\(mode\)/);
+  assert.match(app, /prompt_version: getCompactPromptEnabled\(mode\) \? 'prompt_v3' : 'prompt_v1'/);
+  assert.match(app, /prompt_version_source: 'user'/);
+  assert.match(app, /toggle\.disabled = profile !== 'opaque'/);
+  assert.match(studioState, /material_profile: brief\.material_profile/);
+  assert.match(jobs, /compact_prompt_enabled: parameters\.prompt_version === 'prompt_v3'/);
+  assert.match(css, /\.material-route-status/);
+});
+
 test('result adjustment is a durable derived version instead of overwriting the reviewed image', () => {
   assert.match(html, /id="btn-review-adjust"[^>]*hidden>立即修改本张/);
   assert.match(api, /export async function adjustResult\(jobId, payload\)/);

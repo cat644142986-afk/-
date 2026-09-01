@@ -98,6 +98,7 @@ def normalize_prompt_version(
     requested: Any,
     *,
     environment: Mapping[str, str] | None = None,
+    allow_user_prompt_v3: bool = False,
 ) -> str:
     version = str(requested or PROMPT_V1).strip().lower()
     if version not in SUPPORTED_PROMPT_VERSIONS:
@@ -106,7 +107,11 @@ def normalize_prompt_version(
         raise ValueError(
             f"{PROMPT_V2} is disabled; enable {PROMPT_V2_FEATURE_ENV} only for an approved A/B"
         )
-    if version == PROMPT_V3 and not prompt_v3_enabled(environment):
+    if (
+        version == PROMPT_V3
+        and not allow_user_prompt_v3
+        and not prompt_v3_enabled(environment)
+    ):
         raise ValueError(
             f"{PROMPT_V3} is disabled; enable {PROMPT_V3_FEATURE_ENV} only for an approved A/B"
         )

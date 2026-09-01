@@ -90,6 +90,14 @@ generation trace 合同升级为 `generation-baseline-2026-09-01.3`，固定记�
 
 本检查点全量源码门禁为 Python 260 项（259 通过、1 项平台预期跳过）、前端 116/116、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall 和 Git whitespace 全绿。`paid_pilot_authorized=false`、`formal_promotion_ready=false`；没有重建或提升正式便携版。下一步是建立可靠的结构化材质证据来源并完成显式 UI 接线，而不是继续消耗额度做新实验。
 
+## 材质路由显式 UI 接线（2026-09-01）
+
+高级参数新增“主要材质”和默认关闭的“包装与多件约束优化”。材质只能由用户从未指定、不透明、透明/半透明、高反光和混合五类中明确选择，不从产品名称猜测；选择透明、反光、混合或未指定时，优化开关会被禁用并清除，界面同时说明继续使用稳定基线。只有用户选择不透明材质并主动勾选后，任务才以 `prompt_version_source=user` 请求 v3；后端仍会在包装文字、品牌色或多数量信号缺失时回退 v1。该选项不改变单/双阶段调用数，也不授权失败后自动重做。
+
+材质与优化选择已贯通三种生图工作流的独立草稿、刷新恢复、任务不可变快照和历史任务恢复；批量抠图继续忽略 Prompt 路由。旧草稿没有字段时恢复为“未指定 + 关闭”，显式保存 v1 会覆盖旧内存中的 v3 状态，不会因残留 fallback 再次打开。没有 `prompt_version_source=user` 的 v3 API 请求仍受实验门禁拒绝，v2 门禁不变。
+
+隔离开发账本中的真实界面验收覆盖 1280×720 与 760×650、浅色与深色主题；抽屉无横向溢出，持久帮助文本完整回流，禁用态、状态文本和原生表单语义可读，控制台 0 error / 0 warning。全量门禁为 Python 261 项（260 通过、1 项平台预期跳过）、前端 117/117、Vite production build、Rust/Tauri locked custom-protocol check、compileall 与 Git whitespace 全绿。整个过程没有读取用户图片或调用供应商；本检查点尚未提升正式便携版。
+
 ## 本地质量检查 trace（2026-08-31）
 
 新增 `generation-quality-gate-2026-08-31.1` 本地合同。它只使用生成结果像素和冻结输出规格，检查比例、最低像素、白底边界、画布碰边/疑似裁切和空白漏生成；主生成与最终生成分别保存报告，因此可以在真实 A/B 中观察第二阶段是否改善确定性缺陷。

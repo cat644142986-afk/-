@@ -63,13 +63,14 @@ test('returning to a job restores its immutable brief and controls', () => {
     id: 'job-immutable',
     parameters: { model: 'old-model', fidelity: 10 },
     snapshot: {
-      brief: { user_request: '只保留两个汉堡' },
+      brief: { user_request: '只保留两个汉堡', material_profile: 'opaque' },
       intent: { product_quantity: true },
       parameters: {
         model: 'gpt-image-2', angle: '45top', fidelity: 82,
         output_ratio: '16:9', output_resolution: '4k',
         variations: 3, platter: 'remove', refine: false,
         generation_strategy: 'single_pass',
+        prompt_version: 'prompt_v3', prompt_version_source: 'user',
       },
     },
   }, { compare_state: { divider: 42 } });
@@ -81,6 +82,8 @@ test('returning to a job restores its immutable brief and controls', () => {
     output_ratio: '16:9',
     output_resolution: '4k',
     generation_strategy: 'single_pass',
+    material_profile: 'opaque',
+    compact_prompt_enabled: true,
     fidelity: 82,
     batch: 3,
     platter: 'remove',

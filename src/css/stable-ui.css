@@ -773,6 +773,14 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .drawer .toggle-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-soft); }
 .toggle-row > span:first-child { display: grid; gap: 2px; }
 .toggle-row small { color: var(--ink-3); font-size: var(--type-caption); }
+.material-route-toggle { display: grid !important; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 10px !important; margin-bottom: 8px !important; padding: 10px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-soft); cursor: pointer; }
+.material-route-toggle input { width: 18px; height: 18px; margin: 0; accent-color: var(--coral-deep); }
+.material-route-toggle span { display: grid; min-width: 0; gap: 2px; }
+.material-route-toggle strong { color: var(--ink-1); font-size: var(--type-control); }
+.material-route-toggle small, .material-route-status { color: var(--ink-3); font-size: var(--type-caption); line-height: 1.5; }
+.material-route-toggle:has(input:disabled) { cursor: not-allowed; opacity: .58; }
+.material-route-status { min-height: 2.9em; margin: 0; }
+.material-route-status[data-tone="active"] { color: var(--coral-deep); }
 .output-spec-fields { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(0,.85fr); gap: 8px; }
 .output-spec-fields label { min-width: 0; }
 .output-spec-fields select { min-width: 0; width: 100%; }

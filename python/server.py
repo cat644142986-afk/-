@@ -2744,12 +2744,24 @@ def _normalize_job_parameters(mode: str, parameters: dict) -> dict:
             normalized.get("cutout_selection")
         )
         normalized.pop("prompt_version", None)
+        normalized.pop("prompt_version_source", None)
     elif not str(normalized.get("model") or "").strip():
         normalized["model"] = default_model
     if mode != "cutout-batch":
-        normalized["prompt_version"] = normalize_prompt_version(
-            normalized.get("prompt_version")
+        prompt_source = str(
+            normalized.get("prompt_version_source") or "default"
+        ).strip().lower()
+        if prompt_source not in {"default", "user", "experiment"}:
+            raise ValueError("prompt_version_source is not supported")
+        user_selected_prompt = (
+            prompt_source == "user" and "prompt_version" in normalized
         )
+        normalized["prompt_version"] = normalize_prompt_version(
+            normalized.get("prompt_version"),
+            allow_user_prompt_v3=user_selected_prompt,
+        )
+        if "prompt_version_source" in normalized:
+            normalized["prompt_version_source"] = prompt_source
         if mode in {"single", "multi-file"}:
             strategy_source = str(
                 normalized.get("generation_strategy_source") or "default"

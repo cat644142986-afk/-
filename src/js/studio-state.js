@@ -98,6 +98,10 @@ export function snapshotFromDraft(draft, fallback = {}) {
     output_ratio: parameters.output_ratio || fallback.output_ratio || 'original',
     output_resolution: parameters.output_resolution || fallback.output_resolution || '2k',
     generation_strategy: parameters.generation_strategy || fallback.generation_strategy || 'legacy_double_pass',
+    material_profile: brief.material_profile || fallback.material_profile || 'unknown',
+    compact_prompt_enabled: Object.hasOwn(parameters, 'prompt_version')
+      ? parameters.prompt_version === 'prompt_v3'
+      : Boolean(fallback.compact_prompt_enabled),
     fidelity: Number(parameters.fidelity ?? fallback.fidelity ?? 40),
     batch: Number(parameters.variations ?? parameters.batch ?? fallback.batch ?? 1),
     platter: parameters.platter || fallback.platter || 'auto',
@@ -120,6 +124,7 @@ export function draftPayloadFromSnapshot({ revision, selectedAssetIds, snapshot,
     brief: brief || {
       objective: safe.brief || '将产品原图转化为可交付的商业图片',
       user_request: safe.brief || '',
+      material_profile: safe.material_profile || 'unknown',
     },
     intent: safe.intent_locks || {},
     parameters: {
@@ -129,6 +134,8 @@ export function draftPayloadFromSnapshot({ revision, selectedAssetIds, snapshot,
       output_resolution: safe.output_resolution || '2k',
       generation_strategy: safe.generation_strategy || 'legacy_double_pass',
       generation_strategy_source: 'user',
+      prompt_version: safe.compact_prompt_enabled ? 'prompt_v3' : 'prompt_v1',
+      prompt_version_source: 'user',
       fidelity: Number(safe.fidelity ?? 40),
       batch: Number(safe.batch ?? 1),
       variations: Number(safe.batch ?? 1),

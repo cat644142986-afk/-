@@ -319,6 +319,8 @@ function captureModeSnapshot(mode = state.currentMode) {
     output_ratio: $('#param-output-ratio').value,
     output_resolution: $('#param-output-resolution').value,
     generation_strategy: getGenerationStrategy(mode),
+    material_profile: getMaterialProfile(mode),
+    compact_prompt_enabled: getCompactPromptEnabled(mode),
     fidelity: Number($('#param-fidelity').value),
     batch: Number($('#param-batch').value),
     platter: getPlatter(),
@@ -351,6 +353,7 @@ function modeBrief(mode) {
     angle: snapshot.angle || 'auto',
     output_ratio: snapshot.output_ratio || 'original',
     output_resolution: snapshot.output_resolution || '2k',
+    material_profile: snapshot.material_profile || 'unknown',
     platter: snapshot.platter || 'auto',
     fidelity: Number(snapshot.fidelity ?? 40),
     intent_locks: snapshot.intent_locks || {},
@@ -681,6 +684,11 @@ function restoreModeSnapshot(mode = state.currentMode) {
   if (snapshot.angle && $(`#param-angle option[value="${CSS.escape(snapshot.angle)}"]`)) $('#param-angle').value = snapshot.angle;
   if (snapshot.output_ratio && $(`#param-output-ratio option[value="${CSS.escape(snapshot.output_ratio)}"]`)) $('#param-output-ratio').value = snapshot.output_ratio;
   if (snapshot.output_resolution && $(`#param-output-resolution option[value="${CSS.escape(snapshot.output_resolution)}"]`)) $('#param-output-resolution').value = snapshot.output_resolution;
+  const materialProfile = snapshot.material_profile || 'unknown';
+  if ($(`#param-material-profile option[value="${CSS.escape(materialProfile)}"]`)) {
+    $('#param-material-profile').value = materialProfile;
+  }
+  $('#param-compact-prompt').checked = Boolean(snapshot.compact_prompt_enabled);
   if (Number.isFinite(snapshot.fidelity)) $('#param-fidelity').value = String(snapshot.fidelity);
   if (Number.isFinite(snapshot.batch)) $('#param-batch').value = String(snapshot.batch);
   if (snapshot.platter) {
@@ -689,6 +697,7 @@ function restoreModeSnapshot(mode = state.currentMode) {
   }
   $('#param-refine').checked = snapshot.refine !== false;
   setGenerationStrategy(snapshot.generation_strategy || 'legacy_double_pass', mode);
+  updateMaterialRouteControls();
   $$('[data-lock]').forEach((input) => {
     input.checked = Boolean(snapshot.intent_locks?.[input.dataset.lock]);
     input.closest('.lock-chip').classList.toggle('active', input.checked);
@@ -1023,6 +1032,7 @@ function switchMode(mode, preserveCurrent = true, loadDurable = true) {
   renderFolderSource();
   $('#field-model').hidden = quickCutout;
   $('#field-composition').hidden = quickCutout;
+  $('#field-material-route').hidden = quickCutout;
   $('#field-output-spec').hidden = quickCutout;
   $('#field-intent').hidden = quickCutout;
   $('#btn-knowledge-card').disabled = quickCutout;
@@ -1325,6 +1335,41 @@ function setGenerationStrategy(strategy, mode = state.currentMode) {
   if (mode === 'group-split') $('#param-refine').checked = normalized !== 'single_pass';
 }
 
+function getMaterialProfile(mode = state.currentMode) {
+  if (mode === 'cutout-batch') return 'unknown';
+  const supported = new Set(['unknown', 'opaque', 'transparent', 'reflective', 'mixed']);
+  const profile = String($('#param-material-profile')?.value || 'unknown');
+  return supported.has(profile) ? profile : 'unknown';
+}
+
+function getCompactPromptEnabled(mode = state.currentMode) {
+  return mode !== 'cutout-batch'
+    && getMaterialProfile(mode) === 'opaque'
+    && Boolean($('#param-compact-prompt')?.checked);
+}
+
+function updateMaterialRouteControls() {
+  const profile = getMaterialProfile();
+  const toggle = $('#param-compact-prompt');
+  const status = $('#material-route-status');
+  if (!toggle || !status) return;
+  toggle.disabled = profile !== 'opaque' || state.currentMode === 'cutout-batch';
+  if (toggle.disabled) toggle.checked = false;
+  const messages = {
+    unknown: '未指定可靠材质，继续使用稳定基线。',
+    transparent: '透明或半透明材质固定使用稳定基线，避免主体裁切和背景误判。',
+    reflective: '高反光材质固定使用稳定基线，避免高光与轮廓被过度重写。',
+    mixed: '混合材质固定使用稳定基线，避免单一策略破坏其中一种材质。',
+  };
+  const active = profile === 'opaque' && toggle.checked;
+  status.dataset.tone = active ? 'active' : 'safe';
+  status.textContent = active
+    ? '已请求约束优化；仅包装文字、品牌色或多件任务会采用，其他任务仍安全回退。'
+    : profile === 'opaque'
+      ? '已确认不透明材质；当前仍使用稳定基线，可按需开启约束优化。'
+      : messages[profile] || messages.unknown;
+}
+
 function buildBrief(mode = state.currentMode) {
   const semantic = mode === 'cutout-batch' && cutoutSelectionState().strategy === 'semantic';
   const selection = semantic ? cutoutSelectionState() : null;
@@ -1339,6 +1384,7 @@ function buildBrief(mode = state.currentMode) {
     platform: 'ecommerce',
     output_kind: MODE_CONFIG[mode].outputKind,
     angle: $('#param-angle').value,
+    material_profile: getMaterialProfile(mode),
     platter: getPlatter(),
     fidelity: Number($('#param-fidelity').value),
     intent_locks: getIntentLocks(),
@@ -1550,6 +1596,7 @@ function updateCtaState() {
 }
 
 function updateQuickControls() {
+  updateMaterialRouteControls();
   const angleLabels = { auto: 'Auto', keep: 'Locked', front: 'Front', '45top': '45° Top', '30side': '30° Side', '90top': 'Top' };
   $('#quick-angle').textContent = angleLabels[$('#param-angle').value] || $('#param-angle').value;
   $('#quick-fidelity').textContent = `${$('#param-fidelity').value}%`;
@@ -1593,6 +1640,10 @@ function captureSubmissionDraft() {
       output_ratio: $('#param-output-ratio').value,
       output_resolution: $('#param-output-resolution').value,
       refine: $('#param-refine').checked,
+      ...(mode !== 'cutout-batch' ? {
+        prompt_version: getCompactPromptEnabled(mode) ? 'prompt_v3' : 'prompt_v1',
+        prompt_version_source: 'user',
+      } : {}),
       ...(['single', 'multi-file'].includes(mode) ? {
         generation_strategy: getGenerationStrategy(mode),
         generation_strategy_source: 'user',
@@ -4319,6 +4370,8 @@ function bindEvents() {
   $('#param-angle').addEventListener('change', updateQuickControls);
   $('#param-output-ratio').addEventListener('change', updateQuickControls);
   $('#param-output-resolution').addEventListener('change', updateQuickControls);
+  $('#param-material-profile').addEventListener('change', updateQuickControls);
+  $('#param-compact-prompt').addEventListener('change', updateQuickControls);
   $('#param-fidelity').addEventListener('input', updateQuickControls);
   $('#param-batch').addEventListener('input', updateQuickControls);
   $$('input[name="platter"]').forEach((radio) => radio.addEventListener('change', updateQuickControls));

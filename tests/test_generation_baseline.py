@@ -143,6 +143,12 @@ class GenerationBaselineTests(unittest.TestCase):
             ),
             "prompt_v3",
         )
+        self.assertEqual(
+            normalize_prompt_version(
+                "prompt_v3", environment={}, allow_user_prompt_v3=True
+            ),
+            "prompt_v3",
+        )
         self.assertEqual(normalize_generation_strategy(None, environment={}), LEGACY_DOUBLE_PASS)
         with self.assertRaisesRegex(ValueError, "single_pass is disabled"):
             normalize_generation_strategy(SINGLE_PASS, environment={})
