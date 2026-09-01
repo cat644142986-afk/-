@@ -3830,6 +3830,11 @@ async function connectBackend() {
           setBackendStatus('connecting', '重连中');
           continue;
         }
+        const settingsLoaded = await settingsController.load({ silent: true });
+        if (settingsLoaded !== true) {
+          setBackendStatus('connecting', '重连中');
+          continue;
+        }
         await productProfiles.load({ silent: true });
         setBackendStatus('connected', '已连接');
         API.reportStartupMilestone('backend-ready');
@@ -3877,7 +3882,6 @@ async function init() {
   $('#boot-retry')?.addEventListener('click', () => connectBackend());
   $('#boot-enter')?.addEventListener('click', dismissBootShell);
   connectBackend();
-  settingsController.load();
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -1611,7 +1611,10 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 本检查点只使用 `%TEMP%\ProductAtelier-G2-UI-20260902` 隔离数据和 Git 测试素材；未读取正式账本、用户图片、用户 Prompt 或 API Key，未调用付费 API、生图或 VLM，未修改正式便携目录、NSIS、桌面快捷方式或本机 build 证据。正式 artifact 继续保持 `674feb92109c5115b0efb111b017ab6298fc7267`、contract `2026-09-02.1`、schema v4。
 - 正式发布前审计发现 `tools/test_schema_v4_candidate.py` 虽已要求 schema v5 manifest，但仍从 v3 直迁并错误报告 `schema_after=4`，且 `tools/dev.ps1` 没有在正式换位前调用该专项门禁。现已校正为隔离 v4→v5、唯一 v4 备份和重启幂等验证，并通过打包 sidecar 的真实 HTTP API 完成商品档案 v1 创建、幂等重放、重启恢复、v2 升版及 `[v2, v1]` 不可变历史；正式入口在候选双 smoke 后、备份提升前强制执行该门禁，静态回归锁定顺序。
 - 修正后的打包 sidecar 专项实跑通过：contract `2026-09-02.2`、schema `4→5`、重启后仍只有 1 份 v4 备份、7 个统一命令、稳定空画布 envelope 和商品档案版本历史均符合合同；全量 Python 更新为 310 项（309 通过、1 项平台预期跳过）。测试只使用临时账本和 Git 测试 PNG，临时进程与数据均已清理，正式目录尚未改变。
-- 下一执行游标：提交并推送本源码检查点；随后从干净 Git 身份构建完整 schema v5 Windows 候选，执行候选迁移/重启、候选双 smoke、正式 WebView/DPI、外部完整备份、身份绑定提升、正式目录双 smoke、快捷方式和最终界面复验。任何正式复验失败都回滚，不进入 G3。
+- `e74a47413a41a35a5ca621c3b47d2a8d01fcb66d` 随后已完成 schema v5 candidate-first 提升：contract `2026-09-02.2`、transaction `d8e156d08bba4174a36c6cfce9834957` 为 `finalized`，上一正式版完整备份位于 `D:\ProductAtelier-Backups\release-before-20260902-033247-e74a47413a41`。正式 App / sidecar / manifest SHA-256 分别为 `BCB1C597342AAFCAB9697213976B6B631ADE8568FE60BD5CD7D036B6968AA7C9`、`CD89D33835BD027BFD5DBDD5E79C50915D9DB3DD59E32A58F4BFC1FD1EEC0643`、`954A892D3DF5D61DFC39AE0D75AA6356ECB222F9D39DE940067236800894C765`，正式 tree SHA-256 为 `17D77CB0E11BA7A91FA16CAEB134B212429A9C2FCBAA03B338DA46951C1C3B95`；正式进程、sidecar 和桌面快捷方式均来自正式目录。
+- 正式商品档案窗口已在不保存数据的前提下复验：编辑器完整加载，初始焦点进入 SKU，Tab 路径保持在弹层内，Esc 关闭后焦点返回“管理”。使用正式 artifact 字节和隔离数据运行的 150%→100%→150% 双屏 DPI 门禁全部通过，DWM 系统圆角、无硬裁切 region、最小化/恢复、最大化/恢复和跨屏 DPI 回切均为真。
+- DPI 截图同时暴露一个发布后冷启动缺陷：`init()` 在 `connectBackend()` 尚未健康时并发调用设置读取，导致隔离冷启动短暂显示“读取设置失败”。现已把设置恢复纳入 health 成功后的启动门禁，静默重试成功后才宣布工作台就绪，并增加静态回归锁定顺序；针对性 43/43、完整前端 148/148、Vite production build、顺序执行的 Rust/Tauri locked custom-protocol check、Python compileall 与 Git whitespace 均通过。并行运行 Vite 与 Rust 曾因 `dist` 重建形成一次工具竞态，按真实发布顺序重跑后通过，不记为产品缺陷。
+- 下一执行游标：提交并推送冷启动时序修复，从新的干净 Git 身份重建 schema v5 Windows 候选并再次执行 candidate-first 正式提升；复验冷启动不再出现假错误后关闭 G2，立即进入 G3 ROI / Mask / 扩图合同与失败测试。任何正式复验失败都回滚，不进入 G3。
 
 ## 11. 下一位开发者的执行入口
 

@@ -106,7 +106,7 @@ export function createSettingsController({
     query('#btn-disable-grounding-pack').disabled = !runtimeRoot && !modelRoot;
   }
 
-  async function load() {
+  async function load({ silent = false } = {}) {
     try {
       const settings = await api.getSettings();
       state.settings = settings;
@@ -137,8 +137,10 @@ export function createSettingsController({
       query('#setting-knowledge-path').value = settings.knowledge_base_path || '';
       renderKnowledgeStatus(settings.knowledge);
       updateQuickControls();
+      return true;
     } catch (error) {
-      toast(`读取设置失败：${error}`, 'error');
+      if (!silent) toast(`读取设置失败：${error}`, 'error');
+      return false;
     }
   }
 

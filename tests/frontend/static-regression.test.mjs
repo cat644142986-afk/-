@@ -135,6 +135,19 @@ test('settings and knowledge connection behavior lives outside the page orchestr
   assert.match(css, /\.grounding-pack-status\.is-error/);
 });
 
+test('cold startup restores settings only after backend health succeeds', () => {
+  const connectStart = app.indexOf('async function connectBackend()');
+  const initStart = app.indexOf('async function init()');
+  const healthReady = app.indexOf('if (health.ok)', connectStart);
+  const settingsLoad = app.indexOf('const settingsLoaded = await settingsController.load({ silent: true })', connectStart);
+  const connected = app.indexOf("setBackendStatus('connected', '已连接')", connectStart);
+  assert.ok(connectStart >= 0 && healthReady > connectStart);
+  assert.ok(settingsLoad > healthReady && settingsLoad < connected && connected < initStart);
+  assert.doesNotMatch(app.slice(initStart), /settingsController\.load\(\);/);
+  assert.match(settings, /async function load\(\{ silent = false \} = \{\}\)/);
+  assert.match(settings, /if \(!silent\) toast\(`读取设置失败：\$\{error\}`/);
+});
+
 test('job submission captures an immutable draft before any knowledge await', () => {
   const draft = app.indexOf('const submissionDraft = captureSubmissionDraft()');
   const compile = app.indexOf('payload = await compileSubmissionPayload(submissionDraft)');
