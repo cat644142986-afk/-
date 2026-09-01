@@ -5,12 +5,13 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, assets, config, jobs, memory, review, sessions, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
+const [app, api, assets, config, jobs, knowledge, memory, review, sessions, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-config.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-jobs.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-knowledge.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-memory.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-review.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-sessions.js'), 'utf8'),
@@ -260,7 +261,10 @@ test('growth page projects real knowledge, evidence, review, and motion without 
   assert.match(html, /正式知识、创作现场与终稿反馈各自保留来源/);
   assert.doesNotMatch(html, /牛油果|AVOCADO/);
   assert.match(app, /createMemoryProjectionController/);
-  assert.match(app, /memoryProjectionController\.render\(ledger, pendingSuggestions, knowledgeStatus\)/);
+  assert.match(app, /createKnowledgeController/);
+  assert.match(app, /knowledgeController\.load\(\)/);
+  assert.match(app, /knowledgeController\.bind\(\)/);
+  assert.match(knowledge, /memoryProjectionController\.render\(ledger, pendingSuggestions, knowledgeStatus\)/);
   assert.match(app, /memoryProjectionController\.bind\(\)/);
   assert.doesNotMatch(app, /function (selectMemoryNode|replayMemoryMotion|renderMemoryProjection)/);
   assert.match(memory, /function render\(ledger, suggestions, knowledgeStatus\)/);
@@ -269,8 +273,9 @@ test('growth page projects real knowledge, evidence, review, and motion without 
   assert.match(memory, /未批准前不参与未来生成/);
   assert.match(html, /id="btn-feedback-suggestion"[^>]*hidden/);
   assert.match(api, /export async function getMemorySuggestion\(id\)/);
-  assert.match(app, /function openMemorySuggestion\(suggestionId\)/);
-  assert.match(app, /data-memory-source/);
+  assert.match(app, /knowledgeController\.openSuggestion/);
+  assert.doesNotMatch(app, /function (openMemorySuggestion|updateMemoryFilterControls|memoryCardMarkup|renderMemoryQueue|performMemoryGovernanceAction|loadMemory)/);
+  assert.match(knowledge, /data-memory-source/);
   assert.match(app, /locateResultVersion\(state\.results, source\.result_asset_id\)/);
   assert.match(css, /@keyframes memoryDrawLine/);
   assert.match(css, /@keyframes memoryNodeReveal/);
@@ -506,13 +511,13 @@ test('knowledge suggestions expose durable governance instead of one-way approva
   assert.match(html, /data-memory-filter="pending"/);
   assert.match(html, /data-memory-filter="approved"/);
   assert.match(html, /data-memory-filter="disabled"/);
-  assert.match(app, /API\.governMemorySuggestion/);
-  assert.match(app, /expected_revision: Number\(item\.governance\?\.revision/);
-  assert.match(app, /memoryMutationsInFlight\.has\(id\)/);
-  assert.match(app, /MEMORY_REVISION_CONFLICT/);
-  assert.match(app, /memory-pending-count'\)\.textContent = String\(counts\.pending\)/);
-  assert.match(app, /data-memory-edit-form/);
-  assert.match(app, /data-memory-confirm="true"/);
+  assert.match(knowledge, /api\.governMemorySuggestion/);
+  assert.match(knowledge, /expected_revision: Number\(item\.governance\?\.revision/);
+  assert.match(knowledge, /memoryMutationsInFlight\.has\(id\)/);
+  assert.match(knowledge, /MEMORY_REVISION_CONFLICT/);
+  assert.match(knowledge, /memory-pending-count'\)\.textContent = String\(counts\.pending\)/);
+  assert.match(knowledge, /data-memory-edit-form/);
+  assert.match(knowledge, /data-memory-confirm="true"/);
   assert.match(css, /\.memory-history-list/);
   assert.match(css, /\.memory-edit-error/);
 });

@@ -33,15 +33,16 @@ test('status markup is accessible, actionable, and safely escaped', () => {
 });
 
 test('major durable surfaces use shared states and visible conflict recovery', async () => {
-  const [app, assets, state, html, css] = await Promise.all([
+  const [app, assets, knowledge, state, html, css] = await Promise.all([
     readFile(path.join(root, 'src/js/app.js'), 'utf8'),
     readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
+    readFile(path.join(root, 'src/js/studio-knowledge.js'), 'utf8'),
     readFile(path.join(root, 'src/js/studio-state.js'), 'utf8'),
     readFile(path.join(root, 'src/index.html'), 'utf8'),
     readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8'),
   ]);
   assert.match(app, /statusPanelHtml\('offline'/);
-  assert.match(app, /statusPanelHtml\('loading'/);
+  assert.match(knowledge, /statusPanelHtml\('loading'/);
   assert.match(app, /statusPanelHtml\('partial'/);
   assert.match(app, /setWorkspaceSyncState\('conflict'/);
   assert.match(app, /setWorkspaceSyncState\('recovered'/);

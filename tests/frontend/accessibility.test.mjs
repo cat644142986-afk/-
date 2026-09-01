@@ -18,16 +18,17 @@ test('production shell keeps a single active style and script entry point', asyn
 });
 
 test('tab groups use one tab stop and support arrow, Home, and End navigation', async () => {
-  const [html, app, assets] = await Promise.all([
+  const [html, app, assets, knowledge] = await Promise.all([
     readFile(path.join(root, 'src/index.html'), 'utf8'),
     readFile(path.join(root, 'src/js/app.js'), 'utf8'),
     readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
+    readFile(path.join(root, 'src/js/studio-knowledge.js'), 'utf8'),
   ]);
   assert.match(app, /button\.tabIndex = active \? 0 : -1/);
   assert.match(app, /const resultTabs = \$\$\('\.result-tab'\)/);
   assert.match(app, /ArrowRight: index \+ 1, ArrowLeft: index - 1, Home: 0, End: resultTabs\.length - 1/);
   assert.match(app, /resultTabs\[targetIndex\]\?\.click\(\);\s+resultTabs\[targetIndex\]\?\.focus\(\{ preventScroll: true \}\)/);
-  assert.match(app, /memoryFilters\[targetIndex\]\?\.click\(\);\s+memoryFilters\[targetIndex\]\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(knowledge, /memoryFilters\[targetIndex\]\?\.click\(\);\s+memoryFilters\[targetIndex\]\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(assets, /button\.tabIndex = active \? 0 : -1/);
   assert.match(assets, /const viewTabs = queryAll\('\[data-asset-view\]'\)/);
   assert.match(assets, /ArrowRight: index \+ 1, ArrowLeft: index - 1, Home: 0, End: viewTabs\.length - 1/);
