@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>Product Atelier · G1A 画布原型</title>
+    <link rel="stylesheet" href="/prototype.css" />
+  </head>
+  <body>
+    <div class="app-shell" id="app" aria-busy="true">
+      <header class="topbar">
+        <div class="brand-lockup" aria-label="Product Atelier">
+          <span class="brand-mark" aria-hidden="true"><span></span></span>
+          <span class="brand-copy">
+            <strong>Product Atelier</strong>
+            <small>画布技术原型</small>
+          </span>
+        </div>
+        <div class="document-heading">
+          <strong>商品编排画板</strong>
+          <span>G1A · 独立工作区</span>
+        </div>
+        <div class="topbar-status">
+          <span class="status-dot" id="save-dot" aria-hidden="true"></span>
+          <span id="save-status">准备画布</span>
+          <span class="status-separator" aria-hidden="true"></span>
+          <strong id="header-layer-count">0 图层</strong>
+        </div>
+      </header>
+
+      <aside class="tool-rail" aria-label="画布工具">
+        <div class="tool-group" role="group" aria-label="操作工具">
+          <button class="tool-button is-active" type="button" data-tool="select" aria-pressed="true" aria-label="选择工具" title="选择工具">
+            <i data-lucide="mouse-pointer-2" aria-hidden="true"></i>
+          </button>
+          <button class="tool-button" type="button" data-tool="hand" aria-pressed="false" aria-label="抓手工具" title="抓手工具">
+            <i data-lucide="hand" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div class="tool-group" role="group" aria-label="历史操作">
+          <button class="tool-button" id="undo-button" type="button" aria-label="撤销" title="撤销" disabled>
+            <i data-lucide="undo-2" aria-hidden="true"></i>
+          </button>
+          <button class="tool-button" id="redo-button" type="button" aria-label="重做" title="重做" disabled>
+            <i data-lucide="redo-2" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div class="tool-group tool-group--bottom" role="group" aria-label="原型数据">
+          <button class="tool-button" id="reset-button" type="button" aria-label="重置合成画布" title="重置合成画布">
+            <i data-lucide="rotate-ccw" aria-hidden="true"></i>
+          </button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <div class="commandbar" aria-label="画布命令栏">
+          <button class="primary-command" id="quick-cutout-button" type="button">
+            <i data-lucide="scissors" aria-hidden="true"></i>
+            <span>快速抠图</span>
+          </button>
+          <span class="command-context" id="selection-context">未选择图层</span>
+          <div class="zoom-controls" role="group" aria-label="缩放控制">
+            <button type="button" id="zoom-out-button" aria-label="缩小画布" title="缩小">
+              <i data-lucide="zoom-out" aria-hidden="true"></i>
+            </button>
+            <output id="zoom-output" aria-live="polite">100%</output>
+            <button type="button" id="zoom-in-button" aria-label="放大画布" title="放大">
+              <i data-lucide="zoom-in" aria-hidden="true"></i>
+            </button>
+            <button type="button" id="fit-button" aria-label="适合画板" title="适合画板">
+              <i data-lucide="scan" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+
+        <section class="canvas-region" aria-label="无限画布工作区">
+          <div class="canvas-host" id="canvas-host">
+            <canvas id="fabric-canvas" aria-label="商品编排画布"></canvas>
+            <div class="canvas-loading" id="canvas-loading" role="status">
+              <span class="loading-mark" aria-hidden="true"></span>
+              <strong>正在建立代理画布</strong>
+            </div>
+          </div>
+          <footer class="canvas-statusbar">
+            <span><strong id="metric-build">--</strong> 构建</span>
+            <span><strong id="metric-serialize">--</strong> 序列化</span>
+            <span><strong id="metric-size">--</strong> 文档</span>
+            <span><strong id="metric-memory">--</strong> JS 堆</span>
+            <span class="statusbar-right"><strong id="metric-refs">0</strong> 个 4K 引用</span>
+          </footer>
+        </section>
+      </main>
+
+      <aside class="inspector" aria-label="图层与属性">
+        <section class="selection-panel" aria-labelledby="selection-title">
+          <div class="section-heading">
+            <div>
+              <small>当前对象</small>
+              <h2 id="selection-title">未选择图层</h2>
+            </div>
+            <span class="selection-index" id="selection-index">--</span>
+          </div>
+          <div class="transform-grid" id="transform-controls">
+            <label>X <input id="transform-x" type="number" step="1" disabled /></label>
+            <label>Y <input id="transform-y" type="number" step="1" disabled /></label>
+            <label>宽度 % <input id="transform-scale-x" type="number" min="5" max="800" step="1" disabled /></label>
+            <label>高度 % <input id="transform-scale-y" type="number" min="5" max="800" step="1" disabled /></label>
+            <label class="transform-wide">旋转角度 <input id="transform-rotation" type="number" min="-360" max="360" step="1" disabled /></label>
+          </div>
+          <button class="secondary-command" id="apply-transform-button" type="button" disabled>
+            <i data-lucide="move" aria-hidden="true"></i>
+            应用变换
+          </button>
+        </section>
+
+        <section class="layers-panel" aria-labelledby="layers-title">
+          <div class="section-heading layers-heading">
+            <div>
+              <small>文档结构</small>
+              <h2 id="layers-title">图层</h2>
+            </div>
+            <span class="layer-total" id="layer-total">0</span>
+          </div>
+          <div class="layer-list" id="layer-list" role="listbox" aria-label="画布图层"></div>
+        </section>
+      </aside>
+    </div>
+
+    <dialog class="command-dialog" id="command-dialog" aria-labelledby="command-dialog-title">
+      <div class="dialog-heading">
+        <div>
+          <small>统一命令预览</small>
+          <h2 id="command-dialog-title">快速抠图</h2>
+        </div>
+        <button type="button" data-dialog-close="command-dialog" aria-label="关闭命令预览" title="关闭">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+      </div>
+      <dl class="command-summary">
+        <div><dt>命令</dt><dd id="command-id">--</dd></div>
+        <div><dt>素材</dt><dd id="command-source">--</dd></div>
+        <div><dt>执行</dt><dd>本地 · 0 元</dd></div>
+      </dl>
+      <pre id="command-payload" tabindex="0"></pre>
+      <div class="dialog-status"><i data-lucide="check" aria-hidden="true"></i>命令合同已生成，未提交到正式任务队列</div>
+      <form method="dialog" class="dialog-actions">
+        <button class="primary-command" value="close">完成</button>
+      </form>
+    </dialog>
+
+    <dialog class="confirm-dialog" id="reset-dialog" aria-labelledby="reset-dialog-title">
+      <div class="dialog-heading">
+        <div>
+          <small>合成数据</small>
+          <h2 id="reset-dialog-title">重置画布</h2>
+        </div>
+      </div>
+      <p>本地原型的图层变换和撤销记录将被清空，正式软件数据不受影响。</p>
+      <form method="dialog" class="dialog-actions">
+        <button class="quiet-command" value="cancel">取消</button>
+        <button class="danger-command" id="confirm-reset-button" value="confirm">重置</button>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="/prototype.js"></script>
+  </body>
+</html>

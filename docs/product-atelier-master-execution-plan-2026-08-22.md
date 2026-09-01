@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-01<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `911b352713e91f5da1caf8072b5618cba49af852`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0 增长前置门禁已关闭，当前执行游标进入不修改正式 `src/` 的 G1A Fabric.js 独立原型。情境式创作副驾仅在画布、SKU 与局部处理底座完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `911b352713e91f5da1caf8072b5618cba49af852`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0 增长前置门禁与不修改正式 `src/` 的 G1A Fabric.js 独立原型均已关闭，当前执行游标进入 G1B 正式数据合同、SQLite 文档版本与统一命令接入。情境式创作副驾仅在画布、SKU 与局部处理底座完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1538,13 +1538,24 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 
 - 用户已用持续目标明确授权按唯一总计划推进当前可在本机、零付费完成的增长路线；单个检查点不再作为停止点。Agent、付费模型、付费生图和大型模型下载仍不在授权内。
 - 增长前回滚标签 `baseline-2026-09-01-before-growth-route` 已同时存在于本地和 GitHub；带注释标签对象为 `a00e019a47507fe700d8af38f1fcf4d1e0c7e4cc`，剥离后精确指向正式增长前基线 `98b3afb12069238f491c5b43536b4ae1d0d24c41`。
-- `docs/contracts/growth-foundation-v1.schema.json` 冻结 `CanvasDocument / Artboard / Layer / Operation / Mask / ROI / ProductProfile / QualityIssue / Recipe` 九个最小草案合同。结构层拒绝未知字段、Base64/绝对路径引用和未确认付费操作；语义门禁额外锁定实体引用存在、集合内 ID 唯一、源素材声明、ROI 边界与撤销游标范围。Schema SHA-256 为 `8DBCA3DFF3B0766E5D858BE15C410A221650398679A890B563E3DFEE57E35B88`。
-- G1A 测试入口只使用 `tests/fixtures/growth_foundation/minimal-contract.json` 的纯合成元数据，不包含真实图片字节、用户 Prompt、API Key、绝对路径或正式 SQLite 内容；fixture SHA-256 为 `85B43FE4E7A2D0E89E190BA1550A57B514D7342D9B53AE6AE99FD22F81B6D913`。测试依赖显式锁定 MIT 许可的 `rfc3339-validator==0.1.4`，避免 `jsonschema` 在缺少可选后端时静默跳过 `date-time` 校验。
-- 合同专项 11/11 通过；最终全量门禁为 Python 280 项（279 通过、1 项平台预期跳过）、前端 132/132、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall、全部 Git 跟踪 JavaScript/ESM 语法和 Git whitespace 全绿。被忽略的 `src/js/_appjs_parts/` 是不进入 Git 和构建的本机历史草稿，未修改也未作为生产门禁结果。
+- `docs/contracts/growth-foundation-v1.schema.json` 冻结 `CanvasDocument / Artboard / Layer / Operation / Mask / ROI / ProductProfile / QualityIssue / Recipe` 九个最小草案合同。结构层拒绝未知字段、Base64/绝对路径引用和未确认付费操作；语义门禁额外锁定实体引用存在、集合内 ID 唯一、源素材声明、ROI 边界、撤销游标范围和 mutation 目标存在。G1A 实际实现撤销/重做后，合同校正为每个可逆操作显式保存严格的 `mutation.before / mutation.after` 图层快照，避免重启恢复依赖前端私有旁路；校正后的 Schema SHA-256 为 `5783DBB78046C53AB26AF24F3ECA5CEC13CE016407058F2E80CD0142D301DD3C`。
+- G1A 测试入口只使用 `tests/fixtures/growth_foundation/minimal-contract.json` 的纯合成元数据，不包含真实图片字节、用户 Prompt、API Key、绝对路径或正式 SQLite 内容；加入必填 `mutation` 边界后的 fixture SHA-256 为 `4144CEE886D983FB23F726FA39077290717143599C306252DC7F3823D5BC45E8`。测试依赖显式锁定 MIT 许可的 `rfc3339-validator==0.1.4`，避免 `jsonschema` 在缺少可选后端时静默跳过 `date-time` 校验。
+- 合同专项因上述 G1A 反馈由 11 项增加为 12/12；最终全量门禁为 Python 281 项（280 通过、1 项平台预期跳过）、前端 132/132、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall、51 个 Git 跟踪或本轮新增 JavaScript/ESM 文件语法和 Git whitespace 全绿。被忽略的 `src/js/_appjs_parts/` 与旧 `src/v133-killer.js` 是不进入 Git 和构建的本机历史草稿，未修改也未作为生产门禁结果。
 - 合同检查点提交 `a211e5b728efe87900d0fdb3b33694ec15001816` 已推送。此前已关闭默认生图基线决策、`app.js` 低耦合拆分和生产视觉 token 收口；公开 NSIS 继续明确冻结在外部代码签名证书条件，不冒充已签名公开安装包。
 - 本检查点只改变文档、测试依赖和合成合同夹具，没有修改 `src/`、Python sidecar 运行依赖、Rust/Tauri 或正式资源，因此不构建并提升一个字节相同但 Git 身份不同的伪运行制品。正式便携 artifact、桌面快捷方式和已验证健康证据继续保持 `911b352713e91f5da1caf8072b5618cba49af852`；candidate-first 规则没有被绕过。
 - 本轮没有调用付费 API、创建付费任务、读取 API Key、用户图片、用户 Prompt、正式 SQLite 或 build 证据目录。源控中的付费实验计划仍为 `paid_execution_authorized=false`；由于边界禁止读取用户账本，本记录只证明本轮与源控授权状态，不把它夸大为对用户历史账本的结算审计。
 - G0 关闭后的下一执行游标：在 `prototypes/` 建立独立 G1A Fabric.js 原型；先锁定版本、MIT 许可证、依赖树与 NOTICE，再依次验证无限工作空间/有限画板、图层、选择与变换、撤销/重做、重启恢复、一个现有快捷命令复用，以及 200 张代理图与 4K 原图引用的内存、缩放和序列化。原型通过前不进入正式 `src/`，也不读取正式账本。
+
+### 2026-09-01 G1A Fabric.js 独立画布原型关闭
+
+- 独立原型位于 `prototypes/canvas-g1a/`，没有修改生产 `src/`、Python sidecar、Rust/Tauri、正式便携目录或用户数据。锁定 `fabric@7.4.0`（MIT，上游 commit `ce64f450bad811750cb5a75aa749fc1502c644be`）与 `lucide@1.31.0`（ISC/MIT）；浏览器必需依赖只有这两个包，Fabric 的 Node-only 可选 `canvas/jsdom` 未安装，`npm audit --omit=dev` 为 0 漏洞。`package-lock.json` SHA-256 为 `0098A350B73F6BB138BF279255821063E79EE4FA95231D845E4C1A17C1168A11`，许可证全文与哈希已进入 `THIRD_PARTY_NOTICES.md`。
+- 原型实际使用 200 个 Fabric 代理对象，每个对象只引用一个纯合成 4096×4096 原图元数据；已完成无限工作区平移/缩放、1920×1080 有限画板、图层选择、数值与指针变换、显示/隐藏、锁定/解锁、撤销/重做、分支历史截断和浏览器重启恢复。一个现有 `command:existing-remove-background` 已编译为 `cutout-batch` 的 preview-only、本地 0 元请求形状；原型源码没有 `fetch/XMLHttpRequest/WebSocket` 或 `/api/` 调用。
+- 真实浏览器首先发现 Fabric 7 的 `Rect` 默认中心原点导致画板只显示一半；已改为显式 `originX=left / originY=top` 并增加模型回归测试。1440×900 修复后构建 44.9ms、序列化 0.3ms、文档 81.5KB、JS 堆 27.5MB、彩色非空像素占抽样画板 12.97%；960×600 构建 26.8ms、序列化 0.1ms，页面/状态栏/图层栏横向溢出均为 0。两档均完整显示有限画板和 200 个 4K 引用，控制台 0 error / 0 warning；缩放 50%→60%→50% 正确，抓手平移使工作区抽样像素变化 30.07%。
+- 真实交互把图层 200 从 `x=1830,y=952,72%/72%,0°` 改为 `x=1710,y=870,85%/80%,15°`，撤销、重做和刷新后恢复逐项一致；显示/锁定状态跨刷新恢复，隐藏或锁定后图层选中态继续保留。重置只清理隔离浏览器中的合成原型状态，正式软件数据不受影响。
+- G1A 门禁为原型模型 6/6、增长合同 12/12、Python 281 项（280 通过、1 项平台预期跳过）、前端 132/132、原型与生产 Vite build、Rust/Tauri locked custom-protocol check、Python compileall、JavaScript/ESM syntax、Git whitespace 和 npm 0 漏洞全部通过。原型生产构建为 JS 310.03KB（gzip 97.67KB）、CSS 11.67KB（gzip 3.12KB）、HTML 8.22KB（gzip 2.29KB），只作为 G1A 技术证据，不进入正式包。
+- 正式 artifact 仍保持 `911b352713e91f5da1caf8072b5618cba49af852`，因为 G1A 没有运行时改动，不构造 Git 身份变化但字节相同的伪正式包。正式便携版已用临时隔离账本再次通过完整应用 smoke：contract `2026-08-31.2`、schema v3、动态端口 `51179`、隔离账本 319488 bytes、内嵌 custom protocol 与 shell 日志验证通过；测试启动的应用和 sidecar 已清理，用户原有正式进程未被关闭。
+- Fabric.js 通过 G1A 门槛，Konva 替代 PoC 不启动。G1A 仍是合成原型而不是生产能力：200 条图层的面板在 G1B 必须改成分段/虚拟化，localStorage 必须替换为 SQLite 文档版本，代理缓存必须可重建，快捷命令必须进入正式幂等任务链，画板导出必须增加逐像素门禁。
+- 下一执行游标：进入 G1B 的合同冻结检查点。先把 `CanvasDocument` 版本、图层坐标原点、操作 mutation、SQLite 文档版本/乐观并发、代理引用/重建、统一命令注册表和快捷模式兼容边界写成生产合同与失败测试；这些合同转绿后，才把 Fabric 依赖和最小画布壳接入正式 `src/`，不直接复制原型 localStorage 或 200 行 DOM 图层列表。
 
 ## 11. 下一位开发者的执行入口
 
@@ -1553,7 +1564,7 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 不重复已经关闭的 R0–R9，也不退回历史 `vXX-fixes.css` 补丁路线。Git 跟踪的生产样式只有 `src/css/stable-ui.css`，入口与回归测试已锁死；本机被忽略的旧 CSS/补丁不属于跨电脑源码，也不进入构建。
-4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理、R9 外观/无障碍/大素材渲染与三档正式 WebView 终验，以及材质感知 Prompt 路由、人工结构化材质证据和显式 UI 安全回退均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。当前版本遗留按优先级为：继续解决默认生图质量稳定性；取得代码签名证书后重建并验收公开 NSIS；继续按职责收窄现为 3818 行的 `app.js` 并统一生产入口中的硬编码视觉 token。停止继续堆同类自动定位模型；该能力改由 G1–G3 的直接选择、SKU 约束与可修正蒙版解决。完成或明确冻结这些遗留后，按第 13 节从 G0 增长前置门禁进入 G1A 独立画布原型。
+4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理、R9 外观/无障碍/大素材渲染与三档正式 WebView 终验，以及材质感知 Prompt 路由、人工结构化材质证据和显式 UI 安全回退均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。G0 与 G1A 已关闭，当前从第 13 节 G1B 合同冻结检查点继续；停止继续堆同类自动定位模型，该能力由 G1–G3 的直接选择、SKU 约束与可修正蒙版解决。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 
@@ -1610,7 +1621,7 @@ Product Atelier 的长期定位收敛为：**以无限画布为核心，以商�
 
 | 项目 | 当前决定 | 已核对边界 |
 |---|---|---|
-| Fabric.js | G1A 首选画布候选 | MIT；只负责对象、图层、选择、变换和序列化，必须先过独立性能原型 |
+| Fabric.js | G1A 已通过，G1B 唯一画布实现 | MIT；只负责对象、图层、选择、变换和序列化；独立性能原型已通过，生产接入仍受 SQLite、命令与导出门禁约束 |
 | Konva | Fabric 失败后的替代 PoC | 仓库 LICENSE 为 MIT；不与 Fabric 并行维护 |
 | Excalidraw / miniPaint / TOAST UI | 只借交互和工具逻辑 | 不整体嵌入，不为此迁移 React 或锁死旧 Fabric |
 | tldraw | 排除正式接入 | 当前为自定义生产许可并要求许可条件，不符合当前低成本与 Vanilla JS 路线 |
@@ -1634,6 +1645,8 @@ Product Atelier 的长期定位收敛为：**以无限画布为核心，以商�
 门禁：主工作树干净；回滚与数据隔离可验证；用户明确开始增长路线；没有未结算的付费调用或隐式模型下载。
 
 #### G1：画布核心与统一命令（70–110 小时）
+
+当前状态（2026-09-01）：`G1A` 已关闭，Fabric.js 通过独立原型门槛；`G1B` 从生产合同与失败测试开始，尚未把 Fabric 接入正式 `src/`。
 
 `G1A` 先用 24–40 小时建立独立 Fabric.js 原型，只验证无限工作空间、有限画板、图层、选择/变换、撤销/重做、重启恢复、一个现有快捷命令复用，以及 200 张代理图和 4K 原图引用的内存/缩放/序列化。原型不读取用户正式账本、不进入 `src/`、不改变正式包。
 

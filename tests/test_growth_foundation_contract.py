@@ -80,6 +80,9 @@ def semantic_contract_errors(value: dict) -> list[str]:
             reference = operation[field]
             if reference is not None and reference not in ids[collection_name]:
                 errors.append(f"operation {operation['id']} references a missing {collection_name}")
+        mutation = operation["mutation"]
+        if mutation is not None and mutation["target_layer_id"] not in ids["layer"]:
+            errors.append(f"operation {operation['id']} mutation references a missing layer")
 
     for collection_name in ("mask", "roi"):
         for item in collections[collection_name]:
@@ -147,6 +150,40 @@ class GrowthFoundationContractTests(unittest.TestCase):
         invalid_history = copy.deepcopy(self.fixture)
         invalid_history["canvas_document"]["undo_cursor"] = 2
         self.assertIn("undo_cursor", " ".join(semantic_contract_errors(invalid_history)))
+
+        invalid_mutation = copy.deepcopy(self.fixture)
+        invalid_mutation["canvas_document"]["operations"][0]["mutation"] = {
+            "target_layer_id": "layer:missing",
+            "before": self._layer_snapshot(invalid_mutation["canvas_document"]["layers"][0]),
+            "after": self._layer_snapshot(invalid_mutation["canvas_document"]["layers"][0]),
+        }
+        self.assertIn("mutation references a missing layer", " ".join(semantic_contract_errors(invalid_mutation)))
+
+    @staticmethod
+    def _layer_snapshot(layer: dict) -> dict:
+        return {
+            "transform": copy.deepcopy(layer["transform"]),
+            "z_index": layer["z_index"],
+            "visible": layer["visible"],
+            "locked": layer["locked"],
+        }
+
+    def test_operation_mutation_preserves_strict_before_and_after_layer_state(self) -> None:
+        mutated = copy.deepcopy(self.fixture)
+        layer = mutated["canvas_document"]["layers"][0]
+        before = self._layer_snapshot(layer)
+        after = copy.deepcopy(before)
+        after["transform"]["x"] = 240
+        mutated["canvas_document"]["operations"][0]["mutation"] = {
+            "target_layer_id": layer["id"],
+            "before": before,
+            "after": after,
+        }
+        self.assert_valid(mutated)
+        self.assert_semantically_valid(mutated)
+
+        mutated["canvas_document"]["operations"][0]["mutation"]["after"]["matrix"] = [1, 0, 0, 1, 0, 0]
+        self.assert_invalid(mutated)
 
     def test_roi_must_remain_inside_the_normalized_source_bounds(self) -> None:
         outside = copy.deepcopy(self.fixture)

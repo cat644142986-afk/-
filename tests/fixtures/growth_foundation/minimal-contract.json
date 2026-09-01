@@ -54,6 +54,7 @@
         "roi_id": "roi:synthetic-main",
         "mask_id": "mask:synthetic-main",
         "product_profile_id": "profile:synthetic-sku-001",
+        "mutation": null,
         "cost": {
           "mode": "free",
           "confirmed_call_count": 0,

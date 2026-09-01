@@ -228,6 +228,7 @@
         "roi_id",
         "mask_id",
         "product_profile_id",
+        "mutation",
         "cost",
         "status",
         "created_at"
@@ -265,6 +266,44 @@
         "product_profile_id": {
           "type": ["string", "null"],
           "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "mutation": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["target_layer_id", "before", "after"],
+              "properties": {
+                "target_layer_id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+                },
+                "before": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["transform", "z_index", "visible", "locked"],
+                  "properties": {
+                    "transform": {"$ref": "#/$defs/Layer/properties/transform"},
+                    "z_index": {"$ref": "#/$defs/Layer/properties/z_index"},
+                    "visible": {"$ref": "#/$defs/Layer/properties/visible"},
+                    "locked": {"$ref": "#/$defs/Layer/properties/locked"}
+                  }
+                },
+                "after": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["transform", "z_index", "visible", "locked"],
+                  "properties": {
+                    "transform": {"$ref": "#/$defs/Layer/properties/transform"},
+                    "z_index": {"$ref": "#/$defs/Layer/properties/z_index"},
+                    "visible": {"$ref": "#/$defs/Layer/properties/visible"},
+                    "locked": {"$ref": "#/$defs/Layer/properties/locked"}
+                  }
+                }
+              }
+            }
+          ]
         },
         "cost": {
           "type": "object",
