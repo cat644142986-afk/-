@@ -339,3 +339,18 @@ NSIS 已完成隔离安装、安装态双 smoke 与静默卸载，但没有 Auth
 活动 transaction 文件不存在；候选与正式目录双 smoke 均确认 contract `2026-08-31.2`、schema v3、同一 Git/source fingerprint，桌面快捷方式已在 finalize 后更新。该版本没有数据库迁移；新增内容只影响前端呈现、键盘焦点与大列表渲染，回退到 R9 首批不需要转换账本，但会失去第二批对比度与页签键盘修复。
 
 若需降级，先完成或取消排队/运行任务，退出正式 EXE 及其 sidecar，为当前正式目录和 `%APPDATA%\ProductAtelier` 另留新副本，再从目标提交重走 `tools/dev.ps1`；不要直接覆盖运行中的正式目录。本轮外部备份只含前一正式应用目录，不含用户账本、Key、素材或成品。
+
+## 2026-09-01 R7 显式生成流程正式便携检查点
+
+- 正式 artifact 绑定提交：`f0dc5440c060e9f5a0ee9e185bdfc49b61fb224e`
+- sidecar contract：`2026-08-31.2`；generation trace contract：`generation-baseline-2026-08-31.2`；数据库 schema：v3
+- source fingerprint：`1A90ABD1D6955DE5797C84D843D364CB4ACA7F799ED4CF1B51FEF3D8AC0B2398`
+- 正式 EXE / sidecar / manifest SHA-256：`269775D9C8781686E2DE5C76D3F9F3519549375A102814C020F53A64210C7A6C` / `4B90F9F16B1555FF6350CCD7DAA59B321B6624851B0B8EE0D5E9970B07103474` / `5261B5E1511BA23777EE3C9B316EB01071C414930B7BA2CD5514A4C4C42388C7`
+- 正式目录 tree SHA-256：`DB15888252479C0D2C139F6E2F96F10322B382AFB9E6DC1C77F661318E3F4812`
+- finalized 事务：`2543dfcf698a4a91ba975620b31adea7`
+- 上一 R9 正式目录完整备份：`D:\ProductAtelier-Backups\release-before-20260901-093526-f0dc5440c060`
+- promotion evidence SHA-256：`5954B6CA864E8C40F31CF981621D3C901BD9CBC6DE0B99096F72A5A16C2B9966`
+
+活动 transaction 文件不存在；隔离候选与正式目录双 smoke 均确认同一 Git、contract、schema 与 source fingerprint，桌面快捷方式目标/工作目录及正在运行的应用/sidecar 都指向正式便携目录。正式默认仍为 `prompt_v1 + legacy_double_pass`；用户可在单产品和多文件任务中显式选择 `single_pass`，来源会冻结为 `generation_strategy_source=user`。
+
+本检查点没有数据库 schema 迁移，但旧正式版不会放行新建的用户单次任务。若需降级，先完成或取消使用 `single_pass` 的排队/运行任务，退出正式 EXE 及其 sidecar，并为当前正式目录和 `%APPDATA%\ProductAtelier` 另留新副本，再从目标提交重走 candidate-first 发布链；不要直接覆盖运行中的正式目录。本轮未重建 NSIS，也未在发布过程中调用付费 VLM/生图或处理用户图片。

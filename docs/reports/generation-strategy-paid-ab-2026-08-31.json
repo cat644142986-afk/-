@@ -130,8 +130,8 @@
   },
   "decision": {
     "formal_default_changed": false,
-    "candidate_status": "explicit-speed-option-source-implemented-formal-promotion-pending",
+    "candidate_status": "explicit-speed-option-formally-promoted",
     "reason": "Single pass cuts healthy first-usable latency and normal provider calls roughly in half, but independent human preference is mixed and favors double pass on two of three cases. Neither strategy has a stable quality win.",
-    "next_experiment": "Keep legacy double pass as the default, complete full release gates and candidate-first formal portable promotion for the implemented explicit speed-first option, and expand to nine inputs only under a new paid-call authorization. Prompt v3 must be tested separately."
+    "next_experiment": "Keep legacy double pass as the default. Expand the already promoted explicit speed-first option to nine inputs only under a new paid-call authorization, and test Prompt v3 separately."
   }
 }
