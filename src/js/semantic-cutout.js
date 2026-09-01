@@ -1,5 +1,20 @@
 const STRATEGIES = new Set(['foreground', 'semantic']);
 
+export const SEMANTIC_CANVAS_PALETTE = Object.freeze({
+  includeActive: 'rgba(36,211,138,.86)',
+  includeIdle: 'rgba(36,190,128,.62)',
+  excludeActive: 'rgba(255,70,70,.9)',
+  excludeIdle: 'rgba(255,82,72,.66)',
+  suggestionStroke: '#ffd351',
+  selectionStroke: '#ff6b43',
+  suggestionFill: 'rgba(255,211,81,.14)',
+  selectionFill: 'rgba(255,107,67,.12)',
+  selectionFillMasked: 'rgba(255,107,67,0)',
+  suggestionLabel: '#c98b00',
+  selectionLabel: '#ff6b43',
+  labelText: '#fff',
+});
+
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, Number(value) || 0));
 }

@@ -55,6 +55,7 @@ import { createSessionsController, formatStudioTime } from './studio-sessions.js
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 import { statusPanelHtml } from './status-view.js';
 import {
+  SEMANTIC_CANVAS_PALETTE,
   createSemanticCutoutState,
   semanticCutoutPayload,
   semanticCutoutReadiness,
@@ -2840,8 +2841,8 @@ function drawSemanticMaskStroke(context, edit, active = false) {
   context.lineJoin = 'round';
   context.lineWidth = Math.max(4, Number(edit.radius || 0.018) * Math.min(canvas.width, canvas.height) * 2);
   context.strokeStyle = edit.mode === 'include'
-    ? active ? 'rgba(36,211,138,.86)' : 'rgba(36,190,128,.62)'
-    : active ? 'rgba(255,70,70,.9)' : 'rgba(255,82,72,.66)';
+    ? active ? SEMANTIC_CANVAS_PALETTE.includeActive : SEMANTIC_CANVAS_PALETTE.includeIdle
+    : active ? SEMANTIC_CANVAS_PALETTE.excludeActive : SEMANTIC_CANVAS_PALETTE.excludeIdle;
   context.fillStyle = context.strokeStyle;
   if (points.length === 1) {
     context.beginPath();
@@ -2903,12 +2904,14 @@ function drawSemanticCanvas() {
     const boxHeight = height * canvas.height;
     const suggestion = Boolean(region.isSuggestion);
     context.setLineDash(suggestion ? [10, 7] : []);
-    context.strokeStyle = region.id === 'preview' || suggestion ? '#ffd351' : '#ff6b43';
+    context.strokeStyle = region.id === 'preview' || suggestion
+      ? SEMANTIC_CANVAS_PALETTE.suggestionStroke
+      : SEMANTIC_CANVAS_PALETTE.selectionStroke;
     context.fillStyle = region.id === 'preview' || suggestion
-      ? 'rgba(255,211,81,.14)'
+      ? SEMANTIC_CANVAS_PALETTE.suggestionFill
       : semanticCanvasState.maskImage
-        ? 'rgba(255,107,67,0)'
-        : 'rgba(255,107,67,.12)';
+        ? SEMANTIC_CANVAS_PALETTE.selectionFillMasked
+        : SEMANTIC_CANVAS_PALETTE.selectionFill;
     if (region.id === 'preview' || suggestion || !semanticCanvasState.maskImage) {
       context.fillRect(left, top, boxWidth, boxHeight);
     }
@@ -2920,9 +2923,11 @@ function drawSemanticCanvas() {
       const labelWidth = context.measureText(label).width + 18;
       const labelHeight = Math.max(24, Math.round(Math.min(canvas.width, canvas.height) / 25));
       const labelTop = Math.max(0, top - labelHeight);
-      context.fillStyle = suggestion ? '#c98b00' : '#ff6b43';
+      context.fillStyle = suggestion
+        ? SEMANTIC_CANVAS_PALETTE.suggestionLabel
+        : SEMANTIC_CANVAS_PALETTE.selectionLabel;
       context.fillRect(left, labelTop, labelWidth, labelHeight);
-      context.fillStyle = '#fff';
+      context.fillStyle = SEMANTIC_CANVAS_PALETTE.labelText;
       context.fillText(label, left + 9, labelTop + labelHeight * .7);
     }
   });

@@ -62,3 +62,25 @@ test('key interface tokens preserve readable light and dark surface contrast', a
   assert.doesNotMatch(css, /letter-spacing:\s*-/);
   assert.doesNotMatch(css, /font-size:\s*clamp\([^;]*(?:vw|vh|vmin|vmax)/);
 });
+
+test('production visual constants stay centralized without coupling boot or canvas rendering', async () => {
+  const [css, html, app, semanticCutout] = await Promise.all([
+    readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8'),
+    readFile(path.join(root, 'src/index.html'), 'utf8'),
+    readFile(path.join(root, 'src/js/app.js'), 'utf8'),
+    readFile(path.join(root, 'src/js/semantic-cutout.js'), 'utf8'),
+  ]);
+  const count = (source, literal) => source.split(literal).length - 1;
+  for (const literal of [
+    '#181c20', '#30363b', '#27b552', '#89dda3', '#f6d978', '#8a6500', '#e9e5dc',
+    '#ff5c57', '#ffbd2e', '#28c840', 'rgba(31, 36, 42, .84)',
+  ]) {
+    assert.equal(count(css, literal), 1, `${literal} must have one token declaration`);
+  }
+  assert.match(css, /--surface-inverse-overlay:[^;]+;[\s\S]*?\.review-compare-toolbar[^}]+var\(--surface-inverse-overlay\)/);
+  assert.match(css, /--status-success-solid:[^;]+;[\s\S]*?\.review-summary[^}]+var\(--status-success-solid\)/);
+  assert.match(html, /:root \{ --boot-bg:/);
+  assert.match(semanticCutout, /export const SEMANTIC_CANVAS_PALETTE = Object\.freeze/);
+  assert.match(app, /SEMANTIC_CANVAS_PALETTE\.selectionFillMasked/);
+  assert.doesNotMatch(app, /context\.(?:fillStyle|strokeStyle)\s*=\s*['"](?:#|rgba?\()/);
+});

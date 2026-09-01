@@ -2,12 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  SEMANTIC_CANVAS_PALETTE,
   createSemanticCutoutState,
   semanticCutoutPayload,
   semanticCutoutReadiness,
   semanticGroundingPresentation,
   updateSemanticCutoutState,
 } from '../../src/js/semantic-cutout.js';
+
+test('semantic canvas keeps rendering colors in one fixed palette', () => {
+  assert.equal(Object.isFrozen(SEMANTIC_CANVAS_PALETTE), true);
+  assert.deepEqual(SEMANTIC_CANVAS_PALETTE, {
+    includeActive: 'rgba(36,211,138,.86)',
+    includeIdle: 'rgba(36,190,128,.62)',
+    excludeActive: 'rgba(255,70,70,.9)',
+    excludeIdle: 'rgba(255,82,72,.66)',
+    suggestionStroke: '#ffd351',
+    selectionStroke: '#ff6b43',
+    suggestionFill: 'rgba(255,211,81,.14)',
+    selectionFill: 'rgba(255,107,67,.12)',
+    selectionFillMasked: 'rgba(255,107,67,0)',
+    suggestionLabel: '#c98b00',
+    selectionLabel: '#ff6b43',
+    labelText: '#fff',
+  });
+});
 
 test('quick cutout remains an all-foreground operation', () => {
   const state = createSemanticCutoutState();
