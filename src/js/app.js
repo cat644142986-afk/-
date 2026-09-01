@@ -53,6 +53,7 @@ import { createReviewController } from './studio-review.js';
 import { createCompareController } from './studio-compare.js';
 import { createCanvasController } from './studio-canvas.js';
 import { createSessionsController, formatStudioTime } from './studio-sessions.js';
+import { createProductProfileController } from './studio-product-profiles.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 import { statusPanelHtml } from './status-view.js';
 import {
@@ -101,6 +102,22 @@ const semanticCanvasState = {
 
 const state = createStudioState(MODE_IDS);
 const workflowDock = createWorkflowDockController();
+const productProfiles = createProductProfileController({
+  api: API,
+  state,
+  query: $,
+  modeIds: MODE_IDS,
+  assetUrl,
+  hydrateAssetUrls,
+  escapeHtml,
+  toast,
+  createRequestId: createClientRequestId,
+  formatApiError,
+  onSelectionChange: (mode) => {
+    captureModeSnapshot(mode);
+    if (mode === state.currentMode) updateCtaState();
+  },
+});
 const settingsController = createSettingsController({
   api: API,
   state,
@@ -404,10 +421,10 @@ function captureModeSnapshot(mode = state.currentMode) {
     current_generation_id: previous.current_generation_id || state.workspaceDrafts[mode]?.current_generation_id || null,
     current_result_asset_id: previous.current_result_asset_id || state.workspaceDrafts[mode]?.current_result_asset_id || null,
     compare_state: previous.compare_state || state.workspaceDrafts[mode]?.compare_state || {},
-    ui_state: {
+    ui_state: productProfiles.captureUiState({
       ...(previous.ui_state || state.workspaceDrafts[mode]?.ui_state || {}),
       folder_batch: mode === 'multi-file' ? (state.folderBatches[mode] || null) : null,
-    },
+    }, mode),
     mask_state: previous.mask_state || state.workspaceDrafts[mode]?.mask_state || {},
   };
   state.modeSnapshots[mode] = next;
@@ -755,6 +772,7 @@ async function restoreWorkspaceResult(mode, payload) {
 function restoreModeSnapshot(mode = state.currentMode) {
   const snapshot = state.modeSnapshots[mode];
   if (!snapshot) return;
+  productProfiles.restore(mode, snapshot.ui_state || {});
   $('#brief-input').value = snapshot.brief || '';
   if (snapshot.model && $(`#param-model option[value="${CSS.escape(snapshot.model)}"]`)) $('#param-model').value = snapshot.model;
   if (snapshot.angle && $(`#param-angle option[value="${CSS.escape(snapshot.angle)}"]`)) $('#param-angle').value = snapshot.angle;
@@ -1129,6 +1147,7 @@ function switchMode(mode, preserveCurrent = true, loadDurable = true) {
   state.hydratingWorkspace = true;
   try {
     restoreModeSnapshot(mode);
+    productProfiles.renderPicker();
     syncLegacySelection();
     renderQueue();
     renderFileMeta();
@@ -1651,16 +1670,19 @@ function updateCtaState() {
     && cutoutSelectionState().strategy === 'semantic'
     && !cutoutReadiness.ready
     && !semanticCanConfirm;
-  button.disabled = !hasFiles || state.submitting || !state.assetsAvailable || !capacityOkay || semanticBlocked;
+  const productProfileConflict = productProfiles.hasConflict();
+  button.disabled = !hasFiles || state.submitting || !state.assetsAvailable || !capacityOkay || semanticBlocked || productProfileConflict;
   $('#param-batch').setAttribute('aria-invalid', String(!capacityOkay));
   button.classList.toggle('loading', state.submitting);
   if (state.submitting) $('#generate-text').textContent = '正在加入后台任务';
+  else if (productProfileConflict) $('#generate-text').textContent = '先确认商品档案版本';
   else if (!hasFiles) $('#generate-text').textContent = '选择图片开始';
   else if (semanticCanConfirm) $('#generate-text').textContent = '先确认目标';
   else if (cutoutReadiness?.ready && cutoutSelectionState().strategy === 'semantic') $('#generate-text').textContent = '开始智能抠图';
   else if (state.stage === 'success') $('#generate-text').textContent = '基于当前素材再生成';
   else $('#generate-text').textContent = MODE_CONFIG[state.currentMode].action;
-  if (!hasFiles) $('#cta-hint').textContent = state.currentMode === 'cutout-batch'
+  if (productProfileConflict) $('#cta-hint').textContent = '商品档案已有新版本；确认采用后才会写入不可变任务快照';
+  else if (!hasFiles) $('#cta-hint').textContent = state.currentMode === 'cutout-batch'
     ? '从抠图素材中选择后可入队'
     : '从当前素材区选择后可入队';
   else if (!capacityOkay) $('#cta-hint').textContent = `${count} 张 × ${batch} 方案 = ${plan.total} 个输出；单批最多 ${plan.maxOutputs}，请改为每图 ${plan.maxVariations} 个`;
@@ -1705,9 +1727,11 @@ function captureSubmissionDraft() {
   const mode = state.currentMode;
   const brief = buildBrief(mode);
   const folderBatch = mode === 'multi-file' ? folderBatchForMode(mode, true) : null;
+  const profileSelection = productProfiles.selectionForSubmission(mode);
   return createSubmissionSnapshot({
     mode,
     sourceAssetIds: sourceAssetIdsForSubmission(mode),
+    ...profileSelection,
     parameters: {
       model: $('#param-model').value,
       variations: Number($('#param-batch').value),
@@ -1791,6 +1815,8 @@ async function compileSubmissionPayload(draft) {
     ...createSubmissionSnapshot({
       mode: draft.mode,
       sourceAssetIds: draft.source_asset_ids,
+      productProfileId: draft.product_profile_id,
+      expectedProductProfileRevision: draft.expected_product_profile_revision,
       parameters: {
         ...draft.parameters,
         knowledge_refs: bundle?.sources || [],
@@ -1804,6 +1830,11 @@ async function compileSubmissionPayload(draft) {
 
 async function handleGenerate() {
   if (state.submitting) return;
+  if (productProfiles.hasConflict()) {
+    toast('商品档案已有新版本，请先确认采用最新版', 'error', 5200);
+    $('#btn-product-profile-latest')?.focus();
+    return;
+  }
   if (state.currentMode === 'cutout-batch' && cutoutSelectionState().strategy === 'semantic') {
     const readiness = semanticCutoutReadiness(cutoutSelectionState(), selectedAssetIds());
     if (!readiness.ready) {
@@ -1868,7 +1899,10 @@ async function handleGenerate() {
     if (payload && !payload.parameters?.folder_delivery && isDefinitiveJobRejection(error)) {
       clearPendingSubmission(payload.client_request_id);
     }
-    toast(`任务提交失败：${formatApiError(error, '持久任务接口不可用')}`, 'error', 6500);
+    const handledProfileConflict = await productProfiles.handleSubmissionConflict(error, submissionDraft.mode);
+    if (!handledProfileConflict) {
+      toast(`任务提交失败：${formatApiError(error, '持久任务接口不可用')}`, 'error', 6500);
+    }
   } finally {
     state.submitting = false;
     updateCtaState();
@@ -3721,6 +3755,7 @@ function bindEvents() {
   $('#btn-open-memory-evidence').addEventListener('click', () => openDrawer('intelligence'));
   $('#btn-open-memory-trace').addEventListener('click', () => openDrawer('intelligence'));
   assetManager.bind();
+  productProfiles.bind();
   settingsController.bind();
   $('#modal-backdrop').addEventListener('click', closeModal);
   $('#modal-close').addEventListener('click', closeModal);
@@ -3733,9 +3768,11 @@ function bindEvents() {
   canvas.addEventListener('drop', (event) => { event.preventDefault(); canvas.style.outline = ''; handleFiles(event.dataTransfer.files); });
   document.addEventListener('keydown', (event) => {
     const workflowLayer = $('#settings-panel').classList.contains('is-open') ? $('#settings-panel') : null;
-    const openLayer = [$('#semantic-selection-modal'), $('#img-modal'), $('#job-drawer'), $('#asset-drawer'), $('#advanced-drawer'), $('#intelligence-drawer'), workflowLayer].find((layer) => layer && !layer.hidden);
+    const openLayer = [$('#product-profile-modal'), $('#semantic-selection-modal'), $('#img-modal'), $('#job-drawer'), $('#asset-drawer'), $('#advanced-drawer'), $('#intelligence-drawer'), workflowLayer].find((layer) => layer && !layer.hidden);
     if (event.key === 'Tab' && openLayer) {
-      const focusRoot = openLayer.id === 'semantic-selection-modal'
+      const focusRoot = openLayer.id === 'product-profile-modal'
+        ? $('.product-profile-modal-card', openLayer)
+        : openLayer.id === 'semantic-selection-modal'
         ? $('.semantic-modal-card', openLayer)
         : openLayer.id === 'img-modal'
           ? $('.modal-card', openLayer)
@@ -3750,6 +3787,7 @@ function bindEvents() {
     }
     if (event.key !== 'Escape') return;
     if (!$('#review-guide').hidden) { compareController.setGuideOpen(false, { restore: true }); return; }
+    if (!$('#product-profile-modal').hidden) { productProfiles.close(); return; }
     if (!$('#semantic-selection-modal').hidden) { closeSemanticSelection(); return; }
     if (!$('#img-modal').hidden) closeModal();
     if (!$('#advanced-drawer').hidden) closeDrawer('advanced');
@@ -3792,6 +3830,7 @@ async function connectBackend() {
           setBackendStatus('connecting', '重连中');
           continue;
         }
+        await productProfiles.load({ silent: true });
         setBackendStatus('connected', '已连接');
         API.reportStartupMilestone('backend-ready');
         startJobPolling();
@@ -3833,6 +3872,7 @@ async function init() {
   switchMode(state.currentMode, false);
   setStage('empty');
   renderJobs();
+  productProfiles.renderPicker();
   updateQuickControls();
   $('#boot-retry')?.addEventListener('click', () => connectBackend());
   $('#boot-enter')?.addEventListener('click', dismissBootShell);

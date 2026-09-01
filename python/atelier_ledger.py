@@ -3248,6 +3248,27 @@ class AtelierLedger:
                 raise KeyError(f"unknown product profile version: {version_id}")
         return self._product_profile_version_row(row)
 
+    def list_product_profile_versions(
+        self, profile_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        with self._connection() as connection:
+            profile = connection.execute(
+                "SELECT id FROM product_profiles WHERE id = ?", (str(profile_id),)
+            ).fetchone()
+            if profile is None:
+                raise KeyError(f"unknown product profile: {profile_id}")
+            rows = connection.execute(
+                """
+                SELECT * FROM product_profile_versions
+                WHERE profile_id = ?
+                ORDER BY revision DESC
+                LIMIT ?
+                """,
+                (str(profile_id), limit),
+            ).fetchall()
+        return [self._product_profile_version_row(row) for row in rows]
+
     def list_product_profiles(self, limit: int = 200) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 500))
         with self._connection() as connection:

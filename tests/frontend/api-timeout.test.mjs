@@ -59,3 +59,33 @@ test('pause and resume job controls use the durable POST endpoints', async () =>
     globalThis.fetch = originalFetch;
   }
 });
+
+test('product profile APIs encode IDs and preserve optimistic revision payloads', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url, method: options.method || 'GET', body: options.body || '' });
+    return { ok: true, json: async () => ({ profiles: [], versions: [], profile: {} }) };
+  };
+  try {
+    await API.getProductProfiles(25);
+    await API.getProductProfile('profile/sku one');
+    await API.getProductProfileVersions('profile/sku one', 12);
+    await API.getProductProfileVersion('version/one');
+    await API.saveProductProfile('profile/sku one', {
+      expected_revision: 3,
+      client_request_id: 'save-1',
+      profile: { id: 'profile/sku one' },
+    });
+    assert.deepEqual(requests.map((item) => [item.url, item.method]), [
+      ['http://127.0.0.1:8765/api/product-profiles?limit=25', 'GET'],
+      ['http://127.0.0.1:8765/api/product-profiles/profile%2Fsku%20one', 'GET'],
+      ['http://127.0.0.1:8765/api/product-profiles/profile%2Fsku%20one/versions?limit=12', 'GET'],
+      ['http://127.0.0.1:8765/api/product-profile-versions/version%2Fone', 'GET'],
+      ['http://127.0.0.1:8765/api/product-profiles/profile%2Fsku%20one', 'PUT'],
+    ]);
+    assert.equal(JSON.parse(requests.at(-1).body).expected_revision, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

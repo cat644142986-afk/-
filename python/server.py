@@ -2572,6 +2572,18 @@ async def get_product_profile(profile_id: str):
         )
 
 
+@app.get("/api/product-profiles/{profile_id}/versions")
+async def list_product_profile_versions(profile_id: str, limit: int = 100):
+    try:
+        versions = LEDGER.list_product_profile_versions(profile_id, limit)
+        return {"profile_id": profile_id, "versions": versions, "count": len(versions)}
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "PRODUCT_PROFILE_NOT_FOUND", "message": str(exc)},
+        )
+
+
 @app.get("/api/product-profile-versions/{version_id}")
 async def get_product_profile_version(version_id: str):
     try:

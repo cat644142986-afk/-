@@ -1075,6 +1075,18 @@ class AssetApiTests(unittest.TestCase):
         )
         self.assertEqual(second.status_code, 200, second.text)
         self.assertEqual(second.json()["profile"]["revision"], 2)
+        versions = self.client.get(
+            f"/api/product-profiles/{profile['id']}/versions"
+        )
+        self.assertEqual(versions.status_code, 200, versions.text)
+        self.assertEqual(versions.json()["count"], 2)
+        self.assertEqual(
+            [item["revision"] for item in versions.json()["versions"]], [2, 1]
+        )
+        self.assertEqual(
+            versions.json()["versions"][1]["profile"]["selection_mode"],
+            "full_composition",
+        )
         stale = self.client.post(
             "/api/commands/command:existing-remove-background/execute",
             json={

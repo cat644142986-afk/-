@@ -71,13 +71,25 @@ class FormalWebViewVerifierTests(unittest.TestCase):
                 return next(self.values, True)
 
         client = SequenceClient()
-        self.assertTrue(verifier.wait_for_stable(
-            client,
-            "ready",
-            stable_for=0.008,
-            timeout=0.1,
-            poll_interval=0.002,
-        ))
+        clock = {"now": 0.0}
+
+        def perf_counter() -> float:
+            return clock["now"]
+
+        def sleep(duration: float) -> None:
+            clock["now"] += duration
+
+        with (
+            patch.object(verifier.time, "perf_counter", side_effect=perf_counter),
+            patch.object(verifier.time, "sleep", side_effect=sleep),
+        ):
+            self.assertTrue(verifier.wait_for_stable(
+                client,
+                "ready",
+                stable_for=0.008,
+                timeout=0.1,
+                poll_interval=0.002,
+            ))
         self.assertGreaterEqual(client.calls, 6)
 
     def test_snapshot_passes_only_when_visual_and_accessibility_checks_are_clean(self) -> None:

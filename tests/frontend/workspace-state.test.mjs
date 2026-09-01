@@ -25,7 +25,13 @@ test('submission snapshot freezes mode, twenty source IDs, order, and nested par
     model: 'gpt-image-2',
     brief: { mode: 'multi-file', intent_locks: { packaging_text: true } },
   };
-  const snapshot = createSubmissionSnapshot({ mode: 'multi-file', sourceAssetIds, parameters });
+  const snapshot = createSubmissionSnapshot({
+    mode: 'multi-file',
+    sourceAssetIds,
+    parameters,
+    productProfileId: 'profile:sku-001',
+    expectedProductProfileRevision: 7,
+  });
 
   sourceAssetIds.reverse();
   parameters.model = 'changed-after-click';
@@ -38,6 +44,8 @@ test('submission snapshot freezes mode, twenty source IDs, order, and nested par
   );
   assert.equal(snapshot.parameters.model, 'gpt-image-2');
   assert.equal(snapshot.parameters.brief.intent_locks.packaging_text, true);
+  assert.equal(snapshot.product_profile_id, 'profile:sku-001');
+  assert.equal(snapshot.expected_product_profile_revision, 7);
 });
 
 test('import selection is applied to the initiating mode and preserves deterministic order', () => {
@@ -129,6 +137,14 @@ test('submission fingerprints are stable for object key order but retain source 
   assert.notEqual(
     submissionFingerprint(first),
     submissionFingerprint({ ...first, source_asset_ids: ['asset-b', 'asset-a'] }),
+  );
+  assert.notEqual(
+    submissionFingerprint(first),
+    submissionFingerprint({ ...first, product_profile_id: 'profile:sku-001', expected_product_profile_revision: 1 }),
+  );
+  assert.notEqual(
+    submissionFingerprint({ ...first, product_profile_id: 'profile:sku-001', expected_product_profile_revision: 1 }),
+    submissionFingerprint({ ...first, product_profile_id: 'profile:sku-001', expected_product_profile_revision: 2 }),
   );
 });
 

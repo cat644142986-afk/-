@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, assets, config, jobs, knowledge, memory, review, compare, sessions, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
+const [app, api, assets, config, jobs, knowledge, memory, review, compare, sessions, settings, productProfiles, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
@@ -17,6 +17,7 @@ const [app, api, assets, config, jobs, knowledge, memory, review, compare, sessi
   readFile(path.join(root, 'src/js/studio-compare.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-sessions.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-settings.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-product-profiles.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-shell.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-state.js'), 'utf8'),
   readFile(path.join(root, 'src/index.html'), 'utf8'),
@@ -24,6 +25,34 @@ const [app, api, assets, config, jobs, knowledge, memory, review, compare, sessi
   readFile(path.join(root, 'src-tauri/src/main.rs'), 'utf8'),
   readFile(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'),
 ]);
+
+test('Studio exposes durable SKU product profiles without hiding version conflicts', () => {
+  assert.match(html, /id="product-profile-select"[^>]*aria-describedby="product-profile-picker-status"/);
+  assert.match(html, /id="btn-product-profile-manage"[^>]*aria-haspopup="dialog"/);
+  assert.match(html, /id="product-profile-modal"[^>]*role="dialog"[^>]*aria-modal="true"/);
+  assert.match(html, /id="product-profile-list"/);
+  assert.match(html, /id="product-profile-history"/);
+  assert.match(html, /id="product-profile-form-body"/);
+  assert.match(productProfiles, /uiStateWithProductProfileSelection/);
+  assert.match(productProfiles, /expected_product_profile_revision/);
+  assert.match(productProfiles, /api\.getProductProfileVersions/);
+  assert.match(productProfiles, /api\.saveProductProfile/);
+  assert.match(productProfiles, /PRODUCT_PROFILE_REVISION_CONFLICT/);
+  assert.match(productProfiles, /state\.productProfileConflicts\.add\(mode\)/);
+  assert.match(productProfiles, /approved_reference_ids/);
+  assert.match(app, /productProfiles\.captureUiState/);
+  assert.match(app, /productProfiles\.selectionForSubmission/);
+  assert.match(app, /productProfiles\.hasConflict\(\)/);
+  assert.match(api, /export async function getProductProfileVersions/);
+  assert.match(api, /export async function saveProductProfile/);
+  assert.match(css, /\.product-profile-modal-card/);
+  assert.match(css, /\.product-profile-field-error/);
+  assert.match(productProfiles, /aria-labelledby="product-profile-error-summary-title"/);
+  assert.match(productProfiles, /data-profile-error-link=/);
+  assert.match(productProfiles, /setAttribute\('aria-invalid', 'true'\)/);
+  assert.match(productProfiles, /setAttribute\('aria-describedby'/);
+  assert.match(productProfiles, /scrollIntoView\(\{ block: 'center' \}\)/);
+});
 
 test('task dock filters all workflows and returns to immutable task context', () => {
   assert.match(html, /data-job-filter="all"/);

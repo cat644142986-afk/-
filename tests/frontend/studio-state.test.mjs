@@ -15,6 +15,8 @@ test('studio state isolates four drafts while sharing only the product collectio
   assert.deepEqual(state.modeSelections['multi-file'], []);
   assert.deepEqual(Object.keys(state.assetsByCollection), ['product', 'group', 'cutout']);
   assert.notEqual(state.modeSelections.single, state.modeSelections['multi-file']);
+  assert.equal(state.modeProductProfileSelections.single, null);
+  assert.notEqual(state.modeProductProfileSelections, state.modeSelections);
 });
 
 test('backend draft hydrates editable controls and durable result pointers', () => {
@@ -57,6 +59,12 @@ test('draft save payload preserves revision, ordered selection, intent, and work
       platter: 'keep', refine: false, intent_locks: { packaging_text: true },
       active_job_id: 'job-8', current_generation_id: 'gen-3',
       current_result_asset_id: 'result-9', compare_state: { zoom: 1.5 },
+      ui_state: {
+        product_profile_selection: {
+          product_profile_id: 'profile:sku-001',
+          expected_product_profile_revision: 3,
+        },
+      },
     },
   });
 
@@ -74,4 +82,8 @@ test('draft save payload preserves revision, ordered selection, intent, and work
   assert.equal(payload.active_job_id, 'job-8');
   assert.equal(payload.current_result_asset_id, 'result-9');
   assert.deepEqual(payload.compare_state, { zoom: 1.5 });
+  assert.equal(
+    payload.ui_state.product_profile_selection.expected_product_profile_revision,
+    3,
+  );
 });

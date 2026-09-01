@@ -376,6 +376,38 @@ export async function executeCommand(commandId, payload, options = {}) {
   });
 }
 
+export async function getProductProfiles(limit = 200, options = {}) {
+  return fetchJSON(
+    '/api/product-profiles?limit=' + encodeURIComponent(Math.max(1, Number(limit) || 200)),
+    options,
+  );
+}
+
+export async function getProductProfile(profileId, options = {}) {
+  return fetchJSON('/api/product-profiles/' + encodeURIComponent(profileId), options);
+}
+
+export async function getProductProfileVersions(profileId, limit = 100, options = {}) {
+  return fetchJSON(
+    '/api/product-profiles/' + encodeURIComponent(profileId)
+      + '/versions?limit=' + encodeURIComponent(Math.max(1, Number(limit) || 100)),
+    options,
+  );
+}
+
+export async function getProductProfileVersion(versionId, options = {}) {
+  return fetchJSON('/api/product-profile-versions/' + encodeURIComponent(versionId), options);
+}
+
+export async function saveProductProfile(profileId, payload, options = {}) {
+  return fetchJSON('/api/product-profiles/' + encodeURIComponent(profileId), {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
 export async function removeAssetFromCollection(collection, assetId) {
   return fetchJSON(
     '/api/collections/' + encodeURIComponent(collection) + '/assets/' + encodeURIComponent(assetId),

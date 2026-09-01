@@ -22,11 +22,21 @@ function stableValue(value) {
   return value;
 }
 
-export function createSubmissionSnapshot({ mode, sourceAssetIds, parameters }) {
+export function createSubmissionSnapshot({
+  mode,
+  sourceAssetIds,
+  parameters,
+  productProfileId = null,
+  expectedProductProfileRevision = null,
+}) {
   return {
     mode: String(mode),
     source_asset_ids: Array.from(sourceAssetIds || [], String),
     parameters: cloneJson(parameters || {}),
+    product_profile_id: productProfileId ? String(productProfileId) : null,
+    expected_product_profile_revision: productProfileId
+      ? Number(expectedProductProfileRevision)
+      : null,
   };
 }
 
@@ -35,6 +45,8 @@ export function submissionFingerprint(submission) {
     mode: submission?.mode || '',
     source_asset_ids: submission?.source_asset_ids || [],
     parameters: submission?.parameters || {},
+    product_profile_id: submission?.product_profile_id || null,
+    expected_product_profile_revision: submission?.expected_product_profile_revision ?? null,
   }));
 }
 
