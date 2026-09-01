@@ -1,0 +1,119 @@
+{
+  "schema_version": "1.0",
+  "experiment_id": "r7-prompt-v1-v3-2026-09-01",
+  "executed_at": "2026-09-01",
+  "status": "execution-complete-awaiting-user-blind-review",
+  "scope": {
+    "variable_under_test": "prompt_version",
+    "variants": ["prompt_v1", "prompt_v3"],
+    "fixed_model": "gpt-image-2",
+    "fixed_generation_strategy": "legacy_double_pass",
+    "fixed_stage_count": 2,
+    "fixed_output_ratio": "1:1",
+    "fixed_output_resolution": "2k",
+    "fixed_fidelity_percent": 40,
+    "cases": [
+      "packaging-text-brand-procedural",
+      "multi-count-procedural",
+      "transparent-bottle-real"
+    ]
+  },
+  "authorization": {
+    "max_paid_image_calls": 12,
+    "calls_used": 12,
+    "successful_calls": 12,
+    "failed_calls": 0,
+    "paid_vlm_calls": 0,
+    "automatic_retries": 0,
+    "provider_balance_before": 23.7,
+    "provider_balance_after": 23.01,
+    "provider_balance_delta": 0.69,
+    "mean_balance_delta_per_call": 0.0575,
+    "balance_unit": "provider-platform-unit; currency-not-declared",
+    "actual_per-call_billing_amount": null
+  },
+  "execution": {
+    "runner_version": "prompt-version-paid-ab-2026-09-01.1",
+    "artifact_count": 6,
+    "all_outputs": {"width": 2048, "height": 2048},
+    "mean_two_stage_elapsed_ms": {
+      "prompt_v1": 107477.999,
+      "prompt_v3": 149875.53
+    },
+    "per_case_two_stage_elapsed_ms": {
+      "packaging-text-brand-procedural": {
+        "prompt_v1": 104773.179,
+        "prompt_v3": 160816.73
+      },
+      "multi-count-procedural": {
+        "prompt_v1": 92158.579,
+        "prompt_v3": 112372.093
+      },
+      "transparent-bottle-real": {
+        "prompt_v1": 125502.238,
+        "prompt_v3": 176437.766
+      }
+    },
+    "speed_interpretation": "Prompt v3 was slower in this one sequential run despite being shorter. Provider queue/runtime variance is not controlled, so this sample does not prove that prompt length changes latency."
+  },
+  "prompt_measurements": {
+    "prompt_v1_compiled_characters": {"minimum": 721, "maximum": 792},
+    "prompt_v3_compiled_characters": {"minimum": 429, "maximum": 497},
+    "prompt_v1_negative_characters": {"minimum": 371, "maximum": 371},
+    "prompt_v3_negative_characters": {"minimum": 52, "maximum": 57},
+    "raw_prompts_in_report": false
+  },
+  "deterministic_gate": {
+    "contract_version": "generation-quality-gate-2026-08-31.1",
+    "pass_outputs": 5,
+    "review_outputs": 0,
+    "fail_outputs": 1,
+    "failure_axes": ["white-background-border", "subject-border-contact"],
+    "failed_blind_identity_withheld": true,
+    "unverified_axes": [
+      "reference_fidelity",
+      "product_count",
+      "edge_quality",
+      "packaging_text"
+    ],
+    "paid_retry_authorized": false
+  },
+  "blind_review": {
+    "status": "round-1-sealed-awaiting-user-round-2",
+    "prompt_versions_hidden": true,
+    "private_mapping_read_before_round_1": false,
+    "ai_round_1_scorecards": 6,
+    "ai_round_1_results_in_report": false,
+    "user_round_2": null,
+    "mapping_reveal_authorized": false,
+    "blind_review_sha256": "9D4817DAC0AEE94CEE7354B0FAE6AD38B352F1B821F50B5B24E68D6E61FE866B",
+    "contact_sheet_sha256": "2983122B4B5BFBC15617DD0728F6740371C6379B7BC9401AF569B067911FABD2",
+    "private_mapping_file_sha256": "0F2F1470B157C2E4C74FEF914AC32395A1D6A32F621F0C628F39AE4791005E53",
+    "sealed_ai_scorecard_sha256": "22E8892C6BE5009565D0E431DDA4D52E1BB9951C4BC19CA3AF50FED1C8AB521D"
+  },
+  "evidence": {
+    "executed_authorized_plan_sha256": "F446C8D8B532E657E7F0ADFF762A1641ACB8BAAD06BA6195A130E5F51D283D70",
+    "checked_in_plan_is_non_executable": true,
+    "state_sha256": "5A1B5B0C492ADF9025FF8CA624C9E087A3810DC6A6AC3B9044B89D4498F39EA4",
+    "run_summary_sha256": "13F285E32FACE80029EBDB4A8C39DFC2F67AA6D641180070A25E9029100ACDF0",
+    "generated_images_committed_to_git": false,
+    "raw_provider_task_ids_committed_to_git": false,
+    "api_key_committed_to_git": false
+  },
+  "verification": {
+    "python_unittest": {"total": 258, "passed": 257, "skipped": 1, "failed": 0},
+    "frontend_node_test": {"total": 116, "passed": 116, "failed": 0},
+    "vite_production_build": "passed",
+    "rust_locked_custom_protocol_check": "passed",
+    "python_compileall": "passed",
+    "git_diff_check": "passed"
+  },
+  "decision": {
+    "formal_default_changed": false,
+    "formal_portable_promoted": false,
+    "prompt_v3_status": "experimental-default-off",
+    "quality_conclusion": "pending-user-blind-review",
+    "further_paid_calls_authorized": false,
+    "next_action": "Collect the user's A/B choice for all three rows, then reveal the sealed mapping and decide whether prompt_v3 has a stable quality gain."
+  }
+}

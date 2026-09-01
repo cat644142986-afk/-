@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "experiment_id": "r7-prompt-v1-v3-2026-09-01",
+  "status": "execution-complete-authorization-consumed-2026-09-01",
+  "paid_execution_authorized": false,
+  "authorization_consumed": true,
+  "authorization_scope": "Historical record: the user approved and the experiment consumed the frozen maximum of 12 paid image calls. This checked-in plan does not authorize another run.",
+  "variable_under_test": "prompt_version",
+  "fixed_parameters": {
+    "model": "gpt-image-2",
+    "model_snapshot": "provider:gpt-image-2;adapter:lk-media-generate-v1;date:2026-09-01",
+    "output_ratio": "1:1",
+    "output_resolution": "2k",
+    "generation_strategy": "legacy_double_pass",
+    "stage_count": 2,
+    "fidelity_percent": 40,
+    "fixture_manifest": "tests/fixtures/generation_quality/manifest.json",
+    "case_ids": [
+      "packaging-text-brand-procedural",
+      "multi-count-procedural",
+      "transparent-bottle-real"
+    ]
+  },
+  "variants": [
+    {
+      "id": "baseline-v1",
+      "changes": {"prompt_version": "prompt_v1"},
+      "artifact_refs": []
+    },
+    {
+      "id": "candidate-v3",
+      "changes": {"prompt_version": "prompt_v3"},
+      "artifact_refs": []
+    }
+  ],
+  "budget": {
+    "max_paid_calls": 12,
+    "max_total_amount": null,
+    "currency": null
+  },
+  "stop_conditions": {
+    "consecutive_failures": 2,
+    "unusable_results": 3,
+    "stop_on_call_limit": true,
+    "stop_on_amount_limit": true,
+    "stop_if_quality_gain_absent_after_first_round": true
+  }
+}
