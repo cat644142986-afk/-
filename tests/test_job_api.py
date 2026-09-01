@@ -285,6 +285,38 @@ class DurableJobApiTests(unittest.TestCase):
                 seen_per_source[source_id] += 1
         self.assertEqual(seen_per_source, expected_per_source)
 
+    def test_vlm_detection_parser_accepts_fences_and_surrounding_prose(self) -> None:
+        payload = {
+            "products": [{
+                "bbox": [0, 0, 1000, 1000],
+                "name": "草莓奶麻薯",
+                "ptype": "food",
+                "has_container": True,
+                "cutoff": False,
+                "angle_hint": "front",
+            }],
+            "count": 1,
+            "scene": "single",
+        }
+        content = f"识别结果如下：\n```json\n{json.dumps(payload, ensure_ascii=False)}\n```\n请查收。"
+        self.assertEqual(server.parse_vlm_detection_content(content), payload)
+        self.assertEqual(
+            server.parse_vlm_detection_content([
+                {"type": "text", "text": content},
+            ]),
+            payload,
+        )
+
+    def test_vlm_detection_parser_rejects_non_json_and_redacts_long_tokens(self) -> None:
+        with self.assertRaises(json.JSONDecodeError):
+            server.parse_vlm_detection_content("我无法按要求返回结构化结果")
+        diagnostics = server._vlm_response_diagnostics(
+            "结果 " + ("A" * 180) + " 结束"
+        )
+        self.assertEqual(diagnostics["character_count"], 186)
+        self.assertIn("[redacted-long-token]", diagnostics["preview"])
+        self.assertNotIn("A" * 80, diagnostics["preview"])
+
     def test_job_runtime_endpoint_reports_real_executor_ownership(self) -> None:
         with self.live_client() as client:
             response = client.get("/api/jobs/runtime")
@@ -846,6 +878,55 @@ class DurableJobApiTests(unittest.TestCase):
                 self.ai_mock.assert_not_called()
                 self.remove_mock.assert_not_called()
                 self.network_request.assert_not_called()
+
+    def test_single_detection_failure_falls_back_without_another_vlm_call(self) -> None:
+        self.vlm_mock.side_effect = JobExecutionError(
+            "PRODUCT_DETECTION_FAILED",
+            "Product detection failed before image generation",
+            metadata={
+                "cause_type": "JSONDecodeError",
+                "response": {
+                    "content_type": "str",
+                    "character_count": 18,
+                    "sha256": "a" * 64,
+                    "preview": "不是严格 JSON 的识别结果",
+                },
+            },
+        )
+        with self.live_client() as client:
+            source = self.import_asset(client, "single-vlm-fallback.png", (210, 120, 80))
+            created = self.create_job(client, {
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "parameters": {
+                    "batch": 1,
+                    "model": "gpt-image-2",
+                    "generation_strategy": "single_pass",
+                    "generation_strategy_source": "user",
+                },
+                "max_attempts": 1,
+            })
+            final = self.wait_for_job(created["job"]["id"])
+
+            self.assertEqual(final["status"], "completed")
+            self.assertEqual(self.vlm_mock.call_count, 1)
+            self.assertEqual(self.ai_mock.call_count, 1)
+            fallback_metadata = final["items"][0]["attempts"][0]["metadata"][
+                "recognition_fallback"
+            ]
+            self.assertEqual(fallback_metadata["scope"], "single-product-only")
+            self.assertFalse(fallback_metadata["extra_provider_call"])
+            traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
+            failed_detection = next(item for item in traces if item["stage"] == "vlm.detect")
+            fallback = next(item for item in traces if item["stage"] == "vlm.fallback")
+            self.assertEqual(failed_detection["status"], "failed")
+            self.assertEqual(
+                failed_detection["output"]["diagnostics"]["cause_type"],
+                "JSONDecodeError",
+            )
+            self.assertEqual(fallback["status"], "completed")
+            self.assertFalse(fallback["output"]["extra_provider_call"])
+            self.network_request.assert_not_called()
 
     def test_group_split_rejects_detection_count_mismatch_before_cloud(self) -> None:
         self.vlm_mock.side_effect = lambda *_args, **_kwargs: {

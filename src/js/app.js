@@ -1915,6 +1915,7 @@ function jobFailureCopy(item) {
     INVALID_SOURCE_IMAGE: '源文件已经损坏或不是可读取的图片，重复执行不会修复该文件。',
     UNSUPPORTED_JOB_MODE: '这条历史任务使用了当前版本不支持的工作流，无法继续执行。',
     INVALID_VARIATION_COUNT: '历史任务的方案数量不符合当前规则，需要回到现场重新设置。',
+    PRODUCT_DETECTION_FAILED: '商品识别返回格式异常，尚未开始生图；单独重试后会按参考图主体安全继续。',
     INVALID_PRODUCT_DETECTION: '合照识别结果结构无效，请更换清晰素材后重新建立任务。',
     NO_PRODUCTS_DETECTED: '图片中没有识别到可拆分产品，请更换更清晰的合照。',
     TOO_MANY_PRODUCTS_DETECTED: '图片中的产品数量超过当前安全拆分上限，请分组后重新导入。',
@@ -2054,14 +2055,20 @@ function renderJobs(force = false) {
         const itemProgress = Math.round(itemCompletionProgress(item) * 100);
         const failure = jobFailureCopy(item);
         const canRetryItem = ['failed', 'interrupted'].includes(item.status) && !failure.permanent;
+        const itemProgressCopy = ['failed', 'interrupted', 'canceled'].includes(item.status)
+          ? '已结束'
+          : `完成度 ${itemProgress}%`;
         return `<li class="job-item job-item--${escapeHtml(itemStatus.tone)}">
           <img src="${escapeHtml(assetUrl(source))}" alt="${escapeHtml(source?.name || `任务素材 ${sourceIndex + 1}`)}" loading="lazy" />
-          <span class="job-item__copy"><strong>${escapeHtml(source?.name || `任务素材 ${sourceIndex + 1}`)}</strong><span>${escapeHtml(itemStatus.label)} · 完成度 ${itemProgress}%${failure.permanent ? ' · 永久失败' : ''}</span>${failure.message ? `<small title="${escapeHtml(failure.raw || failure.message)}">${escapeHtml(failure.message)}</small>` : ''}</span>
+          <span class="job-item__copy"><strong>${escapeHtml(source?.name || `任务素材 ${sourceIndex + 1}`)}</strong><span>${escapeHtml(itemStatus.label)} · ${itemProgressCopy}${failure.permanent ? ' · 永久失败' : ''}</span>${failure.message ? `<small title="${escapeHtml(failure.raw || failure.message)}">${escapeHtml(failure.message)}</small>` : ''}</span>
           <span class="job-item__bar"><i style="width:${itemProgress}%"></i></span>
           ${canRetryItem ? `<button type="button" data-job-action="retry-item" data-job-id="${escapeHtml(job.id)}" data-item-id="${escapeHtml(item.id)}" ${jobActionDisabled('retry-item', job.id, item.id) ? 'disabled aria-busy="true"' : ''}>单独重试</button>` : ''}
         </li>`;
       }).join('');
       const issueCount = (job.items || []).filter((item) => ['failed', 'interrupted'].includes(item.status)).length;
+      const progressCopy = ['failed', 'partial', 'interrupted', 'canceled'].includes(job.status)
+        ? '已结束'
+        : `${progress}%`;
       const outcome = status.tone === 'completed'
         ? '成功项目已经锁定，不会因其他项目失败而重复执行。'
         : (issueCount
@@ -2072,7 +2079,7 @@ function renderJobs(force = false) {
       const icon = status.tone === 'completed' ? '✓' : (['partial', 'failed', 'interrupted'].includes(status.tone) ? '!' : '↻');
       return `<article class="job-card job-card--${escapeHtml(status.tone)}" data-job-id="${escapeHtml(job.id)}" tabindex="-1">
         <header><span><i class="job-card__icon">${icon}</i><small>${escapeHtml(MODE_CONFIG[job.mode]?.badge || '创作任务')} · ${escapeHtml(status.label)}</small><strong>${escapeHtml(job.title || MODE_CONFIG[job.mode]?.label || '创作任务')}</strong></span><span class="job-status job-status--${escapeHtml(status.tone)}">${counts.completed}/${counts.total}</span></header>
-        <div class="job-progress"><span><i style="width:${progress}%"></i></span><strong>${progress}%</strong></div>
+        <div class="job-progress"><span><i style="width:${progress}%"></i></span><strong>${progressCopy}</strong></div>
         <div class="job-counts"><span>${counts.total} 项</span><span>${counts.completed} 成功</span><span>${counts.failed} 失败</span><span>${counts.canceled} 取消</span><span>成功率 ${counts.successRate === null ? '—' : `${counts.successRate}%`}</span><time>${escapeHtml(formatTime(job.updated_at || job.created_at))}</time></div>
         <p class="job-outcome"><i></i><span>${escapeHtml(outcome)}</span></p>
         ${items ? `<ul class="job-items ${itemsExpanded ? 'is-expanded' : ''}">${items}</ul>` : ''}

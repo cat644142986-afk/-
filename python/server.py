@@ -1361,6 +1361,88 @@ def ai_i2i(
             except Exception as exc:
                 print(f"[trace] provider evidence callback failed: {exc}", file=sys.stderr, flush=True)
 
+def _vlm_message_text(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"])
+        if parts:
+            return "\n".join(parts)
+    raise TypeError("VLM response content is not text")
+
+
+def _valid_vlm_detection_payload(value):
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("products"), list)
+    )
+
+
+def parse_vlm_detection_content(content):
+    """Parse a product-detection object without requiring byte-perfect JSON output."""
+    text = _vlm_message_text(content).lstrip("\ufeff").strip()
+    if not text:
+        raise json.JSONDecodeError("Empty VLM response", text, 0)
+
+    candidates = [text]
+    candidates.extend(
+        match.group(1).strip()
+        for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE)
+        if match.group(1).strip()
+    )
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        if _valid_vlm_detection_payload(parsed):
+            return parsed
+
+    # Providers occasionally prepend or append prose even when strict JSON was
+    # requested. raw_decode preserves JSON string/escape semantics while safely
+    # extracting the first complete object instead of trimming on the last brace.
+    for candidate in candidates:
+        for match in re.finditer(r"\{", candidate):
+            try:
+                parsed, _end = decoder.raw_decode(candidate, match.start())
+            except json.JSONDecodeError:
+                continue
+            if _valid_vlm_detection_payload(parsed):
+                return parsed
+    raise json.JSONDecodeError(
+        "No valid product-detection JSON object found", text, 0
+    )
+
+
+def _vlm_response_diagnostics(content):
+    try:
+        text = _vlm_message_text(content)
+    except Exception:
+        text = repr(content)
+    preview = re.sub(r"\s+", " ", text).strip()
+    preview = re.sub(
+        r"data:image/[^;\s]+;base64,[A-Za-z0-9+/=_-]+",
+        "[redacted-image-data]",
+        preview,
+        flags=re.IGNORECASE,
+    )
+    preview = re.sub(
+        r"[A-Za-z0-9+/=_-]{160,}", "[redacted-long-token]", preview
+    )
+    return {
+        "content_type": type(content).__name__,
+        "character_count": len(text),
+        "sha256": hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest(),
+        "preview": preview[:240],
+    }
+
+
 def vlm_detect_products(image_path, tid_ref="?"):
     img_url = image_to_data_url(image_path)
     prompt = ("请分析这张图片，识别图中所有产品（食品/商品），以严格JSON格式返回结果。\n"
@@ -1372,24 +1454,23 @@ def vlm_detect_products(image_path, tid_ref="?"):
     body = {"model": "gemini-3.5-flash", "messages": [{"role": "user", "content": [
         {"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": img_url}}]}],
         "max_tokens": 2048, "temperature": 0.1}
+    response_content = None
     try:
         resp = api_request("POST", "/v1/chat/completions", body=body, timeout=60)
-        text = resp["choices"][0]["message"]["content"].strip()
-        if text.startswith("```json"): text = text[7:]
-        if text.startswith("```"): text = text[3:]
-        if text.endswith("```"): text = text[:-3]
-        return json.loads(text.strip())
+        response_content = resp["choices"][0]["message"]["content"]
+        return parse_vlm_detection_content(response_content)
     except Exception as exc:
-        # A group-shot detection failure must never masquerade as one product
-        # covering the whole frame: doing so would trigger paid generation for
-        # a result that violates the requested workflow. Single-product jobs
-        # also fail before spending image-generation quota when recognition is
-        # unavailable and no explicit product name was supplied.
+        # Keep one stable failure code and safe diagnostics. Group-shot callers
+        # fail closed before paid generation; the durable single-product caller
+        # may explicitly record a neutral, no-extra-recognition fallback.
         log_msg(tid_ref, f"VLM检测失败: {type(exc).__name__}")
+        metadata = {"cause_type": type(exc).__name__}
+        if response_content is not None:
+            metadata["response"] = _vlm_response_diagnostics(response_content)
         raise JobExecutionError(
             "PRODUCT_DETECTION_FAILED",
             "Product detection failed before image generation",
-            metadata={"cause_type": type(exc).__name__},
+            metadata=metadata,
         ) from exc
 
 def fidelity_suffix(fidelity):
@@ -4740,6 +4821,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             with ctx.resource("vlm"):
                 detection = vlm_detect_products(str(source_asset["path"]), str(ctx.job_id))
         except Exception as exc:
+            detection_diagnostics = dict(getattr(exc, "metadata", {}) or {})
             _record_execution_trace_safe(
                 trace,
                 "vlm.detect",
@@ -4748,31 +4830,53 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
                 output={
                     "elapsed_ms": round((time.perf_counter() - vlm_started) * 1000, 3),
                     "billing": unavailable_billing_evidence(),
+                    "diagnostics": detection_diagnostics,
                 },
                 error_code=str(getattr(exc, "code", "VLM_DETECTION_FAILED")),
                 error_message=str(exc) or type(exc).__name__,
             )
-            raise
-        _record_execution_trace_safe(
-            trace,
-            "vlm.detect",
-            "completed",
-            parameters={"model": "gemini-3.5-flash", "purpose": "product-detection"},
-            output={
-                "detected_products": len(detection.get("products") or []),
-                "elapsed_ms": round((time.perf_counter() - vlm_started) * 1000, 3),
-                "billing": unavailable_billing_evidence(),
-            },
-        )
-        products = detection.get("products") or []
-        if products:
-            product = products[0]
-            product_name = str(product.get("name") or "产品")
-            product_type = str(product.get("ptype") or "food")
-            if product_type == "packaging":
-                platter = "remove"
+            can_fallback = (
+                mode == "single"
+                and str(getattr(exc, "code", "")) == "PRODUCT_DETECTION_FAILED"
+            )
+            if not can_fallback:
+                raise
+            product_name = "参考图中的主要产品"
+            product_type = "unknown"
+            fallback_evidence = {
+                "reason": "product-detection-unavailable",
+                "scope": "single-product-only",
+                "product_name": product_name,
+                "extra_provider_call": False,
+            }
+            ctx.record_metadata({"recognition_fallback": fallback_evidence})
+            _record_execution_trace_safe(
+                trace,
+                "vlm.fallback",
+                "completed",
+                output=fallback_evidence,
+            )
         else:
-            product_name = "产品"
+            _record_execution_trace_safe(
+                trace,
+                "vlm.detect",
+                "completed",
+                parameters={"model": "gemini-3.5-flash", "purpose": "product-detection"},
+                output={
+                    "detected_products": len(detection.get("products") or []),
+                    "elapsed_ms": round((time.perf_counter() - vlm_started) * 1000, 3),
+                    "billing": unavailable_billing_evidence(),
+                },
+            )
+            products = detection.get("products") or []
+            if products:
+                product = products[0]
+                product_name = str(product.get("name") or "产品")
+                product_type = str(product.get("ptype") or "food")
+                if product_type == "packaging":
+                    platter = "remove"
+            else:
+                product_name = "产品"
     else:
         _record_execution_trace_safe(
             trace,
@@ -5157,6 +5261,7 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
         # image call. A late malformed product must not waste earlier calls.
         products = _validated_group_products(detection)
     except Exception as exc:
+        detection_diagnostics = dict(getattr(exc, "metadata", {}) or {})
         _record_execution_trace_safe(
             trace,
             "vlm.detect",
@@ -5165,6 +5270,7 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             output={
                 "elapsed_ms": round((time.perf_counter() - vlm_started) * 1000, 3),
                 "billing": unavailable_billing_evidence(),
+                "diagnostics": detection_diagnostics,
             },
             error_code=str(getattr(exc, "code", "VLM_DETECTION_FAILED")),
             error_message=str(exc) or type(exc).__name__,

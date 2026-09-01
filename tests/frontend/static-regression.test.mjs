@@ -147,7 +147,8 @@ test('durable job polling has timeout, cancellation, stale-response guard, and s
   assert.doesNotMatch(app, /state\.generating/);
   assert.match(html, /QUEUE COMPLETION/);
   assert.match(app, /成功率/);
-  assert.match(app, /完成度 \$\{itemProgress\}%/);
+  assert.match(app, /const itemProgressCopy = \['failed', 'interrupted', 'canceled'\]\.includes\(item\.status\)/);
+  assert.match(app, /const progressCopy = \['failed', 'partial', 'interrupted', 'canceled'\]\.includes\(job\.status\)/);
   assert.match(app, /queueCompletionProgress\(progressScope\)/);
 });
 
@@ -308,6 +309,7 @@ test('production sessions, task center, and result review use the approved infor
   assert.match(app, /function renderSessionsDashboard\(\)/);
   assert.match(app, /async function openSessionFromHistory\(sessionId\)/);
   assert.match(app, /function jobFailureCopy\(item\)/);
+  assert.match(app, /PRODUCT_DETECTION_FAILED: '商品识别返回格式异常，尚未开始生图/);
   assert.match(app, /PERMANENT_JOB_ERRORS/);
   assert.match(app, /API\.getJobRuntime/);
   assert.match(api, /export async function getJobRuntime/);
