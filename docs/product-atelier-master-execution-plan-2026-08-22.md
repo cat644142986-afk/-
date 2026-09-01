@@ -1618,6 +1618,15 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 正式进程和 sidecar 均来自 `release/ProductAtelier-Portable`，`/api/health` 实测为 `status=ok`、manifest `ok`、contract `2026-09-02.2`、schema v5 且 Git commit 精确匹配。冷启动不再出现“读取设置失败”假错误；商品档案窗口再次在不保存数据的前提下完整加载，SKU 获得可见初始焦点，Esc 关闭后焦点回到“管理”。G2 至此正式关闭。
 - 下一执行游标：进入 G3，先冻结 ROI、Mask、局部编辑、扩图、失败恢复、版本血缘、费用确认和像素保护合同，再为严格模式选区外像素差异、撤销指纹、失败不污染原版本和扩图写入边界建立失败测试。当前仍不下载模型、不调用付费 API，不读取正式账本或用户图片。
 
+### 2026-09-02 G3 ROI / Mask 严格像素保护合同检查点
+
+- 新增 `local-edit-contract-v1` 纯本地安全内核。局部编辑合同冻结 `canvas_version_id + layer_id + source_sha256 + source_size + ROI + Mask SHA-256 + cost`；同尺寸但不同像素的旧版本会在合成前以 `LOCAL_EDIT_SOURCE_FINGERPRINT_MISMATCH` 拒绝，不能把候选结果落到错误画布版本。
+- inpaint 的 ROI 使用原图像素坐标，Mask 必须与原图同尺寸、绑定同一 ROI 且所有非零像素位于 ROI 内；最终结果只通过本地 Mask 合成候选图，逐像素审计 `outside_mask_changed_pixels=0`，源图对象保持不变，回执同时记录 source / candidate / mask / output / undo 指纹。
+- outpaint 的 ROI 使用输出像素坐标；本地合成器先把原图放入更大透明画布，再只允许候选写入 ROI 内的新增区域和显式 `transition_width` 过渡带。过渡带为 0 时原图 100% 锁定；非零时仍逐像素验证 `protected_changed_pixels=0`，扩图失败不修改源图。
+- 费用合同区分 `free / paid`。付费局部编辑必须在执行前冻结并确认调用次数；`automatic_paid_retry` 只允许为 `false`，任何失败都不会自动追加付费调用。未知字段、越界 ROI、越界 Mask、空 Mask、尺寸不符、指纹不符和无新增区域的伪扩图均 fail-closed。
+- 8 项新增专项测试先因实现不存在失败，再在实现后通过；连同旧画布与命令专项共 17/17。全量 Python 318 项通过、1 项平台预期跳过，前端 148/148；新增模块在弃用警告视为错误的模式下也通过。测试只使用内存合成像素，不读取正式账本、用户图片、Prompt 或 Key，不调用网络、模型或付费 API。
+- 当前只完成合同和像素安全内核，尚未接入 schema、sidecar API、Studio 画布或正式包，不能误报为用户可见的局部编辑。下一执行游标：设计并先用失败测试冻结 schema v6 的不可变 ROI、Mask 版本和 LocalEditSpec，要求请求幂等、版本绑定、历史不可改写、素材引用保护及 v5→v6 可恢复迁移；随后再接本地 API 和画布手动选区。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：
