@@ -1492,6 +1492,13 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 发布事务 `b31597b04440486683411cafa66782c7` 已 `finalized`；上一正式版完整备份为 `D:\ProductAtelier-Backups\release-before-20260901-184511-4e67e1b75062`，promotion evidence SHA-256 为 `4A353A324A9AAFB84C9E01A746BFEFAEFA25B9CDD88DF592A078AA02759DA60B`。候选与正式目录的 sidecar、动态端口、manifest、schema v3 和隔离账本 smoke 均通过；桌面快捷方式已指向正式 EXE，新正式软件正在运行。
 - 下一执行游标：继续拆分 Result Review 的低耦合展示/交互边界，先保持现有评审、对比、立即修改和反馈语义逐字不变，再用现有回归锁定主编排文件不保留第二套逻辑。
 
+### 2026-09-01 G0 Result Review 控制器源码检查点
+
+- 新增 `studio-review.js`，将反馈按钮/回执状态、按结果版本恢复评审、评审原因标签、决策表单和已评审摘要移出主编排文件。`app.js` 只通过 `reviewController` 准备与渲染评审界面，从 4487 行降为 4364 行，不保留第二套六个旧函数。
+- 评审提交、“立即修改本张”派生任务、A/B 对比、workspace 持久化、SQLite/API 合同和中文产品文案保持不变。新增决策摘要纯函数单测，静态回归锁定主文件只调用控制器。
+- 源码提交 `c50e85375c3d92dc7dab2e10f9212788926c837a` 完成。门禁为前端 124/124、Python 269 项（268 通过、1 项平台预期跳过）、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall 和 Git whitespace 全绿。
+- 本检查点未读取用户图片、Prompt、SQLite 或 API Key，未连接付费供应商、调用生图或触发自动重做。下一步按 candidate-first Windows 发布链提升该检查点，再审计 knowledge 或 compare 的下一个低耦合边界。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：
