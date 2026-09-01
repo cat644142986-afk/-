@@ -16,7 +16,6 @@ import {
   selectionForRestoredResult,
   submissionFingerprint,
 } from './workspace-state.js';
-import { memoryProjectionState } from './memory-projection.js';
 import {
   memoryGovernancePresentation,
   memorySuggestionsForFilter,
@@ -56,6 +55,7 @@ import {
 } from './studio-jobs.js';
 import { createSettingsController } from './studio-settings.js';
 import { createWorkflowDockController } from './studio-shell.js';
+import { createMemoryProjectionController } from './studio-memory.js';
 import { createSessionsController, formatStudioTime } from './studio-sessions.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 import { statusPanelHtml } from './status-view.js';
@@ -146,6 +146,14 @@ const sessionsController = createSessionsController({
   formatApiError,
   statusPanelHtml,
   escapeHtml,
+});
+const memoryProjectionController = createMemoryProjectionController({
+  state,
+  query: $,
+  queryAll: $$,
+  getResultItems,
+  toast,
+  windowRef: window,
 });
 window.ProductAtelier = { state };
 
@@ -3637,110 +3645,6 @@ function setupCompare() {
   view.addEventListener('pointercancel', endPan);
 }
 
-function selectMemoryNode(node) {
-  if (!node) return;
-  $$('[data-memory-node]').forEach((item) => item.classList.toggle('is-selected', item === node));
-  const caption = $('#memory-dna-caption');
-  $('strong', caption).textContent = node.dataset.memoryNode || '设计判断';
-  $('small', caption).textContent = node.dataset.memoryDetail || '所有关系都来自真实账本和唯一知识库。';
-}
-
-function replayMemoryMotion() {
-  const panel = $('#memory-dna-panel');
-  const trace = $('#memory-trace');
-  [panel, trace].forEach((element) => {
-    element.classList.remove('is-replaying');
-    void element.offsetWidth;
-    element.classList.add('is-replaying');
-  });
-  window.setTimeout(() => {
-    panel.classList.remove('is-replaying');
-    trace.classList.remove('is-replaying');
-  }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 900);
-  toast('正在回放：正式知识 → 创作现场 → 终稿反馈 → 待审核建议', 'success');
-}
-
-function renderMemoryProjection(ledger, suggestions, knowledgeStatus) {
-  const counts = ledger.counts || {};
-  const sessions = Number(counts.sessions || 0);
-  const feedback = Number(counts.feedback || 0);
-  const pending = Number(ledger.pending_memory || suggestions.length || 0);
-  const documents = Number(knowledgeStatus?.document_count || 0);
-  const knowledgeRules = Number(knowledgeStatus?.rule_count || 0);
-  const bundle = state.knowledgeBundle || {};
-  const currentItem = getResultItems()[state.viewerIndex] || null;
-  const currentProjection = memoryProjectionState({
-    currentTaskId: state.currentTaskId,
-    knowledgeBundle: bundle,
-    reviews: state.resultReviews,
-    resultAssetId: currentItem?.asset_id || '',
-  });
-  const sources = Array.isArray(bundle.sources) ? bundle.sources : [];
-  const executionRules = (Array.isArray(bundle.positive_rules) ? bundle.positive_rules.length : 0)
-    + (Array.isArray(bundle.negative_rules) ? bundle.negative_rules.length : 0);
-  const brief = bundle.creative_brief || {};
-  const intent = brief.objective || brief.user_request || $('#brief-input').value.trim();
-  const memorySources = sources.filter((source) => source.relative_path === '记忆反馈/已批准');
-  const appliedRuleTexts = [
-    ...(Array.isArray(bundle.positive_rules) ? bundle.positive_rules : []).map((rule) => rule.text || rule),
-    ...(Array.isArray(bundle.negative_rules) ? bundle.negative_rules : []).map((rule) => rule.text || rule),
-    ...(Array.isArray(bundle.intent_lock_rules) ? bundle.intent_lock_rules : []),
-  ].filter(Boolean);
-
-  $('#memory-session-count').textContent = sessions;
-  $('#memory-feedback-count').textContent = feedback;
-  $('#memory-pending-count').textContent = pending;
-  const pendingNode = $('[data-memory-node="待审核建议"]');
-  pendingNode?.classList.toggle('memory-dna-node--pending', pending > 0);
-  $('#memory-rule-count').textContent = knowledgeStatus?.available === false
-    ? '主库暂不可用'
-    : `${documents} 份文档 · ${knowledgeRules} 条规则`;
-  $('#memory-core-summary').textContent = `${documents} 份正式知识 · ${sessions} 个现场`;
-  $('#memory-trace-title').textContent = currentProjection.title;
-  $('#btn-open-memory-trace').disabled = !currentProjection.hasTask;
-  $('#memory-trace-intent').textContent = currentProjection.hasTask
-    ? intent || '当前任务尚未输入创作目标'
-    : '当前未选择任务；全局现场数量不会被伪装成当前步骤';
-  $('#memory-trace-knowledge').textContent = currentProjection.hasTask
-    ? sources.length
-      ? memorySources.length
-        ? `本次引用 ${sources.length} 份依据，其中 ${memorySources.length} 条是你已批准的反馈`
-        : `本次引用 ${sources.length} 份正式知识`
-      : '当前任务尚未编译知识来源'
-    : `${documents} 份正式知识可用；选择任务后显示实际引用`;
-  $('#memory-trace-rules').textContent = currentProjection.hasTask
-    ? executionRules
-      ? `已应用 ${executionRules} 条可检查执行规则：${appliedRuleTexts.slice(0, 3).join('；')}${appliedRuleTexts.length > 3 ? '…' : ''}`
-      : '只采用已批准规则，不使用待审核建议'
-    : '未选择任务，不展示最后一次前端知识包';
-  $('#memory-trace-feedback-title').textContent = currentProjection.hasTask
-    ? currentProjection.title
-    : '当前未选择任务';
-  $('#memory-trace-feedback').textContent = currentProjection.detail;
-
-  const traceSteps = $$('#memory-trace li');
-  if (!currentProjection.hasTask) {
-    traceSteps.forEach((step) => step.classList.remove('is-complete', 'is-current'));
-  } else {
-    const done = [Boolean(intent), sources.length > 0, executionRules > 0, currentProjection.reviewed];
-    const currentIndex = done.findIndex((value) => !value);
-    traceSteps.forEach((step, index) => {
-      step.classList.toggle('is-complete', done[index]);
-      step.classList.toggle('is-current', currentIndex === index);
-    });
-  }
-
-  const details = {
-    设计判断: `${documents} 份正式知识、${sessions} 个创作现场和 ${feedback} 条反馈共同构成当前投影。`,
-    正式知识: `唯一主库当前只读加载 ${documents} 份文档、${knowledgeRules} 条规则；正式页面不会被后台修改。`,
-    创作现场: `${sessions} 个会话保留各自素材、参数、知识引用与结果版本。`,
-    终稿反馈: `${feedback} 条有效反馈作为学习证据，不会直接覆盖正式知识。`,
-    待审核建议: `${pending} 条建议等待人工确认；未批准前不参与未来生成。`,
-  };
-  $$('[data-memory-node]').forEach((node) => { node.dataset.memoryDetail = details[node.dataset.memoryNode] || ''; });
-  selectMemoryNode($('.memory-dna-node.is-selected') || $('[data-memory-node]'));
-}
-
 async function openMemorySourceResult(source, button) {
   if (!source?.job_id || !source?.result_asset_id || button?.disabled) return;
   if (button) {
@@ -3795,7 +3699,9 @@ function updateMemoryFilterControls() {
   pendingNode?.classList.toggle('memory-dna-node--pending', counts.pending > 0);
   if (pendingNode) {
     pendingNode.dataset.memoryDetail = `${counts.pending} 条建议等待人工确认；未批准前不参与未来生成。`;
-    if (pendingNode.classList.contains('is-selected')) selectMemoryNode(pendingNode);
+    if (pendingNode.classList.contains('is-selected')) {
+      memoryProjectionController.selectNode(pendingNode);
+    }
   }
 }
 
@@ -4030,7 +3936,7 @@ async function loadMemory(targetSuggestionId = state.memoryTargetSuggestionId) {
     state.memorySuggestions = suggestions;
     state.knowledgeStatus = knowledgeStatus;
     const pendingSuggestions = suggestions.filter((item) => item.status === 'pending');
-    renderMemoryProjection(ledger, pendingSuggestions, knowledgeStatus);
+    memoryProjectionController.render(ledger, pendingSuggestions, knowledgeStatus);
     renderMemoryQueue(targetId);
     state.memoryTargetSuggestionId = '';
   } catch (error) {
@@ -4457,8 +4363,7 @@ function bindEvents() {
     else if (state.backendReady) loadWorkspace(state.currentMode, false);
     else connectBackend();
   });
-  $('#btn-replay-memory').addEventListener('click', replayMemoryMotion);
-  $$('[data-memory-node]').forEach((node) => node.addEventListener('click', () => selectMemoryNode(node)));
+  memoryProjectionController.bind();
   $('#btn-open-memory-evidence').addEventListener('click', () => openDrawer('intelligence'));
   $('#btn-open-memory-trace').addEventListener('click', () => openDrawer('intelligence'));
   assetManager.bind();

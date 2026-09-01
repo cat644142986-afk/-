@@ -5,12 +5,13 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, assets, config, jobs, sessions, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
+const [app, api, assets, config, jobs, memory, sessions, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-config.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-jobs.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-memory.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-sessions.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-settings.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-shell.js'), 'utf8'),
@@ -257,10 +258,14 @@ test('growth page projects real knowledge, evidence, review, and motion without 
   assert.match(html, /id="memory-trace"/);
   assert.match(html, /正式知识、创作现场与终稿反馈各自保留来源/);
   assert.doesNotMatch(html, /牛油果|AVOCADO/);
-  assert.match(app, /function renderMemoryProjection\(ledger, suggestions, knowledgeStatus\)/);
+  assert.match(app, /createMemoryProjectionController/);
+  assert.match(app, /memoryProjectionController\.render\(ledger, pendingSuggestions, knowledgeStatus\)/);
+  assert.match(app, /memoryProjectionController\.bind\(\)/);
+  assert.doesNotMatch(app, /function (selectMemoryNode|replayMemoryMotion|renderMemoryProjection)/);
+  assert.match(memory, /function render\(ledger, suggestions, knowledgeStatus\)/);
   assert.match(app, /API\.getKnowledgeStatus\(\)/);
-  assert.match(app, /function replayMemoryMotion\(\)/);
-  assert.match(app, /未批准前不参与未来生成/);
+  assert.match(memory, /function replayMotion\(\)/);
+  assert.match(memory, /未批准前不参与未来生成/);
   assert.match(html, /id="btn-feedback-suggestion"[^>]*hidden/);
   assert.match(api, /export async function getMemorySuggestion\(id\)/);
   assert.match(app, /function openMemorySuggestion\(suggestionId\)/);
@@ -477,11 +482,11 @@ test('real workflow controls share the dark production dock without stretching e
 test('approved feedback is shown as an applied rule, not only a count', () => {
   assert.match(html, /id="memory-trace-knowledge"/);
   assert.match(html, /id="memory-trace-rules"/);
-  assert.match(app, /记忆反馈\/已批准/);
-  assert.match(app, /appliedRuleTexts/);
-  assert.match(app, /positive_rules[\s\S]*?negative_rules[\s\S]*?intent_lock_rules/);
-  assert.match(app, /其中 \$\{memorySources\.length\} 条是你已批准的反馈/);
-  assert.match(app, /已应用 \$\{executionRules\} 条可检查执行规则/);
+  assert.match(memory, /记忆反馈\/已批准/);
+  assert.match(memory, /appliedRuleTexts/);
+  assert.match(memory, /positive_rules[\s\S]*?negative_rules[\s\S]*?intent_lock_rules/);
+  assert.match(memory, /其中 \$\{memorySources\.length\} 条是你已批准的反馈/);
+  assert.match(memory, /已应用 \$\{executionRules\} 条可检查执行规则/);
 });
 
 test('knowledge suggestions expose durable governance instead of one-way approval', () => {
