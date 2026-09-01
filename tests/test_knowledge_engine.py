@@ -48,7 +48,8 @@ class KnowledgeMemoryContractTests(unittest.TestCase):
                     "严格保持产品数量",
                     "严格保持主体结构",
                     "严格保持品牌色",
-                    "第六条应被预算裁剪",
+                    "严格保持原图拍摄角度、透视与产品朝向",
+                    "第七条应被预算裁剪",
                 ],
                 "positive_rules": [
                     {"text": "保留器皿并优化摆盘", "source": source},
@@ -78,7 +79,13 @@ class KnowledgeMemoryContractTests(unittest.TestCase):
                 )
 
             self.assertNotIn("保留器皿并优化摆盘", result["prompt"])
-            self.assertLessEqual(len(result["intent_lock_rules"]), 5)
+            self.assertEqual(len(result["intent_lock_rules"]), 6)
+            self.assertTrue(any(
+                "产品数量不变" in item for item in result["intent_lock_rules"]
+            ))
+            self.assertLessEqual(
+                sum(len(item) for item in result["intent_lock_rules"]), 160
+            )
             self.assertLessEqual(len(result["positive_rules"]), 3)
             self.assertLessEqual(len(result["negative_rules"]), 1)
             self.assertIn("包装文字数字或品牌标志错误", result["negative_prompt"])

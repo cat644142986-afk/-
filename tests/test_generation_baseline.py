@@ -16,6 +16,7 @@ from python.generation_baseline import (
     normalize_prompt_version,
     prompt_adapter_profile,
     prompt_snapshot,
+    prompt_v3_render_plan,
     summarize_trace_timings,
     unavailable_billing_evidence,
 )
@@ -72,6 +73,8 @@ class GenerationBaselineTests(unittest.TestCase):
             "angle": "front",
             "fidelity": 20,
             "source_cutoff": True,
+            "quantity": 3,
+            "user_request": "保留茶盒正面的金色文字，只优化背景光线",
             "output_spec": {
                 "effective_ratio": "4:5",
                 "requested_resolution": "2k",
@@ -102,9 +105,20 @@ class GenerationBaselineTests(unittest.TestCase):
             "gemini-image-compact-v1",
         )
         self.assertIn("4:5", gpt)
+        self.assertIn("2k", gpt)
+        self.assertIn("产品数量严格保持为3", gpt)
+        self.assertIn("保留茶盒正面的金色文字，只优化背景光线", gpt)
         self.assertIn("补全原图被裁切的主体边缘", gpt)
-        self.assertLess(len(gpt), 420)
+        self.assertLess(len(gpt), 520)
         self.assertNotEqual(gpt, gemini)
+
+        plan = prompt_v3_render_plan(
+            context={**context, "model": "gpt-image-2"},
+            stage="refine-1",
+        )
+        self.assertEqual(plan["product_count"], 3)
+        self.assertIn(context["user_request"], plan["objective"])
+        self.assertEqual(plan["output_bits"], ["ecommerce-main", "4:5", "2k"])
 
         adjustment = compile_prompt_version(
             template,

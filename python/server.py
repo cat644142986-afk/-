@@ -36,6 +36,7 @@ try:
         GENERATION_TRACE_CONTRACT_VERSION,
         LEGACY_DOUBLE_PASS,
         PROMPT_COMPILER_VERSION,
+        PROMPT_V3_RENDER_PLAN_VERSION,
         PROMPT_V2_FEATURE_ENV,
         PROMPT_V3_FEATURE_ENV,
         SINGLE_PASS,
@@ -101,6 +102,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         GENERATION_TRACE_CONTRACT_VERSION,
         LEGACY_DOUBLE_PASS,
         PROMPT_COMPILER_VERSION,
+        PROMPT_V3_RENDER_PLAN_VERSION,
         PROMPT_V2_FEATURE_ENV,
         PROMPT_V3_FEATURE_ENV,
         SINGLE_PASS,
@@ -4216,6 +4218,11 @@ def _record_job_prompt(
                 if prompt_version == "prompt_v3"
                 else "legacy-template"
             ),
+            "prompt_render_plan_version": (
+                PROMPT_V3_RENDER_PLAN_VERSION
+                if prompt_version == "prompt_v3"
+                else "legacy-template"
+            ),
             "template_prompt": template_prompt,
             "base_prompt": base_prompt,
             "negative_prompt": negative_prompt,
@@ -4812,6 +4819,19 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
     )
     product_name = str(params.get("product_name") or "").strip()
     product_type = "food"
+    brief = params.get("brief") if isinstance(params.get("brief"), dict) else {}
+    raw_product_count = (
+        params.get("product_count")
+        or params.get("quantity")
+        or brief.get("product_count")
+        or brief.get("quantity")
+    )
+    try:
+        product_count = int(raw_product_count)
+        if product_count < 1 or product_count > 24:
+            product_count = None
+    except (TypeError, ValueError):
+        product_count = None
     if mode == "multi-file" and not product_name:
         product_name = safe_stem(source_asset.get("name", ""), "产品")
     if not product_name:
@@ -4870,6 +4890,12 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             )
             products = detection.get("products") or []
             if products:
+                try:
+                    detected_count = int(detection.get("count") or len(products))
+                except (TypeError, ValueError):
+                    detected_count = len(products)
+                if 1 <= detected_count <= 24:
+                    product_count = detected_count
                 product = products[0]
                 product_name = str(product.get("name") or "产品")
                 product_type = str(product.get("ptype") or "food")
@@ -4904,6 +4930,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             angle=angle,
             fidelity=fidelity,
             product_name=product_name,
+            product_count=product_count,
             output_spec=output_spec,
         )
         template_stage1_prompt = make_prompt(
@@ -5027,6 +5054,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
         ))
     return outputs, {
         "product_name": product_name,
+        "product_count": product_count,
         "variation_count": batch,
         "generation_strategy": generation_strategy,
         "paid_image_stages": 2 if do_refine else 1,
@@ -5343,6 +5371,7 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
             angle=angle,
             fidelity=fidelity,
             product_name=name,
+            product_count=1,
             source_cutoff=cutoff,
             output_spec=output_spec,
         )

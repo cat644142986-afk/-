@@ -42,7 +42,7 @@ trace 合同因此升级为 `generation-baseline-2026-08-31.1`。本节记录的
 后续只读审计确认，当前已记录 Prompt 阶段的正向文本为 655–799 个字符、负向文本为 303–371 个字符，并且普通单产品/多文件会无条件执行两次完整云端生成。这里的核心风险不是“超过上下文”，而是硬约束被重复软要求稀释，以及第二次完整生成再次解释正确主体。旧 `prompt_v2` 会继续携带原模板，因此不再作为“缩短 Prompt”的主候选。
 
 - `prompt_v3` 不携带旧词堆，按模型档案生成紧凑 Render Plan；原模板仍单独冻结到 trace，确保对照可复现。
-- 知识注入限制为最多 5 个意图锁、3 条正向知识、1 条负向知识，并有字符预算、冲突裁剪和 ignored evidence。
+- 知识注入限制为最多 6 个意图锁、3 条正向知识、1 条负向知识；意图锁、正向知识和负向知识的字符预算分别为 160/120/80，并有冲突裁剪和 ignored evidence。
 - 包装文字与 Logo 被锁定时，负向词明确禁止“文字数字或标志错误”，不再同时发送笼统“文字、logo”。
 - `single_pass` 与 Prompt 版本分离；v1/v3、单/双阶段可以分别做单变量实验。
 - `PRODUCT_ATELIER_ENABLE_PROMPT_V3` 继续默认关闭；未标记的单次/实验任务仍受 `PRODUCT_ATELIER_ENABLE_SINGLE_PASS` 保护。经过盲评后，只有用户从界面显式选择的 `single_pass` 可以绕过实验门禁，且来源固定写为 `generation_strategy_source=user`，默认仍是 v1/双阶段。
@@ -51,6 +51,20 @@ trace 合同因此升级为 `generation-baseline-2026-08-31.1`。本节记录的
 trace 合同由此升级为 `generation-baseline-2026-08-31.2`。候选本身不代表真实出图更好；后续付费对照和两轮盲评只授权了显式速度选项，没有授权更改正式默认。
 
 离线回归结果为 Python 共运行 240 项（239 通过、1 项平台预期跳过）、前端 115/115、Vite production build 与 Rust/Tauri locked check 全绿。门禁关闭的候选在 provider 调用前失败；测试门禁开启的单次策略只产生 1 次图片调用，并把跳过精修及零适用账单写入 trace。整个验证过程未连接供应商。
+
+## Prompt v3 Render Plan 离线收口（2026-09-01）
+
+逐路径复核发现，旧 `prompt_v3` 在普通首轮和精修阶段没有把用户本次创作要求写回紧凑 Prompt；这会让“缩短 Prompt”退化成静默丢失用户意图。该缺口现已关闭，并建立可单独检查的 `prompt-v3-render-plan-2026-09-01.1`：
+
+- 用户本次要求在首轮和精修阶段均为最高优先级，不再因切换到 `prompt_v3` 丢失；调整任务继续只修改用户点名的问题。
+- 用户填写或 VLM 返回的产品数量会进入不可破坏约束；合照拆分后的单产品裁切固定数量为 1，避免把整组合照数量误带进单个裁切。
+- 输出规格同时识别 `requested_resolution`、`resolution` 和 `size`；比例与 2K/4K 信息不会因快照字段形状不同消失。
+- 六类意图锁全部保留并做等义短写，正向知识预算从 180 字收紧到 120 字；自动知识可以裁剪，用户明确意图和产品数量不能静默裁剪。
+- 每条 `prompt_v3` trace 新增 `prompt_render_plan_version`，可精确追溯生成时使用的结构化计划版本。
+
+新增只读工具 `tools/audit_prompt_v3.py`。它不打开图片、不读取 API Key、不连接供应商，报告不包含原 Prompt、原用户要求或原任务 ID，只保存约束检查、长度和 SHA-256。对 9 个冻结质量输入和本机账本中 9 个历史任务元数据回放均为 9/9 通过；首轮/精修 Prompt 最大长度为 362/364 字，扣除用户原始要求后的自动内容最大为 281/283 字，低于 460 字门槛。忽略目录中的本地报告为 `build/prompt-v3-offline-audit-2026-09-01.json`，SHA-256 为 `97F664F4363164F27DBD52A5B98AEA419380B850728B25C8A445741A67ECF302`。
+
+本检查点全量门禁为 Python 255 项（254 通过、1 项平台预期跳过）、前端 116/116、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall 和 Git whitespace 全绿。整个过程为零付费调用。结论只到“候选已具备付费小样资格”，不等于 `prompt_v3` 已证明比 `prompt_v1` 出图更好；`prompt_v3` 继续默认关闭，正式默认仍为 `prompt_v1 + legacy_double_pass`。
 
 ## 本地质量检查 trace（2026-08-31）
 

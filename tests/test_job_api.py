@@ -565,6 +565,10 @@ class DurableJobApiTests(unittest.TestCase):
                         "angle": "front",
                         "output_ratio": "4:5",
                         "output_resolution": "2k",
+                        "brief": {
+                            "user_request": "保留茶盒正面的金色文字，只优化背景光线",
+                            "quantity": 3,
+                        },
                         "prompt_version": "prompt_v3",
                         "generation_strategy": "single_pass",
                     },
@@ -608,15 +612,73 @@ class DurableJobApiTests(unittest.TestCase):
                 primary = next(item for item in traces if item["stage"] == "prompt.primary")
                 self.assertIn("未点名的主体内容保持不变", primary["parameters"]["base_prompt"])
                 self.assertNotIn("8K超清", primary["parameters"]["base_prompt"])
+                self.assertIn(
+                    "保留茶盒正面的金色文字，只优化背景光线",
+                    primary["parameters"]["base_prompt"],
+                )
+                self.assertIn(
+                    "产品数量严格保持为3",
+                    primary["parameters"]["base_prompt"],
+                )
                 self.assertIn("8K超清", primary["parameters"]["template_prompt"])
                 self.assertEqual(
                     primary["parameters"]["prompt_adapter_profile"],
                     "gpt-image-2-compact-v1",
                 )
                 self.assertEqual(
+                    primary["parameters"]["prompt_render_plan_version"],
+                    server.PROMPT_V3_RENDER_PLAN_VERSION,
+                )
+                self.assertEqual(
                     primary["output"]["prompt_snapshot"]["prompt_version"],
                     "prompt_v3",
                 )
+                self.network_request.assert_not_called()
+
+    def test_prompt_v3_freezes_the_detected_product_count(self) -> None:
+        self.vlm_products = [
+            {
+                "bbox": [index * 300, 0, min(1000, (index + 1) * 300), 1000],
+                "name": "组合装饮料",
+                "ptype": "packaging",
+                "has_container": False,
+                "cutoff": False,
+                "angle_hint": "front",
+            }
+            for index in range(3)
+        ]
+        with mock.patch.dict(
+            os.environ,
+            {
+                server.PROMPT_V3_FEATURE_ENV: "1",
+                server.SINGLE_PASS_FEATURE_ENV: "1",
+            },
+            clear=False,
+        ):
+            with self.live_client() as client:
+                source = self.import_asset(client, "three-products.png", (90, 150, 210))
+                created = self.create_job(client, {
+                    "mode": "single",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "batch": 1,
+                        "model": "gpt-image-2",
+                        "prompt_version": "prompt_v3",
+                        "generation_strategy": "single_pass",
+                    },
+                })
+                final = self.wait_for_job(created["job"]["id"])
+
+                self.assertEqual(final["status"], "completed")
+                self.assertEqual(
+                    final["items"][0]["attempts"][0]["metadata"]["product_count"],
+                    3,
+                )
+                traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
+                primary = next(item for item in traces if item["stage"] == "prompt.primary")
+                self.assertIn("产品数量严格保持为3", primary["parameters"]["base_prompt"])
+                self.assertEqual(self.vlm_mock.call_count, 1)
+                self.assertEqual(self.ai_mock.call_count, 1)
                 self.network_request.assert_not_called()
 
     def test_explicit_output_spec_survives_job_snapshot_and_both_cloud_stages(self) -> None:

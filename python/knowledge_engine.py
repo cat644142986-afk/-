@@ -382,7 +382,7 @@ class KnowledgeCompiler:
             list(bundle.get("positive_rules") or []),
             context,
             count_limit=3,
-            character_budget=180,
+            character_budget=120,
             kind="positive_rule",
         )
         negatives, ignored_negative = cls._select_v3_rules(
@@ -392,15 +392,36 @@ class KnowledgeCompiler:
             character_budget=80,
             kind="negative_rule",
         )
+        lock_rewrites = (
+            ("主体外形、比例、结构与关键识别特征", "主体外形、比例、结构与识别特征不变"),
+            ("包装上的文字、数字、标签位置与可读性", "包装文字、数字、标签位置与可读性不变"),
+            ("品牌主色及产品固有色", "品牌主色与产品固有色不变"),
+            ("品牌标志的形状、位置、比例与清晰度", "品牌标志形状、位置、比例与清晰度不变"),
+            ("原图拍摄角度、透视与产品朝向", "原图角度、透视与朝向不变"),
+            ("产品数量", "产品数量不变"),
+        )
         locks: list[str] = []
+        seen_locks: set[str] = set()
         ignored_locks: list[dict[str, Any]] = []
         used_lock_chars = 0
         for raw in bundle.get("intent_lock_rules") or []:
             text = str(raw).strip()
-            if len(locks) >= 5:
+            specified = text.split("；指定值：", 1)[1] if "；指定值：" in text else ""
+            for source, replacement in lock_rewrites:
+                if source in text:
+                    text = replacement
+                    if specified:
+                        text += f"（指定值：{specified}）"
+                    break
+            key = re.sub(r"\W+", "", text).lower()
+            if not key or key in seen_locks:
+                ignored_locks.append({"kind": "intent_lock", "reason": "duplicate", "text": text})
+                continue
+            seen_locks.add(key)
+            if len(locks) >= 6:
                 ignored_locks.append({"kind": "intent_lock", "reason": "count-budget", "text": text})
                 continue
-            if used_lock_chars + len(text) > 180:
+            if used_lock_chars + len(text) > 160:
                 ignored_locks.append({"kind": "intent_lock", "reason": "character-budget", "text": text})
                 continue
             locks.append(text)
@@ -436,11 +457,11 @@ class KnowledgeCompiler:
             "conflicts": conflicts,
             "ignored_rules": ignored,
             "rule_budget": {
-                "intent_locks": 5,
+                "intent_locks": 6,
                 "positive_rules": 3,
                 "negative_rules": 1,
-                "lock_characters": 180,
-                "positive_characters": 180,
+                "lock_characters": 160,
+                "positive_characters": 120,
                 "negative_characters": 80,
             },
         }
