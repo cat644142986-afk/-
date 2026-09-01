@@ -345,6 +345,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .mode-button.active { border-color: rgba(255,255,255,.75); background: var(--paper); color: var(--ink); box-shadow: 0 8px 18px rgba(0,0,0,.2); }
 .mode-button.active > span, .mode-button.active small { color: var(--coral-deep); }
 .dock-field { display: grid; gap: 5px; }
+.dock-field-row { display: grid; grid-template-columns: minmax(0,1.16fr) minmax(0,.84fr); gap: 8px; }
+.dock-field-row.is-single { grid-template-columns: minmax(0,1fr); }
+.dock-field-row .dock-field { min-width: 0; }
 .dock-field label, .dock-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .dock-field label span, .dock-label span { font-size: 7.5px; font-weight: 850; letter-spacing: .13em; }
 .dock-field label small, .dock-label small { color: var(--ink-3); font-size: var(--type-caption); }

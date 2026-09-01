@@ -73,6 +73,36 @@
     },
     "interpretation": "No stable visual advantage was observed for the paid refine stage. The sample is directional only because it has three cases and one blind review round."
   },
+  "blind_review_round_2": {
+    "reviewer": "user",
+    "reviewed_blind": true,
+    "review_type": "independent-overall-preference",
+    "user_response_verbatim": "3个都是B不错",
+    "selected_labels": {
+      "packaging-text-brand-procedural": "B",
+      "multi-count-procedural": "B",
+      "transparent-bottle-real": "B"
+    },
+    "selection_after_unblinding": {
+      "packaging-text-brand-procedural": "single_pass",
+      "multi-count-procedural": "legacy_double_pass",
+      "transparent-bottle-real": "legacy_double_pass"
+    },
+    "selected_outputs_described_as_good": true,
+    "directly_deliverable_not_explicitly_scored": true,
+    "full_10_axis_scorecard_completed": false
+  },
+  "combined_review": {
+    "blind_rounds_completed": 2,
+    "full_10_axis_rounds_completed": 1,
+    "independent_human_preference_rounds_completed": 1,
+    "case_round_preferences": {
+      "legacy_double_pass": 3,
+      "single_pass": 2,
+      "tie": 1
+    },
+    "interpretation": "The two rounds disagree on packaging and transparent-bottle preference, while the human round prefers double pass on two of three cases. Quality preference is mixed rather than a stable win for either strategy."
+  },
   "deterministic_gate": {
     "all_outputs": {
       "width": 2048,
@@ -100,8 +130,8 @@
   },
   "decision": {
     "formal_default_changed": false,
-    "candidate_status": "continue-validation",
-    "reason": "Single pass cut healthy first-usable latency and normal provider calls roughly in half without a measured quality loss, but the formal two-round/nine-case promotion gate is not complete.",
-    "next_experiment": "Run the second independent blind review, then expand only if it remains non-inferior. Prompt v3 must be tested separately after the strategy decision."
+    "candidate_status": "explicit-speed-option-source-implemented-formal-promotion-pending",
+    "reason": "Single pass cuts healthy first-usable latency and normal provider calls roughly in half, but independent human preference is mixed and favors double pass on two of three cases. Neither strategy has a stable quality win.",
+    "next_experiment": "Keep legacy double pass as the default, complete full release gates and candidate-first formal portable promotion for the implemented explicit speed-first option, and expand to nine inputs only under a new paid-call authorization. Prompt v3 must be tested separately."
   }
 }

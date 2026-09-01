@@ -476,6 +476,41 @@ class DurableJobApiTests(unittest.TestCase):
             self.ai_mock.assert_not_called()
             self.network_request.assert_not_called()
 
+    def test_user_selected_single_pass_is_public_traceable_and_calls_provider_once(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "user-selected-single-pass.png", (95, 155, 205))
+            created = self.create_job(client, {
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "parameters": {
+                    "batch": 1,
+                    "product_name": "茶盒",
+                    "model": "gpt-image-2",
+                    "generation_strategy": "single_pass",
+                    "generation_strategy_source": "user",
+                },
+                "client_request_id": "user-selected-single-pass",
+            })
+            final = self.wait_for_job(created["job"]["id"])
+            self.assertEqual(final["status"], "completed")
+            self.assertEqual(final["parameters"]["prompt_version"], "prompt_v1")
+            self.assertEqual(final["parameters"]["generation_strategy"], "single_pass")
+            self.assertEqual(final["parameters"]["generation_strategy_source"], "user")
+            self.assertEqual(len(self.ai_calls), 1)
+
+            traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
+            providers = [
+                item for item in traces if item["stage"].startswith("provider.image.")
+            ]
+            self.assertEqual(len(providers), 1)
+            skipped_refine = next(
+                item for item in traces if item["stage"] == "generation.refine.1"
+            )
+            self.assertEqual(skipped_refine["status"], "skipped")
+            self.assertEqual(
+                skipped_refine["output"]["billing"]["status"], "not-applicable"
+            )
+
     def test_prompt_v3_single_pass_is_compact_traceable_and_calls_provider_once(self) -> None:
         with mock.patch.dict(
             os.environ,

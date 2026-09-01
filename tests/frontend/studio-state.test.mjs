@@ -22,7 +22,7 @@ test('backend draft hydrates editable controls and durable result pointers', () 
     brief: { objective: '只保留两个汉堡', user_request: '只保留两个汉堡' },
     parameters: {
       model: 'local-birefnet', fidelity: 75, variations: 3,
-      output_ratio: '4:5', output_resolution: '4k',
+      output_ratio: '4:5', output_resolution: '4k', generation_strategy: 'single_pass',
     },
     intent: { subject_count: true },
     active_job_id: 'job-7',
@@ -34,6 +34,7 @@ test('backend draft hydrates editable controls and durable result pointers', () 
   assert.equal(snapshot.batch, 3);
   assert.equal(snapshot.output_ratio, '4:5');
   assert.equal(snapshot.output_resolution, '4k');
+  assert.equal(snapshot.generation_strategy, 'single_pass');
   assert.deepEqual(snapshot.intent_locks, { subject_count: true });
   assert.equal(snapshot.active_job_id, 'job-7');
   assert.equal(snapshot.current_result_asset_id, 'asset-result-2');
@@ -46,7 +47,7 @@ test('draft save payload preserves revision, ordered selection, intent, and work
     brief: { objective: '商品主图', user_request: '保留包装字' },
     snapshot: {
       model: 'gpt-image-2', angle: 'front', fidelity: 80, batch: 2,
-      output_ratio: 'original', output_resolution: '4k',
+      output_ratio: 'original', output_resolution: '4k', generation_strategy: 'single_pass',
       platter: 'keep', refine: false, intent_locks: { packaging_text: true },
       active_job_id: 'job-8', current_generation_id: 'gen-3',
       current_result_asset_id: 'result-9', compare_state: { zoom: 1.5 },
@@ -58,6 +59,8 @@ test('draft save payload preserves revision, ordered selection, intent, and work
   assert.equal(payload.parameters.variations, 2);
   assert.equal(payload.parameters.output_ratio, 'original');
   assert.equal(payload.parameters.output_resolution, '4k');
+  assert.equal(payload.parameters.generation_strategy, 'single_pass');
+  assert.equal(payload.parameters.generation_strategy_source, 'user');
   assert.deepEqual(payload.intent, { packaging_text: true });
   assert.equal(payload.active_job_id, 'job-8');
   assert.equal(payload.current_result_asset_id, 'result-9');

@@ -405,6 +405,19 @@ test('output canvas ratio and resolution are real durable controls instead of st
   assert.match(app, /actual回传像素|实际回传像素/);
 });
 
+test('generation flow exposes an honest per-task single or double pass choice', () => {
+  assert.match(html, /<label for="param-generation-strategy">/);
+  assert.match(html, /id="param-generation-strategy"[^>]*aria-describedby="strategy-help"/);
+  assert.match(html, /value="legacy_double_pass"[^>]*>完整双阶段/);
+  assert.match(html, /value="single_pass"[^>]*>快速单次/);
+  assert.match(html, /id="strategy-reason">2 次调用/);
+  assert.match(app, /generation_strategy: getGenerationStrategy\(mode\)/);
+  assert.match(app, /generation_strategy_source: 'user'/);
+  assert.match(app, /strategy-reason/);
+  assert.match(studioState, /generation_strategy: parameters\.generation_strategy/);
+  assert.match(css, /\.dock-field-row \{[^}]*grid-template-columns:/);
+});
+
 test('result adjustment is a durable derived version instead of overwriting the reviewed image', () => {
   assert.match(html, /id="btn-review-adjust"[^>]*hidden>立即修改本张/);
   assert.match(api, /export async function adjustResult\(jobId, payload\)/);

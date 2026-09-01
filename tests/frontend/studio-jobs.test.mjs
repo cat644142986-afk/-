@@ -69,6 +69,7 @@ test('returning to a job restores its immutable brief and controls', () => {
         model: 'gpt-image-2', angle: '45top', fidelity: 82,
         output_ratio: '16:9', output_resolution: '4k',
         variations: 3, platter: 'remove', refine: false,
+        generation_strategy: 'single_pass',
       },
     },
   }, { compare_state: { divider: 42 } });
@@ -79,6 +80,7 @@ test('returning to a job restores its immutable brief and controls', () => {
     angle: '45top',
     output_ratio: '16:9',
     output_resolution: '4k',
+    generation_strategy: 'single_pass',
     fidelity: 82,
     batch: 3,
     platter: 'remove',

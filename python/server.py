@@ -2664,9 +2664,20 @@ def _normalize_job_parameters(mode: str, parameters: dict) -> dict:
             normalized.get("prompt_version")
         )
         if mode in {"single", "multi-file"}:
-            normalized["generation_strategy"] = normalize_generation_strategy(
-                normalized.get("generation_strategy")
+            strategy_source = str(
+                normalized.get("generation_strategy_source") or "default"
+            ).strip().lower()
+            if strategy_source not in {"default", "user", "experiment"}:
+                raise ValueError("generation_strategy_source is not supported")
+            user_selected_strategy = (
+                strategy_source == "user" and "generation_strategy" in normalized
             )
+            normalized["generation_strategy"] = normalize_generation_strategy(
+                normalized.get("generation_strategy"),
+                allow_existing_single_pass=user_selected_strategy,
+            )
+            if "generation_strategy_source" in normalized:
+                normalized["generation_strategy_source"] = strategy_source
         elif mode == "group-split":
             # ``refine=false`` was already a supported public contract before
             # generation strategies were named. Preserve that route while a

@@ -92,6 +92,7 @@ export function jobWorkspaceSnapshot(job, fallback = {}) {
     // Preserve that immutable meaning when their snapshot predates this field.
     output_ratio: parameters.output_ratio || fallback.output_ratio || '1:1',
     output_resolution: parameters.output_resolution || fallback.output_resolution || '2k',
+    generation_strategy: parameters.generation_strategy || fallback.generation_strategy || 'legacy_double_pass',
     fidelity: Number(parameters.fidelity ?? fallback.fidelity ?? 40),
     batch: Number(parameters.variations ?? parameters.batch ?? fallback.batch ?? 1),
     platter: parameters.platter || fallback.platter || 'auto',

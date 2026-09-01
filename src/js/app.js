@@ -318,6 +318,7 @@ function captureModeSnapshot(mode = state.currentMode) {
     angle: $('#param-angle').value,
     output_ratio: $('#param-output-ratio').value,
     output_resolution: $('#param-output-resolution').value,
+    generation_strategy: getGenerationStrategy(mode),
     fidelity: Number($('#param-fidelity').value),
     batch: Number($('#param-batch').value),
     platter: getPlatter(),
@@ -687,6 +688,7 @@ function restoreModeSnapshot(mode = state.currentMode) {
     if (platter) platter.checked = true;
   }
   $('#param-refine').checked = snapshot.refine !== false;
+  setGenerationStrategy(snapshot.generation_strategy || 'legacy_double_pass', mode);
   $$('[data-lock]').forEach((input) => {
     input.checked = Boolean(snapshot.intent_locks?.[input.dataset.lock]);
     input.closest('.lock-chip').classList.toggle('active', input.checked);
@@ -1028,6 +1030,10 @@ function switchMode(mode, preserveCurrent = true, loadDurable = true) {
     ? '快速去背景当前不读取知识库或文字描述'
     : '查看本次知识介入';
   $('#field-refine').hidden = mode !== 'group-split';
+  const selectableGenerationStrategy = ['single', 'multi-file'].includes(mode);
+  $('#field-generation-controls').hidden = quickCutout;
+  $('#field-generation-controls').classList.toggle('is-single', !selectableGenerationStrategy);
+  $('#field-generation-strategy').hidden = !selectableGenerationStrategy;
   $('#batch-field-label').firstChild.textContent = mode === 'multi-file' ? '每图方案数 ' : '生成方案数 ';
   if (mode === 'multi-file' && $('#param-model').value === 'gpt-image-2') $('#model-reason').textContent = '每张独立处理';
   else if (mode === 'cutout-batch') $('#model-reason').textContent = '本地 BiRefNet';
@@ -1303,6 +1309,22 @@ function getPlatter() {
   return $('input[name="platter"]:checked')?.value || 'auto';
 }
 
+function getGenerationStrategy(mode = state.currentMode) {
+  if (mode === 'cutout-batch') return '';
+  if (mode === 'group-split') {
+    return $('#param-refine').checked ? 'legacy_double_pass' : 'single_pass';
+  }
+  return $('#param-generation-strategy').value === 'single_pass'
+    ? 'single_pass'
+    : 'legacy_double_pass';
+}
+
+function setGenerationStrategy(strategy, mode = state.currentMode) {
+  const normalized = strategy === 'single_pass' ? 'single_pass' : 'legacy_double_pass';
+  $('#param-generation-strategy').value = normalized;
+  if (mode === 'group-split') $('#param-refine').checked = normalized !== 'single_pass';
+}
+
 function buildBrief(mode = state.currentMode) {
   const semantic = mode === 'cutout-batch' && cutoutSelectionState().strategy === 'semantic';
   const selection = semantic ? cutoutSelectionState() : null;
@@ -1532,6 +1554,10 @@ function updateQuickControls() {
   $('#quick-angle').textContent = angleLabels[$('#param-angle').value] || $('#param-angle').value;
   $('#quick-fidelity').textContent = `${$('#param-fidelity').value}%`;
   $('#quick-batch').textContent = state.currentMode === 'multi-file' ? `${$('#param-batch').value} / file` : $('#param-batch').value;
+  const generationStrategy = getGenerationStrategy();
+  $('#strategy-reason').textContent = generationStrategy === 'single_pass'
+    ? '1 次调用'
+    : '2 次调用';
   $('#fid-val').textContent = `${$('#param-fidelity').value}%`;
   $('#batch-val').textContent = $('#param-batch').value;
   const outputRatio = $('#param-output-ratio').value;
@@ -1567,6 +1593,10 @@ function captureSubmissionDraft() {
       output_ratio: $('#param-output-ratio').value,
       output_resolution: $('#param-output-resolution').value,
       refine: $('#param-refine').checked,
+      ...(['single', 'multi-file'].includes(mode) ? {
+        generation_strategy: getGenerationStrategy(mode),
+        generation_strategy_source: 'user',
+      } : {}),
       output_root: String(state.settings?.output_root || state.settings?.output_dir || '').trim(),
       brief,
       intent_locks: mode === 'cutout-batch' ? {} : getIntentLocks(),
@@ -4278,6 +4308,7 @@ function bindEvents() {
   $('#btn-error-reset').addEventListener('click', () => { setStage(state.selectedFiles.length ? 'ready' : 'empty'); updateCtaState(); });
   $('#brief-input').addEventListener('input', scheduleKnowledgeCompile);
   $('#param-model').addEventListener('change', updateQuickControls);
+  $('#param-generation-strategy').addEventListener('change', updateQuickControls);
   $('#param-angle').addEventListener('change', updateQuickControls);
   $('#param-output-ratio').addEventListener('change', updateQuickControls);
   $('#param-output-resolution').addEventListener('change', updateQuickControls);
