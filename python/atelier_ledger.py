@@ -3701,6 +3701,30 @@ class AtelierLedger:
             ).fetchall()
         return [self._canvas_mask_version_row(row) for row in rows]
 
+    def get_canvas_mask(self, roi_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            mask = connection.execute(
+                "SELECT * FROM canvas_masks WHERE roi_id = ?", (str(roi_id),)
+            ).fetchone()
+            if mask is None:
+                raise KeyError(f"unknown canvas mask for ROI: {roi_id}")
+            version = connection.execute(
+                "SELECT * FROM canvas_mask_versions WHERE id = ?",
+                (mask["current_version_id"],),
+            ).fetchone()
+        if version is None:
+            raise LedgerSchemaError(f"canvas mask {mask['id']} has no current version")
+        return self._canvas_mask_result(mask, version, replayed=False)
+
+    def get_canvas_mask_version(self, version_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM canvas_mask_versions WHERE id = ?", (str(version_id),)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown canvas mask version: {version_id}")
+        return self._canvas_mask_version_row(row)
+
     def save_canvas_mask(
         self,
         *,

@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-02<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `fb1468bb8a518b043ae26bfb0cc5021de7874bed`，contract `2026-09-02.2`、SQLite schema v5、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出和 `ProductProfile` 商品档案均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1 与 G2 已完成并正式发布。G3 已完成严格像素合同与源码 schema v6 不可变 ROI / Mask / LocalEditSpec 账本，尚未进入 sidecar API、Studio 界面或正式便携版；当前执行游标为本地 API 和手动画框/蒙版底座。情境式创作副驾仅在 G3 完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `fb1468bb8a518b043ae26bfb0cc5021de7874bed`，contract `2026-09-02.2`、SQLite schema v5、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出和 `ProductProfile` 商品档案均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1 与 G2 已完成并正式发布。G3 已完成严格像素合同、源码 schema v6 不可变 ROI / Mask / LocalEditSpec 账本和 sidecar 本地 API，尚未进入 Studio 界面或正式便携版；当前执行游标为画布手动画框、画笔修正、反选、边缘调整、蒙版预览与恢复。情境式创作副驾仅在 G3 完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1635,6 +1635,15 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 新增测试覆盖未知 Mask 字段、矢量点越界、源图指纹不符、跨 ROI Mask、过期画布、任务操作不符、任务重放换绑、trace 继承、完整/部分迁移识别和事务回滚。专项 48/48；全量 Python 327 项通过、1 项平台预期跳过；前端 148/148、Vite production build、Rust/Tauri `custom-protocol` check、Python compileall 与 `git diff --check` 均通过。
 - 本检查点未读取正式 SQLite、用户图片、Prompt、Key 或 build 证据目录，未调用网络、模型或付费 API；正式便携目录仍是 `fb1468b` / contract `2026-09-02.2` / schema v5，不能误报为 schema v6 已发布。
 - 下一执行游标：先冻结并实现 sidecar 的 ROI、Mask 版本与 LocalEditSpec 本地 API，要求结构化 400/404/409、请求幂等、乐观并发和无付费副作用；随后把画布矩形 ROI、画笔保留/删除、反选、边缘调整、蒙版预览与恢复接入同一 API。API 和 UI 均完成前不构建正式候选，不启动 Agent、模型下载或付费调用。
+
+### 2026-09-02 G3 sidecar 局部编辑 API 检查点
+
+- sidecar contract 源码升至 `2026-09-02.3`，在现有 FastAPI 服务内新增 ROI 创建/读取、Mask 当前版本/保存/历史列表/历史读取、LocalEditSpec 创建/读取接口；不建立第二套服务，不接收 Base64、文件路径、Prompt 或图像内容，也不触发模型和付费调用。
+- ROI 创建绑定 exact canvas revision；Mask 保存绑定 ROI 和 `expected_revision`；三类写入均以 `client_request_id` 幂等。接口按语义返回结构化 400（合同无效）、404（引用不存在）和 409（画布/Mask 乐观并发或幂等冲突），历史版本只读。
+- 统一命令执行请求新增可选 `local_edit_spec_id`，只能由账本校验后写入任务快照；执行 trace 继续从快照继承，API 调用方不能绕过 spec、canvas operation、source asset、ROI 或 Mask 血缘检查。
+- 端到端 API 测试覆盖创建、重放、冲突、越界、过期 revision、历史恢复、错误源指纹、命令绑定和 trace 继承。API/局部编辑专项 42/42；全量 Python 328 项通过、1 项平台预期跳过；前端 148/148、Vite production build、Rust/Tauri `custom-protocol` check、Python 编译与 `git diff --check` 均通过。
+- 正式便携目录仍是 `fb1468b` / contract `2026-09-02.2` / schema v5；`2026-09-02.3` 与 schema v6 目前只是源码候选，未经过 Windows candidate-first 正式提升，不能当成用户当前正在使用的功能。
+- 下一执行游标：在现有 Fabric Studio 上先实现选中单个图层后的矩形 ROI 与本地 Mask 编辑状态，提供画笔保留/删除、反选、边缘调整、可见预览、取消恢复和键盘路径；所有保存走本检查点 API。随后再接 strict local compose 与 outpaint 新增区域，UI 可恢复前不触发生成任务。
 
 ## 11. 下一位开发者的执行入口
 

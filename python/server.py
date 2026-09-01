@@ -253,7 +253,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-09-02.2"
+SIDECAR_CONTRACT_VERSION = "2026-09-02.3"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -2047,6 +2047,37 @@ class CanvasDocumentSaveRequest(BaseModel):
         extra = "forbid"
 
 
+class CanvasRoiCreateRequest(BaseModel):
+    canvas_document_id: str
+    expected_canvas_revision: int = Field(ge=0)
+    source_layer_id: str
+    coordinate_space: str
+    rect: dict[str, Any]
+    purpose: str
+    client_request_id: str
+
+    class Config:
+        extra = "forbid"
+
+
+class CanvasMaskSaveRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
+    client_request_id: str
+    definition: dict[str, Any]
+    pixel_sha256: str
+
+    class Config:
+        extra = "forbid"
+
+
+class LocalEditSpecCreateRequest(BaseModel):
+    client_request_id: str
+    contract: dict[str, Any]
+
+    class Config:
+        extra = "forbid"
+
+
 class ProductProfileSaveRequest(BaseModel):
     expected_revision: int = Field(ge=0)
     client_request_id: str
@@ -2555,6 +2586,170 @@ async def save_workflow_canvas(mode: str, request: CanvasDocumentSaveRequest):
         )
 
 
+def raise_local_edit_http_error(
+    exc: Exception,
+    *,
+    invalid_code: str,
+    not_found_code: str,
+    revision_code: str = "CANVAS_REVISION_CONFLICT",
+) -> None:
+    if isinstance(exc, CanvasRevisionConflictError):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": revision_code,
+                "message": str(exc),
+                "current": exc.current,
+            },
+        )
+    if isinstance(exc, IdempotencyConflictError):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)},
+        )
+    if isinstance(exc, KeyError):
+        raise HTTPException(
+            status_code=404,
+            detail={"code": not_found_code, "message": str(exc)},
+        )
+    raise HTTPException(
+        status_code=400,
+        detail={"code": invalid_code, "message": str(exc)},
+    )
+
+
+@app.post("/api/canvas-rois")
+async def create_canvas_roi(request: CanvasRoiCreateRequest):
+    try:
+        return LEDGER.create_canvas_roi(
+            canvas_document_id=request.canvas_document_id,
+            expected_canvas_revision=request.expected_canvas_revision,
+            source_layer_id=request.source_layer_id,
+            coordinate_space=request.coordinate_space,
+            rect=request.rect,
+            purpose=request.purpose,
+            client_request_id=request.client_request_id,
+        )
+    except (
+        CanvasRevisionConflictError,
+        IdempotencyConflictError,
+        KeyError,
+        sqlite3.IntegrityError,
+        ValueError,
+    ) as exc:
+        raise_local_edit_http_error(
+            exc,
+            invalid_code="INVALID_CANVAS_ROI",
+            not_found_code="CANVAS_ROI_REFERENCE_NOT_FOUND",
+        )
+
+
+@app.get("/api/canvas-rois/{roi_id}")
+async def get_canvas_roi(roi_id: str):
+    try:
+        return LEDGER.get_canvas_roi(roi_id)
+    except KeyError as exc:
+        raise_local_edit_http_error(
+            exc,
+            invalid_code="INVALID_CANVAS_ROI",
+            not_found_code="CANVAS_ROI_NOT_FOUND",
+        )
+
+
+@app.get("/api/canvas-rois/{roi_id}/mask")
+async def get_canvas_mask(roi_id: str):
+    try:
+        return LEDGER.get_canvas_mask(roi_id)
+    except KeyError as exc:
+        raise_local_edit_http_error(
+            exc,
+            invalid_code="INVALID_CANVAS_MASK",
+            not_found_code="CANVAS_MASK_NOT_FOUND",
+        )
+
+
+@app.put("/api/canvas-rois/{roi_id}/mask")
+async def save_canvas_mask(roi_id: str, request: CanvasMaskSaveRequest):
+    try:
+        return LEDGER.save_canvas_mask(
+            roi_id=roi_id,
+            expected_revision=request.expected_revision,
+            definition=request.definition,
+            pixel_sha256=request.pixel_sha256,
+            client_request_id=request.client_request_id,
+        )
+    except (
+        CanvasRevisionConflictError,
+        IdempotencyConflictError,
+        KeyError,
+        sqlite3.IntegrityError,
+        ValueError,
+    ) as exc:
+        raise_local_edit_http_error(
+            exc,
+            invalid_code="INVALID_CANVAS_MASK",
+            not_found_code="CANVAS_MASK_REFERENCE_NOT_FOUND",
+            revision_code="CANVAS_MASK_REVISION_CONFLICT",
+        )
+
+
+@app.get("/api/canvas-masks/{mask_id}/versions")
+async def list_canvas_mask_versions(mask_id: str, limit: int = 100):
+    try:
+        versions = LEDGER.list_canvas_mask_versions(mask_id, limit)
+        return {"mask_id": mask_id, "versions": versions, "count": len(versions)}
+    except KeyError as exc:
+        raise_local_edit_http_error(
+            exc,
+            invalid_code="INVALID_CANVAS_MASK",
+            not_found_code="CANVAS_MASK_NOT_FOUND",
+        )
+
+
+@app.get("/api/canvas-mask-versions/{version_id}")
+async def get_canvas_mask_version(version_id: str):
+    try:
+        return LEDGER.get_canvas_mask_version(version_id)
+    except KeyError as exc:
+        raise_local_edit_http_error(
+            exc,
+            invalid_code="INVALID_CANVAS_MASK",
+            not_found_code="CANVAS_MASK_VERSION_NOT_FOUND",
+        )
+
+
+@app.post("/api/local-edit-specs")
+async def create_local_edit_spec(request: LocalEditSpecCreateRequest):
+    try:
+        return LEDGER.create_local_edit_spec(
+            contract=request.contract,
+            client_request_id=request.client_request_id,
+        )
+    except (
+        IdempotencyConflictError,
+        KeyError,
+        sqlite3.IntegrityError,
+        ValueError,
+    ) as exc:
+        raise_local_edit_http_error(
+            exc,
+            invalid_code="INVALID_LOCAL_EDIT_SPEC",
+            not_found_code="LOCAL_EDIT_REFERENCE_NOT_FOUND",
+        )
+
+
+@app.get("/api/local-edit-specs/{spec_id}")
+async def get_local_edit_spec(spec_id: str):
+    try:
+        return LEDGER.get_local_edit_spec(spec_id)
+    except KeyError as exc:
+        raise_local_edit_http_error(
+            exc,
+            invalid_code="INVALID_LOCAL_EDIT_SPEC",
+            not_found_code="LOCAL_EDIT_SPEC_NOT_FOUND",
+        )
+
+
 @app.get("/api/product-profiles")
 async def list_product_profiles(limit: int = 200):
     profiles = LEDGER.list_product_profiles(limit)
@@ -2993,6 +3188,7 @@ class CommandExecutionRequest(BaseModel):
     canvas_operation_id: Optional[str] = None
     product_profile_id: Optional[str] = None
     expected_product_profile_revision: Optional[int] = None
+    local_edit_spec_id: Optional[str] = None
 
     class Config:
         extra = "forbid"
@@ -3232,6 +3428,7 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
             canvas_operation_id=request.canvas_operation_id,
             product_profile_id=request.product_profile_id,
             expected_product_profile_revision=request.expected_product_profile_revision,
+            local_edit_spec_id=request.local_edit_spec_id,
         )
         _wake_job_engine()
         return {"job": job, "created": created, "command": command}

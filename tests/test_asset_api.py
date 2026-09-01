@@ -35,6 +35,74 @@ def png_bytes(color: tuple[int, int, int] = (220, 100, 40)) -> bytes:
     return buffer.getvalue()
 
 
+def local_edit_canvas_payload(source_id: str) -> dict:
+    return {
+        "id": "canvas:api-local-edit",
+        "schema_version": 1,
+        "coordinate_system": {
+            "unit": "canvas-pixel",
+            "origin": "top-left",
+            "x_axis": "right",
+            "y_axis": "down",
+        },
+        "revision": 0,
+        "active_artboard_id": "artboard:api-local-edit",
+        "source_asset_ids": [source_id],
+        "artboards": [{
+            "id": "artboard:api-local-edit",
+            "name": "局部编辑画板",
+            "rect": {"x": 0, "y": 0, "width": 24, "height": 18},
+            "export": {
+                "pixel_width": 24,
+                "pixel_height": 18,
+                "color_space": "srgb",
+            },
+        }],
+        "layers": [{
+            "id": "layer:api-local-edit-source",
+            "artboard_id": "artboard:api-local-edit",
+            "source": {
+                "kind": "asset",
+                "id": source_id,
+                "proxy_ref": "proxy:thumbnail:512",
+                "original_pixel_width": 24,
+                "original_pixel_height": 18,
+            },
+            "transform": {
+                "x": 0,
+                "y": 0,
+                "scale_x": 1,
+                "scale_y": 1,
+                "rotation_degrees": 0,
+                "opacity": 1,
+            },
+            "z_index": 0,
+            "visible": True,
+            "locked": False,
+        }],
+        "operations": [],
+        "undo_cursor": -1,
+        "created_at": "2026-09-02T00:00:00Z",
+        "updated_at": "2026-09-02T00:00:00Z",
+    }
+
+
+def local_edit_mask_definition() -> dict:
+    return {
+        "schema_version": 1,
+        "coordinate_space": "source-pixel",
+        "width": 24,
+        "height": 18,
+        "base": "empty",
+        "strokes": [{
+            "mode": "include",
+            "radius": 2,
+            "points": [{"x": 4, "y": 5}, {"x": 8, "y": 9}],
+        }],
+        "feather_radius": 0,
+    }
+
+
 def product_profile_payload(reference_id: str, *, revision: int = 0) -> dict:
     return {
         "id": "profile:api-transparent-bottle",
@@ -994,6 +1062,183 @@ class AssetApiTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409, stale.text)
         self.assertEqual(
             stale.json()["detail"]["code"], "CANVAS_REVISION_CONFLICT"
+        )
+
+    def test_local_edit_api_preserves_roi_mask_spec_job_and_trace_lineage(self) -> None:
+        source = self.client.post(
+            "/api/assets/import?collection=product",
+            files={"file": ("local-edit-source.png", png_bytes(), "image/png")},
+        ).json()
+        document = local_edit_canvas_payload(source["id"])
+        saved = self.client.put(
+            "/api/workspaces/single/canvas",
+            json={
+                "expected_revision": 0,
+                "client_request_id": "api-local-edit-canvas-1",
+                "document": document,
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+
+        roi_payload = {
+            "canvas_document_id": document["id"],
+            "expected_canvas_revision": 1,
+            "source_layer_id": "layer:api-local-edit-source",
+            "coordinate_space": "source-pixel",
+            "rect": {"x": 2, "y": 3, "width": 12, "height": 10},
+            "purpose": "inpaint",
+            "client_request_id": "api-local-edit-roi-1",
+        }
+        roi = self.client.post("/api/canvas-rois", json=roi_payload)
+        replayed_roi = self.client.post("/api/canvas-rois", json=roi_payload)
+        self.assertEqual(roi.status_code, 200, roi.text)
+        self.assertEqual(replayed_roi.status_code, 200, replayed_roi.text)
+        self.assertTrue(replayed_roi.json()["replayed"])
+        roi_id = roi.json()["id"]
+        self.assertEqual(
+            self.client.get(f"/api/canvas-rois/{roi_id}").json()["rect"],
+            roi_payload["rect"],
+        )
+
+        conflicting_roi = dict(roi_payload)
+        conflicting_roi["rect"] = {"x": 3, "y": 3, "width": 12, "height": 10}
+        conflict = self.client.post("/api/canvas-rois", json=conflicting_roi)
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        self.assertEqual(conflict.json()["detail"]["code"], "IDEMPOTENCY_CONFLICT")
+        stale_roi = self.client.post("/api/canvas-rois", json={
+            **roi_payload,
+            "expected_canvas_revision": 0,
+            "client_request_id": "api-local-edit-roi-stale",
+        })
+        self.assertEqual(stale_roi.status_code, 409, stale_roi.text)
+        self.assertEqual(
+            stale_roi.json()["detail"]["code"], "CANVAS_REVISION_CONFLICT"
+        )
+        invalid_roi = self.client.post("/api/canvas-rois", json={
+            **roi_payload,
+            "rect": {"x": 20, "y": 3, "width": 12, "height": 10},
+            "client_request_id": "api-local-edit-roi-outside",
+        })
+        self.assertEqual(invalid_roi.status_code, 400, invalid_roi.text)
+        self.assertEqual(invalid_roi.json()["detail"]["code"], "INVALID_CANVAS_ROI")
+
+        mask_payload = {
+            "expected_revision": 0,
+            "client_request_id": "api-local-edit-mask-1",
+            "definition": local_edit_mask_definition(),
+            "pixel_sha256": "C" * 64,
+        }
+        mask = self.client.put(f"/api/canvas-rois/{roi_id}/mask", json=mask_payload)
+        replayed_mask = self.client.put(
+            f"/api/canvas-rois/{roi_id}/mask", json=mask_payload
+        )
+        self.assertEqual(mask.status_code, 200, mask.text)
+        self.assertEqual(replayed_mask.status_code, 200, replayed_mask.text)
+        self.assertTrue(replayed_mask.json()["replayed"])
+        mask_id = mask.json()["id"]
+        mask_version_id = mask.json()["version"]["id"]
+        current_mask = self.client.get(f"/api/canvas-rois/{roi_id}/mask")
+        versions = self.client.get(f"/api/canvas-masks/{mask_id}/versions")
+        historical = self.client.get(f"/api/canvas-mask-versions/{mask_version_id}")
+        self.assertEqual(current_mask.status_code, 200, current_mask.text)
+        self.assertEqual(versions.status_code, 200, versions.text)
+        self.assertEqual(historical.status_code, 200, historical.text)
+        self.assertEqual(versions.json()["count"], 1)
+        self.assertEqual(historical.json()["definition"], mask_payload["definition"])
+        stale_mask = self.client.put(f"/api/canvas-rois/{roi_id}/mask", json={
+            **mask_payload,
+            "client_request_id": "api-local-edit-mask-stale",
+        })
+        self.assertEqual(stale_mask.status_code, 409, stale_mask.text)
+        self.assertEqual(
+            stale_mask.json()["detail"]["code"], "CANVAS_MASK_REVISION_CONFLICT"
+        )
+
+        operation_id = "operation:api-local-edit-1"
+        contract = {
+            "schema_version": 1,
+            "operation_id": operation_id,
+            "mode": "inpaint",
+            "source_canvas_version_id": saved.json()["version"]["id"],
+            "source_layer_id": "layer:api-local-edit-source",
+            "source_sha256": source["sha256"],
+            "source_size": {"width": 24, "height": 18},
+            "roi": {
+                "id": roi_id,
+                "coordinate_space": "source-pixel",
+                "rect": roi_payload["rect"],
+            },
+            "mask": {
+                "id": mask_version_id,
+                "roi_id": roi_id,
+                "width": 24,
+                "height": 18,
+                "sha256": mask_payload["pixel_sha256"],
+            },
+            "strict_pixel_protection": True,
+            "cost": {
+                "mode": "free",
+                "confirmed_call_count": 0,
+                "user_confirmation_required": False,
+                "user_confirmed": False,
+                "automatic_paid_retry": False,
+            },
+        }
+        spec_payload = {
+            "client_request_id": "api-local-edit-spec-1",
+            "contract": contract,
+        }
+        spec = self.client.post("/api/local-edit-specs", json=spec_payload)
+        replayed_spec = self.client.post("/api/local-edit-specs", json=spec_payload)
+        self.assertEqual(spec.status_code, 200, spec.text)
+        self.assertEqual(replayed_spec.status_code, 200, replayed_spec.text)
+        self.assertTrue(replayed_spec.json()["replayed"])
+        spec_id = spec.json()["id"]
+        self.assertEqual(
+            self.client.get(f"/api/local-edit-specs/{spec_id}").json()["contract"],
+            spec.json()["contract"],
+        )
+        invalid_contract = dict(contract)
+        invalid_contract["source_sha256"] = "D" * 64
+        invalid_spec = self.client.post("/api/local-edit-specs", json={
+            "client_request_id": "api-local-edit-spec-wrong-source",
+            "contract": invalid_contract,
+        })
+        self.assertEqual(invalid_spec.status_code, 400, invalid_spec.text)
+        self.assertEqual(
+            invalid_spec.json()["detail"]["code"], "INVALID_LOCAL_EDIT_SPEC"
+        )
+
+        command = self.client.post(
+            "/api/commands/command:existing-generate-single/execute",
+            json={
+                "client_request_id": "api-local-edit-command-1",
+                "source_asset_ids": [source["id"]],
+                "parameters": {"batch": 1},
+                "canvas_document_id": document["id"],
+                "expected_canvas_revision": 1,
+                "canvas_operation_id": operation_id,
+                "local_edit_spec_id": spec_id,
+            },
+        )
+        self.assertEqual(command.status_code, 200, command.text)
+        job = command.json()["job"]
+        self.assertEqual(job["snapshot"]["local_edit_spec_id"], spec_id)
+        trace = self.client.post(
+            f"/api/jobs/{job['id']}/traces",
+            json={
+                "client_request_id": "api-local-edit-trace-1",
+                "stage": "local-edit.accepted",
+                "status": "completed",
+            },
+        )
+        self.assertEqual(trace.status_code, 200, trace.text)
+        self.assertEqual(trace.json()["trace"]["local_edit_spec_id"], spec_id)
+
+        missing = self.client.get("/api/local-edit-specs/editspec_missing")
+        self.assertEqual(missing.status_code, 404, missing.text)
+        self.assertEqual(
+            missing.json()["detail"]["code"], "LOCAL_EDIT_SPEC_NOT_FOUND"
         )
 
     def test_product_profile_api_versions_constraints_and_command_binding(self) -> None:
