@@ -5,13 +5,14 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, assets, config, jobs, memory, sessions, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
+const [app, api, assets, config, jobs, memory, review, sessions, settings, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-config.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-jobs.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-memory.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/studio-review.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-sessions.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-settings.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-shell.js'), 'utf8'),
@@ -469,6 +470,18 @@ test('result review persists A/B target, divider, zoom, pan, and first-use guida
   assert.match(app, /scheduleWorkspaceDraftSave\(mode\)/);
   assert.match(css, /--compare-zoom/);
   assert.match(css, /\.review-guide/);
+});
+
+test('result review form and feedback receipt behavior live outside the page orchestrator', () => {
+  assert.match(app, /createReviewController/);
+  assert.match(app, /reviewController\.prepareFeedback\(item\)/);
+  assert.match(app, /reviewController\.renderPanel\(activeItem\)/);
+  assert.match(app, /reviewController\.activateDecision\(button\.dataset\.reviewDecision \|\| ''\)/);
+  assert.doesNotMatch(app, /function (renderFeedbackState|prepareFeedbackForResult|clearReviewForm|renderReviewReasonTags|activateReviewDecision|renderReviewPanel)/);
+  assert.match(review, /function prepareFeedback\(item\)/);
+  assert.match(review, /function renderPanel\(item\)/);
+  assert.match(review, /已记录需要调整/);
+  assert.match(review, /feedbackReceiptCopy\(durable\.receipt\)/);
 });
 
 test('real workflow controls share the dark production dock without stretching empty space', () => {

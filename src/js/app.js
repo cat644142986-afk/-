@@ -35,7 +35,6 @@ import {
   normalizeCompareState,
   normalizeReviewReasonCodes,
   reviewReasonLabel,
-  reviewReasonOptions,
   reviewStateForResult,
 } from './result-review.js';
 import {
@@ -56,6 +55,7 @@ import {
 import { createSettingsController } from './studio-settings.js';
 import { createWorkflowDockController } from './studio-shell.js';
 import { createMemoryProjectionController } from './studio-memory.js';
+import { createReviewController } from './studio-review.js';
 import { createSessionsController, formatStudioTime } from './studio-sessions.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 import { statusPanelHtml } from './status-view.js';
@@ -154,6 +154,14 @@ const memoryProjectionController = createMemoryProjectionController({
   getResultItems,
   toast,
   windowRef: window,
+});
+const reviewController = createReviewController({
+  state,
+  query: $,
+  queryAll: $$,
+  escapeHtml,
+  activeFeedbackResultKey,
+  discardPendingReviewRequest,
 });
 window.ProductAtelier = { state };
 
@@ -2463,57 +2471,6 @@ function activeFeedbackResultKey(item) {
   ].join(':');
 }
 
-function renderFeedbackState() {
-  const entry = $('#feedback-entry');
-  const receipt = $('#feedback-receipt');
-  const detail = $('#feedback-detail');
-  if (!entry || !receipt || !detail) return;
-  entry.hidden = state.feedbackRecorded;
-  receipt.hidden = !state.feedbackRecorded;
-  detail.hidden = state.feedbackRecorded || !['rejected', 'note'].includes(state.lastFeedbackSignal);
-  $('#feedback-receipt-copy').textContent = state.feedbackReceipt || '已记录为下一版证据';
-  const suggestionButton = $('#btn-feedback-suggestion');
-  suggestionButton.hidden = !state.feedbackRecorded || !state.feedbackSuggestionId;
-  suggestionButton.dataset.suggestionId = state.feedbackSuggestionId || '';
-  ['#btn-adopt', '#btn-reject', '#btn-feedback'].forEach((selector) => {
-    const button = $(selector);
-    button.disabled = state.feedbackSubmitting;
-    button.setAttribute('aria-busy', String(state.feedbackSubmitting));
-  });
-  ['#btn-review-adjust', '#btn-review-record', '#btn-review-suggest'].forEach((selector) => {
-    const button = $(selector);
-    if (!button) return;
-    button.disabled = state.feedbackSubmitting;
-    button.setAttribute('aria-busy', String(state.feedbackSubmitting));
-  });
-  $('#btn-feedback').textContent = state.feedbackSubmitting ? '记录中…' : '发送';
-}
-
-function prepareFeedbackForResult(item) {
-  const key = activeFeedbackResultKey(item);
-  const durable = reviewStateForResult(state.resultReviews, item?.asset_id || '');
-  if (state.feedbackResultKey !== key) {
-    state.feedbackResultKey = key;
-    state.feedbackSubmitting = false;
-    if (state.editingFeedbackResultKey !== key) state.editingFeedbackResultKey = '';
-    $('#feedback-input').value = '';
-  }
-  const editing = state.editingFeedbackResultKey === key;
-  state.feedbackRecorded = durable.reviewed && !editing;
-  state.feedbackReceipt = durable.reviewed ? feedbackReceiptCopy(durable.receipt) : '';
-  state.feedbackSuggestionId = durable.reviewed ? durable.receipt.suggestionId : '';
-  if (durable.reviewed && !editing) {
-    discardPendingReviewRequest(item?.asset_id || '');
-    const decision = String(durable.decision || '');
-    state.lastFeedbackSignal = decision === 'reject'
-      ? 'rejected'
-      : decision === 'adopt' ? 'adopted' : 'adjusted';
-  } else if (!state.lastFeedbackSignal) {
-    state.lastFeedbackSignal = 'note';
-  }
-  renderFeedbackState();
-}
-
 function renderResults() {
   $$('.result-tab').forEach((button) => {
     const active = button.dataset.rtab === state.resultTab;
@@ -2529,7 +2486,7 @@ function renderResults() {
   }
   state.viewerIndex = Math.max(0, Math.min(state.viewerIndex, items.length - 1));
   const item = items[state.viewerIndex];
-  prepareFeedbackForResult(item);
+  reviewController.prepareFeedback(item);
   const src = resultDataUrl(item);
   const viewerImage = $('#viewer-main-img');
   const showDimensions = () => {
@@ -2598,7 +2555,7 @@ async function recordFeedback(signal, reason = '', learningAction = 'record', re
   const reviewNote = String(reason || '').trim()
     || normalizedReasons.map((code) => reviewReasonLabel(code)).join('、');
   state.feedbackSubmitting = true;
-  renderFeedbackState();
+  reviewController.renderFeedback();
   const reviewPayload = {
     result_asset_id: item.asset_id,
     generation_id: item.generation_id || state.currentGenerationId || null,
@@ -2634,7 +2591,7 @@ async function recordFeedback(signal, reason = '', learningAction = 'record', re
     return false;
   } finally {
     state.feedbackSubmitting = false;
-    renderFeedbackState();
+    reviewController.renderFeedback();
   }
 }
 
@@ -2661,7 +2618,7 @@ async function startImmediateAdjustment(reason, reasonCodes = []) {
   };
   const requestId = reviewRequestId(item.asset_id, reviewPayload);
   state.feedbackSubmitting = true;
-  renderFeedbackState();
+  reviewController.renderFeedback();
   try {
     const response = await API.adjustResult(parentJobId, {
       client_request_id: requestId,
@@ -2711,7 +2668,7 @@ async function startImmediateAdjustment(reason, reasonCodes = []) {
     return false;
   } finally {
     state.feedbackSubmitting = false;
-    renderFeedbackState();
+    reviewController.renderFeedback();
   }
 }
 
@@ -3367,86 +3324,6 @@ function activeResultEntry(entries = resultReviewEntries()) {
   )) || null;
 }
 
-function clearReviewForm() {
-  state.reviewDecision = '';
-  state.reviewReasonCodes = new Set();
-  $('#review-reason-input').value = '';
-  $('#review-reason').hidden = true;
-  $('#btn-review-adjust').hidden = true;
-  $$('[data-review-decision]').forEach((button) => button.classList.remove('is-selected'));
-}
-
-function renderReviewReasonTags() {
-  const wrap = $('#review-reason-tags');
-  const options = reviewReasonOptions(state.reviewDecision);
-  wrap.innerHTML = options.map((option) => {
-    const selected = state.reviewReasonCodes.has(option.code);
-    return `<button type="button" data-review-reason="${escapeHtml(option.code)}" aria-pressed="${selected}">${escapeHtml(option.label)}</button>`;
-  }).join('');
-  $$('[data-review-reason]', wrap).forEach((button) => button.addEventListener('click', () => {
-    const code = String(button.dataset.reviewReason || '');
-    if (state.reviewReasonCodes.has(code)) state.reviewReasonCodes.delete(code);
-    else state.reviewReasonCodes.add(code);
-    button.setAttribute('aria-pressed', String(state.reviewReasonCodes.has(code)));
-  }));
-}
-
-function activateReviewDecision(decision, { reasonCodes = [], note = '' } = {}) {
-  const normalized = String(decision || '');
-  state.reviewDecision = normalized;
-  state.reviewReasonCodes = new Set(normalizeReviewReasonCodes(normalized, reasonCodes));
-  $$('[data-review-decision]').forEach((button) => {
-    button.classList.toggle('is-selected', button.dataset.reviewDecision === normalized);
-  });
-  $('#review-reason').hidden = !normalized;
-  $('#btn-review-adjust').hidden = normalized !== 'adjusted';
-  $('#review-reason-input').value = String(note || '');
-  renderReviewReasonTags();
-}
-
-function renderReviewPanel(item) {
-  const durable = reviewStateForResult(state.resultReviews, item?.asset_id || '');
-  const key = activeFeedbackResultKey(item);
-  if (state.reviewFormResultKey !== key) {
-    clearReviewForm();
-    state.reviewFormResultKey = key;
-  }
-  const editing = state.editingFeedbackResultKey === key;
-  const summary = $('#review-summary');
-  const options = $('#review-options');
-  if (durable.reviewed && !editing) {
-    const decisionCopy = {
-      adopt: '已确认可以直接使用',
-      adjust: '已记录需要调整',
-      reject: '已记录整体方向不对',
-    }[durable.decision] || '本版本已完成评审';
-    summary.hidden = false;
-    options.hidden = true;
-    $('#review-reason').hidden = true;
-    $('#review-summary-title').textContent = decisionCopy;
-    $('#review-summary-copy').textContent = feedbackReceiptCopy(durable.receipt);
-    const codes = Array.isArray(durable.review?.reason_codes) ? durable.review.reason_codes : [];
-    $('#review-summary-tags').innerHTML = codes
-      .map((code) => `<span>${escapeHtml(reviewReasonLabel(code))}</span>`)
-      .join('');
-    const suggestion = $('#btn-review-summary-suggestion');
-    suggestion.hidden = !durable.receipt.suggestionId;
-    suggestion.dataset.suggestionId = durable.receipt.suggestionId || '';
-    clearReviewForm();
-  } else {
-    summary.hidden = true;
-    options.hidden = false;
-    if (editing && durable.reviewed && !state.reviewDecision) {
-      const signal = durable.decision === 'adopt'
-        ? 'adopted' : durable.decision === 'reject' ? 'rejected' : 'adjusted';
-      activateReviewDecision(signal, {
-        reasonCodes: durable.review?.reason_codes || [],
-        note: durable.review?.note || '',
-      });
-    }
-  }
-}
-
 function setReviewGuideOpen(open, { focus = false, restore = false } = {}) {
   const guide = $('#review-guide');
   const help = $('#btn-compare-help');
@@ -3517,7 +3394,7 @@ function renderCompare() {
     $('#compare-view').classList.remove('is-side-by-side', 'is-zoomed', 'is-panning');
     $('#compare-slider').hidden = false;
     $('#compare-mode-note').hidden = true;
-    renderReviewPanel(activeItem);
+    reviewController.renderPanel(activeItem);
     return;
   }
 
@@ -3539,7 +3416,7 @@ function renderCompare() {
   if (original.complete && result.complete) sync();
   setComparePosition(currentCompare.divider, false);
   setCompareTransform(currentCompare, false);
-  renderReviewPanel(activeItem);
+  reviewController.renderPanel(activeItem);
 }
 
 function syncComparePresentation(original, result) {
@@ -4263,7 +4140,7 @@ function bindEvents() {
     openMemorySuggestion(event.currentTarget.dataset.suggestionId || '');
   });
   $$('[data-review-decision]').forEach((button) => button.addEventListener('click', () => {
-    activateReviewDecision(button.dataset.reviewDecision || '');
+    reviewController.activateDecision(button.dataset.reviewDecision || '');
     $('#review-reason-tags button')?.focus();
   }));
   $('#btn-review-adjust').addEventListener('click', async () => {
@@ -4283,7 +4160,7 @@ function bindEvents() {
       [...state.reviewReasonCodes],
     );
     if (saved) {
-      clearReviewForm();
+      reviewController.clearForm();
       switchPage('process');
       renderResults();
     }
@@ -4299,7 +4176,7 @@ function bindEvents() {
       [...state.reviewReasonCodes],
     );
     if (!saved) return;
-    clearReviewForm();
+    reviewController.clearForm();
     switchPage('process');
     renderResults();
   });
@@ -4310,7 +4187,7 @@ function bindEvents() {
   });
   $('#btn-reject').addEventListener('click', () => {
     state.lastFeedbackSignal = 'rejected';
-    renderFeedbackState();
+    reviewController.renderFeedback();
     $('#feedback-input').focus();
     toast('请说出具体原因，它会成为下一版证据');
   });
@@ -4325,7 +4202,7 @@ function bindEvents() {
     state.feedbackRecorded = false;
     state.feedbackReceipt = '';
     state.lastFeedbackSignal = 'note';
-    renderFeedbackState();
+    reviewController.renderFeedback();
     $('#feedback-input').focus();
   });
   $('#btn-feedback-suggestion').addEventListener('click', () => {
