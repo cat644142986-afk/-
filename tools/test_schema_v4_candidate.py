@@ -177,8 +177,8 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             raise RuntimeError(f"sidecar manifest does not fingerprint {label}")
         if _sha256(ROOT / source_key) != str(source_hashes[source_key]).upper():
             raise RuntimeError(f"sidecar manifest {label} hash is stale")
-    if int(manifest.get("ledger_schema_version", 0)) != 4:
-        raise RuntimeError("candidate manifest is not bound to schema v4")
+    if int(manifest.get("ledger_schema_version", 0)) != 5:
+        raise RuntimeError("candidate manifest is not bound to schema v5")
 
     expected_commands = {
         "command:existing-generate-single",
@@ -212,8 +212,8 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
         if len(backups) != 1:
             raise RuntimeError(f"expected one v3 migration backup, found {len(backups)}")
         backup = backups[0]
-        if _schema_version(backup) != 3 or _schema_version(ledger_path) != 4:
-            raise RuntimeError("candidate did not preserve v3 backup and migrate to v4")
+        if _schema_version(backup) != 3 or _schema_version(ledger_path) != 5:
+            raise RuntimeError("candidate did not preserve v3 backup and migrate to v5")
 
         try:
             second_process, second_port, second_health = _start_candidate(
@@ -228,7 +228,7 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             data_dir.glob("atelier.sqlite3.backup-v3-*.sqlite3")
         )
         if backups_after_restart != backups:
-            raise RuntimeError("idempotent v4 restart created another migration backup")
+            raise RuntimeError("idempotent v5 restart created another migration backup")
         for health in (first_health, second_health):
             if health.get("status") != "ok":
                 raise RuntimeError("candidate health is not ok")
@@ -238,8 +238,8 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
                 raise RuntimeError("candidate health contract does not match manifest")
             if health.get("service", {}).get("manifest_status") != "ok":
                 raise RuntimeError("candidate rejected its sidecar manifest")
-            if int(health.get("ledger", {}).get("schema_version", 0)) != 4:
-                raise RuntimeError("candidate health does not report schema v4")
+            if int(health.get("ledger", {}).get("schema_version", 0)) != 5:
+                raise RuntimeError("candidate health does not report schema v5")
         for commands in (first_commands, second_commands):
             if commands.get("contract_version") != "canvas-command-v1":
                 raise RuntimeError("command API contract version is wrong")

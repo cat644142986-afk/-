@@ -27,8 +27,9 @@ except ImportError:
     from .command_registry import command_for_mode, get_command
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 CANVAS_DOCUMENT_SCHEMA_VERSION = 1
+PRODUCT_PROFILE_SCHEMA_VERSION = 1
 CANVAS_COORDINATE_SYSTEM = {
     "unit": "canvas-pixel",
     "origin": "top-left",
@@ -115,6 +116,14 @@ class DraftRevisionConflictError(ValueError):
 
 class CanvasRevisionConflictError(ValueError):
     """Raised when a stale canvas mutation targets an older document version."""
+
+    def __init__(self, message: str, current: Mapping[str, Any]):
+        super().__init__(message)
+        self.current = dict(current)
+
+
+class ProductProfileRevisionConflictError(ValueError):
+    """Raised when a stale product-profile edit targets an older version."""
 
     def __init__(self, message: str, current: Mapping[str, Any]):
         super().__init__(message)
@@ -258,6 +267,38 @@ V4_REQUIRED_TRIGGERS = frozenset({
     "trg_canvas_versions_no_delete",
     "trg_canvas_sources_no_update",
     "trg_canvas_sources_no_delete",
+})
+
+V5_TABLE_COLUMNS = {
+    "product_profiles": frozenset({
+        "id", "sku", "current_version_id", "current_revision",
+        "created_at", "updated_at",
+    }),
+    "product_profile_versions": frozenset({
+        "id", "profile_id", "revision", "parent_version_id",
+        "client_request_id", "request_fingerprint", "profile_json",
+        "profile_sha256", "created_at",
+    }),
+    "product_profile_version_assets": frozenset({
+        "version_id", "asset_id", "role",
+    }),
+}
+
+V5_JOB_SNAPSHOT_COLUMNS = frozenset({"product_profile_version_id"})
+V5_EXECUTION_TRACE_COLUMNS = frozenset({"product_profile_version_id"})
+
+V5_REQUIRED_INDEXES = frozenset({
+    "idx_product_profiles_sku",
+    "idx_product_profile_versions_profile",
+    "idx_product_profile_assets_asset",
+    "idx_job_snapshots_product_profile",
+})
+
+V5_REQUIRED_TRIGGERS = frozenset({
+    "trg_product_profile_versions_no_update",
+    "trg_product_profile_versions_no_delete",
+    "trg_product_profile_assets_no_update",
+    "trg_product_profile_assets_no_delete",
 })
 
 V1_SCHEMA_STATEMENTS = (
@@ -743,6 +784,236 @@ def normalize_canvas_document(value: Mapping[str, Any]) -> dict[str, Any]:
     return json.loads(canonical_json(document))
 
 
+_PROFILE_ABSOLUTE_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|/(?:Users|home|var|tmp)/)")
+_PROFILE_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def _profile_text(
+    value: Any,
+    label: str,
+    *,
+    minimum: int = 0,
+    maximum: int,
+) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    item = value.strip()
+    if not minimum <= len(item) <= maximum:
+        raise ValueError(f"{label} must contain {minimum} to {maximum} characters")
+    lowered = item.lower()
+    if "base64," in lowered or lowered.startswith("data:"):
+        raise ValueError(f"{label} cannot contain embedded data")
+    if _PROFILE_ABSOLUTE_PATH.match(item):
+        raise ValueError(f"{label} cannot contain an absolute path")
+    return item
+
+
+def _profile_array(value: Any, label: str, *, minimum: int = 0, maximum: int) -> list[Any]:
+    if not isinstance(value, list) or not minimum <= len(value) <= maximum:
+        raise ValueError(f"{label} must contain {minimum} to {maximum} items")
+    return value
+
+
+def normalize_product_profile(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate ProductProfile v1 as strict, model-independent product facts."""
+    profile = _canvas_object(
+        value,
+        label="ProductProfile",
+        required={
+            "id", "schema_version", "sku", "name", "revision", "category",
+            "specification", "components", "materials", "brand_colors",
+            "packaging_texts", "logos", "platform_specs", "selection_mode",
+            "approved_reference_ids", "created_at", "updated_at",
+        },
+    )
+    _canvas_id(profile["id"], "ProductProfile.id")
+    if profile["schema_version"] != PRODUCT_PROFILE_SCHEMA_VERSION:
+        raise ValueError("ProductProfile.schema_version is unsupported")
+    _profile_text(profile["sku"], "ProductProfile.sku", minimum=1, maximum=120)
+    _profile_text(profile["name"], "ProductProfile.name", minimum=1, maximum=160)
+    _canvas_integer(profile["revision"], "ProductProfile.revision", minimum=0)
+    _profile_text(profile["category"], "ProductProfile.category", minimum=1, maximum=120)
+
+    specification = _canvas_object(
+        profile["specification"],
+        label="ProductProfile.specification",
+        required={"display", "net_content", "unit_count", "attributes"},
+    )
+    _profile_text(
+        specification["display"], "ProductProfile.specification.display",
+        minimum=1, maximum=160,
+    )
+    _profile_text(
+        specification["net_content"], "ProductProfile.specification.net_content",
+        maximum=120,
+    )
+    _canvas_integer(
+        specification["unit_count"], "ProductProfile.specification.unit_count",
+        minimum=1, maximum=10000,
+    )
+    attribute_keys: set[str] = set()
+    for index, raw_attribute in enumerate(_profile_array(
+        specification["attributes"], "ProductProfile.specification.attributes", maximum=32
+    )):
+        label = f"ProductProfile.specification.attributes[{index}]"
+        attribute = _canvas_object(raw_attribute, label=label, required={"key", "value"})
+        key = _profile_text(attribute["key"], f"{label}.key", minimum=1, maximum=80)
+        _profile_text(attribute["value"], f"{label}.value", minimum=1, maximum=160)
+        normalized_key = key.casefold()
+        if normalized_key in attribute_keys:
+            raise ValueError("ProductProfile specification attribute keys must be unique")
+        attribute_keys.add(normalized_key)
+
+    component_ids: set[str] = set()
+    allowed_roles = {"core", "container", "cap", "label", "accessory", "shadow", "background", "other"}
+    allowed_policies = {"must_preserve", "optional_preserve", "allow_modify", "forbid_modify"}
+    for index, raw_component in enumerate(_profile_array(
+        profile["components"], "ProductProfile.components", minimum=1, maximum=64
+    )):
+        label = f"ProductProfile.components[{index}]"
+        component = _canvas_object(
+            raw_component,
+            label=label,
+            required={"id", "name", "role", "policy", "quantity"},
+        )
+        component_id = _canvas_id(component["id"], f"{label}.id")
+        if component_id in component_ids:
+            raise ValueError(f"duplicate product component id: {component_id}")
+        component_ids.add(component_id)
+        _profile_text(component["name"], f"{label}.name", minimum=1, maximum=120)
+        if component["role"] not in allowed_roles:
+            raise ValueError(f"{label}.role is unsupported")
+        if component["policy"] not in allowed_policies:
+            raise ValueError(f"{label}.policy is unsupported")
+        _canvas_integer(component["quantity"], f"{label}.quantity", minimum=1, maximum=10000)
+
+    material_components: set[str] = set()
+    for index, raw_material in enumerate(_profile_array(
+        profile["materials"], "ProductProfile.materials", maximum=64
+    )):
+        label = f"ProductProfile.materials[{index}]"
+        material = _canvas_object(
+            raw_material,
+            label=label,
+            required={"component_id", "material", "finish", "transparent"},
+        )
+        component_id = _canvas_id(material["component_id"], f"{label}.component_id")
+        if component_id not in component_ids:
+            raise ValueError(f"{label}.component_id references a missing component")
+        if component_id in material_components:
+            raise ValueError("ProductProfile materials must identify each component once")
+        material_components.add(component_id)
+        _profile_text(material["material"], f"{label}.material", minimum=1, maximum=120)
+        _profile_text(material["finish"], f"{label}.finish", maximum=120)
+        if not isinstance(material["transparent"], bool):
+            raise ValueError(f"{label}.transparent must be a boolean")
+
+    color_names: set[str] = set()
+    for index, raw_color in enumerate(_profile_array(
+        profile["brand_colors"], "ProductProfile.brand_colors", maximum=16
+    )):
+        label = f"ProductProfile.brand_colors[{index}]"
+        color = _canvas_object(raw_color, label=label, required={"name", "value"})
+        name = _profile_text(color["name"], f"{label}.name", minimum=1, maximum=80)
+        if name.casefold() in color_names:
+            raise ValueError("ProductProfile brand color names must be unique")
+        color_names.add(name.casefold())
+        if not isinstance(color["value"], str) or not _PROFILE_COLOR.fullmatch(color["value"]):
+            raise ValueError(f"{label}.value must be a six-digit hex color")
+
+    def validate_component_annotations(
+        raw_items: Any,
+        *,
+        field: str,
+        maximum: int,
+        required: set[str],
+        policies: set[str],
+        text_field: str,
+        text_maximum: int,
+    ) -> None:
+        item_ids: set[str] = set()
+        for index, raw_item in enumerate(_profile_array(
+            raw_items, f"ProductProfile.{field}", maximum=maximum
+        )):
+            label = f"ProductProfile.{field}[{index}]"
+            item = _canvas_object(raw_item, label=label, required=required)
+            item_id = _canvas_id(item["id"], f"{label}.id")
+            if item_id in item_ids:
+                raise ValueError(f"duplicate ProductProfile.{field} id: {item_id}")
+            item_ids.add(item_id)
+            component_id = _canvas_id(item["component_id"], f"{label}.component_id")
+            if component_id not in component_ids:
+                raise ValueError(f"{label}.component_id references a missing component")
+            _profile_text(item[text_field], f"{label}.{text_field}", minimum=1, maximum=text_maximum)
+            if item["policy"] not in policies:
+                raise ValueError(f"{label}.policy is unsupported")
+
+    validate_component_annotations(
+        profile["packaging_texts"],
+        field="packaging_texts",
+        maximum=64,
+        required={"id", "component_id", "content", "policy"},
+        policies={"exact_preserve", "readable_preserve", "allow_modify"},
+        text_field="content",
+        text_maximum=500,
+    )
+    validate_component_annotations(
+        profile["logos"],
+        field="logos",
+        maximum=32,
+        required={"id", "component_id", "name", "policy"},
+        policies={"exact_preserve", "allow_reposition", "allow_modify"},
+        text_field="name",
+        text_maximum=120,
+    )
+
+    platform_keys: set[tuple[str, str]] = set()
+    for index, raw_spec in enumerate(_profile_array(
+        profile["platform_specs"], "ProductProfile.platform_specs", minimum=1, maximum=32
+    )):
+        label = f"ProductProfile.platform_specs[{index}]"
+        spec = _canvas_object(
+            raw_spec,
+            label=label,
+            required={
+                "platform", "role", "pixel_width", "pixel_height", "format",
+                "safe_area_percent",
+            },
+        )
+        platform = _profile_text(spec["platform"], f"{label}.platform", minimum=1, maximum=80)
+        role = _profile_text(spec["role"], f"{label}.role", minimum=1, maximum=80)
+        key = (platform.casefold(), role.casefold())
+        if key in platform_keys:
+            raise ValueError("ProductProfile platform and role pairs must be unique")
+        platform_keys.add(key)
+        _canvas_integer(spec["pixel_width"], f"{label}.pixel_width", minimum=1, maximum=32768)
+        _canvas_integer(spec["pixel_height"], f"{label}.pixel_height", minimum=1, maximum=32768)
+        if spec["format"] not in {"jpeg", "png", "webp"}:
+            raise ValueError(f"{label}.format is unsupported")
+        _canvas_number(
+            spec["safe_area_percent"], f"{label}.safe_area_percent", minimum=0, maximum=45
+        )
+
+    if profile["selection_mode"] not in {
+        "core_only", "core_with_container", "full_composition", "separate_all",
+    }:
+        raise ValueError("ProductProfile.selection_mode is unsupported")
+    references = _profile_array(
+        profile["approved_reference_ids"],
+        "ProductProfile.approved_reference_ids",
+        minimum=1,
+        maximum=64,
+    )
+    reference_ids = [
+        _canvas_id(item, "ProductProfile.approved_reference_ids item") for item in references
+    ]
+    if len(reference_ids) != len(set(reference_ids)):
+        raise ValueError("ProductProfile.approved_reference_ids must be unique")
+    _canvas_timestamp(profile["created_at"], "ProductProfile.created_at")
+    _canvas_timestamp(profile["updated_at"], "ProductProfile.updated_at")
+    return json.loads(canonical_json(profile))
+
+
 def json_contains_value(value: Any, target: str) -> bool:
     """Return whether a decoded JSON value contains one exact string value."""
     if isinstance(value, str):
@@ -1092,6 +1363,85 @@ class AtelierLedger:
         if missing_triggers:
             issues.append(f"missing triggers: {', '.join(missing_triggers)}")
 
+        integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
+        if integrity_rows != ["ok"]:
+            issues.append(f"integrity_check failed: {'; '.join(integrity_rows[:3])}")
+        foreign_key_rows = list(connection.execute("PRAGMA foreign_key_check"))
+        if foreign_key_rows:
+            issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
+        return issues
+
+    @classmethod
+    def _v5_objects_present(cls, connection: sqlite3.Connection) -> bool:
+        tables = cls._table_names(connection)
+        if tables.intersection(V5_TABLE_COLUMNS):
+            return True
+        for table, expected in (
+            ("job_snapshots", V5_JOB_SNAPSHOT_COLUMNS),
+            ("execution_traces", V5_EXECUTION_TRACE_COLUMNS),
+        ):
+            if table in tables:
+                columns = {
+                    str(row[1])
+                    for row in connection.execute(f"PRAGMA table_info({table})")
+                }
+                if columns.intersection(expected):
+                    return True
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        return bool(triggers.intersection(V5_REQUIRED_TRIGGERS))
+
+    @classmethod
+    def _v5_contract_issues(cls, connection: sqlite3.Connection) -> list[str]:
+        issues: list[str] = []
+        tables = cls._table_names(connection)
+        for table, required_columns in V5_TABLE_COLUMNS.items():
+            if table not in tables:
+                issues.append(f"missing table {table}")
+                continue
+            actual_columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing_columns = sorted(required_columns - actual_columns)
+            if missing_columns:
+                issues.append(f"{table} missing columns: {', '.join(missing_columns)}")
+
+        for table, required_columns in (
+            ("job_snapshots", V5_JOB_SNAPSHOT_COLUMNS),
+            ("execution_traces", V5_EXECUTION_TRACE_COLUMNS),
+        ):
+            if table not in tables:
+                issues.append(f"missing table {table}")
+                continue
+            actual_columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing_columns = sorted(required_columns - actual_columns)
+            if missing_columns:
+                issues.append(f"{table} missing columns: {', '.join(missing_columns)}")
+
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        missing_indexes = sorted(V5_REQUIRED_INDEXES - indexes)
+        if missing_indexes:
+            issues.append(f"missing indexes: {', '.join(missing_indexes)}")
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        missing_triggers = sorted(V5_REQUIRED_TRIGGERS - triggers)
+        if missing_triggers:
+            issues.append(f"missing triggers: {', '.join(missing_triggers)}")
         integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
         if integrity_rows != ["ok"]:
             issues.append(f"integrity_check failed: {'; '.join(integrity_rows[:3])}")
@@ -1591,6 +1941,112 @@ class AtelierLedger:
             """
         )
 
+    @staticmethod
+    def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
+        """Add immutable SKU product profiles and exact job/trace bindings."""
+        connection.execute(
+            """
+            CREATE TABLE product_profiles (
+                id TEXT PRIMARY KEY,
+                sku TEXT NOT NULL,
+                current_version_id TEXT,
+                current_revision INTEGER NOT NULL DEFAULT 0 CHECK(current_revision >= 0),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(current_version_id)
+                    REFERENCES product_profile_versions(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE product_profile_versions (
+                id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                parent_version_id TEXT,
+                client_request_id TEXT NOT NULL UNIQUE,
+                request_fingerprint TEXT NOT NULL,
+                profile_json TEXT NOT NULL,
+                profile_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(profile_id) REFERENCES product_profiles(id) ON DELETE RESTRICT,
+                FOREIGN KEY(parent_version_id)
+                    REFERENCES product_profile_versions(id) ON DELETE RESTRICT,
+                UNIQUE(profile_id, revision)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE product_profile_version_assets (
+                version_id TEXT NOT NULL,
+                asset_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role = 'approved_reference'),
+                PRIMARY KEY(version_id, asset_id, role),
+                FOREIGN KEY(version_id)
+                    REFERENCES product_profile_versions(id) ON DELETE RESTRICT,
+                FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            "ALTER TABLE job_snapshots ADD COLUMN product_profile_version_id TEXT "
+            "REFERENCES product_profile_versions(id) ON DELETE RESTRICT"
+        )
+        connection.execute(
+            "ALTER TABLE execution_traces ADD COLUMN product_profile_version_id TEXT "
+            "REFERENCES product_profile_versions(id) ON DELETE RESTRICT"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX idx_product_profiles_sku "
+            "ON product_profiles(sku COLLATE NOCASE)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_product_profile_versions_profile "
+            "ON product_profile_versions(profile_id, revision DESC)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_product_profile_assets_asset "
+            "ON product_profile_version_assets(asset_id)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_job_snapshots_product_profile "
+            "ON job_snapshots(product_profile_version_id)"
+        )
+        for trigger_name, table, message in (
+            (
+                "trg_product_profile_versions_no_update",
+                "product_profile_versions",
+                "product profile versions are immutable",
+            ),
+            (
+                "trg_product_profile_versions_no_delete",
+                "product_profile_versions",
+                "product profile versions are immutable",
+            ),
+            (
+                "trg_product_profile_assets_no_update",
+                "product_profile_version_assets",
+                "product profile version assets are immutable",
+            ),
+            (
+                "trg_product_profile_assets_no_delete",
+                "product_profile_version_assets",
+                "product profile version assets are immutable",
+            ),
+        ):
+            action = "UPDATE" if trigger_name.endswith("no_update") else "DELETE"
+            connection.execute(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {action} ON {table}
+                BEGIN
+                    SELECT RAISE(ABORT, '{message}');
+                END
+                """
+            )
+
     def _ensure_schema(self) -> None:
         with self._schema_lock:
             # Probe the version without changing journal mode. An older app must
@@ -1678,6 +2134,23 @@ class AtelierLedger:
                                     else:
                                         self._migrate_v3_to_v4(connection)
                                     current_version = 4
+                                elif current_version == 4:
+                                    if self._v5_objects_present(connection):
+                                        issues = self._v5_contract_issues(connection)
+                                        if issues:
+                                            raise PartialSchemaError(
+                                                "Detected an incomplete v5 ledger while schema metadata says v4; "
+                                                "the database was not changed. Restore the automatic backup or "
+                                                f"repair these objects first: {' | '.join(issues)}"
+                                            )
+                                        repair = "recovered complete v5 schema with stale v4 metadata"
+                                        self.last_schema_repair = (
+                                            f"{self.last_schema_repair}; {repair}"
+                                            if self.last_schema_repair else repair
+                                        )
+                                    else:
+                                        self._migrate_v4_to_v5(connection)
+                                    current_version = 5
                                 else:
                                     raise LedgerSchemaError(
                                         f"No migration path from schema v{current_version}"
@@ -2275,6 +2748,14 @@ class AtelierLedger:
                     (asset_id,),
                 )
             ],
+            "product_profile_versions": [
+                str(row["version_id"])
+                for row in connection.execute(
+                    "SELECT DISTINCT version_id FROM product_profile_version_assets "
+                    "WHERE asset_id = ?",
+                    (asset_id,),
+                )
+            ],
             "job_snapshots": [],
             "generation_results": [],
             "knowledge_evidence": [],
@@ -2714,6 +3195,259 @@ class AtelierLedger:
 
         return self._canvas_result(document_row, version_row, replayed=replayed)
 
+    @staticmethod
+    def _product_profile_version_row(
+        row: sqlite3.Row | Mapping[str, Any],
+    ) -> dict[str, Any]:
+        item = dict(row)
+        item["profile"] = decode_json(item.pop("profile_json", "{}"), {})
+        item.pop("request_fingerprint", None)
+        return item
+
+    @classmethod
+    def _product_profile_result(
+        cls,
+        profile_row: sqlite3.Row | Mapping[str, Any],
+        version_row: sqlite3.Row | Mapping[str, Any],
+        *,
+        replayed: bool,
+    ) -> dict[str, Any]:
+        version = cls._product_profile_version_row(version_row)
+        profile = version.pop("profile")
+        return {
+            "id": str(profile_row["id"]),
+            "sku": str(profile_row["sku"]),
+            "current_revision": int(profile_row["current_revision"]),
+            "current_version_id": profile_row["current_version_id"],
+            "profile": profile,
+            "version": version,
+            "replayed": replayed,
+        }
+
+    def get_product_profile(self, profile_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM product_profiles WHERE id = ?", (str(profile_id),)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown product profile: {profile_id}")
+            version = connection.execute(
+                "SELECT * FROM product_profile_versions WHERE id = ?",
+                (row["current_version_id"],),
+            ).fetchone()
+            if version is None:
+                raise LedgerSchemaError(f"product profile {profile_id} has no current version")
+        return self._product_profile_result(row, version, replayed=False)
+
+    def get_product_profile_version(self, version_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM product_profile_versions WHERE id = ?", (str(version_id),)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown product profile version: {version_id}")
+        return self._product_profile_version_row(row)
+
+    def list_product_profiles(self, limit: int = 200) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT p.*, v.id AS version_record_id, v.profile_id,
+                       v.revision AS version_revision, v.parent_version_id,
+                       v.client_request_id, v.request_fingerprint, v.profile_json,
+                       v.profile_sha256, v.created_at AS version_created_at
+                FROM product_profiles p
+                JOIN product_profile_versions v ON v.id = p.current_version_id
+                ORDER BY p.updated_at DESC, p.id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            profile_row = {
+                "id": item["id"],
+                "sku": item["sku"],
+                "current_revision": item["current_revision"],
+                "current_version_id": item["current_version_id"],
+            }
+            version = {
+                "id": item["version_record_id"],
+                "profile_id": item["profile_id"],
+                "revision": item["version_revision"],
+                "parent_version_id": item["parent_version_id"],
+                "client_request_id": item["client_request_id"],
+                "request_fingerprint": item["request_fingerprint"],
+                "profile_json": item["profile_json"],
+                "profile_sha256": item["profile_sha256"],
+                "created_at": item["version_created_at"],
+            }
+            results.append(
+                self._product_profile_result(profile_row, version, replayed=False)
+            )
+        return results
+
+    @staticmethod
+    def _validate_product_profile_references(
+        connection: sqlite3.Connection,
+        profile: Mapping[str, Any],
+    ) -> None:
+        reference_ids = [str(item) for item in profile["approved_reference_ids"]]
+        placeholders = ",".join("?" for _ in reference_ids)
+        rows = connection.execute(
+            f"SELECT id, role FROM assets WHERE id IN ({placeholders})",
+            reference_ids,
+        ).fetchall()
+        assets = {str(row["id"]): str(row["role"] or "") for row in rows}
+        missing = [asset_id for asset_id in reference_ids if asset_id not in assets]
+        if missing:
+            raise KeyError(f"unknown approved reference assets: {', '.join(missing)}")
+        invalid = [asset_id for asset_id in reference_ids if assets[asset_id] != "workspace_source"]
+        if invalid:
+            raise ValueError(
+                "approved references must be workspace source assets: " + ", ".join(invalid)
+            )
+
+    def save_product_profile(
+        self,
+        *,
+        expected_revision: int,
+        client_request_id: str,
+        profile: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        expected_revision = _canvas_integer(
+            expected_revision, "expected_revision", minimum=0
+        )
+        request_id = str(client_request_id or "").strip()
+        version_id = idempotent_id("profilever", request_id)
+        normalized = normalize_product_profile(profile)
+        if int(normalized["revision"]) != expected_revision:
+            raise ValueError("ProductProfile.revision must equal expected_revision")
+        profile_id = str(normalized["id"])
+        sku = str(normalized["sku"])
+        fingerprint = hashlib.sha256(canonical_json({
+            "expected_revision": expected_revision,
+            "profile": normalized,
+        }).encode("utf-8")).hexdigest()
+        replayed = False
+
+        with self._immediate_connection() as connection:
+            prior_version = connection.execute(
+                "SELECT * FROM product_profile_versions WHERE client_request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if prior_version is not None:
+                if str(prior_version["request_fingerprint"]) != fingerprint:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different product profile save"
+                    )
+                profile_row = connection.execute(
+                    "SELECT * FROM product_profiles WHERE id = ?",
+                    (prior_version["profile_id"],),
+                ).fetchone()
+                if profile_row is None or str(profile_row["id"]) != profile_id:
+                    raise IdempotencyConflictError(
+                        "client_request_id belongs to a different product profile"
+                    )
+                replayed = True
+                version_row = prior_version
+            else:
+                profile_row = connection.execute(
+                    "SELECT * FROM product_profiles WHERE id = ?", (profile_id,)
+                ).fetchone()
+                if profile_row is None:
+                    if expected_revision != 0:
+                        raise ProductProfileRevisionConflictError(
+                            f"product profile {profile_id} is revision 0, not {expected_revision}",
+                            {"id": None, "revision": 0, "version_id": None},
+                        )
+                    duplicate_sku = connection.execute(
+                        "SELECT id, current_revision, current_version_id "
+                        "FROM product_profiles WHERE sku = ? COLLATE NOCASE",
+                        (sku,),
+                    ).fetchone()
+                    if duplicate_sku is not None:
+                        raise ValueError("ProductProfile.sku already belongs to another profile")
+                    parent_version_id = None
+                    created_at = utc_now()
+                else:
+                    current_revision = int(profile_row["current_revision"])
+                    if current_revision != expected_revision:
+                        raise ProductProfileRevisionConflictError(
+                            f"product profile {profile_id} is revision {current_revision}, "
+                            f"not {expected_revision}",
+                            {
+                                "id": profile_id,
+                                "revision": current_revision,
+                                "version_id": profile_row["current_version_id"],
+                            },
+                        )
+                    if str(profile_row["sku"]).casefold() != sku.casefold():
+                        raise ValueError("ProductProfile.sku cannot change between versions")
+                    parent_version_id = profile_row["current_version_id"]
+                    created_at = str(profile_row["created_at"])
+
+                self._validate_product_profile_references(connection, normalized)
+                next_revision = expected_revision + 1
+                now = utc_now()
+                stored_profile = json.loads(canonical_json(normalized))
+                stored_profile["revision"] = next_revision
+                stored_profile["created_at"] = created_at
+                stored_profile["updated_at"] = now
+                stored_json = canonical_json(stored_profile)
+                profile_sha256 = hashlib.sha256(stored_json.encode("utf-8")).hexdigest()
+
+                if profile_row is None:
+                    connection.execute(
+                        """
+                        INSERT INTO product_profiles(
+                            id, sku, current_version_id, current_revision,
+                            created_at, updated_at
+                        ) VALUES(?, ?, NULL, 0, ?, ?)
+                        """,
+                        (profile_id, sku, created_at, now),
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO product_profile_versions(
+                        id, profile_id, revision, parent_version_id,
+                        client_request_id, request_fingerprint, profile_json,
+                        profile_sha256, created_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        version_id, profile_id, next_revision, parent_version_id,
+                        request_id, fingerprint, stored_json, profile_sha256, now,
+                    ),
+                )
+                for asset_id in stored_profile["approved_reference_ids"]:
+                    connection.execute(
+                        """
+                        INSERT INTO product_profile_version_assets(version_id, asset_id, role)
+                        VALUES(?, ?, 'approved_reference')
+                        """,
+                        (version_id, asset_id),
+                    )
+                connection.execute(
+                    """
+                    UPDATE product_profiles
+                    SET current_version_id = ?, current_revision = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (version_id, next_revision, now, profile_id),
+                )
+                profile_row = connection.execute(
+                    "SELECT * FROM product_profiles WHERE id = ?", (profile_id,)
+                ).fetchone()
+                version_row = connection.execute(
+                    "SELECT * FROM product_profile_versions WHERE id = ?", (version_id,)
+                ).fetchone()
+                assert profile_row is not None and version_row is not None
+
+        return self._product_profile_result(profile_row, version_row, replayed=replayed)
+
     def save_workflow_draft(
         self,
         mode: str,
@@ -2944,6 +3678,8 @@ class AtelierLedger:
         canvas_document_id: str | None = None,
         expected_canvas_revision: int | None = None,
         canvas_operation_id: str | None = None,
+        product_profile_id: str | None = None,
+        expected_product_profile_revision: int | None = None,
     ) -> tuple[dict[str, Any], bool]:
         source_asset_ids = [str(asset_id) for asset_id in source_asset_ids]
         if mode not in {"single", "multi-file", "group-split", "cutout-batch"}:
@@ -2973,6 +3709,23 @@ class AtelierLedger:
             )
             if canvas_operation_id is not None:
                 _canvas_id(canvas_operation_id, "canvas_operation_id")
+        product_profile_id = str(product_profile_id or "").strip() or None
+        if product_profile_id is None:
+            if expected_product_profile_revision is not None:
+                raise ValueError(
+                    "expected_product_profile_revision requires product_profile_id"
+                )
+        else:
+            _canvas_id(product_profile_id, "product_profile_id")
+            if expected_product_profile_revision is None:
+                raise ValueError(
+                    "expected_product_profile_revision is required for a product profile"
+                )
+            expected_product_profile_revision = _canvas_integer(
+                expected_product_profile_revision,
+                "expected_product_profile_revision",
+                minimum=1,
+            )
         idempotency_key = str(idempotency_key).strip()
         if len(idempotency_key) > 200:
             raise ValueError("idempotency key is too long")
@@ -2984,6 +3737,7 @@ class AtelierLedger:
         now = utc_now()
         created = False
         canvas_document_version_id: str | None = None
+        product_profile_version_id: str | None = None
 
         with self._immediate_connection() as connection:
             if idempotency_key:
@@ -3027,6 +3781,30 @@ class AtelierLedger:
                                 },
                             )
                         canvas_document_version_id = str(requested_version["id"])
+                    if product_profile_id is not None:
+                        requested_profile_version = connection.execute(
+                            """
+                            SELECT v.id FROM product_profile_versions v
+                            JOIN product_profiles p ON p.id = v.profile_id
+                            WHERE p.id = ? AND v.revision = ?
+                            """,
+                            (product_profile_id, expected_product_profile_revision),
+                        ).fetchone()
+                        if requested_profile_version is None:
+                            current = connection.execute(
+                                "SELECT current_revision, current_version_id "
+                                "FROM product_profiles WHERE id = ?",
+                                (product_profile_id,),
+                            ).fetchone()
+                            raise ProductProfileRevisionConflictError(
+                                "the requested product profile revision is unavailable",
+                                {
+                                    "id": product_profile_id if current else None,
+                                    "revision": int(current["current_revision"]) if current else 0,
+                                    "version_id": current["current_version_id"] if current else None,
+                                },
+                            )
+                        product_profile_version_id = str(requested_profile_version["id"])
                     same_request = (
                         str(existing["mode"]) == mode
                         and decode_json(existing["parameters_json"], {}) == parameters
@@ -3039,6 +3817,8 @@ class AtelierLedger:
                         and (snapshot["canvas_document_version_id"] or None)
                         == canvas_document_version_id
                         and (snapshot["canvas_operation_id"] or None) == canvas_operation_id
+                        and (snapshot["product_profile_version_id"] or None)
+                        == product_profile_version_id
                     )
                     if not same_request:
                         raise IdempotencyConflictError(
@@ -3089,6 +3869,25 @@ class AtelierLedger:
                             "job source assets are not present in the selected canvas version: "
                             + ", ".join(outside)
                         )
+                if product_profile_id is not None:
+                    profile = connection.execute(
+                        "SELECT * FROM product_profiles WHERE id = ?",
+                        (product_profile_id,),
+                    ).fetchone()
+                    if profile is None:
+                        raise KeyError(f"unknown product profile: {product_profile_id}")
+                    current_revision = int(profile["current_revision"])
+                    if current_revision != expected_product_profile_revision:
+                        raise ProductProfileRevisionConflictError(
+                            f"product profile {product_profile_id} is revision {current_revision}, "
+                            f"not {expected_product_profile_revision}",
+                            {
+                                "id": product_profile_id,
+                                "revision": current_revision,
+                                "version_id": profile["current_version_id"],
+                            },
+                        )
+                    product_profile_version_id = str(profile["current_version_id"])
                 placeholders = ",".join("?" for _ in source_asset_ids)
                 rows = connection.execute(
                     f"""
@@ -3151,8 +3950,9 @@ class AtelierLedger:
                         source_asset_ids_json, brief_json, intent_json,
                         parameters_json, knowledge_refs_json, ui_context_json,
                         command_id, canvas_document_version_id, canvas_operation_id,
+                        product_profile_version_id,
                         created_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         job_id,
@@ -3173,6 +3973,7 @@ class AtelierLedger:
                         command_id,
                         canvas_document_version_id,
                         canvas_operation_id,
+                        product_profile_version_id,
                         now,
                     ),
                 )
@@ -3229,6 +4030,7 @@ class AtelierLedger:
                             "command_id": command_id,
                             "canvas_document_version_id": canvas_document_version_id,
                             "canvas_operation_id": canvas_operation_id,
+                            "product_profile_version_id": product_profile_version_id,
                         }),
                         now,
                     ),
@@ -4588,7 +5390,8 @@ class AtelierLedger:
         with self._immediate_connection() as connection:
             if job_id:
                 snapshot = connection.execute(
-                    "SELECT command_id, canvas_document_version_id, canvas_operation_id "
+                    "SELECT command_id, canvas_document_version_id, canvas_operation_id, "
+                    "product_profile_version_id "
                     "FROM job_snapshots WHERE job_id = ?",
                     (job_id,),
                 ).fetchone()
@@ -4598,12 +5401,14 @@ class AtelierLedger:
                     "command_id": str(snapshot["command_id"] or ""),
                     "canvas_document_version_id": snapshot["canvas_document_version_id"],
                     "canvas_operation_id": snapshot["canvas_operation_id"],
+                    "product_profile_version_id": snapshot["product_profile_version_id"],
                 })
             else:
                 candidate.update({
                     "command_id": "",
                     "canvas_document_version_id": None,
                     "canvas_operation_id": None,
+                    "product_profile_version_id": None,
                 })
             existing_row = connection.execute(
                 "SELECT * FROM execution_traces WHERE id = ?", (trace_id,)
@@ -4647,8 +5452,9 @@ class AtelierLedger:
                     user_input_json, compiled_prompt, applied_knowledge_json,
                     ignored_fields_json, model, parameters_json, output_json,
                     error_code, error_message, command_id,
-                    canvas_document_version_id, canvas_operation_id, created_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    canvas_document_version_id, canvas_operation_id,
+                    product_profile_version_id, created_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trace_id, job_id, job_item_id, generation_id, stage, status,
@@ -4658,7 +5464,8 @@ class AtelierLedger:
                     encode_json(candidate["parameters"]), encode_json(candidate["output"]),
                     candidate["error_code"], candidate["error_message"],
                     candidate["command_id"], candidate["canvas_document_version_id"],
-                    candidate["canvas_operation_id"], now,
+                    candidate["canvas_operation_id"],
+                    candidate["product_profile_version_id"], now,
                 ),
             )
             row = connection.execute(
@@ -5201,6 +6008,8 @@ class AtelierLedger:
                     "draft_asset_selections", "job_snapshots", "result_reviews",
                     "execution_traces", "canvas_documents",
                     "canvas_document_versions", "canvas_version_sources",
+                    "product_profiles", "product_profile_versions",
+                    "product_profile_version_assets",
                 )
             }
             counts["sessions"] = connection.execute(

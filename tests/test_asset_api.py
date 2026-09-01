@@ -35,6 +35,78 @@ def png_bytes(color: tuple[int, int, int] = (220, 100, 40)) -> bytes:
     return buffer.getvalue()
 
 
+def product_profile_payload(reference_id: str, *, revision: int = 0) -> dict:
+    return {
+        "id": "profile:api-transparent-bottle",
+        "schema_version": 1,
+        "sku": "API-BOTTLE-500",
+        "name": "API 测试透明瓶",
+        "revision": revision,
+        "category": "beverage",
+        "specification": {
+            "display": "500 ml × 1 瓶",
+            "net_content": "500 ml",
+            "unit_count": 1,
+            "attributes": [],
+        },
+        "components": [
+            {
+                "id": "component:api-bottle",
+                "name": "透明瓶身",
+                "role": "core",
+                "policy": "must_preserve",
+                "quantity": 1,
+            },
+            {
+                "id": "component:api-label",
+                "name": "包装标签",
+                "role": "label",
+                "policy": "forbid_modify",
+                "quantity": 1,
+            },
+        ],
+        "materials": [
+            {
+                "component_id": "component:api-bottle",
+                "material": "PET",
+                "finish": "glossy",
+                "transparent": True,
+            }
+        ],
+        "brand_colors": [{"name": "品牌色", "value": "#E86E4B"}],
+        "packaging_texts": [
+            {
+                "id": "text:api-brand",
+                "component_id": "component:api-label",
+                "content": "API BRAND",
+                "policy": "exact_preserve",
+            }
+        ],
+        "logos": [
+            {
+                "id": "logo:api-primary",
+                "component_id": "component:api-label",
+                "name": "API 主 Logo",
+                "policy": "exact_preserve",
+            }
+        ],
+        "platform_specs": [
+            {
+                "platform": "marketplace",
+                "role": "main-image",
+                "pixel_width": 1024,
+                "pixel_height": 1024,
+                "format": "png",
+                "safe_area_percent": 5,
+            }
+        ],
+        "selection_mode": "full_composition",
+        "approved_reference_ids": [reference_id],
+        "created_at": "2026-09-02T00:00:00Z",
+        "updated_at": "2026-09-02T00:00:00Z",
+    }
+
+
 class AssetApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -922,6 +994,130 @@ class AssetApiTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409, stale.text)
         self.assertEqual(
             stale.json()["detail"]["code"], "CANVAS_REVISION_CONFLICT"
+        )
+
+    def test_product_profile_api_versions_constraints_and_command_binding(self) -> None:
+        source = self.client.post(
+            "/api/assets/import?collection=cutout",
+            files={"file": ("profile-reference.png", png_bytes(), "image/png")},
+        ).json()
+        profile = product_profile_payload(source["id"])
+        first = self.client.put(
+            f"/api/product-profiles/{profile['id']}",
+            json={
+                "expected_revision": 0,
+                "client_request_id": "api-profile-save-1",
+                "profile": profile,
+            },
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["profile"]["revision"], 1)
+        profile_version_id = first.json()["version"]["id"]
+
+        replay = self.client.put(
+            f"/api/product-profiles/{profile['id']}",
+            json={
+                "expected_revision": 0,
+                "client_request_id": "api-profile-save-1",
+                "profile": profile,
+            },
+        )
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertTrue(replay.json()["replayed"])
+        self.assertEqual(replay.json()["version"]["id"], profile_version_id)
+
+        listed = self.client.get("/api/product-profiles")
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(listed.json()["count"], 1)
+        current = self.client.get(f"/api/product-profiles/{profile['id']}")
+        historical = self.client.get(
+            f"/api/product-profile-versions/{profile_version_id}"
+        )
+        self.assertEqual(current.status_code, 200, current.text)
+        self.assertEqual(historical.status_code, 200, historical.text)
+        self.assertTrue(historical.json()["profile"]["materials"][0]["transparent"])
+
+        command = self.client.post(
+            "/api/commands/command:existing-remove-background/execute",
+            json={
+                "client_request_id": "api-profile-command-1",
+                "source_asset_ids": [source["id"]],
+                "parameters": {"cutout_selection": {"strategy": "foreground"}},
+                "product_profile_id": profile["id"],
+                "expected_product_profile_revision": 1,
+            },
+        )
+        self.assertEqual(command.status_code, 200, command.text)
+        snapshot = command.json()["job"]["snapshot"]
+        self.assertEqual(snapshot["product_profile_version_id"], profile_version_id)
+        trace = self.client.post(
+            f"/api/jobs/{command.json()['job']['id']}/traces",
+            json={
+                "client_request_id": "api-profile-command-trace-1",
+                "stage": "profile.constraints",
+                "status": "completed",
+            },
+        )
+        self.assertEqual(trace.status_code, 200, trace.text)
+        self.assertEqual(
+            trace.json()["trace"]["product_profile_version_id"], profile_version_id
+        )
+
+        changed = first.json()["profile"]
+        changed["selection_mode"] = "core_only"
+        second = self.client.put(
+            f"/api/product-profiles/{profile['id']}",
+            json={
+                "expected_revision": 1,
+                "client_request_id": "api-profile-save-2",
+                "profile": changed,
+            },
+        )
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(second.json()["profile"]["revision"], 2)
+        stale = self.client.post(
+            "/api/commands/command:existing-remove-background/execute",
+            json={
+                "client_request_id": "api-profile-command-stale",
+                "source_asset_ids": [source["id"]],
+                "parameters": {"cutout_selection": {"strategy": "foreground"}},
+                "product_profile_id": profile["id"],
+                "expected_product_profile_revision": 1,
+            },
+        )
+        self.assertEqual(stale.status_code, 409, stale.text)
+        self.assertEqual(
+            stale.json()["detail"]["code"], "PRODUCT_PROFILE_REVISION_CONFLICT"
+        )
+
+        stale_job = self.client.post(
+            "/api/jobs",
+            json={
+                "mode": "single",
+                "client_request_id": "api-profile-job-stale",
+                "source_asset_ids": [source["id"]],
+                "parameters": {"batch": 1},
+                "product_profile_id": profile["id"],
+                "expected_product_profile_revision": 1,
+            },
+        )
+        self.assertEqual(stale_job.status_code, 409, stale_job.text)
+        self.assertEqual(
+            stale_job.json()["detail"]["code"],
+            "PRODUCT_PROFILE_REVISION_CONFLICT",
+        )
+
+        mismatched = self.client.put(
+            "/api/product-profiles/profile:different",
+            json={
+                "expected_revision": 0,
+                "client_request_id": "api-profile-mismatch",
+                "profile": profile,
+            },
+        )
+        self.assertEqual(mismatched.status_code, 400, mismatched.text)
+        self.assertEqual(
+            mismatched.json()["detail"]["code"], "INVALID_PRODUCT_PROFILE"
         )
 
     def test_canvas_export_uses_original_pixels_and_protects_revision_and_paths(self) -> None:

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from python.atelier_ledger import normalize_product_profile
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "docs" / "contracts" / "growth-foundation-v1.schema.json"
@@ -137,6 +139,37 @@ class GrowthFoundationContractTests(unittest.TestCase):
 
     def test_document_references_only_existing_contract_entities(self) -> None:
         self.assert_semantically_valid(self.fixture)
+
+    def test_product_profile_freezes_visible_commercial_constraints(self) -> None:
+        profile = self.fixture["product_profiles"][0]
+        normalized = normalize_product_profile(profile)
+        self.assertEqual(normalized, profile)
+        self.assertEqual(normalized["selection_mode"], "full_composition")
+        self.assertTrue(normalized["materials"][0]["transparent"])
+        self.assertEqual(normalized["packaging_texts"][0]["policy"], "exact_preserve")
+        self.assertEqual(normalized["logos"][0]["policy"], "exact_preserve")
+        self.assertEqual(normalized["platform_specs"][0]["pixel_width"], 1024)
+
+    def test_product_profile_rejects_dangling_components_and_unsafe_payloads(self) -> None:
+        profile = copy.deepcopy(self.fixture["product_profiles"][0])
+        profile["materials"][0]["component_id"] = "component:missing"
+        with self.assertRaisesRegex(ValueError, "missing component"):
+            normalize_product_profile(profile)
+
+        duplicate = copy.deepcopy(self.fixture["product_profiles"][0])
+        duplicate["components"].append(copy.deepcopy(duplicate["components"][0]))
+        with self.assertRaisesRegex(ValueError, "duplicate product component"):
+            normalize_product_profile(duplicate)
+
+        embedded = copy.deepcopy(self.fixture["product_profiles"][0])
+        embedded["packaging_texts"][0]["content"] = "data:image/png;base64,AA=="
+        with self.assertRaisesRegex(ValueError, "embedded data"):
+            normalize_product_profile(embedded)
+
+        absolute = copy.deepcopy(self.fixture["product_profiles"][0])
+        absolute["name"] = "D:\\private\\product.png"
+        with self.assertRaisesRegex(ValueError, "absolute path"):
+            normalize_product_profile(absolute)
 
     def test_canvas_coordinate_contract_is_explicit_and_top_left(self) -> None:
         document = self.fixture["canvas_document"]

@@ -32,6 +32,7 @@ try:
         IdempotencyConflictError,
         InvalidStatusTransitionError,
         MemorySuggestionRevisionConflictError,
+        ProductProfileRevisionConflictError,
         idempotent_id,
     )
     from command_registry import (
@@ -109,6 +110,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         IdempotencyConflictError,
         InvalidStatusTransitionError,
         MemorySuggestionRevisionConflictError,
+        ProductProfileRevisionConflictError,
         idempotent_id,
     )
     from python.command_registry import (
@@ -251,7 +253,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-09-02.1"
+SIDECAR_CONTRACT_VERSION = "2026-09-02.2"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -2045,6 +2047,15 @@ class CanvasDocumentSaveRequest(BaseModel):
         extra = "forbid"
 
 
+class ProductProfileSaveRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
+    client_request_id: str
+    profile: dict[str, Any]
+
+    class Config:
+        extra = "forbid"
+
+
 class CanvasExportRequest(BaseModel):
     expected_revision: int = Field(ge=0)
     artboard_id: Optional[str] = None
@@ -2544,6 +2555,76 @@ async def save_workflow_canvas(mode: str, request: CanvasDocumentSaveRequest):
         )
 
 
+@app.get("/api/product-profiles")
+async def list_product_profiles(limit: int = 200):
+    profiles = LEDGER.list_product_profiles(limit)
+    return {"profiles": profiles, "count": len(profiles)}
+
+
+@app.get("/api/product-profiles/{profile_id}")
+async def get_product_profile(profile_id: str):
+    try:
+        return LEDGER.get_product_profile(profile_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "PRODUCT_PROFILE_NOT_FOUND", "message": str(exc)},
+        )
+
+
+@app.get("/api/product-profile-versions/{version_id}")
+async def get_product_profile_version(version_id: str):
+    try:
+        return LEDGER.get_product_profile_version(version_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "PRODUCT_PROFILE_VERSION_NOT_FOUND", "message": str(exc)},
+        )
+
+
+@app.put("/api/product-profiles/{profile_id}")
+async def save_product_profile(profile_id: str, request: ProductProfileSaveRequest):
+    if str(request.profile.get("id") or "") != profile_id:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_PRODUCT_PROFILE",
+                "message": "ProductProfile.id must match the request path",
+            },
+        )
+    try:
+        return LEDGER.save_product_profile(
+            expected_revision=request.expected_revision,
+            client_request_id=request.client_request_id,
+            profile=request.profile,
+        )
+    except ProductProfileRevisionConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PRODUCT_PROFILE_REVISION_CONFLICT",
+                "message": str(exc),
+                "current": exc.current,
+            },
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "PRODUCT_PROFILE_REFERENCE_NOT_FOUND", "message": str(exc)},
+        )
+    except (sqlite3.IntegrityError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_PRODUCT_PROFILE", "message": str(exc)},
+        )
+
+
 def _resolve_canvas_source_path(source: dict[str, Any]) -> Path:
     source_id = str(source.get("id") or "")
     if source.get("kind") == "asset":
@@ -2882,6 +2963,8 @@ class JobCreateRequest(BaseModel):
     client_request_id: str = ""
     requested_concurrency: Optional[int] = None
     max_attempts: int = 2
+    product_profile_id: Optional[str] = None
+    expected_product_profile_revision: Optional[int] = None
 
     class Config:
         extra = "forbid"
@@ -2896,6 +2979,8 @@ class CommandExecutionRequest(BaseModel):
     canvas_document_id: Optional[str] = None
     expected_canvas_revision: Optional[int] = None
     canvas_operation_id: Optional[str] = None
+    product_profile_id: Optional[str] = None
+    expected_product_profile_revision: Optional[int] = None
 
     class Config:
         extra = "forbid"
@@ -3133,6 +3218,8 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
             canvas_document_id=request.canvas_document_id,
             expected_canvas_revision=request.expected_canvas_revision,
             canvas_operation_id=request.canvas_operation_id,
+            product_profile_id=request.product_profile_id,
+            expected_product_profile_revision=request.expected_product_profile_revision,
         )
         _wake_job_engine()
         return {"job": job, "created": created, "command": command}
@@ -3141,6 +3228,15 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
             status_code=409,
             detail={
                 "code": "CANVAS_REVISION_CONFLICT",
+                "message": str(exc),
+                "current": exc.current,
+            },
+        )
+    except ProductProfileRevisionConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PRODUCT_PROFILE_REVISION_CONFLICT",
                 "message": str(exc),
                 "current": exc.current,
             },
@@ -3199,9 +3295,20 @@ async def create_durable_job(request: JobCreateRequest):
                 "group-split": "合照拆分任务",
                 "cutout-batch": f"批量抠图 · {len(source_asset_ids)} 张",
             }[mode],
+            product_profile_id=request.product_profile_id,
+            expected_product_profile_revision=request.expected_product_profile_revision,
         )
         _wake_job_engine()
         return {"job": job, "created": created}
+    except ProductProfileRevisionConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PRODUCT_PROFILE_REVISION_CONFLICT",
+                "message": str(exc),
+                "current": exc.current,
+            },
+        )
     except IdempotencyConflictError as exc:
         raise HTTPException(
             status_code=409,
