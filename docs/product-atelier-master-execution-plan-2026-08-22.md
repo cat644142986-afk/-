@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-02<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `911b352713e91f5da1caf8072b5618cba49af852`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1A 和 G1B 的生产源码、SQLite 恢复、分段图层列表、可逆编辑与逐像素原图导出已经关闭源码及隔离浏览器门禁，当前执行游标进入 schema v4 Windows candidate-first 正式提升、正式 WebView/DPI 和正式目录复验。正式 artifact 和用户账本在提升成功前仍保持 schema v3，不以开发环境通过冒充正式发布。情境式创作副驾仅在画布、SKU 与局部处理底座完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `674feb92109c5115b0efb111b017ab6298fc7267`，contract `2026-09-02.1`、SQLite schema v4、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑和逐像素原始素材 PNG 导出均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1A 与 G1B 已完成并正式发布，当前执行游标进入 G2 SKU 商品数字分身。情境式创作副驾仅在画布、SKU 与局部处理底座完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1581,6 +1581,15 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 本检查点未调用付费 API、生图或 VLM，未读取 API Key、用户 Prompt、用户图片或正式 SQLite，没有修改正式便携目录、NSIS 或桌面快捷方式。正式 artifact 继续保持 `911b352713e91f5da1caf8072b5618cba49af852`、schema v3，直到下一游标完成 candidate-first 提升。
 - 下一执行游标：提交并推送本计划记录；随后从干净 Git 身份构建完整 Windows 候选，依次执行 schema v4 候选迁移/重启/原图导出、正式 WebView 最小尺寸与 DPI、候选双 smoke、外部完整备份、身份绑定提升、正式目录双 smoke、快捷方式和最终窗口复验。任何正式复验失败都回滚，不进入 G2。
 
+### 2026-09-02 G1B Windows 正式发布关闭
+
+- `674feb92109c5115b0efb111b017ab6298fc7267` 的干净 Git 身份已完成完整候选构建、schema v4 迁移与重启、原图导出、候选双 smoke、正式 WebView/DPI、外部备份、身份绑定提升、正式目录双 smoke、快捷方式和最终窗口复验。发布状态为 `finalized`，transaction ID `3b4e977f900346de839faa9d620d080c`，promotion evidence 为本机忽略目录中的 `build/last-portable-promotion.json`。
+- 正式目录为 `release/ProductAtelier-Portable`，提升前外部完整备份为 `D:\ProductAtelier-Backups\release-before-20260902-011608-674feb92109c`。正式 tree SHA-256 `F94D464C050E4DA208C08217AE4CCC79EBF4F4ACFAB76A4635C555CDFF573B3AD`；App、sidecar、manifest SHA-256 分别为 `96E69379F229C92A4A611E85CA94A3514D9DFE03F476267C2129F74AC705F461`、`39E0D25BB6C7E5D3063F1130D735BA424972042E78FAC60CA524E88F2A4B88EC`、`37A627988BFD11E0C0FA822FA1505158A816697337A7BEE8859DB69F31259C4F`；source fingerprint 为 `22A6A6D81E5E6501B7C01493DE10F9C96CA194E4D3627F0CF89556057BA0047C`。
+- 正式 `/api/health` 已再次实测为 `status=ok`、manifest `ok`、contract `2026-09-02.1`、schema v4 且 Git commit 精确匹配；桌面 `Product Atelier.lnk` 精确指向正式 EXE。正式进程来自该目录，不以候选或开发服务冒充正式验证。
+- 最终门禁为 Python 297 项通过、1 项平台预期跳过，前端 142/142，Vite production build、Rust/Tauri locked custom-protocol release、候选与正式目录双 smoke、schema v4 重启和原始素材逐像素导出全部通过。未调用付费接口、生图或 VLM，未读取用户图片、用户 Prompt 或正式 SQLite 内容。
+- 正式 960×600 复验发现空画布说明贴近底边；提交 `674feb92109c5115b0efb111b017ab6298fc7267` 增加稳定紧凑布局约束和静态回归，复验后标题、说明、工具栏、图层栏与状态栏完整可见。任务控制抽屉在等待 240ms 滑入动画结束后完整可用，确认不是裁切缺陷，因此未制造无依据补丁。
+- G1B 已正式关闭。下一执行游标为 G2 SKU 商品数字分身：先冻结 `ProductProfile`、组件保护、批准参考图、版本与任务/trace 绑定合同，再在隔离 schema、合成元数据和 Git 测试素材上实现，不读取正式账本或用户图片。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：
@@ -1588,7 +1597,7 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 不重复已经关闭的 R0–R9，也不退回历史 `vXX-fixes.css` 补丁路线。Git 跟踪的生产样式只有 `src/css/stable-ui.css`，入口与回归测试已锁死；本机被忽略的旧 CSS/补丁不属于跨电脑源码，也不进入构建。
-4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理、R9 外观/无障碍/大素材渲染与三档正式 WebView 终验，以及材质感知 Prompt 路由、人工结构化材质证据和显式 UI 安全回退均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。G0 与 G1A 已关闭，当前从第 13 节 G1B 合同冻结检查点继续；停止继续堆同类自动定位模型，该能力由 G1–G3 的直接选择、SKU 约束与可修正蒙版解决。
+4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理、R9 外观/无障碍/大素材渲染与三档正式 WebView 终验，以及材质感知 Prompt 路由、人工结构化材质证据、显式 UI 安全回退和 G1 schema v4 生产自由画布均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。G0、G1A 与 G1B 已关闭，当前从第 13 节 G2 SKU 商品数字分身继续；停止继续堆同类自动定位模型，该能力由画布直接选择、SKU 约束与后续 G3 可修正蒙版解决。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 
@@ -1670,7 +1679,7 @@ Product Atelier 的长期定位收敛为：**以无限画布为核心，以商�
 
 #### G1：画布核心与统一命令（70–110 小时）
 
-当前状态（2026-09-01）：`G1A` 与 `G1B` 第一检查点已关闭，Fabric.js 通过独立原型门槛，schema v4、不可变画布版本、统一命令注册表和后端 API 已转绿；Fabric 仍未接入正式 `src/`，正式 artifact/账本仍为 schema v3。
+当前状态（2026-09-02）：`G1A` 与 `G1B` 已关闭并正式发布。Fabric.js 7.4.0、schema v4、不可变画布版本、统一命令注册表、分段图层、重启恢复和逐像素原始素材导出均已进入 `674feb92109c5115b0efb111b017ab6298fc7267` 正式便携版；下一阶段不再重复 G1 门禁。
 
 `G1A` 先用 24–40 小时建立独立 Fabric.js 原型，只验证无限工作空间、有限画板、图层、选择/变换、撤销/重做、重启恢复、一个现有快捷命令复用，以及 200 张代理图和 4K 原图引用的内存/缩放/序列化。原型不读取用户正式账本、不进入 `src/`、不改变正式包。
 
@@ -1758,4 +1767,4 @@ G1–G8 预计 `330–560` 小时有效开发与验证，G0 另需 `12–24` 小
 
 ### 13.7 下一执行入口
 
-G0、G1A 与 G1B 生产源码及隔离浏览器门禁已经关闭。当前执行入口是 schema v4 candidate-first Windows 正式提升：从干净 Git 身份构建候选，完成候选迁移/重启/原图导出、正式 WebView 最小尺寸与 DPI、外部备份、事务提升、正式目录双 smoke、快捷方式和最终窗口复验；通过后才进入 G2 SKU 商品数字分身。Agent、模型下载和付费 API 继续不在当前授权内。
+G0、G1A 与 G1B 已完成源码、构建、正式 WebView/DPI、candidate-first Windows 提升和正式目录复验。当前执行入口是 G2 SKU 商品数字分身：先冻结 `ProductProfile`、商品组件保护、批准参考图、不可变档案版本和任务/trace 绑定合同，再接入正式 Studio 与 schema v5 候选；Agent、模型下载和付费 API 继续不在当前授权内。
