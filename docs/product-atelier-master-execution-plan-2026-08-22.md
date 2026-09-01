@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
-> 首次制定：2026-08-22；最近校准：2026-09-01<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `911b352713e91f5da1caf8072b5618cba49af852`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1A 与 G1B 第一检查点（schema v4 不可变画布版本、统一命令注册表和 API 合同）已关闭，当前执行游标仍在 G1B，进入 Fabric.js 正式最小画布壳、SQLite 恢复、分段图层列表与逐像素导出实现。正式 artifact 和用户账本仍保持 schema v3，必须等正式 UI 与 Windows 门禁通过后才 candidate-first 提升。情境式创作副驾仅在画布、SKU 与局部处理底座完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 首次制定：2026-08-22；最近校准：2026-09-02<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `911b352713e91f5da1caf8072b5618cba49af852`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1A 和 G1B 的生产源码、SQLite 恢复、分段图层列表、可逆编辑与逐像素原图导出已经关闭源码及隔离浏览器门禁，当前执行游标进入 schema v4 Windows candidate-first 正式提升、正式 WebView/DPI 和正式目录复验。正式 artifact 和用户账本在提升成功前仍保持 schema v3，不以开发环境通过冒充正式发布。情境式创作副驾仅在画布、SKU 与局部处理底座完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1569,6 +1569,18 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 本检查点没有读取 API Key、用户图片、用户 Prompt、正式 SQLite 或付费调用结果，没有修改正式便携目录、NSIS、桌面快捷方式或用户账本。正式 artifact 继续是 `911b352713e91f5da1caf8072b5618cba49af852`、schema v3；上方只关闭 schema v4 sidecar 候选身份门禁，正式 UI 完成后仍须重新构建完整应用候选，并按 candidate-first 执行外部备份、身份绑定提升、正式复验与失败回滚。
 - 下一执行游标：在生产依赖中锁定 `fabric@7.4.0`，把最小画布壳接入正式 `src/`；从第一版即通过 schema v4 API 恢复/保存，不复制原型 localStorage。图层列表使用分段或虚拟化而不是 200 行 DOM，先完成素材入画布、选择/变换、显隐/锁定、撤销/重做和重启恢复，再增加严格按画板像素导出与正式 WebView/DPI 门禁。
 
+### 2026-09-02 G1B 生产画布与逐像素导出源码门禁关闭
+
+- 提交 `2cb6fc488ef9f96a83c3e9c677f7ba1394abe92e` 将锁定的 `fabric@7.4.0` 延迟接入正式 Studio。快捷处理与自由画布使用同一素材域和工作流草稿；画布支持素材加入、选择/变换、显隐、锁定、撤销/重做、抓手/缩放、40 条分段图层与素材列表，200 行 DOM 原型和浏览器存储没有进入生产实现。
+- 画布只通过 schema v4 `GET/PUT /api/workspaces/{mode}/canvas` 恢复和追加不可变 SQLite 版本；保存携带 expected revision、幂等 request ID、冲突重载与失败重试。生产画布合同测试确认不保存 Base64、机器绝对路径或 Fabric 代理字节，代理只用于显示，`assets.id` 与原始像素继续是事实源。
+- 新增 `POST /api/workspaces/{mode}/canvas/export` 和 `python/canvas_export.py`。后端在导出前强制 revision 一致，只接受 PNG，按画板坐标、裁切、缩放、旋转、透明度、显隐和 z-index 从原始素材逐像素合成；响应返回画板、尺寸、revision、可见图层数和 `X-Canvas-Source: original-assets`，素材错误不泄露本机路径。
+- 隔离真实验收使用 Git 测试素材 `tests/fixtures/semantic_grounding_photos/coffee-powder.jpg`，没有读取用户图片或正式账本。自由画布保存为 revision 1、1 图层、画板 `1536 × 2048 px`；API 和落盘 PNG 均为 2,479,870 bytes，SHA-256 `E6F42659E7746399325B68E3DAC0024233A8B1F3A38BC1788A80DA0B4932F9A7`，响应头为 revision 1、1 个可见图层和 `original-assets`。
+- 真实浏览器在 `1280×720` 与最小 `960×600` 验证画布非空、按钮不遮挡、无横向或纵向溢出；导出状态从“正在导出画板”进入“画板已导出”。页面刷新和隔离 sidecar 真实重启后，同一 version ID、document SHA、revision 1 与 1 图层完整恢复并可再次导出；控制台 0 error / 0 warning。
+- 最终源码门禁为 Python 297 项通过、1 项平台预期跳过；前端 141/141；Vite production build；Rust/Tauri locked custom-protocol check；Python compileall、51 个 Git 跟踪 JS/ESM 语法、Git whitespace 和 `npm audit --omit=dev` 0 漏洞。第一次并行 Rust 检查因 Vite 正在清空 `dist` 瞬时缺图标，按发布真实顺序在 build 后重跑通过，不把构建竞争误报为源码通过。
+- 发布前审计补齐两项门禁：`python/canvas_export.py` 已进入 sidecar manifest source fingerprint，`tools/test_schema_v4_candidate.py` 会验证其哈希；生产 `src/public/THIRD_PARTY_NOTICES.txt` 随 Vite/Tauri 制品交付 Fabric 与 Lucide 许可证，源码和 dist SHA-256 均为 `F876DB029AD81ACAA19CF87639F12D2C625C62536E7002A9D336021C46EDC34D`。
+- 本检查点未调用付费 API、生图或 VLM，未读取 API Key、用户 Prompt、用户图片或正式 SQLite，没有修改正式便携目录、NSIS 或桌面快捷方式。正式 artifact 继续保持 `911b352713e91f5da1caf8072b5618cba49af852`、schema v3，直到下一游标完成 candidate-first 提升。
+- 下一执行游标：提交并推送本计划记录；随后从干净 Git 身份构建完整 Windows 候选，依次执行 schema v4 候选迁移/重启/原图导出、正式 WebView 最小尺寸与 DPI、候选双 smoke、外部完整备份、身份绑定提升、正式目录双 smoke、快捷方式和最终窗口复验。任何正式复验失败都回滚，不进入 G2。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：
@@ -1746,4 +1758,4 @@ G1–G8 预计 `330–560` 小时有效开发与验证，G0 另需 `12–24` 小
 
 ### 13.7 下一执行入口
 
-G0、G1A 与 G1B 第一检查点已经关闭。当前从 G1B 的正式 UI 接入继续：锁定生产 Fabric 依赖，接入最小画布壳、schema v4 恢复/保存、分段图层列表和逐像素导出；完成源码、正式 WebView/DPI 与 candidate-first Windows 发布门禁后才提升 schema v4 正式便携版。Agent、模型下载和付费 API 继续不在当前授权内。
+G0、G1A 与 G1B 生产源码及隔离浏览器门禁已经关闭。当前执行入口是 schema v4 candidate-first Windows 正式提升：从干净 Git 身份构建候选，完成候选迁移/重启/原图导出、正式 WebView 最小尺寸与 DPI、外部备份、事务提升、正式目录双 smoke、快捷方式和最终窗口复验；通过后才进入 G2 SKU 商品数字分身。Agent、模型下载和付费 API 继续不在当前授权内。
