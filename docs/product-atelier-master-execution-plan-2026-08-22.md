@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-01<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `911b352713e91f5da1caf8072b5618cba49af852`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8：无限画布为核心方向，情境式创作副驾仅在画布、SKU 与局部处理底座完成后进入条件式阶段；常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `911b352713e91f5da1caf8072b5618cba49af852`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0 增长前置门禁已关闭，当前执行游标进入不修改正式 `src/` 的 G1A Fabric.js 独立原型。情境式创作副驾仅在画布、SKU 与局部处理底座完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1533,6 +1533,18 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 记录源码检查点的总计划提交 `911b352713e91f5da1caf8072b5618cba49af852` 已按 candidate-first Windows 发布链进入正式便携目录。正式 EXE / sidecar / manifest SHA-256 分别为 `DB448C5F9B266D804190803FB22C40D6C172938AE5240F7EFE34D2B9AADB76A9`、`71DE2195F81779887CD5257C1B7E05DED10A112D4B424C2CCA2965D843A10E68`、`19FCD817C44BE1A3692D662A6E0F2CE1AA7D59A84A26C56382898BA8CB748551`；正式目录为 1747 个文件、271 个目录、375682710 bytes，tree SHA-256 为 `0D05AC8D2FCAB6B5CC637107471BD17FB2FDEA51B2195050C7089BABC9701BB2`，source fingerprint 为 `870AA34920719DB6A2FF73F6C153D7C7E93EB401C1F3672E72AB3A15D23FE699`。
 - 发布事务 `d6b7416153ff4d7ca45646734b24c75b` 已 `finalized`，事务文件和发布锁均已清除；上一正式版完整备份为 `D:\\ProductAtelier-Backups\\release-before-20260901-205458-911b352713e9`，promotion evidence SHA-256 为 `E9BE71071C2026A478DA950CD4FBDCEEFFCFDE332A1B1E88BB52973AFEC50678`。候选与正式目录双 smoke 均通过；最终正式应用和 sidecar 从正式目录运行，动态端口 `62199` 的健康接口返回 `ok`、manifest `ok`、schema v3，桌面快捷方式目标/工作目录均为正式目录。最终窗口截图 SHA-256 为 `A5F8B325805498BD15DCE171DCDD3DBBDA3F9870C57042B0830A501DCFDF2756`，目视无黑屏、白边、内容遮挡或圆角漏底。
 - 下一执行游标：审计 G0 的回滚点、测试数据隔离与九个最小增长合同草案。只有这些门禁具备可验证证据后才关闭 G0，并进入不修改正式 `src/`、不读取用户账本的 G1A Fabric.js 独立原型。
+
+### 2026-09-01 G0 增长前置门禁关闭
+
+- 用户已用持续目标明确授权按唯一总计划推进当前可在本机、零付费完成的增长路线；单个检查点不再作为停止点。Agent、付费模型、付费生图和大型模型下载仍不在授权内。
+- 增长前回滚标签 `baseline-2026-09-01-before-growth-route` 已同时存在于本地和 GitHub；带注释标签对象为 `a00e019a47507fe700d8af38f1fcf4d1e0c7e4cc`，剥离后精确指向正式增长前基线 `98b3afb12069238f491c5b43536b4ae1d0d24c41`。
+- `docs/contracts/growth-foundation-v1.schema.json` 冻结 `CanvasDocument / Artboard / Layer / Operation / Mask / ROI / ProductProfile / QualityIssue / Recipe` 九个最小草案合同。结构层拒绝未知字段、Base64/绝对路径引用和未确认付费操作；语义门禁额外锁定实体引用存在、集合内 ID 唯一、源素材声明、ROI 边界与撤销游标范围。Schema SHA-256 为 `8DBCA3DFF3B0766E5D858BE15C410A221650398679A890B563E3DFEE57E35B88`。
+- G1A 测试入口只使用 `tests/fixtures/growth_foundation/minimal-contract.json` 的纯合成元数据，不包含真实图片字节、用户 Prompt、API Key、绝对路径或正式 SQLite 内容；fixture SHA-256 为 `85B43FE4E7A2D0E89E190BA1550A57B514D7342D9B53AE6AE99FD22F81B6D913`。测试依赖显式锁定 MIT 许可的 `rfc3339-validator==0.1.4`，避免 `jsonschema` 在缺少可选后端时静默跳过 `date-time` 校验。
+- 合同专项 11/11 通过；最终全量门禁为 Python 280 项（279 通过、1 项平台预期跳过）、前端 132/132、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall、全部 Git 跟踪 JavaScript/ESM 语法和 Git whitespace 全绿。被忽略的 `src/js/_appjs_parts/` 是不进入 Git 和构建的本机历史草稿，未修改也未作为生产门禁结果。
+- 合同检查点提交 `a211e5b728efe87900d0fdb3b33694ec15001816` 已推送。此前已关闭默认生图基线决策、`app.js` 低耦合拆分和生产视觉 token 收口；公开 NSIS 继续明确冻结在外部代码签名证书条件，不冒充已签名公开安装包。
+- 本检查点只改变文档、测试依赖和合成合同夹具，没有修改 `src/`、Python sidecar 运行依赖、Rust/Tauri 或正式资源，因此不构建并提升一个字节相同但 Git 身份不同的伪运行制品。正式便携 artifact、桌面快捷方式和已验证健康证据继续保持 `911b352713e91f5da1caf8072b5618cba49af852`；candidate-first 规则没有被绕过。
+- 本轮没有调用付费 API、创建付费任务、读取 API Key、用户图片、用户 Prompt、正式 SQLite 或 build 证据目录。源控中的付费实验计划仍为 `paid_execution_authorized=false`；由于边界禁止读取用户账本，本记录只证明本轮与源控授权状态，不把它夸大为对用户历史账本的结算审计。
+- G0 关闭后的下一执行游标：在 `prototypes/` 建立独立 G1A Fabric.js 原型；先锁定版本、MIT 许可证、依赖树与 NOTICE，再依次验证无限工作空间/有限画板、图层、选择与变换、撤销/重做、重启恢复、一个现有快捷命令复用，以及 200 张代理图与 4K 原图引用的内存、缩放和序列化。原型通过前不进入正式 `src/`，也不读取正式账本。
 
 ## 11. 下一位开发者的执行入口
 
