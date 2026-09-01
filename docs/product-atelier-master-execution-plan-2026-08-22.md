@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-01<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `4e67e1b750628b81ffb5b2bd2d9c8857daceb2e6`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8：无限画布为核心方向，情境式创作副驾仅在画布、SKU 与局部处理底座完成后进入条件式阶段；常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `4779aee3a62e7eecac0aaa83ea150dd74aa00c45`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8：无限画布为核心方向，情境式创作副驾仅在画布、SKU 与局部处理底座完成后进入条件式阶段；常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1498,6 +1498,9 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 评审提交、“立即修改本张”派生任务、A/B 对比、workspace 持久化、SQLite/API 合同和中文产品文案保持不变。新增决策摘要纯函数单测，静态回归锁定主文件只调用控制器。
 - 源码提交 `c50e85375c3d92dc7dab2e10f9212788926c837a` 完成。门禁为前端 124/124、Python 269 项（268 通过、1 项平台预期跳过）、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall 和 Git whitespace 全绿。
 - 本检查点未读取用户图片、Prompt、SQLite 或 API Key，未连接付费供应商、调用生图或触发自动重做。下一步按 candidate-first Windows 发布链提升该检查点，再审计 knowledge 或 compare 的下一个低耦合边界。
+- 记录本检查点的总计划提交 `4779aee3a62e7eecac0aaa83ea150dd74aa00c45` 已按 candidate-first Windows 发布链进入正式便携目录。正式 EXE / sidecar / manifest SHA-256 分别为 `382B8493CD678783634E8890F28A100ACB017D90B9A7F4D5EA68A10803ED19D4`、`EE35C0625E0C4DA9DEBDB8AD630731F177FE447E1FD4749894042C0A30CA1BF7`、`B20902324F3CB22DB7527CC3B43A560D5FDCBF85D26C10EDA4F640CE991D9507`；正式目录为 1747 个文件、271 个目录、375682198 bytes，tree SHA-256 为 `7E8C508E2920469A9BC721FEF20A9C2DBE147D5A87FFE37796C6BBAF60F55D37`。
+- 发布事务 `6f2e5964ade645dd91372664e067e36c` 已 `finalized`；上一正式版完整备份为 `D:\ProductAtelier-Backups\release-before-20260901-190343-4779aee3a62e`，promotion evidence SHA-256 为 `8237B7EA851D559ACF2E3E8308C7B5B1DAE7B426F986538162BCC8C3B7556EA6`。候选与正式目录的 sidecar、动态端口、manifest、schema v3 和隔离账本 smoke 均通过；桌面快捷方式已指向正式 EXE，新正式软件正在运行。
+- 下一执行游标：审计 knowledge 与 compare 边界，优先选择不改动任务提交、数据持久化和图像处理的展示/交互控制器；每次只拆一个低耦合边界并继续完整回归。
 
 ## 11. 下一位开发者的执行入口
 
