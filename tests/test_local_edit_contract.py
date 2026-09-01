@@ -8,8 +8,10 @@ from python.local_edit_contract import (
     LocalEditContractError,
     apply_strict_inpaint,
     apply_strict_outpaint,
+    canvas_mask_fingerprint,
     image_fingerprint,
     normalize_local_edit_contract,
+    render_canvas_mask_definition,
 )
 
 
@@ -83,6 +85,29 @@ def outpaint_contract(*, transition_width: int = 0) -> dict:
 
 
 class LocalEditContractTests(unittest.TestCase):
+    def test_vector_mask_renders_deterministically_and_never_escapes_roi(self) -> None:
+        definition = {
+            "schema_version": 1,
+            "coordinate_space": "source-pixel",
+            "width": 12,
+            "height": 10,
+            "base": "full",
+            "strokes": [{
+                "mode": "exclude",
+                "radius": 1,
+                "points": [{"x": 5, "y": 5}],
+            }],
+            "feather_radius": 1,
+        }
+        roi = {"x": 3, "y": 2, "width": 6, "height": 6}
+        rendered = render_canvas_mask_definition(definition, roi)
+        self.assertEqual(rendered.size, (12, 10))
+        self.assertEqual(rendered.getpixel((0, 0)), 0)
+        self.assertEqual(rendered.getpixel((11, 9)), 0)
+        self.assertGreater(rendered.getpixel((3, 2)), 0)
+        self.assertLess(rendered.getpixel((5, 5)), 255)
+        self.assertEqual(canvas_mask_fingerprint(definition, roi), image_fingerprint(rendered))
+
     def test_contract_rejects_unknown_fields_and_out_of_bounds_roi(self) -> None:
         mask = Image.new("L", (6, 6), 0)
         payload = inpaint_contract(mask)

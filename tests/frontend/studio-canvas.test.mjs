@@ -18,6 +18,17 @@ import {
   transformFromFabricObject,
   undoCanvas,
 } from '../../src/js/canvas-model.js';
+import {
+  appendMaskStroke,
+  buildFreeLocalEditContract,
+  createMaskDefinition,
+  invertMaskDefinition,
+  normalizeSourceRoi,
+  roiFromSceneDrag,
+  sceneRectFromSourceRoi,
+  setMaskBase,
+  setMaskFeather,
+} from '../../src/js/local-edit-model.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const [controllerSource, modelSource, appSource, apiSource, htmlSource] = await Promise.all([
@@ -126,12 +137,85 @@ test('two hundred rows render in stable forty-item segments', () => {
   assert.deepEqual([final.visible, final.hasMore], [200, false]);
 });
 
+test('manual ROI supports drag and exact numeric entry without leaving source pixels', () => {
+  const layer = createCanvasDocument('single', asset('asset:first', 1200, 800)).layers[0];
+  layer.transform = {
+    ...layer.transform,
+    x: 100,
+    y: 50,
+    scale_x: 0.5,
+    scale_y: 0.5,
+  };
+  assert.deepEqual(
+    roiFromSceneDrag(layer, { x: 150, y: 100 }, { x: 350, y: 250 }),
+    { x: 100, y: 100, width: 400, height: 300 },
+  );
+  assert.deepEqual(
+    sceneRectFromSourceRoi(layer, { x: 100, y: 100, width: 400, height: 300 }),
+    { x: 150, y: 100, width: 200, height: 150 },
+  );
+  assert.deepEqual(
+    normalizeSourceRoi(layer, { x: 10, y: 20, width: 300, height: 200 }),
+    { x: 10, y: 20, width: 300, height: 200 },
+  );
+  assert.throws(
+    () => normalizeSourceRoi(layer, { x: 1100, y: 20, width: 300, height: 200 }),
+    /不能超出原图像素范围/,
+  );
+  layer.transform.rotation_degrees = 15;
+  assert.throws(() => roiFromSceneDrag(layer, { x: 0, y: 0 }, { x: 10, y: 10 }), /旋转为 0°/);
+});
+
+test('manual mask keeps reversible base, brush, inverse, feather, and free spec facts', () => {
+  const layer = createCanvasDocument('single', asset('asset:first', 1200, 800)).layers[0];
+  const roi = { id: 'roi:test', rect: { x: 100, y: 100, width: 400, height: 300 } };
+  let definition = createMaskDefinition(layer);
+  definition = appendMaskStroke(definition, 'include', 24, [
+    { x: 120, y: 130 },
+    { x: 180, y: 190 },
+    { x: 900, y: 700 },
+  ], roi.rect);
+  assert.equal(definition.strokes.length, 1);
+  assert.equal(definition.strokes[0].points.length, 2);
+  definition = setMaskFeather(definition, 8);
+  assert.equal(definition.feather_radius, 8);
+  definition = invertMaskDefinition(definition);
+  assert.equal(definition.base, 'full');
+  assert.equal(definition.strokes[0].mode, 'exclude');
+  definition = setMaskBase(definition, 'empty');
+  assert.equal(definition.strokes.length, 0);
+
+  const mask = {
+    version: {
+      id: 'maskver:test',
+      pixel_sha256: 'a'.repeat(64),
+      definition: createMaskDefinition(layer, 'full'),
+    },
+  };
+  const contract = buildFreeLocalEditContract({
+    operationId: 'operation:test-local-edit',
+    canvasVersionId: 'canvasver:test',
+    layer,
+    sourceSha256: 'b'.repeat(64),
+    roi,
+    mask,
+  });
+  assert.equal(contract.mask.id, 'maskver:test');
+  assert.equal(contract.mask.sha256, 'A'.repeat(64));
+  assert.equal(contract.cost.mode, 'free');
+  assert.equal(contract.cost.automatic_paid_retry, false);
+});
+
 test('production canvas uses SQLite APIs and is wired into the Studio lifecycle', () => {
   assert.match(apiSource, /export async function getCanvas\(mode/);
   assert.match(apiSource, /export async function saveCanvas\(mode/);
   assert.match(apiSource, /export async function exportCanvas\(mode/);
   assert.match(apiSource, /X-Canvas-Source/);
   assert.match(apiSource, /export async function getCommands\(/);
+  assert.match(apiSource, /export async function createCanvasRoi\(/);
+  assert.match(apiSource, /export async function getCanvasRois\(/);
+  assert.match(apiSource, /export async function saveCanvasMask\(/);
+  assert.match(apiSource, /export async function createLocalEditSpec\(/);
   assert.match(apiSource, /export async function executeCommand\(commandId/);
   assert.match(apiSource, /import\.meta\.env\?\.DEV/);
   assert.match(apiSource, /\['127\.0\.0\.1', 'localhost', '::1'\]/);
@@ -146,6 +230,18 @@ test('production canvas uses SQLite APIs and is wired into the Studio lifecycle'
   assert.match(htmlSource, /data-studio-view="quick"/);
   assert.match(htmlSource, /data-studio-view="canvas"/);
   assert.match(htmlSource, /id="studio-fabric-canvas"/);
+  assert.match(controllerSource, /api\.getCanvasRois\(entry\.currentVersionId, layer\.id/);
+  assert.match(controllerSource, /api\.createCanvasRoi\(\{/);
+  assert.match(controllerSource, /api\.saveCanvasMask\(local\.roi\.id/);
+  assert.match(controllerSource, /api\.createLocalEditSpec\(\{/);
+  assert.match(controllerSource, /dataset\.localEditBase/);
+  assert.match(controllerSource, /key === 'r' \? 'roi'/);
+  assert.match(controllerSource, /key === 'b' \? 'brush-include'/);
+  assert.match(controllerSource, /key === 'e' \? 'brush-exclude'/);
+  assert.match(controllerSource, /objectRole', 'local-edit-roi'/);
+  assert.match(htmlSource, /id="canvas-panel-local-edit"/);
+  assert.match(htmlSource, /id="local-edit-save-mask"/);
+  assert.match(htmlSource, /role="status" aria-live="polite" aria-atomic="true"/);
 });
 
 test('canvas persistence never uses browser storage, embedded images, or machine paths', () => {

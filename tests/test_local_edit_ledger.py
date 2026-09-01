@@ -6,8 +6,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PIL import Image
-
 from python.atelier_ledger import (
     AtelierLedger,
     CanvasRevisionConflictError,
@@ -16,7 +14,7 @@ from python.atelier_ledger import (
     PartialSchemaError,
     SCHEMA_VERSION,
 )
-from python.local_edit_contract import image_fingerprint
+from python.local_edit_contract import canvas_mask_fingerprint
 from tests.test_canvas_ledger import canvas_document
 
 
@@ -94,13 +92,15 @@ class LocalEditLedgerTests(unittest.TestCase):
         )
 
     def create_mask(self, roi_id: str, *, request_id: str = "mask-request-1") -> dict:
-        pixel_mask = Image.new("L", (4096, 4096), 0)
-        pixel_mask.putpixel((120, 160), 255)
+        definition = mask_definition()
         return self.ledger.save_canvas_mask(
             roi_id=roi_id,
             expected_revision=0,
-            definition=mask_definition(),
-            pixel_sha256=image_fingerprint(pixel_mask),
+            definition=definition,
+            pixel_sha256=canvas_mask_fingerprint(
+                definition,
+                {"x": 64, "y": 80, "width": 1024, "height": 1200},
+            ),
             client_request_id=request_id,
         )
 
@@ -193,13 +193,14 @@ class LocalEditLedgerTests(unittest.TestCase):
         self.assertEqual(mask_v1["version"]["id"], replayed_mask["version"]["id"])
 
         changed_definition = mask_definition(x=240)
-        pixel_mask_v2 = Image.new("L", (4096, 4096), 0)
-        pixel_mask_v2.putpixel((240, 160), 255)
         mask_v2 = self.ledger.save_canvas_mask(
             roi_id=roi["id"],
             expected_revision=1,
             definition=changed_definition,
-            pixel_sha256=image_fingerprint(pixel_mask_v2),
+            pixel_sha256=canvas_mask_fingerprint(
+                changed_definition,
+                {"x": 64, "y": 80, "width": 1024, "height": 1200},
+            ),
             client_request_id="mask-request-2",
         )
         self.assertEqual(mask_v2["current_revision"], 2)

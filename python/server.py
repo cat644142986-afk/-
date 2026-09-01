@@ -2064,7 +2064,7 @@ class CanvasMaskSaveRequest(BaseModel):
     expected_revision: int = Field(ge=0)
     client_request_id: str
     definition: dict[str, Any]
-    pixel_sha256: str
+    pixel_sha256: str = ""
 
     class Config:
         extra = "forbid"
@@ -2653,6 +2653,27 @@ async def get_canvas_roi(roi_id: str):
             exc,
             invalid_code="INVALID_CANVAS_ROI",
             not_found_code="CANVAS_ROI_NOT_FOUND",
+        )
+
+
+@app.get("/api/canvas-versions/{version_id}/rois")
+async def list_canvas_rois(
+    version_id: str,
+    source_layer_id: Optional[str] = None,
+    limit: int = 100,
+):
+    try:
+        rois = LEDGER.list_canvas_rois(
+            version_id,
+            source_layer_id=source_layer_id,
+            limit=limit,
+        )
+        return {"canvas_version_id": version_id, "rois": rois, "count": len(rois)}
+    except KeyError as exc:
+        raise_local_edit_http_error(
+            exc,
+            invalid_code="INVALID_CANVAS_ROI",
+            not_found_code="CANVAS_VERSION_NOT_FOUND",
         )
 
 

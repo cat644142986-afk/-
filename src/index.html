@@ -159,6 +159,7 @@
               <div class="canvas-workspace__identity"><span class="canvas-index">01</span><div><p>CANVAS WORKSPACE</p><strong id="canvas-mode-label">single · 尚未创建</strong></div></div>
               <div class="canvas-tool-groups">
                 <div class="canvas-tool-group" role="group" aria-label="画布工具"><button class="canvas-icon-button is-active" type="button" data-canvas-tool="select" aria-pressed="true" aria-label="选择工具" title="选择工具"><i data-lucide="mouse-pointer-2" aria-hidden="true"></i></button><button class="canvas-icon-button" type="button" data-canvas-tool="pan" aria-pressed="false" aria-label="抓手工具" title="抓手工具（按住空格临时启用）"><i data-lucide="hand" aria-hidden="true"></i></button></div>
+                <div class="canvas-tool-group" role="group" aria-label="局部编辑工具"><button class="canvas-icon-button" type="button" data-canvas-tool="roi" data-local-edit-requires-layer aria-pressed="false" aria-label="框选局部区域" title="框选局部区域"><i data-lucide="scan" aria-hidden="true"></i></button><button class="canvas-icon-button" type="button" data-canvas-tool="brush-include" data-local-edit-requires-roi aria-pressed="false" aria-label="蒙版保留画笔" title="蒙版保留画笔"><i data-lucide="brush" aria-hidden="true"></i></button><button class="canvas-icon-button" type="button" data-canvas-tool="brush-exclude" data-local-edit-requires-roi aria-pressed="false" aria-label="蒙版删除画笔" title="蒙版删除画笔"><i data-lucide="eraser" aria-hidden="true"></i></button></div>
                 <div class="canvas-tool-group" role="group" aria-label="历史操作"><button class="canvas-icon-button" id="canvas-undo" type="button" data-canvas-edit-action aria-label="撤销" title="撤销（Ctrl+Z）"><i data-lucide="undo-2" aria-hidden="true"></i></button><button class="canvas-icon-button" id="canvas-redo" type="button" data-canvas-edit-action aria-label="重做" title="重做（Ctrl+Y）"><i data-lucide="redo-2" aria-hidden="true"></i></button></div>
                 <div class="canvas-tool-group" role="group" aria-label="画布缩放"><button class="canvas-icon-button" id="canvas-zoom-out" type="button" aria-label="缩小画布" title="缩小"><i data-lucide="zoom-out" aria-hidden="true"></i></button><output id="canvas-zoom-output" aria-live="polite">100%</output><button class="canvas-icon-button" id="canvas-zoom-in" type="button" aria-label="放大画布" title="放大"><i data-lucide="zoom-in" aria-hidden="true"></i></button><button class="canvas-icon-button" id="canvas-fit" type="button" aria-label="适合画板" title="适合画板"><i data-lucide="focus" aria-hidden="true"></i></button></div>
                 <div class="canvas-tool-group" role="group" aria-label="画板导出"><button class="canvas-icon-button" id="canvas-export" type="button" aria-label="导出当前画板" title="导出当前画板 PNG" disabled><i data-lucide="download" aria-hidden="true"></i></button></div>
@@ -173,7 +174,7 @@
               </div>
 
               <aside class="canvas-inspector" aria-label="画布检查器">
-                <div class="canvas-panel-tabs" role="tablist" aria-label="画布侧栏"><button class="is-active" type="button" role="tab" data-canvas-panel="layers" aria-selected="true">图层</button><button type="button" role="tab" data-canvas-panel="assets" aria-selected="false">素材</button></div>
+                <div class="canvas-panel-tabs" role="tablist" aria-label="画布侧栏"><button class="is-active" type="button" role="tab" data-canvas-panel="layers" aria-selected="true">图层</button><button type="button" role="tab" data-canvas-panel="assets" aria-selected="false">素材</button><button type="button" role="tab" data-canvas-panel="local-edit" aria-selected="false">局部</button></div>
                 <section class="canvas-panel" id="canvas-panel-layers" role="tabpanel">
                   <div class="canvas-selection" aria-live="polite"><div><strong id="canvas-selection-title">未选择图层</strong><small id="canvas-selection-detail">从画板或图层列表选择素材</small></div><div class="canvas-transform-controls" id="canvas-transform-controls" hidden><label>X<input id="canvas-transform-x" type="number" step="1" inputmode="decimal" /></label><label>Y<input id="canvas-transform-y" type="number" step="1" inputmode="decimal" /></label><label>缩放 %<input id="canvas-transform-scale" type="number" min="1" max="1000" step="1" inputmode="decimal" /></label><label>旋转 °<input id="canvas-transform-rotation" type="number" min="-360" max="360" step="1" inputmode="decimal" /></label><button id="canvas-apply-transform" type="button" data-canvas-edit-action>应用</button></div></div>
                   <div class="canvas-list-meta"><span id="canvas-layer-segment-status">已显示 0 / 0</span><small>每段 40 条</small></div>
@@ -184,6 +185,22 @@
                   <div class="canvas-list-meta"><span id="canvas-asset-segment-status">已显示 0 / 0</span><small>当前素材域</small></div>
                   <div class="canvas-asset-list" id="canvas-asset-list" aria-label="可加入画布的素材"></div>
                   <button class="canvas-list-more" id="canvas-asset-more" type="button" hidden>加载下一段素材</button>
+                </section>
+                <section class="canvas-panel canvas-local-edit-panel" id="canvas-panel-local-edit" role="tabpanel" hidden>
+                  <div class="local-edit-state" id="local-edit-state" data-kind="idle" role="status" aria-live="polite" aria-atomic="true"><span></span><div><strong id="local-edit-state-title">请选择一个图层</strong><small id="local-edit-state-detail">局部编辑尚未开始</small></div></div>
+                  <fieldset class="local-edit-fieldset" id="local-edit-roi-fields" disabled>
+                    <legend>像素选区</legend>
+                    <div class="local-edit-grid"><label>X<input id="local-edit-roi-x" type="number" min="0" step="1" inputmode="numeric" /></label><label>Y<input id="local-edit-roi-y" type="number" min="0" step="1" inputmode="numeric" /></label><label>宽<input id="local-edit-roi-width" type="number" min="1" step="1" inputmode="numeric" /></label><label>高<input id="local-edit-roi-height" type="number" min="1" step="1" inputmode="numeric" /></label></div>
+                    <button class="local-edit-primary" id="local-edit-save-roi" type="button">保存选区</button>
+                  </fieldset>
+                  <fieldset class="local-edit-fieldset" id="local-edit-mask-fields" disabled>
+                    <legend>蒙版</legend>
+                    <div class="local-edit-segment" role="group" aria-label="蒙版初始范围"><button type="button" data-local-edit-base="full">填满选区</button><button type="button" data-local-edit-base="empty">清空选区</button></div>
+                    <div class="local-edit-sliders"><label for="local-edit-brush-radius"><span>画笔半径</span><output id="local-edit-brush-radius-output">24 px</output></label><input id="local-edit-brush-radius" type="range" min="1" max="256" step="1" value="24" /><label for="local-edit-feather"><span>边缘柔化</span><output id="local-edit-feather-output">0 px</output></label><input id="local-edit-feather" type="range" min="0" max="64" step="1" value="0" /></div>
+                    <div class="local-edit-actions"><button id="local-edit-invert" type="button"><i data-lucide="flip-horizontal-2" aria-hidden="true"></i>反选</button><button id="local-edit-restore" type="button"><i data-lucide="rotate-ccw" aria-hidden="true"></i>恢复</button></div>
+                    <button class="local-edit-primary" id="local-edit-save-mask" type="button">保存蒙版版本</button>
+                    <button class="local-edit-secondary" id="local-edit-prepare" type="button" disabled>冻结本地编辑规格</button>
+                  </fieldset>
                 </section>
               </aside>
             </div>

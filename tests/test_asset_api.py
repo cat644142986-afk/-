@@ -1095,6 +1095,13 @@ class AssetApiTests(unittest.TestCase):
         self.assertEqual(replayed_roi.status_code, 200, replayed_roi.text)
         self.assertTrue(replayed_roi.json()["replayed"])
         roi_id = roi.json()["id"]
+        listed_rois = self.client.get(
+            f"/api/canvas-versions/{saved.json()['version']['id']}/rois",
+            params={"source_layer_id": "layer:api-local-edit-source"},
+        )
+        self.assertEqual(listed_rois.status_code, 200, listed_rois.text)
+        self.assertEqual(listed_rois.json()["count"], 1)
+        self.assertEqual(listed_rois.json()["rois"][0]["id"], roi_id)
         self.assertEqual(
             self.client.get(f"/api/canvas-rois/{roi_id}").json()["rect"],
             roi_payload["rect"],
@@ -1126,7 +1133,6 @@ class AssetApiTests(unittest.TestCase):
             "expected_revision": 0,
             "client_request_id": "api-local-edit-mask-1",
             "definition": local_edit_mask_definition(),
-            "pixel_sha256": "C" * 64,
         }
         mask = self.client.put(f"/api/canvas-rois/{roi_id}/mask", json=mask_payload)
         replayed_mask = self.client.put(
@@ -1173,7 +1179,7 @@ class AssetApiTests(unittest.TestCase):
                 "roi_id": roi_id,
                 "width": 24,
                 "height": 18,
-                "sha256": mask_payload["pixel_sha256"],
+                "sha256": mask.json()["version"]["pixel_sha256"],
             },
             "strict_pixel_protection": True,
             "cost": {

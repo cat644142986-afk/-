@@ -1,7 +1,10 @@
 import {
+  Brush,
   Download,
+  Eraser,
   Eye,
   EyeOff,
+  FlipHorizontal2,
   Focus,
   Hand,
   Layers3,
@@ -12,6 +15,7 @@ import {
   Redo2,
   RefreshCw,
   RotateCcw,
+  Scan,
   Undo2,
   ZoomIn,
   ZoomOut,
@@ -31,6 +35,21 @@ import {
   undoCanvas,
 } from './canvas-model.js';
 
+import {
+  appendMaskStroke,
+  buildFreeLocalEditContract,
+  cloneMaskDefinition,
+  createMaskDefinition,
+  invertMaskDefinition,
+  maskHasWritablePixels,
+  normalizeSourceRoi,
+  roiFromSceneDrag,
+  sceneRectFromSourceRoi,
+  setMaskBase,
+  setMaskFeather,
+  sourcePointFromScene,
+} from './local-edit-model.js';
+
 const CANVAS_COMMAND_CONTRACT = 'canvas-command-v1';
 const REQUIRED_MUTATION_COMMANDS = new Set([
   'command:transform-layer',
@@ -44,9 +63,12 @@ const EMPTY_ARTBOARD = Object.freeze({
   export: { pixel_width: 1600, pixel_height: 1200, color_space: 'srgb' },
 });
 const ICONS = {
+  Brush,
   Download,
+  Eraser,
   Eye,
   EyeOff,
+  FlipHorizontal2,
   Focus,
   Hand,
   Layers3,
@@ -57,6 +79,7 @@ const ICONS = {
   Redo2,
   RefreshCw,
   RotateCcw,
+  Scan,
   Undo2,
   ZoomIn,
   ZoomOut,
@@ -65,10 +88,12 @@ let fabricRuntimePromise = null;
 
 function loadFabricRuntime() {
   if (!fabricRuntimePromise) {
-    fabricRuntimePromise = import('fabric').then(({ Canvas, FabricImage, Point, Rect }) => ({
+    fabricRuntimePromise = import('fabric').then(({ Canvas, Circle, FabricImage, Point, Polyline, Rect }) => ({
       Canvas,
+      Circle,
       FabricImage,
       Point,
+      Polyline,
       Rect,
     }));
   }
@@ -89,12 +114,35 @@ function blankEntry() {
     blocked: false,
     pendingSave: null,
     saveTimer: null,
+    localEdits: new Map(),
+    localEditLoadToken: 0,
   };
 }
 
-function createRequestId() {
-  if (globalThis.crypto?.randomUUID) return `canvas-save:${globalThis.crypto.randomUUID().toLowerCase()}`;
-  return `canvas-save:${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function createRequestId(prefix = 'canvas-save') {
+  if (globalThis.crypto?.randomUUID) return `${prefix}:${globalThis.crypto.randomUUID().toLowerCase()}`;
+  return `${prefix}:${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function blankLocalEditState() {
+  return {
+    hydrated: false,
+    loading: false,
+    saving: false,
+    roi: null,
+    draftRect: null,
+    mask: null,
+    definition: null,
+    savedDefinition: null,
+    dirtyMask: false,
+    spec: null,
+    error: '',
+  };
+}
+
+function sameRect(left, right) {
+  return ['x', 'y', 'width', 'height']
+    .every((key) => Number(left?.[key]) === Number(right?.[key]));
 }
 
 function sameTransform(left, right) {
@@ -142,6 +190,7 @@ export function createCanvasController({
   let isPanning = false;
   let lastPanPoint = null;
   let toolBeforeSpace = null;
+  let localPointer = null;
   let bound = false;
 
   function entryFor(mode = currentMode) {
@@ -175,6 +224,154 @@ export function createCanvasController({
     return asset?.name || `素材 ${String(layer?.source?.id || '').slice(-8)}`;
   }
 
+  function localEditKey(entry = entryFor(), layerId = selectedLayerId) {
+    if (!entry.currentVersionId || !layerId) return '';
+    return `${entry.currentVersionId}|${layerId}`;
+  }
+
+  function localEditState({ create = true } = {}) {
+    const entry = entryFor();
+    const key = localEditKey(entry);
+    if (!key) return null;
+    if (!entry.localEdits.has(key) && create) entry.localEdits.set(key, blankLocalEditState());
+    return entry.localEdits.get(key) || null;
+  }
+
+  function setLocalEditStatus(kind, title, detail = '') {
+    const host = query('#local-edit-state');
+    if (!host) return;
+    host.dataset.kind = kind;
+    query('#local-edit-state-title').textContent = title;
+    query('#local-edit-state-detail').textContent = detail;
+  }
+
+  function localEditLayerReady(layer = activeLayer()) {
+    return Boolean(
+      layer
+      && !layer.locked
+      && Math.abs(Number(layer.transform.rotation_degrees || 0)) < 0.0001
+      && entryFor().document
+      && entryFor().currentVersionId
+      && !entryFor().dirty
+      && !entryFor().saving
+      && !entryFor().blocked
+    );
+  }
+
+  function writeRoiInputs(rect) {
+    const values = rect || { x: '', y: '', width: '', height: '' };
+    query('#local-edit-roi-x').value = String(values.x ?? '');
+    query('#local-edit-roi-y').value = String(values.y ?? '');
+    query('#local-edit-roi-width').value = String(values.width ?? '');
+    query('#local-edit-roi-height').value = String(values.height ?? '');
+  }
+
+  function roiFromInputs() {
+    return normalizeSourceRoi(activeLayer(), {
+      x: Number(query('#local-edit-roi-x').value),
+      y: Number(query('#local-edit-roi-y').value),
+      width: Number(query('#local-edit-roi-width').value),
+      height: Number(query('#local-edit-roi-height').value),
+    });
+  }
+
+  function updateLocalEditPanel() {
+    const entry = entryFor();
+    const layer = activeLayer();
+    const local = localEditState({ create: false });
+    const layerReady = localEditLayerReady(layer);
+    const roiReady = Boolean(local?.roi && sameRect(local.roi.rect, local.draftRect));
+    const maskSaved = Boolean(local?.mask?.version?.id && !local.dirtyMask);
+    const writableMask = Boolean(local?.definition && maskHasWritablePixels(local.definition));
+    const busy = Boolean(local?.loading || local?.saving);
+
+    query('#local-edit-roi-fields').disabled = !layerReady || busy;
+    query('#local-edit-mask-fields').disabled = !layerReady || !roiReady || busy;
+    queryAll('[data-local-edit-requires-layer]').forEach((button) => {
+      button.disabled = !layerReady || busy;
+    });
+    queryAll('[data-local-edit-requires-roi]').forEach((button) => {
+      button.disabled = !layerReady || !roiReady || busy;
+    });
+    query('#local-edit-prepare').disabled = !maskSaved || !writableMask || busy;
+
+    if (local?.draftRect) writeRoiInputs(local.draftRect);
+    else if (!layer) writeRoiInputs(null);
+    const brushRadius = Number(query('#local-edit-brush-radius').value || 24);
+    query('#local-edit-brush-radius-output').textContent = `${brushRadius} px`;
+    const feather = Number(local?.definition?.feather_radius ?? query('#local-edit-feather').value ?? 0);
+    query('#local-edit-feather').value = String(feather);
+    query('#local-edit-feather-output').textContent = `${feather} px`;
+    queryAll('[data-local-edit-base]').forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.localEditBase === local?.definition?.base);
+    });
+
+    if (!layer) setLocalEditStatus('idle', '请选择一个图层', '局部编辑尚未开始');
+    else if (!entry.currentVersionId) setLocalEditStatus('dirty', '请先保存画布', '局部选区必须绑定不可变画布版本');
+    else if (entry.dirty) setLocalEditStatus('dirty', '正在保存画布修改', '新画布版本生成后再继续局部编辑');
+    else if (layer.locked) setLocalEditStatus('idle', '图层已锁定', '解锁后才能创建局部选区');
+    else if (Math.abs(Number(layer.transform.rotation_degrees || 0)) >= 0.0001) {
+      setLocalEditStatus('error', '暂不支持旋转图层', '将旋转恢复为 0° 后再框选');
+    } else if (local?.loading) setLocalEditStatus('saving', '正在恢复局部编辑', '读取当前版本的最新选区与蒙版');
+    else if (local?.saving) setLocalEditStatus('saving', '正在写入本地账本', '操作完成前不会覆盖已有版本');
+    else if (local?.error) setLocalEditStatus('error', '局部编辑未完成', local.error);
+    else if (!local?.draftRect) setLocalEditStatus('idle', '框选局部区域', '选择框选工具后在图层上拖动');
+    else if (!roiReady) setLocalEditStatus('dirty', '选区尚未保存', '核对原图像素坐标后保存不可变 ROI');
+    else if (!local.mask) setLocalEditStatus('ready', '选区已保存', '填满选区或使用保留画笔创建蒙版');
+    else if (local.dirtyMask) setLocalEditStatus('dirty', '蒙版有未保存修改', '保存后才可冻结本地编辑规格');
+    else if (local.spec) setLocalEditStatus('saved', '本地编辑规格已冻结', `零调用 · ${local.spec.id}`);
+    else setLocalEditStatus('saved', '蒙版版本已保存', `revision ${local.mask.current_revision} · 可冻结零费用规格`);
+  }
+
+  async function ensureLocalEditHydrated(force = false) {
+    const entry = entryFor();
+    const layer = activeLayer();
+    const key = localEditKey(entry);
+    if (!layer || !key) {
+      updateLocalEditPanel();
+      return;
+    }
+    const local = localEditState();
+    if ((!force && local.hydrated) || local.loading) {
+      updateLocalEditPanel();
+      return;
+    }
+    const token = ++entry.localEditLoadToken;
+    local.loading = true;
+    local.error = '';
+    updateLocalEditPanel();
+    try {
+      const response = await api.getCanvasRois(entry.currentVersionId, layer.id, { timeoutMs: 10000 });
+      if (token !== entry.localEditLoadToken || key !== localEditKey(entry)) return;
+      const roi = Array.from(response?.rois || [])[0] || null;
+      local.roi = roi;
+      local.draftRect = roi ? { ...roi.rect } : null;
+      local.mask = null;
+      local.definition = roi ? createMaskDefinition(layer) : null;
+      local.savedDefinition = null;
+      local.dirtyMask = false;
+      local.spec = null;
+      if (roi) {
+        try {
+          local.mask = await api.getCanvasMask(roi.id, { timeoutMs: 10000 });
+          local.definition = cloneMaskDefinition(local.mask.version.definition);
+          local.savedDefinition = cloneMaskDefinition(local.mask.version.definition);
+        } catch (error) {
+          if (error?.status !== 404) throw error;
+        }
+      }
+      local.hydrated = true;
+    } catch (error) {
+      local.error = formatApiError(error, '无法恢复当前图层的局部编辑记录');
+    } finally {
+      local.loading = false;
+      if (token === entry.localEditLoadToken && key === localEditKey(entry)) {
+        updateLocalEditPanel();
+        renderLocalEditOverlay();
+      }
+    }
+  }
+
   function refreshIcons(root = document) {
     createIcons({ icons: ICONS, nameAttr: 'data-lucide', root });
   }
@@ -199,15 +396,20 @@ export function createCanvasController({
     });
     if (canvas) {
       canvas.selection = !disabled && activeTool === 'select';
-      canvas.skipTargetFind = disabled || activeTool === 'pan';
+      canvas.skipTargetFind = disabled || activeTool !== 'select';
       canvas.forEachObject((object) => {
-        if (object.get('objectRole') === 'artboard') return;
+        const role = String(object.get('objectRole') || '');
+        if (role === 'artboard' || role.startsWith('local-edit')) {
+          object.set({ selectable: false, evented: false });
+          return;
+        }
         const layer = entry.document?.layers?.find((item) => item.id === object.get('layerId'));
         object.set({ selectable: !disabled && !layer?.locked, evented: !disabled && !layer?.locked });
       });
       canvas.requestRenderAll();
     }
     updateExportControl();
+    updateLocalEditPanel();
   }
 
   function updateExportControl() {
@@ -238,9 +440,13 @@ export function createCanvasController({
       updateExportControl();
       updateHistoryControls();
       renderLists();
+      if (selectedLayerId) ensureLocalEditHydrated();
       if (currentView === 'canvas') {
         if (rebuildCanvas) renderCanvas();
-        else entry.document?.layers?.forEach((layer) => syncObjectFromLayer(layer.id));
+        else {
+          entry.document?.layers?.forEach((layer) => syncObjectFromLayer(layer.id));
+          renderLocalEditOverlay();
+        }
       }
     }
   }
@@ -507,6 +713,22 @@ export function createCanvasController({
     updateSelectionPanel();
   }
 
+  function setActivePanel(panel) {
+    activePanel = ['layers', 'assets', 'local-edit'].includes(panel) ? panel : 'layers';
+    queryAll('[data-canvas-panel]').forEach((item) => {
+      const active = item.dataset.canvasPanel === activePanel;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-selected', String(active));
+    });
+    query('#canvas-panel-layers').hidden = activePanel !== 'layers';
+    query('#canvas-panel-assets').hidden = activePanel !== 'assets';
+    query('#canvas-panel-local-edit').hidden = activePanel !== 'local-edit';
+    if (activePanel === 'local-edit') {
+      updateLocalEditPanel();
+      ensureLocalEditHydrated();
+    }
+  }
+
   function syncObjectFromLayer(layerId) {
     const layer = activeDocument()?.layers?.find((item) => item.id === layerId);
     const object = objectByLayer.get(layerId);
@@ -540,6 +762,8 @@ export function createCanvasController({
     } else canvas?.discardActiveObject();
     renderLayerList();
     updateSelectionPanel();
+    ensureLocalEditHydrated();
+    renderLocalEditOverlay();
     if (focusRow) {
       queryAll('[data-canvas-layer-id]')
         .find((row) => row.dataset.canvasLayerId === layerId)
@@ -548,18 +772,436 @@ export function createCanvasController({
   }
 
   function setTool(tool) {
-    activeTool = tool === 'pan' ? 'pan' : 'select';
+    const allowed = new Set(['select', 'pan', 'roi', 'brush-include', 'brush-exclude']);
+    const requested = allowed.has(tool) ? tool : 'select';
+    if (requested === 'roi' && !localEditLayerReady()) {
+      updateLocalEditPanel();
+      return;
+    }
+    if (requested.startsWith('brush-')) {
+      const local = localEditState({ create: false });
+      if (!localEditLayerReady() || !local?.roi || !sameRect(local.roi.rect, local.draftRect)) {
+        updateLocalEditPanel();
+        return;
+      }
+    }
+    activeTool = requested;
+    if (activeTool === 'roi' || activeTool.startsWith('brush-')) setActivePanel('local-edit');
     queryAll('[data-canvas-tool]').forEach((button) => {
       const active = button.dataset.canvasTool === activeTool;
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-pressed', String(active));
     });
-    if (!canvas) return;
+    if (!canvas) {
+      updateLocalEditPanel();
+      return;
+    }
     const disabled = entryFor().saving || entryFor().blocked;
     canvas.selection = !disabled && activeTool === 'select';
-    canvas.skipTargetFind = disabled || activeTool === 'pan';
-    canvas.defaultCursor = activeTool === 'pan' ? 'grab' : 'default';
+    canvas.skipTargetFind = disabled || activeTool !== 'select';
+    canvas.defaultCursor = activeTool === 'pan'
+      ? 'grab'
+      : activeTool === 'roi' || activeTool.startsWith('brush-') ? 'crosshair' : 'default';
     canvas.requestRenderAll();
+    updateLocalEditPanel();
+  }
+
+  function removeLocalEditObjects() {
+    if (!canvas) return;
+    canvas.getObjects()
+      .filter((object) => String(object.get('objectRole') || '').startsWith('local-edit'))
+      .forEach((object) => canvas.remove(object));
+  }
+
+  function localClipPath(sceneRect) {
+    return new fabricRuntime.Rect({
+      left: sceneRect.x,
+      top: sceneRect.y,
+      width: sceneRect.width,
+      height: sceneRect.height,
+      originX: 'left',
+      originY: 'top',
+      absolutePositioned: true,
+    });
+  }
+
+  function renderLocalEditOverlay() {
+    if (!canvas || !fabricRuntime) return;
+    removeLocalEditObjects();
+    const layer = activeLayer();
+    const local = localEditState({ create: false });
+    if (!layer || !local?.draftRect) {
+      canvas.requestRenderAll();
+      return;
+    }
+    let sceneRect;
+    try {
+      sceneRect = sceneRectFromSourceRoi(layer, local.draftRect);
+    } catch (_) {
+      canvas.requestRenderAll();
+      return;
+    }
+    const { Circle, Polyline, Rect } = fabricRuntime;
+    const roiReady = Boolean(local.roi && sameRect(local.roi.rect, local.draftRect));
+    if (roiReady && local.definition?.base === 'full') {
+      const fill = new Rect({
+        left: sceneRect.x,
+        top: sceneRect.y,
+        width: sceneRect.width,
+        height: sceneRect.height,
+        originX: 'left',
+        originY: 'top',
+        fill: 'rgba(45, 164, 112, 0.22)',
+        strokeWidth: 0,
+        selectable: false,
+        evented: false,
+        objectCaching: false,
+        excludeFromExport: true,
+      });
+      fill.set('objectRole', 'local-edit-mask-base');
+      canvas.add(fill);
+    }
+    if (roiReady) {
+      Array.from(local.definition?.strokes || []).forEach((stroke) => {
+        const color = stroke.mode === 'exclude' ? 'rgba(213, 70, 70, 0.72)' : 'rgba(37, 164, 109, 0.72)';
+        const points = stroke.points.map((point) => ({
+          x: Number(layer.transform.x) + point.x * Number(layer.transform.scale_x),
+          y: Number(layer.transform.y) + point.y * Number(layer.transform.scale_y),
+        }));
+        const width = Math.max(
+          1,
+          Number(stroke.radius) * 2
+            * ((Number(layer.transform.scale_x) + Number(layer.transform.scale_y)) / 2),
+        );
+        if (points.length === 1) {
+          const dot = new Circle({
+            left: points[0].x,
+            top: points[0].y,
+            radius: width / 2,
+            originX: 'center',
+            originY: 'center',
+            fill: color,
+            selectable: false,
+            evented: false,
+            objectCaching: false,
+            excludeFromExport: true,
+            clipPath: localClipPath(sceneRect),
+          });
+          dot.set('objectRole', 'local-edit-mask-stroke');
+          canvas.add(dot);
+          return;
+        }
+        const path = new Polyline(points, {
+          fill: '',
+          stroke: color,
+          strokeWidth: width,
+          strokeLineCap: 'round',
+          strokeLineJoin: 'round',
+          selectable: false,
+          evented: false,
+          objectCaching: false,
+          excludeFromExport: true,
+          clipPath: localClipPath(sceneRect),
+        });
+        path.set('objectRole', 'local-edit-mask-stroke');
+        canvas.add(path);
+      });
+    }
+    const outline = new Rect({
+      left: sceneRect.x,
+      top: sceneRect.y,
+      width: sceneRect.width,
+      height: sceneRect.height,
+      originX: 'left',
+      originY: 'top',
+      fill: 'rgba(0, 0, 0, 0)',
+      stroke: roiReady ? '#f16745' : '#bf6b22',
+      strokeWidth: 2,
+      strokeDashArray: roiReady ? null : [8, 6],
+      strokeUniform: true,
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+      excludeFromExport: true,
+    });
+    outline.set('objectRole', 'local-edit-roi');
+    canvas.add(outline);
+    canvas.requestRenderAll();
+  }
+
+  function scenePointFromEvent(options) {
+    const point = options?.scenePoint || canvas?.getScenePoint?.(options?.e);
+    return point ? { x: Number(point.x), y: Number(point.y) } : null;
+  }
+
+  function pointInsideRect(point, rect) {
+    return Boolean(
+      point
+      && point.x >= rect.x
+      && point.y >= rect.y
+      && point.x < rect.x + rect.width
+      && point.y < rect.y + rect.height
+    );
+  }
+
+  function beginLocalPointer(options) {
+    if (!['roi', 'brush-include', 'brush-exclude'].includes(activeTool)) return false;
+    const layer = activeLayer();
+    const local = localEditState();
+    const scenePoint = scenePointFromEvent(options);
+    if (!localEditLayerReady(layer) || !local || !scenePoint) return true;
+    local.error = '';
+    if (activeTool === 'roi') {
+      localPointer = {
+        kind: 'roi',
+        start: scenePoint,
+        priorRect: local.draftRect ? { ...local.draftRect } : null,
+      };
+      local.draftRect = roiFromSceneDrag(layer, scenePoint, scenePoint);
+      local.spec = null;
+      writeRoiInputs(local.draftRect);
+      updateLocalEditPanel();
+      renderLocalEditOverlay();
+      return true;
+    }
+    if (!local.roi || !sameRect(local.roi.rect, local.draftRect)) return true;
+    const sourcePoint = sourcePointFromScene(layer, scenePoint);
+    if (!pointInsideRect(sourcePoint, local.roi.rect)) {
+      local.error = '画笔必须从当前选区内部开始';
+      updateLocalEditPanel();
+      return true;
+    }
+    localPointer = {
+      kind: 'stroke',
+      mode: activeTool === 'brush-exclude' ? 'exclude' : 'include',
+      points: [sourcePoint],
+    };
+    return true;
+  }
+
+  function moveLocalPointer(options) {
+    if (!localPointer) return false;
+    const layer = activeLayer();
+    const local = localEditState();
+    const scenePoint = scenePointFromEvent(options);
+    if (!layer || !local || !scenePoint) return true;
+    if (localPointer.kind === 'roi') {
+      local.draftRect = roiFromSceneDrag(layer, localPointer.start, scenePoint);
+      local.spec = null;
+      writeRoiInputs(local.draftRect);
+      updateLocalEditPanel();
+      renderLocalEditOverlay();
+      return true;
+    }
+    const sourcePoint = sourcePointFromScene(layer, scenePoint);
+    const previous = localPointer.points.at(-1);
+    if (!previous || Math.hypot(sourcePoint.x - previous.x, sourcePoint.y - previous.y) >= 1) {
+      localPointer.points.push(sourcePoint);
+    }
+    return true;
+  }
+
+  function endLocalPointer() {
+    if (!localPointer) return false;
+    const pointer = localPointer;
+    localPointer = null;
+    if (pointer.kind === 'roi') {
+      updateLocalEditPanel();
+      renderLocalEditOverlay();
+      return true;
+    }
+    const layer = activeLayer();
+    const local = localEditState();
+    if (!layer || !local?.roi) return true;
+    try {
+      const definition = local.definition || createMaskDefinition(layer);
+      local.definition = appendMaskStroke(
+        definition,
+        pointer.mode,
+        Number(query('#local-edit-brush-radius').value),
+        pointer.points,
+        local.roi.rect,
+      );
+      local.dirtyMask = true;
+      local.spec = null;
+      local.error = '';
+    } catch (error) {
+      local.error = error.message || '无法记录当前笔触';
+    }
+    updateLocalEditPanel();
+    renderLocalEditOverlay();
+    return true;
+  }
+
+  function updateRoiDraftFromInputs() {
+    const local = localEditState();
+    if (!local || !activeLayer()) return false;
+    try {
+      local.draftRect = roiFromInputs();
+      local.spec = null;
+      local.error = '';
+      updateLocalEditPanel();
+      renderLocalEditOverlay();
+      return true;
+    } catch (error) {
+      local.error = error.message || '选区像素坐标无效';
+      updateLocalEditPanel();
+      return false;
+    }
+  }
+
+  async function saveLocalRoi() {
+    const entry = entryFor();
+    const layerId = selectedLayerId;
+    let rect;
+    try {
+      rect = roiFromInputs();
+    } catch (error) {
+      const local = localEditState();
+      if (local) local.error = error.message || '选区像素坐标无效';
+      updateLocalEditPanel();
+      return;
+    }
+    if (entry.dirty && !await saveMode(currentMode)) return;
+    entry.localEditLoadToken += 1;
+    const layer = activeDocument()?.layers?.find((item) => item.id === layerId);
+    const local = localEditState();
+    if (!layer || !local || !entry.currentVersionId) {
+      updateLocalEditPanel();
+      return;
+    }
+    local.loading = false;
+    local.saving = true;
+    local.error = '';
+    updateLocalEditPanel();
+    try {
+      const roi = await api.createCanvasRoi({
+        canvas_document_id: entry.document.id,
+        expected_canvas_revision: entry.currentRevision,
+        source_layer_id: layer.id,
+        coordinate_space: 'source-pixel',
+        rect: normalizeSourceRoi(layer, rect),
+        purpose: 'inpaint',
+        client_request_id: createRequestId('roi-create'),
+      }, { timeoutMs: 12000 });
+      local.roi = roi;
+      local.draftRect = { ...roi.rect };
+      local.mask = null;
+      local.definition = createMaskDefinition(layer);
+      local.savedDefinition = null;
+      local.dirtyMask = false;
+      local.spec = null;
+      local.hydrated = true;
+      setTool('brush-include');
+    } catch (error) {
+      local.error = formatApiError(error, '选区未能写入本地账本');
+    } finally {
+      local.saving = false;
+      updateLocalEditPanel();
+      renderLocalEditOverlay();
+    }
+  }
+
+  function mutateLocalMask(mutation) {
+    const layer = activeLayer();
+    const local = localEditState();
+    if (!layer || !local?.roi || !sameRect(local.roi.rect, local.draftRect)) return;
+    try {
+      const current = local.definition || createMaskDefinition(layer);
+      local.definition = mutation(current);
+      local.dirtyMask = true;
+      local.spec = null;
+      local.error = '';
+    } catch (error) {
+      local.error = error.message || '蒙版修改失败';
+    }
+    updateLocalEditPanel();
+    renderLocalEditOverlay();
+  }
+
+  function restoreLocalMask() {
+    const layer = activeLayer();
+    const local = localEditState();
+    if (!layer || !local?.roi) return;
+    local.definition = local.savedDefinition
+      ? cloneMaskDefinition(local.savedDefinition)
+      : createMaskDefinition(layer);
+    local.dirtyMask = false;
+    local.error = '';
+    updateLocalEditPanel();
+    renderLocalEditOverlay();
+  }
+
+  async function saveLocalMask() {
+    const local = localEditState();
+    if (!local?.roi || !local.definition || local.saving) return;
+    local.saving = true;
+    local.error = '';
+    updateLocalEditPanel();
+    try {
+      local.mask = await api.saveCanvasMask(local.roi.id, {
+        expected_revision: Number(local.mask?.current_revision || 0),
+        client_request_id: createRequestId('mask-save'),
+        definition: cloneMaskDefinition(local.definition),
+      }, { timeoutMs: 20000 });
+      local.definition = cloneMaskDefinition(local.mask.version.definition);
+      local.savedDefinition = cloneMaskDefinition(local.mask.version.definition);
+      local.dirtyMask = false;
+      local.spec = null;
+    } catch (error) {
+      local.error = formatApiError(error, '蒙版版本未能写入本地账本');
+      if (error?.detail?.code === 'CANVAS_MASK_REVISION_CONFLICT') {
+        local.hydrated = false;
+      }
+    } finally {
+      local.saving = false;
+      updateLocalEditPanel();
+      renderLocalEditOverlay();
+    }
+  }
+
+  async function prepareLocalEditSpec() {
+    const entry = entryFor();
+    const layer = activeLayer();
+    const local = localEditState();
+    const source = assetById(layer?.source?.id);
+    const sourceSha256 = source?.sha256 || source?.blob?.sha256 || '';
+    if (
+      !layer
+      || !local?.roi
+      || !local.mask?.version?.id
+      || local.dirtyMask
+      || !maskHasWritablePixels(local.definition)
+    ) return;
+    if (!/^[a-f0-9]{64}$/i.test(String(sourceSha256))) {
+      local.error = '原始素材缺少可验证的 SHA-256，无法冻结编辑规格';
+      updateLocalEditPanel();
+      return;
+    }
+    local.saving = true;
+    local.error = '';
+    updateLocalEditPanel();
+    try {
+      const operationId = createRequestId('operation-local-edit');
+      const contract = buildFreeLocalEditContract({
+        operationId,
+        canvasVersionId: entry.currentVersionId,
+        layer,
+        sourceSha256,
+        roi: local.roi,
+        mask: local.mask,
+      });
+      local.spec = await api.createLocalEditSpec({
+        client_request_id: createRequestId('local-edit-spec'),
+        contract,
+      }, { timeoutMs: 12000 });
+      toast('本地编辑规格已冻结，不会产生模型调用费用', 'success');
+    } catch (error) {
+      local.error = formatApiError(error, '本地编辑规格冻结失败');
+    } finally {
+      local.saving = false;
+      updateLocalEditPanel();
+    }
   }
 
   function setCanvasDimensions() {
@@ -699,6 +1341,7 @@ export function createCanvasController({
       });
     }
     if (token !== buildToken) return;
+    renderLocalEditOverlay();
     canvas.requestRenderAll();
     fitArtboard();
     if (selectedLayerId) setSelectedLayer(selectedLayerId);
@@ -727,9 +1370,11 @@ export function createCanvasController({
       if (id) setSelectedLayer(id);
     });
     canvas.on('selection:cleared', () => {
+      if (activeTool !== 'select') return;
       selectedLayerId = '';
       renderLayerList();
       updateSelectionPanel();
+      renderLocalEditOverlay();
     });
     canvas.on('object:modified', ({ target }) => {
       const layerId = target?.get('layerId');
@@ -743,24 +1388,37 @@ export function createCanvasController({
       updateHistoryControls();
       scheduleSave();
     });
-    canvas.on('mouse:down', ({ e }) => {
+    canvas.on('mouse:down', (options) => {
+      const { e } = options;
       if (activeTool !== 'pan' && !toolBeforeSpace) return;
       isPanning = true;
       lastPanPoint = { x: e.clientX, y: e.clientY };
       canvas.defaultCursor = 'grabbing';
     });
-    canvas.on('mouse:move', ({ e }) => {
-      if (!isPanning || !lastPanPoint) return;
-      const viewport = canvas.viewportTransform;
-      viewport[4] += e.clientX - lastPanPoint.x;
-      viewport[5] += e.clientY - lastPanPoint.y;
-      lastPanPoint = { x: e.clientX, y: e.clientY };
-      canvas.requestRenderAll();
+    canvas.on('mouse:down', (options) => {
+      if (activeTool === 'pan' || toolBeforeSpace) return;
+      beginLocalPointer(options);
+    });
+    canvas.on('mouse:move', (options) => {
+      const { e } = options;
+      if (isPanning && lastPanPoint) {
+        const viewport = canvas.viewportTransform;
+        viewport[4] += e.clientX - lastPanPoint.x;
+        viewport[5] += e.clientY - lastPanPoint.y;
+        lastPanPoint = { x: e.clientX, y: e.clientY };
+        canvas.requestRenderAll();
+        return;
+      }
+      moveLocalPointer(options);
     });
     canvas.on('mouse:up', () => {
-      isPanning = false;
-      lastPanPoint = null;
-      canvas.defaultCursor = activeTool === 'pan' ? 'grab' : 'default';
+      if (isPanning) {
+        isPanning = false;
+        lastPanPoint = null;
+        canvas.defaultCursor = activeTool === 'pan' ? 'grab' : 'default';
+        return;
+      }
+      endLocalPointer();
     });
     canvas.on('mouse:wheel', ({ e }) => {
       const zoom = Math.max(0.04, Math.min(4, canvas.getZoom() * (0.999 ** e.deltaY)));
@@ -916,14 +1574,7 @@ export function createCanvasController({
     refreshIcons(query('#canvas-workspace'));
     queryAll('[data-studio-view]').forEach((button) => button.addEventListener('click', () => setView(button.dataset.studioView)));
     queryAll('[data-canvas-panel]').forEach((button) => button.addEventListener('click', () => {
-      activePanel = button.dataset.canvasPanel;
-      queryAll('[data-canvas-panel]').forEach((item) => {
-        const active = item.dataset.canvasPanel === activePanel;
-        item.classList.toggle('is-active', active);
-        item.setAttribute('aria-selected', String(active));
-      });
-      query('#canvas-panel-layers').hidden = activePanel !== 'layers';
-      query('#canvas-panel-assets').hidden = activePanel !== 'assets';
+      setActivePanel(button.dataset.canvasPanel);
     }));
     queryAll('[data-canvas-tool]').forEach((button) => button.addEventListener('click', () => setTool(button.dataset.canvasTool)));
     query('#canvas-undo').addEventListener('click', undo);
@@ -935,6 +1586,25 @@ export function createCanvasController({
     query('#canvas-apply-transform').addEventListener('click', applyTransform);
     query('#canvas-save-retry').addEventListener('click', () => saveMode(currentMode, true));
     query('#canvas-save-reload').addEventListener('click', reloadCurrent);
+    query('#local-edit-save-roi').addEventListener('click', saveLocalRoi);
+    queryAll('#local-edit-roi-fields input').forEach((input) => {
+      input.addEventListener('change', updateRoiDraftFromInputs);
+    });
+    queryAll('[data-local-edit-base]').forEach((button) => {
+      button.addEventListener('click', () => mutateLocalMask(
+        (definition) => setMaskBase(definition, button.dataset.localEditBase),
+      ));
+    });
+    query('#local-edit-brush-radius').addEventListener('input', updateLocalEditPanel);
+    query('#local-edit-feather').addEventListener('input', (event) => {
+      mutateLocalMask((definition) => setMaskFeather(definition, Number(event.target.value)));
+    });
+    query('#local-edit-invert').addEventListener('click', () => {
+      mutateLocalMask(invertMaskDefinition);
+    });
+    query('#local-edit-restore').addEventListener('click', restoreLocalMask);
+    query('#local-edit-save-mask').addEventListener('click', saveLocalMask);
+    query('#local-edit-prepare').addEventListener('click', prepareLocalEditSpec);
     query('#canvas-layer-more').addEventListener('click', () => {
       layerVisibleLimit += CANVAS_PAGE_SIZE;
       renderLayerList();
@@ -960,11 +1630,30 @@ export function createCanvasController({
     query('#canvas-stage').addEventListener('keydown', (event) => {
       if (eventTargetIsEditable(event) || currentView !== 'canvas') return;
       const layer = activeLayer();
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        const local = localEditState({ create: false });
+        if (localPointer?.kind === 'roi' && local) local.draftRect = localPointer.priorRect;
+        localPointer = null;
+        setTool('select');
+        updateLocalEditPanel();
+        renderLocalEditOverlay();
+        return;
+      }
       if (event.key === ' ' && !event.repeat) {
         event.preventDefault();
         toolBeforeSpace = activeTool;
         setTool('pan');
         return;
+      }
+      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+        const key = event.key.toLowerCase();
+        const tool = key === 'r' ? 'roi' : key === 'b' ? 'brush-include' : key === 'e' ? 'brush-exclude' : '';
+        if (tool) {
+          event.preventDefault();
+          setTool(tool);
+          return;
+        }
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
         event.preventDefault();
@@ -998,6 +1687,7 @@ export function createCanvasController({
     });
     setPage(true);
     setMode(state.currentMode || 'single');
+    setActivePanel('layers');
     updateHistoryControls();
     updateSelectionPanel();
   }

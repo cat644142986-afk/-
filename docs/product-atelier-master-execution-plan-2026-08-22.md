@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-02<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `fb1468bb8a518b043ae26bfb0cc5021de7874bed`，contract `2026-09-02.2`、SQLite schema v5、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出和 `ProductProfile` 商品档案均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1 与 G2 已完成并正式发布。G3 已完成严格像素合同、源码 schema v6 不可变 ROI / Mask / LocalEditSpec 账本和 sidecar 本地 API，尚未进入 Studio 界面或正式便携版；当前执行游标为画布手动画框、画笔修正、反选、边缘调整、蒙版预览与恢复。情境式创作副驾仅在 G3 完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `fb1468bb8a518b043ae26bfb0cc5021de7874bed`，contract `2026-09-02.2`、SQLite schema v5、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出和 `ProductProfile` 商品档案均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1 与 G2 已完成并正式发布。G3 已完成严格像素合同、源码 schema v6 不可变 ROI / Mask / LocalEditSpec 账本、sidecar 本地 API，以及 Studio 手动画框、原图像素输入、保留/删除画笔、填满/清空、反选、柔化、恢复、蒙版预览和零费用规格冻结；这些能力仍是源码候选，尚未进入正式便携版。当前执行游标为统一源文件摘要与像素指纹语义，接通 strict local compose、账本结果血缘与 outpaint 新增区域执行链。情境式创作副驾仅在 G3 完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1645,6 +1645,16 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 正式便携目录仍是 `fb1468b` / contract `2026-09-02.2` / schema v5；`2026-09-02.3` 与 schema v6 目前只是源码候选，未经过 Windows candidate-first 正式提升，不能当成用户当前正在使用的功能。
 - 下一执行游标：在现有 Fabric Studio 上先实现选中单个图层后的矩形 ROI 与本地 Mask 编辑状态，提供画笔保留/删除、反选、边缘调整、可见预览、取消恢复和键盘路径；所有保存走本检查点 API。随后再接 strict local compose 与 outpaint 新增区域，UI 可恢复前不触发生成任务。
 
+### 2026-09-02 G3 Studio 手动 ROI / Mask 源码检查点
+
+- 生产 Fabric Studio 已接入矩形 ROI 拖拽和原图像素 X/Y/宽/高输入；ROI 绑定当前画布不可变版本与选中图层，旋转图层、锁定图层、未保存画布和越界坐标均 fail-closed。局部状态按“工作流模式 + 画布版本 + 图层”隔离，刷新后从 sidecar 恢复最新 ROI 与 Mask，不把旧版本蒙版串到新画布版本。
+- 蒙版编辑已支持填满、清空、保留画笔、删除画笔、反选、边缘柔化和恢复已保存版本；Fabric 覆盖层使用绿色保留、红色删除和 ROI 边界预览，覆盖对象不参与导出。`R / B / E / Escape` 提供框选、两种画笔与取消路径，所有工具均有可访问名称，状态和错误通过 inline `aria-live` 回执显示。
+- Mask 保存由后端根据规范化矢量定义确定性渲染完整尺寸 L 通道并计算像素 SHA-256，不再信任前端自报摘要；coordinate space、ROI 用途和源图尺寸不一致时拒绝写入。保存后的不可变 Mask 版本可冻结 `LocalEditSpec`，界面明确显示“零调用”，本检查点不会触发模型或费用。
+- 隔离 sidecar 和浏览器实测完成 ROI `100,120,500,600`、Mask 保存、规格冻结、刷新恢复、填满/清空、保留/删除画笔、反选、柔化、恢复、真实拖拽换算及键盘路径。`1440×900`、`1280×720`、`960×600` 均无页面级横向或纵向溢出；窄屏局部面板独立滚动，底部冻结按钮可达且不被状态栏遮挡，控制台 `0 error / 0 warning`。
+- 最终源码门禁为 Python 329 项通过、1 项平台预期跳过；前端 `150/150`；Vite production build；顺序执行的 Rust/Tauri locked custom-protocol check；Python compileall 与 `git diff --check` 全部通过。Vite 和 Rust 不并行争用 `dist`，避免把构建目录竞态误报为产品故障。
+- 本检查点只使用 `D:\ProductAtelier-Temp\g3-ui-20260902` 和 `D:\ProductAtelier-Temp\g3-webview-20260902` 隔离数据；未读取正式账本、用户 Prompt 或 API Key，未调用网络、模型或付费 API，未修改正式便携目录、NSIS、桌面快捷方式或 build 证据。正式 artifact 继续保持 `fb1468b` / contract `2026-09-02.2` / schema v5。
+- 下一执行游标：先统一账本素材原始文件 SHA-256 与 `apply_strict_inpaint` 当前像素指纹的身份语义，确保冻结规格、加载原始素材、实际合成和结果账本验证使用同一个可证明合同；补齐 Mask 空像素、候选尺寸、选区外零差异、失败不落版本、undo 指纹和 spec 幂等的端到端测试。随后接通 strict local compose，再实现 outpaint 输出尺寸、原图放置、过渡带和只写新增区域的生产 UI/执行链。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：
@@ -1754,7 +1764,7 @@ Product Atelier 的长期定位收敛为：**以无限画布为核心，以商�
 
 #### G3：精准局部处理与扩图（50–90 小时）
 
-当前状态（2026-09-02）：已进入合同与失败测试阶段；尚未把 ROI / Mask / 局部编辑 / 扩图写入边界接入生产画布，不得误报为已实现。首个检查点只建立本地、可恢复、可测试的合同和手动底座，不下载模型、不调用付费 API。
+当前状态（2026-09-02）：严格像素合同、schema v6 不可变 ROI / Mask / LocalEditSpec、sidecar API 和生产 Studio 手动画框/蒙版编辑均已在源码完成并通过三档界面与完整回归；尚未接通 strict local compose、结果版本写入、撤销和 outpaint 执行链，也尚未经过 Windows candidate-first 正式提升，因此当前正式便携版仍不能使用 G3。
 
 - 在画布接入框选、点选、画笔保留/删除、反选、边缘调整、蒙版预览与恢复。
 - 云端图像编辑 provider 可以读取选区周边上下文，但返回结果必须由本地合成器按 Mask 落图。
@@ -1826,4 +1836,4 @@ G1–G8 预计 `330–560` 小时有效开发与验证，G0 另需 `12–24` 小
 
 ### 13.7 下一执行入口
 
-G0、G1 与 G2 已完成源码、构建、正式 WebView/DPI、candidate-first Windows 提升和正式目录复验。当前执行入口是 G3：先冻结 ROI、Mask、局部编辑、扩图、失败恢复、版本血缘、费用确认和像素保护合同，再为严格模式选区外像素差异为 0、撤销返回原指纹、失败不污染原版本、扩图只写新增区域建立失败测试，随后接入画布选区与手动可恢复底座。Agent、模型下载和付费 API 继续不在当前授权内。
+G0、G1 与 G2 已完成源码、构建、正式 WebView/DPI、candidate-first Windows 提升和正式目录复验。G3 已完成严格像素合同、schema v6 账本、sidecar API 和生产画布手动 ROI / Mask 底座；当前执行入口是统一源文件 SHA-256 与像素指纹语义，接通 strict local compose、结果版本/undo/失败不污染血缘和 outpaint 只写新增区域。Agent、模型下载和付费 API 继续不在当前授权内。

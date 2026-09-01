@@ -8,7 +8,7 @@ import json
 import re
 from typing import Any, Mapping
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 
 LOCAL_EDIT_CONTRACT_SCHEMA_VERSION = 1
@@ -424,6 +424,59 @@ def normalize_canvas_mask_definition(value: Mapping[str, Any]) -> dict[str, Any]
         "strokes": normalized_strokes,
         "feather_radius": feather_radius,
     }
+
+
+def render_canvas_mask_definition(
+    definition: Mapping[str, Any],
+    roi_rect: Mapping[str, Any],
+) -> Image.Image:
+    """Render one deterministic full-size L mask clipped to its immutable ROI."""
+    normalized = normalize_canvas_mask_definition(definition)
+    roi = _rect(roi_rect, "CanvasMaskDefinition.roi_rect")
+    size = {"width": normalized["width"], "height": normalized["height"]}
+    if normalized["coordinate_space"] != "source-pixel":
+        _fail(
+            "LOCAL_EDIT_MASK_DEFINITION_INVALID",
+            "Only source-pixel masks can be rendered",
+        )
+    if not _rect_within(roi, size):
+        _fail("LOCAL_EDIT_ROI_OUT_OF_BOUNDS", "Mask ROI exceeds its pixel bounds")
+
+    mask = Image.new("L", (size["width"], size["height"]), 0)
+    draw = ImageDraw.Draw(mask)
+    roi_box = (
+        roi["x"],
+        roi["y"],
+        roi["x"] + roi["width"] - 1,
+        roi["y"] + roi["height"] - 1,
+    )
+    if normalized["base"] == "full":
+        draw.rectangle(roi_box, fill=255)
+
+    for stroke in normalized["strokes"]:
+        fill = 255 if stroke["mode"] == "include" else 0
+        radius = int(stroke["radius"])
+        points = [(point["x"], point["y"]) for point in stroke["points"]]
+        if len(points) > 1:
+            draw.line(points, fill=fill, width=radius * 2, joint="curve")
+        for x, y in (points if len(points) == 1 else (points[0], points[-1])):
+            draw.ellipse(
+                (x - radius, y - radius, x + radius, y + radius),
+                fill=fill,
+            )
+
+    if normalized["feather_radius"]:
+        mask = mask.filter(ImageFilter.GaussianBlur(normalized["feather_radius"]))
+    roi_clip = Image.new("L", mask.size, 0)
+    ImageDraw.Draw(roi_clip).rectangle(roi_box, fill=255)
+    return ImageChops.multiply(mask, roi_clip)
+
+
+def canvas_mask_fingerprint(
+    definition: Mapping[str, Any],
+    roi_rect: Mapping[str, Any],
+) -> str:
+    return image_fingerprint(render_canvas_mask_definition(definition, roi_rect))
 
 
 def image_fingerprint(image: Image.Image) -> str:

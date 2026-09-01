@@ -28,11 +28,13 @@ except ImportError:
 
 try:
     from local_edit_contract import (
+        canvas_mask_fingerprint,
         normalize_canvas_mask_definition,
         normalize_local_edit_contract,
     )
 except ImportError:
     from .local_edit_contract import (
+        canvas_mask_fingerprint,
         normalize_canvas_mask_definition,
         normalize_local_edit_contract,
     )
@@ -3528,6 +3530,44 @@ class AtelierLedger:
             raise KeyError(f"unknown canvas ROI: {roi_id}")
         return self._canvas_roi_row(row)
 
+    def list_canvas_rois(
+        self,
+        canvas_document_version_id: str,
+        *,
+        source_layer_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        version_id = str(canvas_document_version_id or "").strip()
+        layer_id = str(source_layer_id or "").strip() or None
+        limit = max(1, min(int(limit), 500))
+        with self._connection() as connection:
+            version = connection.execute(
+                "SELECT id FROM canvas_document_versions WHERE id = ?", (version_id,)
+            ).fetchone()
+            if version is None:
+                raise KeyError(f"unknown canvas document version: {version_id}")
+            if layer_id is None:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM canvas_rois
+                    WHERE canvas_document_version_id = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (version_id, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM canvas_rois
+                    WHERE canvas_document_version_id = ? AND source_layer_id = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (version_id, layer_id, limit),
+                ).fetchall()
+        return [self._canvas_roi_row(row) for row in rows]
+
     def create_canvas_roi(
         self,
         *,
@@ -3739,9 +3779,36 @@ class AtelierLedger:
             expected_revision, "expected_revision", minimum=0
         )
         normalized = normalize_canvas_mask_definition(definition)
-        pixel_digest = str(pixel_sha256 or "").upper()
-        if re.fullmatch(r"[A-F0-9]{64}", pixel_digest) is None:
+        claimed_pixel_digest = str(pixel_sha256 or "").upper()
+        if claimed_pixel_digest and re.fullmatch(r"[A-F0-9]{64}", claimed_pixel_digest) is None:
             raise ValueError("pixel_sha256 must be a SHA-256 digest")
+        roi_for_digest = self.get_canvas_roi(roi_id)
+        if normalized["coordinate_space"] != str(roi_for_digest["coordinate_space"]):
+            raise ValueError("mask coordinate space must match its ROI")
+        if str(roi_for_digest["purpose"]) != "inpaint":
+            raise ValueError("outpaint write masks are derived locally")
+        with self._connection() as validation_connection:
+            source_for_digest = validation_connection.execute(
+                """
+                SELECT original_pixel_width, original_pixel_height
+                FROM canvas_version_sources
+                WHERE version_id = ? AND layer_id = ?
+                """,
+                (
+                    roi_for_digest["canvas_document_version_id"],
+                    roi_for_digest["source_layer_id"],
+                ),
+            ).fetchone()
+        if source_for_digest is None:
+            raise LedgerSchemaError("ROI source layer is missing from its canvas version")
+        if (
+            normalized["width"] != int(source_for_digest["original_pixel_width"])
+            or normalized["height"] != int(source_for_digest["original_pixel_height"])
+        ):
+            raise ValueError("mask dimensions must match the ROI source layer")
+        pixel_digest = canvas_mask_fingerprint(normalized, roi_for_digest["rect"])
+        if claimed_pixel_digest and claimed_pixel_digest != pixel_digest:
+            raise ValueError("pixel_sha256 does not match the rendered mask definition")
         request_id = str(client_request_id or "").strip()
         version_id = idempotent_id("maskver", request_id)
         mask_id = idempotent_id("mask", roi_id)

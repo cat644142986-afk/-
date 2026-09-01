@@ -363,6 +363,60 @@ export async function exportCanvas(mode, payload, options = {}) {
   });
 }
 
+export async function createCanvasRoi(payload, options = {}) {
+  return fetchJSON('/api/canvas-rois', {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function getCanvasRois(versionId, sourceLayerId = '', options = {}) {
+  const query = sourceLayerId
+    ? '?source_layer_id=' + encodeURIComponent(sourceLayerId)
+    : '';
+  return fetchJSON('/api/canvas-versions/' + encodeURIComponent(versionId) + '/rois' + query, options);
+}
+
+export async function getCanvasMask(roiId, options = {}) {
+  return fetchJSON('/api/canvas-rois/' + encodeURIComponent(roiId) + '/mask', options);
+}
+
+export async function saveCanvasMask(roiId, payload, options = {}) {
+  return fetchJSON('/api/canvas-rois/' + encodeURIComponent(roiId) + '/mask', {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function getCanvasMaskVersions(maskId, limit = 100, options = {}) {
+  return fetchJSON(
+    '/api/canvas-masks/' + encodeURIComponent(maskId)
+      + '/versions?limit=' + encodeURIComponent(Math.max(1, Number(limit) || 100)),
+    options,
+  );
+}
+
+export async function getCanvasMaskVersion(versionId, options = {}) {
+  return fetchJSON('/api/canvas-mask-versions/' + encodeURIComponent(versionId), options);
+}
+
+export async function createLocalEditSpec(payload, options = {}) {
+  return fetchJSON('/api/local-edit-specs', {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function getLocalEditSpec(specId, options = {}) {
+  return fetchJSON('/api/local-edit-specs/' + encodeURIComponent(specId), options);
+}
+
 export async function getCommands(options = {}) {
   return fetchJSON('/api/commands', options);
 }
