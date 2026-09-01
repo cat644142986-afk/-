@@ -4409,8 +4409,8 @@ function bindEvents() {
       const targetIndex = event.key === 'ArrowRight' || event.key === 'ArrowLeft'
         ? (targets[event.key] + resultTabs.length) % resultTabs.length
         : targets[event.key];
-      resultTabs[targetIndex]?.focus();
       resultTabs[targetIndex]?.click();
+      resultTabs[targetIndex]?.focus({ preventScroll: true });
     });
   });
   $('#viewer-prev').addEventListener('click', () => {
@@ -4562,8 +4562,8 @@ function bindEvents() {
       const targetIndex = event.key === 'ArrowRight' || event.key === 'ArrowLeft'
         ? (targets[event.key] + memoryFilters.length) % memoryFilters.length
         : targets[event.key];
-      memoryFilters[targetIndex]?.focus();
       memoryFilters[targetIndex]?.click();
+      memoryFilters[targetIndex]?.focus({ preventScroll: true });
     });
   });
   $('#workspace-sync-state').addEventListener('click', (event) => {

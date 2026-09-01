@@ -476,8 +476,8 @@ export function createAssetManagerController({
         const targetIndex = event.key === 'ArrowRight' || event.key === 'ArrowLeft'
           ? (targets[event.key] + viewTabs.length) % viewTabs.length
           : targets[event.key];
-        viewTabs[targetIndex]?.focus();
         viewTabs[targetIndex]?.click();
+        viewTabs[targetIndex]?.focus({ preventScroll: true });
       });
     });
     query('#asset-manager-search').addEventListener('input', (event) => { search = event.target.value.trim(); visibleLimit = ASSET_PAGE_SIZE; renderList(); });

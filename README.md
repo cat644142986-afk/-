@@ -124,7 +124,7 @@ powershell -ExecutionPolicy Bypass -File tools\dev.ps1
 ProductAtelier-Desktop/
 ├── src/                    # 前端源码
 │   ├── index.html          # 主页面 (含自定义标题栏/侧边栏/工作区)
-│   ├── css/style.css       # 玻璃拟态样式
+│   ├── css/stable-ui.css   # 正式桌面界面唯一样式入口
 │   └── js/
 │       ├── api.js          # HTTP + Tauri invoke 封装
 │       ├── studio-config.js# 工作流、集合与状态契约

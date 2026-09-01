@@ -14,19 +14,25 @@ test('production shell keeps a single active style and script entry point', asyn
   assert.deepEqual([...html.matchAll(/<script[^>]+type="module"[^>]+src="([^"]+)"/g)].map((match) => match[1]), [
     './js/app.js',
   ]);
+  await assert.rejects(readFile(path.join(root, 'src/css/style.css'), 'utf8'), { code: 'ENOENT' });
 });
 
 test('tab groups use one tab stop and support arrow, Home, and End navigation', async () => {
-  const [app, assets] = await Promise.all([
+  const [html, app, assets] = await Promise.all([
+    readFile(path.join(root, 'src/index.html'), 'utf8'),
     readFile(path.join(root, 'src/js/app.js'), 'utf8'),
     readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
   ]);
   assert.match(app, /button\.tabIndex = active \? 0 : -1/);
   assert.match(app, /const resultTabs = \$\$\('\.result-tab'\)/);
   assert.match(app, /ArrowRight: index \+ 1, ArrowLeft: index - 1, Home: 0, End: resultTabs\.length - 1/);
+  assert.match(app, /resultTabs\[targetIndex\]\?\.click\(\);\s+resultTabs\[targetIndex\]\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(app, /memoryFilters\[targetIndex\]\?\.click\(\);\s+memoryFilters\[targetIndex\]\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(assets, /button\.tabIndex = active \? 0 : -1/);
   assert.match(assets, /const viewTabs = queryAll\('\[data-asset-view\]'\)/);
   assert.match(assets, /ArrowRight: index \+ 1, ArrowLeft: index - 1, Home: 0, End: viewTabs\.length - 1/);
+  assert.match(assets, /viewTabs\[targetIndex\]\?\.click\(\);\s+viewTabs\[targetIndex\]\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(html, /id="brief-input"[^>]+aria-label="创作要求"/);
 });
 
 test('review help and preview layers expose predictable focus behavior', async () => {
@@ -51,4 +57,6 @@ test('key interface tokens preserve readable light and dark surface contrast', a
   assert.match(css, /\.primary-button \{[^}]+color: var\(--dark\)/);
   assert.match(css, /\.rail-connection \{[^}]+color: var\(--ink\)/);
   assert.match(css, /textarea:focus-visible \{ outline: 3px solid var\(--coral-deep\)/);
+  assert.doesNotMatch(css, /letter-spacing:\s*-/);
+  assert.doesNotMatch(css, /font-size:\s*clamp\([^;]*(?:vw|vh|vmin|vmax)/);
 });
