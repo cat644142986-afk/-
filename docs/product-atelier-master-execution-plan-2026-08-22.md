@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-02<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `674feb92109c5115b0efb111b017ab6298fc7267`，contract `2026-09-02.1`、SQLite schema v4、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑和逐像素原始素材 PNG 导出均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1A 与 G1B 已完成并正式发布。G2 已完成 schema v5、`ProductProfile` 不可变版本及任务/trace 精确绑定的源码后端检查点，但尚未接入正式 Studio、构建候选或提升正式版；当前游标是 G2 前端商品档案管理与任务选择。情境式创作副驾仅在画布、SKU 与局部处理底座完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `fb1468bb8a518b043ae26bfb0cc5021de7874bed`，contract `2026-09-02.2`、SQLite schema v5、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出和 `ProductProfile` 商品档案均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1 与 G2 已完成并正式发布，当前执行游标为 G3 ROI / Mask / 精准局部处理与扩图合同和失败测试。情境式创作副驾仅在 G3 完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1614,7 +1614,9 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - `e74a47413a41a35a5ca621c3b47d2a8d01fcb66d` 随后已完成 schema v5 candidate-first 提升：contract `2026-09-02.2`、transaction `d8e156d08bba4174a36c6cfce9834957` 为 `finalized`，上一正式版完整备份位于 `D:\ProductAtelier-Backups\release-before-20260902-033247-e74a47413a41`。正式 App / sidecar / manifest SHA-256 分别为 `BCB1C597342AAFCAB9697213976B6B631ADE8568FE60BD5CD7D036B6968AA7C9`、`CD89D33835BD027BFD5DBDD5E79C50915D9DB3DD59E32A58F4BFC1FD1EEC0643`、`954A892D3DF5D61DFC39AE0D75AA6356ECB222F9D39DE940067236800894C765`，正式 tree SHA-256 为 `17D77CB0E11BA7A91FA16CAEB134B212429A9C2FCBAA03B338DA46951C1C3B95`；正式进程、sidecar 和桌面快捷方式均来自正式目录。
 - 正式商品档案窗口已在不保存数据的前提下复验：编辑器完整加载，初始焦点进入 SKU，Tab 路径保持在弹层内，Esc 关闭后焦点返回“管理”。使用正式 artifact 字节和隔离数据运行的 150%→100%→150% 双屏 DPI 门禁全部通过，DWM 系统圆角、无硬裁切 region、最小化/恢复、最大化/恢复和跨屏 DPI 回切均为真。
 - DPI 截图同时暴露一个发布后冷启动缺陷：`init()` 在 `connectBackend()` 尚未健康时并发调用设置读取，导致隔离冷启动短暂显示“读取设置失败”。现已把设置恢复纳入 health 成功后的启动门禁，静默重试成功后才宣布工作台就绪，并增加静态回归锁定顺序；针对性 43/43、完整前端 148/148、Vite production build、顺序执行的 Rust/Tauri locked custom-protocol check、Python compileall 与 Git whitespace 均通过。并行运行 Vite 与 Rust 曾因 `dist` 重建形成一次工具竞态，按真实发布顺序重跑后通过，不记为产品缺陷。
-- 下一执行游标：提交并推送冷启动时序修复，从新的干净 Git 身份重建 schema v5 Windows 候选并再次执行 candidate-first 正式提升；复验冷启动不再出现假错误后关闭 G2，立即进入 G3 ROI / Mask / 扩图合同与失败测试。任何正式复验失败都回滚，不进入 G3。
+- `fb1468bb8a518b043ae26bfb0cc5021de7874bed` 已从新的干净 Git 身份完成 schema v5 Windows 候选重建和 candidate-first 正式提升。transaction `02fb5ee5da2e4f1284af6d5a9977ea1c` 为 `finalized`，提升前外部完整备份位于 `D:\ProductAtelier-Backups\release-before-20260902-035228-fb1468bb8a51`；正式 App、sidecar、manifest SHA-256 分别为 `47AF153F189642550B2D0B1B25E3A87D3240CADC7747AE2203F783246BD77917`、`8584D56D1402512FCE2542D4E83AA50C3BB850D2C1763D72EAC9D736A85014E6`、`0F7BB6F4C9BC5F5BCA897C07C4F707FA1B3976A687A10A215BEC2644DB243F3E`，正式 tree SHA-256 为 `44DFD5F265A5EFE8E2D7A8EC8774518A3569B9A1FCF3B158C5A91F7B195607C0`。
+- 正式进程和 sidecar 均来自 `release/ProductAtelier-Portable`，`/api/health` 实测为 `status=ok`、manifest `ok`、contract `2026-09-02.2`、schema v5 且 Git commit 精确匹配。冷启动不再出现“读取设置失败”假错误；商品档案窗口再次在不保存数据的前提下完整加载，SKU 获得可见初始焦点，Esc 关闭后焦点回到“管理”。G2 至此正式关闭。
+- 下一执行游标：进入 G3，先冻结 ROI、Mask、局部编辑、扩图、失败恢复、版本血缘、费用确认和像素保护合同，再为严格模式选区外像素差异、撤销指纹、失败不污染原版本和扩图写入边界建立失败测试。当前仍不下载模型、不调用付费 API，不读取正式账本或用户图片。
 
 ## 11. 下一位开发者的执行入口
 
@@ -1623,7 +1625,7 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 不重复已经关闭的 R0–R9，也不退回历史 `vXX-fixes.css` 补丁路线。Git 跟踪的生产样式只有 `src/css/stable-ui.css`，入口与回归测试已锁死；本机被忽略的旧 CSS/补丁不属于跨电脑源码，也不进入构建。
-4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理、R9 外观/无障碍/大素材渲染与三档正式 WebView 终验，以及材质感知 Prompt 路由、人工结构化材质证据、显式 UI 安全回退和 G1 schema v4 生产自由画布均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。G0、G1A 与 G1B 已关闭，G2 schema v5 后端与 Studio 源码门禁已通过，当前从完整 Windows 候选和正式提升继续；停止堆叠同类自动定位模型，该能力由画布直接选择、SKU 约束与后续 G3 可修正蒙版解决。
+4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理、R9 外观/无障碍/大素材渲染与三档正式 WebView 终验，以及材质感知 Prompt 路由、人工结构化材质证据、显式 UI 安全回退、G1 schema v4 生产自由画布和 G2 schema v5 商品档案均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。G0、G1 与 G2 已关闭，当前从 G3 ROI / Mask / 精准局部处理与扩图合同继续；停止堆叠同类自动定位模型，该能力由画布直接选择、SKU 约束与 G3 可修正蒙版解决。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 
@@ -1715,7 +1717,7 @@ Product Atelier 的长期定位收敛为：**以无限画布为核心，以商�
 
 #### G2：SKU 商品数字分身（35–60 小时）
 
-当前状态（2026-09-02）：schema v5、生产 `ProductProfile` 合同、不可变版本、批准参考图保护、任务/trace 绑定、正式 Studio 管理与任务选择、刷新恢复、冲突闭环和三档真实界面源码门禁均已通过；完整 Windows 候选构建与 candidate-first 正式提升尚未完成，正式 artifact 仍为 schema v4。
+当前状态（2026-09-02）：已关闭并正式发布。schema v5、生产 `ProductProfile` 合同、不可变版本、批准参考图保护、任务/trace 绑定、正式 Studio 管理与任务选择、刷新恢复、冲突闭环、三档真实界面、完整 Windows 候选、candidate-first 提升和正式目录复验均已通过；正式 artifact 为 `fb1468bb8a518b043ae26bfb0cc5021de7874bed`、contract `2026-09-02.2`、schema v5。
 
 - 建立商品档案：SKU、类目、规格、材质、品牌色、包装文字、Logo、平台规格与批准参考图。
 - 商品组件覆盖核心主体、容器/盘子、瓶盖、标签、配件、阴影和背景；每项可设为“必须保留 / 可选保留 / 允许修改 / 禁止修改”。
@@ -1724,6 +1726,8 @@ Product Atelier 的长期定位收敛为：**以无限画布为核心，以商�
 门禁：用餐盘、透明瓶、包装文字、多产品合照验证；材质、数量、文字和组件保护进入不可变任务快照与 trace；历史档案版本可追溯且不被新修改覆盖。
 
 #### G3：精准局部处理与扩图（50–90 小时）
+
+当前状态（2026-09-02）：已进入合同与失败测试阶段；尚未把 ROI / Mask / 局部编辑 / 扩图写入边界接入生产画布，不得误报为已实现。首个检查点只建立本地、可恢复、可测试的合同和手动底座，不下载模型、不调用付费 API。
 
 - 在画布接入框选、点选、画笔保留/删除、反选、边缘调整、蒙版预览与恢复。
 - 云端图像编辑 provider 可以读取选区周边上下文，但返回结果必须由本地合成器按 Mask 落图。
@@ -1795,4 +1799,4 @@ G1–G8 预计 `330–560` 小时有效开发与验证，G0 另需 `12–24` 小
 
 ### 13.7 下一执行入口
 
-G0、G1A 与 G1B 已完成源码、构建、正式 WebView/DPI、candidate-first Windows 提升和正式目录复验。G2 后端 schema v5、商品档案版本合同、正式 Studio 管理、批准参考图、组件保护、任务版本选择与真实界面源码门禁已经通过；当前执行入口是提交该源码检查点，随后从干净 Git 身份构建 schema v5 候选并完成 candidate-first Windows 正式门禁。Agent、模型下载和付费 API 继续不在当前授权内。
+G0、G1 与 G2 已完成源码、构建、正式 WebView/DPI、candidate-first Windows 提升和正式目录复验。当前执行入口是 G3：先冻结 ROI、Mask、局部编辑、扩图、失败恢复、版本血缘、费用确认和像素保护合同，再为严格模式选区外像素差异为 0、撤销返回原指纹、失败不污染原版本、扩图只写新增区域建立失败测试，随后接入画布选区与手动可恢复底座。Agent、模型下载和付费 API 继续不在当前授权内。
