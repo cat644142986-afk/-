@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "experiment_id": "r7-prompt-v1-v3-2026-09-01",
   "executed_at": "2026-09-01",
-  "status": "execution-complete-awaiting-user-blind-review",
+  "status": "review-complete-no-global-promotion",
   "scope": {
     "variable_under_test": "prompt_version",
     "variants": ["prompt_v1", "prompt_v3"],
@@ -69,7 +69,9 @@
     "review_outputs": 0,
     "fail_outputs": 1,
     "failure_axes": ["white-background-border", "subject-border-contact"],
-    "failed_blind_identity_withheld": true,
+    "failed_blind_identity_withheld": false,
+    "failed_case": "transparent-bottle-real",
+    "failed_variant": "prompt_v3",
     "unverified_axes": [
       "reference_fidelity",
       "product_count",
@@ -79,13 +81,38 @@
     "paid_retry_authorized": false
   },
   "blind_review": {
-    "status": "round-1-sealed-awaiting-user-round-2",
-    "prompt_versions_hidden": true,
+    "status": "completed-and-revealed",
+    "prompt_versions_hidden_during_both_rounds": true,
     "private_mapping_read_before_round_1": false,
     "ai_round_1_scorecards": 6,
-    "ai_round_1_results_in_report": false,
-    "user_round_2": null,
-    "mapping_reveal_authorized": false,
+    "ai_round_1_results_in_report": true,
+    "user_round_2": {
+      "choices": {
+        "packaging-text-brand-procedural": "B",
+        "multi-count-procedural": "B",
+        "transparent-bottle-real": "B"
+      },
+      "revealed_variants": {
+        "packaging-text-brand-procedural": "prompt_v3",
+        "multi-count-procedural": "prompt_v3",
+        "transparent-bottle-real": "prompt_v1"
+      },
+      "variant_preferences": {"prompt_v1": 1, "prompt_v3": 2}
+    },
+    "ai_round_1": {
+      "case_preferences": {
+        "packaging-text-brand-procedural": "prompt_v3",
+        "multi-count-procedural": "prompt_v1",
+        "transparent-bottle-real": "prompt_v1"
+      },
+      "variant_preferences": {"prompt_v1": 2, "prompt_v3": 1},
+      "mean_ten_axis_score": {"prompt_v1": 4.613, "prompt_v3": 3.973}
+    },
+    "reviewer_agreement_cases": 2,
+    "reviewer_disagreement_cases": 1,
+    "combined_preference_votes": {"prompt_v1": 3, "prompt_v3": 3},
+    "mapping_reveal_authorized": true,
+    "mapping_revealed_after_user_round_2": true,
     "blind_review_sha256": "9D4817DAC0AEE94CEE7354B0FAE6AD38B352F1B821F50B5B24E68D6E61FE866B",
     "contact_sheet_sha256": "2983122B4B5BFBC15617DD0728F6740371C6379B7BC9401AF569B067911FABD2",
     "private_mapping_file_sha256": "0F2F1470B157C2E4C74FEF914AC32395A1D6A32F621F0C628F39AE4791005E53",
@@ -111,9 +138,10 @@
   "decision": {
     "formal_default_changed": false,
     "formal_portable_promoted": false,
-    "prompt_v3_status": "experimental-default-off",
-    "quality_conclusion": "pending-user-blind-review",
+    "prompt_v3_status": "experimental-not-promoted",
+    "quality_conclusion": "no-stable-global-quality-gain",
+    "reason": "The user preferred prompt_v3 for the two procedural opaque-product cases but prompt_v1 for the real transparent bottle. Blind AI review preferred prompt_v1 in two of three cases, and prompt_v3 had the only deterministic blocking failure on transparent material. Prompt v3 therefore cannot safely replace prompt_v1 globally.",
     "further_paid_calls_authorized": false,
-    "next_action": "Collect the user's A/B choice for all three rows, then reveal the sealed mapping and decide whether prompt_v3 has a stable quality gain."
+    "next_action": "Keep prompt_v1 as the formal default. Design and validate a material-aware prompt route offline so compact constraints may be used for suitable opaque/count-sensitive products while transparent or reflective products retain the safer baseline. Do not auto-redo or call the provider without a new explicit budget."
   }
 }
