@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import sqlite3
 import threading
 import time
@@ -20,8 +21,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+try:
+    from command_registry import command_for_mode, get_command
+except ImportError:
+    from .command_registry import command_for_mode, get_command
 
-SCHEMA_VERSION = 3
+
+SCHEMA_VERSION = 4
+CANVAS_DOCUMENT_SCHEMA_VERSION = 1
+CANVAS_COORDINATE_SYSTEM = {
+    "unit": "canvas-pixel",
+    "origin": "top-left",
+    "x_axis": "right",
+    "y_axis": "down",
+}
 WORKSPACE_SESSION_ID = "ses_workspace"
 
 COLLECTION_IDS = {
@@ -98,6 +111,14 @@ class IdempotencyConflictError(ValueError):
 
 class DraftRevisionConflictError(ValueError):
     """Raised when a stale client attempts to overwrite a newer draft."""
+
+
+class CanvasRevisionConflictError(ValueError):
+    """Raised when a stale canvas mutation targets an older document version."""
+
+    def __init__(self, message: str, current: Mapping[str, Any]):
+        super().__init__(message)
+        self.current = dict(current)
 
 
 class MemorySuggestionRevisionConflictError(ValueError):
@@ -199,6 +220,44 @@ V3_REQUIRED_INDEXES = frozenset({
     "idx_reviews_result",
     "idx_traces_job",
     "idx_traces_item",
+})
+
+V4_TABLE_COLUMNS = {
+    "canvas_documents": frozenset({
+        "id", "draft_id", "current_version_id", "current_revision",
+        "created_at", "updated_at",
+    }),
+    "canvas_document_versions": frozenset({
+        "id", "document_id", "revision", "parent_version_id",
+        "client_request_id", "request_fingerprint", "document_json",
+        "document_sha256", "created_at",
+    }),
+    "canvas_version_sources": frozenset({
+        "version_id", "layer_id", "source_kind", "source_asset_id",
+        "proxy_ref", "original_pixel_width", "original_pixel_height",
+    }),
+}
+
+V4_JOB_SNAPSHOT_COLUMNS = frozenset({
+    "command_id", "canvas_document_version_id", "canvas_operation_id",
+})
+
+V4_EXECUTION_TRACE_COLUMNS = frozenset({
+    "command_id", "canvas_document_version_id", "canvas_operation_id",
+})
+
+V4_REQUIRED_INDEXES = frozenset({
+    "idx_canvas_documents_draft",
+    "idx_canvas_versions_document",
+    "idx_canvas_sources_asset",
+    "idx_job_snapshots_canvas_version",
+})
+
+V4_REQUIRED_TRIGGERS = frozenset({
+    "trg_canvas_versions_no_update",
+    "trg_canvas_versions_no_delete",
+    "trg_canvas_sources_no_update",
+    "trg_canvas_sources_no_delete",
 })
 
 V1_SCHEMA_STATEMENTS = (
@@ -367,6 +426,321 @@ def decode_json(value: str | None, fallback: Any) -> Any:
         return json.loads(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def canonical_json(value: Any) -> str:
+    return json.dumps(
+        value if value is not None else {},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+_CANVAS_ID_PATTERN = re.compile(r"^[a-z][a-z0-9._:-]{2,127}$")
+_CANVAS_PROXY_PATTERN = re.compile(r"^proxy:(thumbnail|preview):([1-9][0-9]{1,4})$")
+
+
+def _canvas_object(
+    value: Any,
+    *,
+    label: str,
+    required: set[str],
+    optional: set[str] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} must be an object")
+    item = dict(value)
+    allowed = required | set(optional or set())
+    missing = sorted(required - set(item))
+    unknown = sorted(set(item) - allowed)
+    if missing:
+        raise ValueError(f"{label} is missing fields: {', '.join(missing)}")
+    if unknown:
+        raise ValueError(f"{label} has unknown fields: {', '.join(unknown)}")
+    return item
+
+
+def _canvas_id(value: Any, label: str) -> str:
+    item = str(value or "").strip()
+    if not _CANVAS_ID_PATTERN.fullmatch(item):
+        raise ValueError(f"{label} is not a valid canvas identifier")
+    return item
+
+
+def _canvas_number(
+    value: Any,
+    label: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+    exclusive_minimum: bool = False,
+) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a finite number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{label} must be a finite number")
+    if minimum is not None:
+        invalid = number <= minimum if exclusive_minimum else number < minimum
+        if invalid:
+            raise ValueError(f"{label} is below its minimum")
+    if maximum is not None and number > maximum:
+        raise ValueError(f"{label} exceeds its maximum")
+    return number
+
+
+def _canvas_integer(
+    value: Any,
+    label: str,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{label} is below its minimum")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{label} exceeds its maximum")
+    return value
+
+
+def _canvas_timestamp(value: Any, label: str) -> str:
+    item = str(value or "").strip()
+    try:
+        datetime.fromisoformat(item.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an ISO-8601 timestamp") from exc
+    return item
+
+
+def _validate_layer_transform(value: Any, label: str) -> None:
+    transform = _canvas_object(
+        value,
+        label=label,
+        required={"x", "y", "scale_x", "scale_y", "rotation_degrees", "opacity"},
+    )
+    _canvas_number(transform["x"], f"{label}.x")
+    _canvas_number(transform["y"], f"{label}.y")
+    _canvas_number(transform["scale_x"], f"{label}.scale_x", minimum=0, exclusive_minimum=True)
+    _canvas_number(transform["scale_y"], f"{label}.scale_y", minimum=0, exclusive_minimum=True)
+    _canvas_number(
+        transform["rotation_degrees"],
+        f"{label}.rotation_degrees",
+        minimum=-360,
+        maximum=360,
+    )
+    _canvas_number(transform["opacity"], f"{label}.opacity", minimum=0, maximum=1)
+
+
+def _validate_layer_snapshot(value: Any, label: str) -> None:
+    snapshot = _canvas_object(
+        value,
+        label=label,
+        required={"transform", "z_index", "visible", "locked"},
+    )
+    _validate_layer_transform(snapshot["transform"], f"{label}.transform")
+    _canvas_integer(snapshot["z_index"], f"{label}.z_index", minimum=0)
+    if not isinstance(snapshot["visible"], bool) or not isinstance(snapshot["locked"], bool):
+        raise ValueError(f"{label} visibility and lock fields must be booleans")
+
+
+def normalize_canvas_document(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the production CanvasDocument v1 contract without optional packages."""
+    document = _canvas_object(
+        value,
+        label="CanvasDocument",
+        required={
+            "id", "schema_version", "coordinate_system", "revision",
+            "active_artboard_id", "source_asset_ids", "artboards", "layers",
+            "operations", "undo_cursor", "created_at", "updated_at",
+        },
+    )
+    _canvas_id(document["id"], "CanvasDocument.id")
+    if document["schema_version"] != CANVAS_DOCUMENT_SCHEMA_VERSION:
+        raise ValueError("CanvasDocument.schema_version is unsupported")
+    if document["coordinate_system"] != CANVAS_COORDINATE_SYSTEM:
+        raise ValueError("CanvasDocument.coordinate_system must use top-left canvas pixels")
+    _canvas_integer(document["revision"], "CanvasDocument.revision", minimum=0)
+    active_artboard_id = _canvas_id(
+        document["active_artboard_id"], "CanvasDocument.active_artboard_id"
+    )
+
+    source_asset_ids = document["source_asset_ids"]
+    if not isinstance(source_asset_ids, list) or not source_asset_ids:
+        raise ValueError("CanvasDocument.source_asset_ids must be a non-empty list")
+    normalized_source_ids = [
+        _canvas_id(item, "CanvasDocument.source_asset_ids item") for item in source_asset_ids
+    ]
+    if len(normalized_source_ids) != len(set(normalized_source_ids)):
+        raise ValueError("CanvasDocument.source_asset_ids must be unique")
+
+    artboards = document["artboards"]
+    if not isinstance(artboards, list) or not artboards:
+        raise ValueError("CanvasDocument.artboards must be a non-empty list")
+    artboard_ids: set[str] = set()
+    for index, raw_artboard in enumerate(artboards):
+        label = f"CanvasDocument.artboards[{index}]"
+        artboard = _canvas_object(
+            raw_artboard,
+            label=label,
+            required={"id", "name", "rect", "export"},
+        )
+        artboard_id = _canvas_id(artboard["id"], f"{label}.id")
+        if artboard_id in artboard_ids:
+            raise ValueError(f"duplicate artboard id: {artboard_id}")
+        artboard_ids.add(artboard_id)
+        if not isinstance(artboard["name"], str) or not 1 <= len(artboard["name"]) <= 120:
+            raise ValueError(f"{label}.name must contain 1 to 120 characters")
+        rect = _canvas_object(
+            artboard["rect"],
+            label=f"{label}.rect",
+            required={"x", "y", "width", "height"},
+        )
+        _canvas_number(rect["x"], f"{label}.rect.x")
+        _canvas_number(rect["y"], f"{label}.rect.y")
+        _canvas_number(rect["width"], f"{label}.rect.width", minimum=0, exclusive_minimum=True)
+        _canvas_number(rect["height"], f"{label}.rect.height", minimum=0, exclusive_minimum=True)
+        export = _canvas_object(
+            artboard["export"],
+            label=f"{label}.export",
+            required={"pixel_width", "pixel_height", "color_space"},
+        )
+        _canvas_integer(export["pixel_width"], f"{label}.export.pixel_width", minimum=1, maximum=32768)
+        _canvas_integer(export["pixel_height"], f"{label}.export.pixel_height", minimum=1, maximum=32768)
+        if export["color_space"] not in {"srgb", "display-p3"}:
+            raise ValueError(f"{label}.export.color_space is unsupported")
+    if active_artboard_id not in artboard_ids:
+        raise ValueError("CanvasDocument.active_artboard_id references a missing artboard")
+
+    layers = document["layers"]
+    if not isinstance(layers, list):
+        raise ValueError("CanvasDocument.layers must be a list")
+    layer_ids: set[str] = set()
+    asset_layer_sources: set[str] = set()
+    for index, raw_layer in enumerate(layers):
+        label = f"CanvasDocument.layers[{index}]"
+        layer = _canvas_object(
+            raw_layer,
+            label=label,
+            required={"id", "artboard_id", "source", "transform", "z_index", "visible", "locked"},
+        )
+        layer_id = _canvas_id(layer["id"], f"{label}.id")
+        if layer_id in layer_ids:
+            raise ValueError(f"duplicate layer id: {layer_id}")
+        layer_ids.add(layer_id)
+        if _canvas_id(layer["artboard_id"], f"{label}.artboard_id") not in artboard_ids:
+            raise ValueError(f"{label} references a missing artboard")
+        source = _canvas_object(
+            layer["source"],
+            label=f"{label}.source",
+            required={
+                "kind", "id", "proxy_ref", "original_pixel_width",
+                "original_pixel_height",
+            },
+        )
+        if source["kind"] not in {"asset", "result"}:
+            raise ValueError(f"{label}.source.kind is unsupported")
+        source_id = _canvas_id(source["id"], f"{label}.source.id")
+        if source["kind"] == "asset":
+            asset_layer_sources.add(source_id)
+        proxy_match = _CANVAS_PROXY_PATTERN.fullmatch(str(source["proxy_ref"] or ""))
+        if proxy_match is None or not 64 <= int(proxy_match.group(2)) <= 4096:
+            raise ValueError(f"{label}.source.proxy_ref is not rebuildable")
+        _canvas_integer(
+            source["original_pixel_width"],
+            f"{label}.source.original_pixel_width",
+            minimum=1,
+        )
+        _canvas_integer(
+            source["original_pixel_height"],
+            f"{label}.source.original_pixel_height",
+            minimum=1,
+        )
+        _validate_layer_transform(layer["transform"], f"{label}.transform")
+        _canvas_integer(layer["z_index"], f"{label}.z_index", minimum=0)
+        if not isinstance(layer["visible"], bool) or not isinstance(layer["locked"], bool):
+            raise ValueError(f"{label} visibility and lock fields must be booleans")
+    if asset_layer_sources != set(normalized_source_ids):
+        raise ValueError("CanvasDocument.source_asset_ids must match asset-backed layers")
+
+    operations = document["operations"]
+    if not isinstance(operations, list):
+        raise ValueError("CanvasDocument.operations must be a list")
+    operation_ids: set[str] = set()
+    for index, raw_operation in enumerate(operations):
+        label = f"CanvasDocument.operations[{index}]"
+        operation = _canvas_object(
+            raw_operation,
+            label=label,
+            required={
+                "id", "command_id", "input_layer_ids", "output_layer_id",
+                "roi_id", "mask_id", "product_profile_id", "mutation",
+                "cost", "status", "created_at",
+            },
+        )
+        operation_id = _canvas_id(operation["id"], f"{label}.id")
+        if operation_id in operation_ids:
+            raise ValueError(f"duplicate operation id: {operation_id}")
+        operation_ids.add(operation_id)
+        command_id = _canvas_id(operation["command_id"], f"{label}.command_id")
+        get_command(command_id)
+        inputs = operation["input_layer_ids"]
+        if not isinstance(inputs, list) or not inputs:
+            raise ValueError(f"{label}.input_layer_ids must be a non-empty list")
+        input_ids = [_canvas_id(item, f"{label}.input_layer_ids item") for item in inputs]
+        if len(input_ids) != len(set(input_ids)) or not set(input_ids).issubset(layer_ids):
+            raise ValueError(f"{label}.input_layer_ids are duplicate or missing")
+        if _canvas_id(operation["output_layer_id"], f"{label}.output_layer_id") not in layer_ids:
+            raise ValueError(f"{label}.output_layer_id references a missing layer")
+        for field in ("roi_id", "mask_id", "product_profile_id"):
+            if operation[field] is not None:
+                _canvas_id(operation[field], f"{label}.{field}")
+        mutation = operation["mutation"]
+        if mutation is not None:
+            mutation = _canvas_object(
+                mutation,
+                label=f"{label}.mutation",
+                required={"target_layer_id", "before", "after"},
+            )
+            if _canvas_id(mutation["target_layer_id"], f"{label}.mutation.target_layer_id") not in layer_ids:
+                raise ValueError(f"{label}.mutation references a missing layer")
+            _validate_layer_snapshot(mutation["before"], f"{label}.mutation.before")
+            _validate_layer_snapshot(mutation["after"], f"{label}.mutation.after")
+        cost = _canvas_object(
+            operation["cost"],
+            label=f"{label}.cost",
+            required={
+                "mode", "confirmed_call_count", "user_confirmation_required",
+                "automatic_paid_retry",
+            },
+        )
+        if cost["mode"] not in {"free", "paid"}:
+            raise ValueError(f"{label}.cost.mode is unsupported")
+        calls = _canvas_integer(
+            cost["confirmed_call_count"], f"{label}.cost.confirmed_call_count", minimum=0
+        )
+        if not isinstance(cost["user_confirmation_required"], bool) or not isinstance(
+            cost["automatic_paid_retry"], bool
+        ):
+            raise ValueError(f"{label}.cost confirmation fields must be booleans")
+        if cost["mode"] == "paid" and (
+            calls < 1
+            or cost["user_confirmation_required"] is not True
+            or cost["automatic_paid_retry"] is not False
+        ):
+            raise ValueError(f"{label}.cost violates the paid-operation safety contract")
+        if operation["status"] not in {"planned", "running", "succeeded", "failed", "canceled"}:
+            raise ValueError(f"{label}.status is unsupported")
+        _canvas_timestamp(operation["created_at"], f"{label}.created_at")
+
+    undo_cursor = _canvas_integer(document["undo_cursor"], "CanvasDocument.undo_cursor", minimum=-1)
+    if undo_cursor > len(operations) - 1:
+        raise ValueError("CanvasDocument.undo_cursor exceeds the operation history")
+    _canvas_timestamp(document["created_at"], "CanvasDocument.created_at")
+    _canvas_timestamp(document["updated_at"], "CanvasDocument.updated_at")
+    return json.loads(canonical_json(document))
 
 
 def json_contains_value(value: Any, target: str) -> bool:
@@ -624,6 +998,99 @@ class AtelierLedger:
             }
             if actual_drafts != expected_drafts:
                 issues.append("default workflow drafts are missing or inconsistent")
+
+        integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
+        if integrity_rows != ["ok"]:
+            issues.append(f"integrity_check failed: {'; '.join(integrity_rows[:3])}")
+        foreign_key_rows = list(connection.execute("PRAGMA foreign_key_check"))
+        if foreign_key_rows:
+            issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
+        return issues
+
+    @classmethod
+    def _v4_objects_present(cls, connection: sqlite3.Connection) -> bool:
+        tables = cls._table_names(connection)
+        if tables.intersection(V4_TABLE_COLUMNS):
+            return True
+        if "job_snapshots" in tables:
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(job_snapshots)")
+            }
+            if columns.intersection(V4_JOB_SNAPSHOT_COLUMNS):
+                return True
+        if "execution_traces" in tables:
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(execution_traces)")
+            }
+            if columns.intersection(V4_EXECUTION_TRACE_COLUMNS):
+                return True
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        return bool(triggers.intersection(V4_REQUIRED_TRIGGERS))
+
+    @classmethod
+    def _v4_contract_issues(cls, connection: sqlite3.Connection) -> list[str]:
+        issues: list[str] = []
+        tables = cls._table_names(connection)
+        for table, required_columns in V4_TABLE_COLUMNS.items():
+            if table not in tables:
+                issues.append(f"missing table {table}")
+                continue
+            actual_columns = {
+                str(row[1])
+                for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing_columns = sorted(required_columns - actual_columns)
+            if missing_columns:
+                issues.append(f"{table} missing columns: {', '.join(missing_columns)}")
+
+        if "job_snapshots" not in tables:
+            issues.append("missing table job_snapshots")
+        else:
+            snapshot_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(job_snapshots)")
+            }
+            missing = sorted(V4_JOB_SNAPSHOT_COLUMNS - snapshot_columns)
+            if missing:
+                issues.append(f"job_snapshots missing columns: {', '.join(missing)}")
+
+        if "execution_traces" not in tables:
+            issues.append("missing table execution_traces")
+        else:
+            trace_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(execution_traces)")
+            }
+            missing = sorted(V4_EXECUTION_TRACE_COLUMNS - trace_columns)
+            if missing:
+                issues.append(f"execution_traces missing columns: {', '.join(missing)}")
+
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        missing_indexes = sorted(V4_REQUIRED_INDEXES - indexes)
+        if missing_indexes:
+            issues.append(f"missing indexes: {', '.join(missing_indexes)}")
+
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        missing_triggers = sorted(V4_REQUIRED_TRIGGERS - triggers)
+        if missing_triggers:
+            issues.append(f"missing triggers: {', '.join(missing_triggers)}")
 
         integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
         if integrity_rows != ["ok"]:
@@ -973,6 +1440,157 @@ class AtelierLedger:
                 ),
             )
 
+    @staticmethod
+    def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
+        """Add immutable canvas versions and bind jobs to canonical commands."""
+        connection.execute(
+            """
+            CREATE TABLE canvas_documents (
+                id TEXT PRIMARY KEY,
+                draft_id TEXT NOT NULL UNIQUE,
+                current_version_id TEXT,
+                current_revision INTEGER NOT NULL DEFAULT 0 CHECK(current_revision >= 0),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(draft_id) REFERENCES workflow_drafts(id) ON DELETE RESTRICT,
+                FOREIGN KEY(current_version_id) REFERENCES canvas_document_versions(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE canvas_document_versions (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                parent_version_id TEXT,
+                client_request_id TEXT NOT NULL UNIQUE,
+                request_fingerprint TEXT NOT NULL,
+                document_json TEXT NOT NULL,
+                document_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(document_id) REFERENCES canvas_documents(id) ON DELETE RESTRICT,
+                FOREIGN KEY(parent_version_id) REFERENCES canvas_document_versions(id) ON DELETE RESTRICT,
+                UNIQUE(document_id, revision)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE canvas_version_sources (
+                version_id TEXT NOT NULL,
+                layer_id TEXT NOT NULL,
+                source_kind TEXT NOT NULL CHECK(source_kind IN ('asset','result')),
+                source_asset_id TEXT NOT NULL,
+                proxy_ref TEXT NOT NULL,
+                original_pixel_width INTEGER NOT NULL CHECK(original_pixel_width > 0),
+                original_pixel_height INTEGER NOT NULL CHECK(original_pixel_height > 0),
+                PRIMARY KEY(version_id, layer_id),
+                FOREIGN KEY(version_id) REFERENCES canvas_document_versions(id) ON DELETE RESTRICT,
+                FOREIGN KEY(source_asset_id) REFERENCES assets(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            "ALTER TABLE job_snapshots ADD COLUMN command_id TEXT NOT NULL DEFAULT ''"
+        )
+        connection.execute(
+            "ALTER TABLE job_snapshots ADD COLUMN canvas_document_version_id TEXT "
+            "REFERENCES canvas_document_versions(id) ON DELETE RESTRICT"
+        )
+        connection.execute(
+            "ALTER TABLE job_snapshots ADD COLUMN canvas_operation_id TEXT"
+        )
+        connection.execute(
+            "ALTER TABLE execution_traces ADD COLUMN command_id TEXT NOT NULL DEFAULT ''"
+        )
+        connection.execute(
+            "ALTER TABLE execution_traces ADD COLUMN canvas_document_version_id TEXT "
+            "REFERENCES canvas_document_versions(id) ON DELETE RESTRICT"
+        )
+        connection.execute(
+            "ALTER TABLE execution_traces ADD COLUMN canvas_operation_id TEXT"
+        )
+        connection.execute(
+            """
+            UPDATE job_snapshots
+            SET command_id = CASE mode
+                WHEN 'single' THEN 'command:existing-generate-single'
+                WHEN 'multi-file' THEN 'command:existing-generate-multi-file'
+                WHEN 'group-split' THEN 'command:existing-group-split'
+                WHEN 'cutout-batch' THEN 'command:existing-remove-background'
+                ELSE ''
+            END
+            """
+        )
+        connection.execute(
+            """
+            UPDATE execution_traces
+            SET command_id = COALESCE((
+                    SELECT s.command_id FROM job_snapshots s
+                    WHERE s.job_id = execution_traces.job_id
+                ), ''),
+                canvas_document_version_id = (
+                    SELECT s.canvas_document_version_id FROM job_snapshots s
+                    WHERE s.job_id = execution_traces.job_id
+                ),
+                canvas_operation_id = (
+                    SELECT s.canvas_operation_id FROM job_snapshots s
+                    WHERE s.job_id = execution_traces.job_id
+                )
+            """
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX idx_canvas_documents_draft ON canvas_documents(draft_id)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_canvas_versions_document "
+            "ON canvas_document_versions(document_id, revision DESC)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_canvas_sources_asset ON canvas_version_sources(source_asset_id)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_job_snapshots_canvas_version "
+            "ON job_snapshots(canvas_document_version_id)"
+        )
+        connection.execute(
+            """
+            CREATE TRIGGER trg_canvas_versions_no_update
+            BEFORE UPDATE ON canvas_document_versions
+            BEGIN
+                SELECT RAISE(ABORT, 'canvas document versions are immutable');
+            END
+            """
+        )
+        connection.execute(
+            """
+            CREATE TRIGGER trg_canvas_versions_no_delete
+            BEFORE DELETE ON canvas_document_versions
+            BEGIN
+                SELECT RAISE(ABORT, 'canvas document versions are immutable');
+            END
+            """
+        )
+        connection.execute(
+            """
+            CREATE TRIGGER trg_canvas_sources_no_update
+            BEFORE UPDATE ON canvas_version_sources
+            BEGIN
+                SELECT RAISE(ABORT, 'canvas version sources are immutable');
+            END
+            """
+        )
+        connection.execute(
+            """
+            CREATE TRIGGER trg_canvas_sources_no_delete
+            BEFORE DELETE ON canvas_version_sources
+            BEGIN
+                SELECT RAISE(ABORT, 'canvas version sources are immutable');
+            END
+            """
+        )
+
     def _ensure_schema(self) -> None:
         with self._schema_lock:
             # Probe the version without changing journal mode. An older app must
@@ -1043,6 +1661,23 @@ class AtelierLedger:
                                     else:
                                         self._migrate_v2_to_v3(connection)
                                     current_version = 3
+                                elif current_version == 3:
+                                    if self._v4_objects_present(connection):
+                                        issues = self._v4_contract_issues(connection)
+                                        if issues:
+                                            raise PartialSchemaError(
+                                                "Detected an incomplete v4 ledger while schema metadata says v3; "
+                                                "the database was not changed. Restore the automatic backup or "
+                                                f"repair these objects first: {' | '.join(issues)}"
+                                            )
+                                        repair = "recovered complete v4 schema with stale v3 metadata"
+                                        self.last_schema_repair = (
+                                            f"{self.last_schema_repair}; {repair}"
+                                            if self.last_schema_repair else repair
+                                        )
+                                    else:
+                                        self._migrate_v3_to_v4(connection)
+                                    current_version = 4
                                 else:
                                     raise LedgerSchemaError(
                                         f"No migration path from schema v{current_version}"
@@ -1632,6 +2267,14 @@ class AtelierLedger:
                     (asset_id,),
                 )
             ],
+            "canvas_versions": [
+                str(row["version_id"])
+                for row in connection.execute(
+                    "SELECT DISTINCT version_id FROM canvas_version_sources "
+                    "WHERE source_asset_id = ?",
+                    (asset_id,),
+                )
+            ],
             "job_snapshots": [],
             "generation_results": [],
             "knowledge_evidence": [],
@@ -1774,6 +2417,302 @@ class AtelierLedger:
         item["mask_state"] = decode_json(item.pop("mask_state_json"), {})
         item["selected_asset_ids"] = [str(selected_row["asset_id"]) for selected_row in selected]
         return item
+
+    @staticmethod
+    def _canvas_version_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["document"] = decode_json(item.pop("document_json", "{}"), {})
+        item.pop("request_fingerprint", None)
+        return item
+
+    @staticmethod
+    def _canvas_proxy_manifest(document: Mapping[str, Any]) -> list[dict[str, Any]]:
+        proxies: list[dict[str, Any]] = []
+        for layer in document.get("layers") or []:
+            source = layer["source"]
+            proxy_ref = str(source["proxy_ref"])
+            match = _CANVAS_PROXY_PATTERN.fullmatch(proxy_ref)
+            if match is None:
+                raise ValueError("stored canvas proxy_ref is invalid")
+            max_edge = int(match.group(2))
+            source_id = str(source["id"])
+            proxies.append({
+                "layer_id": str(layer["id"]),
+                "source_kind": str(source["kind"]),
+                "source_id": source_id,
+                "proxy_ref": proxy_ref,
+                "url": f"/api/assets/{source_id}/thumbnail?size={max_edge}",
+                "max_edge": max_edge,
+                "authoritative_source": "assets.id",
+                "rebuildable": True,
+                "cache_is_authoritative": False,
+            })
+        return proxies
+
+    @classmethod
+    def _canvas_result(
+        cls,
+        document_row: sqlite3.Row,
+        version_row: sqlite3.Row,
+        *,
+        replayed: bool,
+    ) -> dict[str, Any]:
+        version = cls._canvas_version_row(version_row)
+        document = version.pop("document")
+        return {
+            "id": str(document_row["id"]),
+            "draft_id": str(document_row["draft_id"]),
+            "current_revision": int(document_row["current_revision"]),
+            "current_version_id": document_row["current_version_id"],
+            "document": document,
+            "version": version,
+            "proxies": cls._canvas_proxy_manifest(document),
+            "replayed": replayed,
+        }
+
+    def get_canvas_document(self, mode: str) -> dict[str, Any] | None:
+        if mode not in WORKFLOW_DRAFT_IDS:
+            raise ValueError(f"unsupported workflow mode: {mode}")
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT c.* FROM canvas_documents c
+                JOIN workflow_drafts d ON d.id = c.draft_id
+                WHERE d.mode = ?
+                """,
+                (mode,),
+            ).fetchone()
+            if row is None:
+                return None
+            version = connection.execute(
+                "SELECT * FROM canvas_document_versions WHERE id = ?",
+                (row["current_version_id"],),
+            ).fetchone()
+            if version is None:
+                raise LedgerSchemaError(f"canvas {row['id']} has no current version")
+        return self._canvas_result(row, version, replayed=False)
+
+    def get_canvas_document_version(self, version_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM canvas_document_versions WHERE id = ?",
+                (str(version_id),),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown canvas document version: {version_id}")
+        return self._canvas_version_row(row)
+
+    @staticmethod
+    def _validate_canvas_sources(
+        connection: sqlite3.Connection,
+        draft: sqlite3.Row,
+        document: Mapping[str, Any],
+    ) -> None:
+        sources = [layer["source"] for layer in document["layers"]]
+        source_ids = list(dict.fromkeys(str(source["id"]) for source in sources))
+        if source_ids:
+            placeholders = ",".join("?" for _ in source_ids)
+            rows = connection.execute(
+                f"SELECT id, role, width, height FROM assets WHERE id IN ({placeholders})",
+                source_ids,
+            ).fetchall()
+            assets = {str(row["id"]): row for row in rows}
+        else:
+            assets = {}
+        missing = [source_id for source_id in source_ids if source_id not in assets]
+        if missing:
+            raise KeyError(f"unknown canvas source assets: {', '.join(missing)}")
+
+        for source in sources:
+            asset = assets[str(source["id"])]
+            role = str(asset["role"] or "")
+            if source["kind"] == "asset" and role != "workspace_source":
+                raise ValueError(f"canvas asset source {source['id']} is not a workspace source")
+            if source["kind"] == "result" and not role.startswith("result_"):
+                raise ValueError(f"canvas result source {source['id']} is not a result asset")
+            width = int(asset["width"] or 0)
+            height = int(asset["height"] or 0)
+            if width > 0 and width != int(source["original_pixel_width"]):
+                raise ValueError(f"canvas source {source['id']} width does not match the ledger")
+            if height > 0 and height != int(source["original_pixel_height"]):
+                raise ValueError(f"canvas source {source['id']} height does not match the ledger")
+
+        asset_source_ids = [str(item) for item in document["source_asset_ids"]]
+        if asset_source_ids:
+            placeholders = ",".join("?" for _ in asset_source_ids)
+            rows = connection.execute(
+                f"""
+                SELECT asset_id FROM asset_collection_members
+                WHERE collection_id = ? AND status = 'active'
+                  AND asset_id IN ({placeholders})
+                """,
+                (draft["collection_id"], *asset_source_ids),
+            ).fetchall()
+            active = {str(row["asset_id"]) for row in rows}
+            outside = [asset_id for asset_id in asset_source_ids if asset_id not in active]
+            if outside:
+                raise ValueError(
+                    "canvas source assets are outside the workflow collection: "
+                    + ", ".join(outside)
+                )
+
+    def save_canvas_document(
+        self,
+        mode: str,
+        *,
+        expected_revision: int,
+        client_request_id: str,
+        document: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if mode not in WORKFLOW_DRAFT_IDS:
+            raise ValueError(f"unsupported workflow mode: {mode}")
+        expected_revision = _canvas_integer(
+            expected_revision, "expected_revision", minimum=0
+        )
+        request_id = str(client_request_id or "").strip()
+        version_id = idempotent_id("canvasver", request_id)
+        normalized = normalize_canvas_document(document)
+        if int(normalized["revision"]) != expected_revision:
+            raise ValueError("CanvasDocument.revision must equal expected_revision")
+        fingerprint = hashlib.sha256(canonical_json({
+            "mode": mode,
+            "expected_revision": expected_revision,
+            "document": normalized,
+        }).encode("utf-8")).hexdigest()
+        replayed = False
+        result_document_id = str(normalized["id"])
+
+        with self._immediate_connection() as connection:
+            prior_version = connection.execute(
+                "SELECT * FROM canvas_document_versions WHERE client_request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if prior_version is not None:
+                if str(prior_version["request_fingerprint"]) != fingerprint:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different canvas save"
+                    )
+                prior_document = connection.execute(
+                    """
+                    SELECT c.* FROM canvas_documents c
+                    JOIN workflow_drafts d ON d.id = c.draft_id
+                    WHERE c.id = ? AND d.mode = ?
+                    """,
+                    (prior_version["document_id"], mode),
+                ).fetchone()
+                if prior_document is None:
+                    raise IdempotencyConflictError(
+                        "client_request_id belongs to a different canvas workflow"
+                    )
+                replayed = True
+                document_row = prior_document
+                version_row = prior_version
+            else:
+                draft = connection.execute(
+                    "SELECT * FROM workflow_drafts WHERE mode = ?", (mode,)
+                ).fetchone()
+                if draft is None:
+                    raise LedgerSchemaError(f"missing workflow draft: {mode}")
+                document_row = connection.execute(
+                    "SELECT * FROM canvas_documents WHERE draft_id = ?",
+                    (draft["id"],),
+                ).fetchone()
+                if document_row is None:
+                    if expected_revision != 0:
+                        raise CanvasRevisionConflictError(
+                            f"canvas for {mode} is revision 0, not {expected_revision}",
+                            {"id": None, "revision": 0, "version_id": None},
+                        )
+                    duplicate = connection.execute(
+                        "SELECT id, current_revision, current_version_id FROM canvas_documents WHERE id = ?",
+                        (result_document_id,),
+                    ).fetchone()
+                    if duplicate is not None:
+                        raise ValueError("CanvasDocument.id already belongs to another workflow")
+                    parent_version_id = None
+                    created_at = utc_now()
+                else:
+                    current_revision = int(document_row["current_revision"])
+                    if str(document_row["id"]) != result_document_id:
+                        raise ValueError("CanvasDocument.id cannot change between versions")
+                    if current_revision != expected_revision:
+                        raise CanvasRevisionConflictError(
+                            f"canvas {result_document_id} is revision {current_revision}, "
+                            f"not {expected_revision}",
+                            {
+                                "id": result_document_id,
+                                "revision": current_revision,
+                                "version_id": document_row["current_version_id"],
+                            },
+                        )
+                    parent_version_id = document_row["current_version_id"]
+                    created_at = str(document_row["created_at"])
+
+                self._validate_canvas_sources(connection, draft, normalized)
+                next_revision = expected_revision + 1
+                now = utc_now()
+                stored_document = json.loads(canonical_json(normalized))
+                stored_document["revision"] = next_revision
+                stored_document["created_at"] = created_at
+                stored_document["updated_at"] = now
+                stored_json = canonical_json(stored_document)
+                document_sha256 = hashlib.sha256(stored_json.encode("utf-8")).hexdigest()
+
+                if document_row is None:
+                    connection.execute(
+                        """
+                        INSERT INTO canvas_documents(
+                            id, draft_id, current_version_id, current_revision,
+                            created_at, updated_at
+                        ) VALUES(?, ?, NULL, 0, ?, ?)
+                        """,
+                        (result_document_id, draft["id"], created_at, now),
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO canvas_document_versions(
+                        id, document_id, revision, parent_version_id,
+                        client_request_id, request_fingerprint, document_json,
+                        document_sha256, created_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        version_id, result_document_id, next_revision, parent_version_id,
+                        request_id, fingerprint, stored_json, document_sha256, now,
+                    ),
+                )
+                for layer in stored_document["layers"]:
+                    source = layer["source"]
+                    connection.execute(
+                        """
+                        INSERT INTO canvas_version_sources(
+                            version_id, layer_id, source_kind, source_asset_id,
+                            proxy_ref, original_pixel_width, original_pixel_height
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            version_id, layer["id"], source["kind"], source["id"],
+                            source["proxy_ref"], source["original_pixel_width"],
+                            source["original_pixel_height"],
+                        ),
+                    )
+                connection.execute(
+                    """
+                    UPDATE canvas_documents
+                    SET current_version_id = ?, current_revision = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (version_id, next_revision, now, result_document_id),
+                )
+                document_row = connection.execute(
+                    "SELECT * FROM canvas_documents WHERE id = ?", (result_document_id,)
+                ).fetchone()
+                version_row = connection.execute(
+                    "SELECT * FROM canvas_document_versions WHERE id = ?", (version_id,)
+                ).fetchone()
+                assert document_row is not None and version_row is not None
+
+        return self._canvas_result(document_row, version_row, replayed=replayed)
 
     def save_workflow_draft(
         self,
@@ -2001,6 +2940,10 @@ class AtelierLedger:
         requested_concurrency: int = 1,
         max_attempts: int = 2,
         title: str = "",
+        command_id: str = "",
+        canvas_document_id: str | None = None,
+        expected_canvas_revision: int | None = None,
+        canvas_operation_id: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
         source_asset_ids = [str(asset_id) for asset_id in source_asset_ids]
         if mode not in {"single", "multi-file", "group-split", "cutout-batch"}:
@@ -2012,6 +2955,24 @@ class AtelierLedger:
         engine_key = str(engine_key).strip()
         if not engine_key:
             raise ValueError("engine_key is required")
+        command = get_command(command_id) if str(command_id or "").strip() else command_for_mode(mode)
+        if command["execution_kind"] != "durable-job" or command["mode"] != mode:
+            raise ValueError(f"command {command['id']} does not execute workflow mode {mode}")
+        command_id = str(command["id"])
+        canvas_document_id = str(canvas_document_id or "").strip() or None
+        canvas_operation_id = str(canvas_operation_id or "").strip() or None
+        if canvas_document_id is None:
+            if expected_canvas_revision is not None or canvas_operation_id is not None:
+                raise ValueError("canvas revision and operation require canvas_document_id")
+        else:
+            _canvas_id(canvas_document_id, "canvas_document_id")
+            if expected_canvas_revision is None:
+                raise ValueError("expected_canvas_revision is required for a canvas command")
+            expected_canvas_revision = _canvas_integer(
+                expected_canvas_revision, "expected_canvas_revision", minimum=0
+            )
+            if canvas_operation_id is not None:
+                _canvas_id(canvas_operation_id, "canvas_operation_id")
         idempotency_key = str(idempotency_key).strip()
         if len(idempotency_key) > 200:
             raise ValueError("idempotency key is too long")
@@ -2022,6 +2983,7 @@ class AtelierLedger:
         session_id = new_id("ses")
         now = utc_now()
         created = False
+        canvas_document_version_id: str | None = None
 
         with self._immediate_connection() as connection:
             if idempotency_key:
@@ -2030,11 +2992,41 @@ class AtelierLedger:
                 ).fetchone()
                 if existing is not None:
                     job_id = str(existing["id"])
+                    snapshot = connection.execute(
+                        "SELECT * FROM job_snapshots WHERE job_id = ?", (job_id,)
+                    ).fetchone()
+                    if snapshot is None:
+                        raise LedgerSchemaError(f"job {job_id} has no immutable snapshot")
                     existing_items = connection.execute(
                         "SELECT source_asset_id, engine_key, max_attempts FROM job_items "
                         "WHERE job_id = ? ORDER BY position",
                         (job_id,),
                     ).fetchall()
+                    if canvas_document_id is not None:
+                        requested_version = connection.execute(
+                            """
+                            SELECT v.id FROM canvas_document_versions v
+                            JOIN canvas_documents c ON c.id = v.document_id
+                            JOIN workflow_drafts d ON d.id = c.draft_id
+                            WHERE c.id = ? AND v.revision = ? AND d.mode = ?
+                            """,
+                            (canvas_document_id, expected_canvas_revision, mode),
+                        ).fetchone()
+                        if requested_version is None:
+                            current = connection.execute(
+                                "SELECT current_revision, current_version_id "
+                                "FROM canvas_documents WHERE id = ?",
+                                (canvas_document_id,),
+                            ).fetchone()
+                            raise CanvasRevisionConflictError(
+                                "the requested canvas revision is unavailable",
+                                {
+                                    "id": canvas_document_id,
+                                    "revision": int(current["current_revision"]) if current else 0,
+                                    "version_id": current["current_version_id"] if current else None,
+                                },
+                            )
+                        canvas_document_version_id = str(requested_version["id"])
                     same_request = (
                         str(existing["mode"]) == mode
                         and decode_json(existing["parameters_json"], {}) == parameters
@@ -2043,6 +3035,10 @@ class AtelierLedger:
                         == source_asset_ids
                         and all(str(row["engine_key"]) == engine_key for row in existing_items)
                         and all(int(row["max_attempts"]) == max_attempts for row in existing_items)
+                        and str(snapshot["command_id"] or "") == command_id
+                        and (snapshot["canvas_document_version_id"] or None)
+                        == canvas_document_version_id
+                        and (snapshot["canvas_operation_id"] or None) == canvas_operation_id
                     )
                     if not same_request:
                         raise IdempotencyConflictError(
@@ -2054,6 +3050,45 @@ class AtelierLedger:
                 created = True
 
             if created:
+                if canvas_document_id is not None:
+                    canvas = connection.execute(
+                        """
+                        SELECT c.* FROM canvas_documents c
+                        JOIN workflow_drafts d ON d.id = c.draft_id
+                        WHERE c.id = ? AND d.mode = ?
+                        """,
+                        (canvas_document_id, mode),
+                    ).fetchone()
+                    if canvas is None:
+                        raise KeyError(f"unknown canvas for {mode}: {canvas_document_id}")
+                    current_revision = int(canvas["current_revision"])
+                    if current_revision != expected_canvas_revision:
+                        raise CanvasRevisionConflictError(
+                            f"canvas {canvas_document_id} is revision {current_revision}, "
+                            f"not {expected_canvas_revision}",
+                            {
+                                "id": canvas_document_id,
+                                "revision": current_revision,
+                                "version_id": canvas["current_version_id"],
+                            },
+                        )
+                    canvas_document_version_id = str(canvas["current_version_id"])
+                    canvas_sources = {
+                        str(row["source_asset_id"])
+                        for row in connection.execute(
+                            "SELECT source_asset_id FROM canvas_version_sources "
+                            "WHERE version_id = ?",
+                            (canvas_document_version_id,),
+                        )
+                    }
+                    outside = [
+                        asset_id for asset_id in source_asset_ids if asset_id not in canvas_sources
+                    ]
+                    if outside:
+                        raise ValueError(
+                            "job source assets are not present in the selected canvas version: "
+                            + ", ".join(outside)
+                        )
                 placeholders = ",".join("?" for _ in source_asset_ids)
                 rows = connection.execute(
                     f"""
@@ -2115,8 +3150,9 @@ class AtelierLedger:
                         job_id, draft_id, draft_revision, mode,
                         source_asset_ids_json, brief_json, intent_json,
                         parameters_json, knowledge_refs_json, ui_context_json,
+                        command_id, canvas_document_version_id, canvas_operation_id,
                         created_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         job_id,
@@ -2134,6 +3170,9 @@ class AtelierLedger:
                             else decode_json(draft["ui_state_json"], {})
                             if draft is not None else {}
                         ),
+                        command_id,
+                        canvas_document_version_id,
+                        canvas_operation_id,
                         now,
                     ),
                 )
@@ -2187,6 +3226,9 @@ class AtelierLedger:
                             "mode": mode,
                             "total_items": len(source_asset_ids),
                             "idempotency_key": idempotency_key,
+                            "command_id": command_id,
+                            "canvas_document_version_id": canvas_document_version_id,
+                            "canvas_operation_id": canvas_operation_id,
                         }),
                         now,
                     ),
@@ -3544,6 +4586,25 @@ class AtelierLedger:
             "error_message": str(error_message),
         }
         with self._immediate_connection() as connection:
+            if job_id:
+                snapshot = connection.execute(
+                    "SELECT command_id, canvas_document_version_id, canvas_operation_id "
+                    "FROM job_snapshots WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()
+                if snapshot is None:
+                    raise KeyError(f"unknown job: {job_id}")
+                candidate.update({
+                    "command_id": str(snapshot["command_id"] or ""),
+                    "canvas_document_version_id": snapshot["canvas_document_version_id"],
+                    "canvas_operation_id": snapshot["canvas_operation_id"],
+                })
+            else:
+                candidate.update({
+                    "command_id": "",
+                    "canvas_document_version_id": None,
+                    "canvas_operation_id": None,
+                })
             existing_row = connection.execute(
                 "SELECT * FROM execution_traces WHERE id = ?", (trace_id,)
             ).fetchone()
@@ -3555,11 +4616,6 @@ class AtelierLedger:
                         "client_request_id already belongs to a different execution trace"
                     )
                 return existing
-            if job_id:
-                if connection.execute(
-                    "SELECT 1 FROM jobs WHERE id = ?", (job_id,)
-                ).fetchone() is None:
-                    raise KeyError(f"unknown job: {job_id}")
             if job_item_id:
                 item = connection.execute(
                     "SELECT job_id, generation_id FROM job_items WHERE id = ?",
@@ -3590,8 +4646,9 @@ class AtelierLedger:
                     id, job_id, job_item_id, generation_id, stage, status,
                     user_input_json, compiled_prompt, applied_knowledge_json,
                     ignored_fields_json, model, parameters_json, output_json,
-                    error_code, error_message, created_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    error_code, error_message, command_id,
+                    canvas_document_version_id, canvas_operation_id, created_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trace_id, job_id, job_item_id, generation_id, stage, status,
@@ -3599,7 +4656,9 @@ class AtelierLedger:
                     encode_json(candidate["applied_knowledge"]),
                     encode_json(candidate["ignored_fields"]), candidate["model"],
                     encode_json(candidate["parameters"]), encode_json(candidate["output"]),
-                    candidate["error_code"], candidate["error_message"], now,
+                    candidate["error_code"], candidate["error_message"],
+                    candidate["command_id"], candidate["canvas_document_version_id"],
+                    candidate["canvas_operation_id"], now,
                 ),
             )
             row = connection.execute(
@@ -4140,7 +5199,8 @@ class AtelierLedger:
                     "feedback", "memory_suggestions", "jobs", "job_items", "task_attempts",
                     "asset_collections", "asset_collection_members", "workflow_drafts",
                     "draft_asset_selections", "job_snapshots", "result_reviews",
-                    "execution_traces",
+                    "execution_traces", "canvas_documents",
+                    "canvas_document_versions", "canvas_version_sources",
                 )
             }
             counts["sessions"] = connection.execute(

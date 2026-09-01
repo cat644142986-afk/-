@@ -284,7 +284,8 @@ class LedgerMigrationTests(unittest.TestCase):
         self.assertEqual(
             repaired.last_schema_repair,
             "recovered complete v2 schema with stale v1 metadata; "
-            "recovered complete v3 schema with stale v2 metadata",
+            "recovered complete v3 schema with stale v2 metadata; "
+            "recovered complete v4 schema with stale v3 metadata",
         )
         self.assertIsNotNone(repaired.last_migration_backup)
         backup_path = repaired.last_migration_backup
@@ -362,7 +363,8 @@ class LedgerMigrationTests(unittest.TestCase):
         self.assertEqual(read_schema_version(self.db_path), SCHEMA_VERSION)
         self.assertEqual(
             repaired.last_schema_repair,
-            "recovered complete v3 schema with stale v2 metadata",
+            "recovered complete v3 schema with stale v2 metadata; "
+            "recovered complete v4 schema with stale v3 metadata",
         )
         self.assertIsNotNone(repaired.last_migration_backup)
         backup_path = repaired.last_migration_backup

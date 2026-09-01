@@ -138,6 +138,20 @@ class GrowthFoundationContractTests(unittest.TestCase):
     def test_document_references_only_existing_contract_entities(self) -> None:
         self.assert_semantically_valid(self.fixture)
 
+    def test_canvas_coordinate_contract_is_explicit_and_top_left(self) -> None:
+        document = self.fixture["canvas_document"]
+        self.assertEqual(document["schema_version"], 1)
+        self.assertEqual(document["coordinate_system"], {
+            "unit": "canvas-pixel",
+            "origin": "top-left",
+            "x_axis": "right",
+            "y_axis": "down",
+        })
+
+        centered = copy.deepcopy(self.fixture)
+        centered["canvas_document"]["coordinate_system"]["origin"] = "center"
+        self.assert_invalid(centered)
+
     def test_semantic_integrity_rejects_dangling_duplicate_and_history_references(self) -> None:
         dangling = copy.deepcopy(self.fixture)
         dangling["canvas_document"]["operations"][0]["input_layer_ids"] = ["layer:missing"]

@@ -167,6 +167,7 @@ try {
         $sourceFiles = @(
             "python/server.py",
             "python/atelier_ledger.py",
+            "python/command_registry.py",
             "python/asset_store.py",
             "python/job_engine.py",
             "python/knowledge_engine.py",

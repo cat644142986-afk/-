@@ -25,11 +25,19 @@ try:
     from atelier_ledger import (
         AssetPurgeBlockedError,
         AtelierLedger,
+        CanvasRevisionConflictError,
         DraftRevisionConflictError,
         IdempotencyConflictError,
         InvalidStatusTransitionError,
         MemorySuggestionRevisionConflictError,
         idempotent_id,
+    )
+    from command_registry import (
+        COMMAND_REGISTRY_VERSION,
+        command_for_mode,
+        get_command,
+        list_commands,
+        validate_command_sources,
     )
     from job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from generation_baseline import (
@@ -93,11 +101,19 @@ except ImportError:  # Allows importing as python.server during local tests.
     from python.atelier_ledger import (
         AssetPurgeBlockedError,
         AtelierLedger,
+        CanvasRevisionConflictError,
         DraftRevisionConflictError,
         IdempotencyConflictError,
         InvalidStatusTransitionError,
         MemorySuggestionRevisionConflictError,
         idempotent_id,
+    )
+    from python.command_registry import (
+        COMMAND_REGISTRY_VERSION,
+        command_for_mode,
+        get_command,
+        list_commands,
+        validate_command_sources,
     )
     from python.job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from python.generation_baseline import (
@@ -232,7 +248,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-08-31.2"
+SIDECAR_CONTRACT_VERSION = "2026-09-01.1"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -1980,6 +1996,15 @@ class WorkflowCompletionRequest(BaseModel):
         extra = "forbid"
 
 
+class CanvasDocumentSaveRequest(BaseModel):
+    expected_revision: int
+    client_request_id: str
+    document: dict[str, Any]
+
+    class Config:
+        extra = "forbid"
+
+
 class CollectionOrderRequest(BaseModel):
     asset_ids: list[str]
 
@@ -2356,6 +2381,7 @@ async def get_workflow_workspace(mode: str, asset_limit: int = 200, job_limit: i
             "mode": mode,
             "collection": draft["collection_key"],
             "draft": draft,
+            "canvas": LEDGER.get_canvas_document(mode),
             "assets": [workspace_asset_response(asset) for asset in assets],
             "asset_total": LEDGER.count_collection_assets(draft["collection_key"]),
             "jobs": jobs,
@@ -2409,6 +2435,63 @@ async def save_workflow_workspace_draft(mode: str, request: WorkflowDraftRequest
         raise HTTPException(
             status_code=400,
             detail={"code": "INVALID_DRAFT", "message": str(exc)},
+        )
+
+
+@app.get("/api/workspaces/{mode}/canvas")
+async def get_workflow_canvas(mode: str):
+    try:
+        canvas = LEDGER.get_canvas_document(mode)
+        if canvas is None:
+            return {
+                "id": None,
+                "document": None,
+                "version": None,
+                "proxies": [],
+                "current_revision": 0,
+                "current_version_id": None,
+                "replayed": False,
+            }
+        return canvas
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_WORKFLOW", "message": str(exc)},
+        )
+
+
+@app.put("/api/workspaces/{mode}/canvas")
+async def save_workflow_canvas(mode: str, request: CanvasDocumentSaveRequest):
+    try:
+        return LEDGER.save_canvas_document(
+            mode,
+            expected_revision=request.expected_revision,
+            client_request_id=request.client_request_id,
+            document=request.document,
+        )
+    except CanvasRevisionConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CANVAS_REVISION_CONFLICT",
+                "message": str(exc),
+                "current": exc.current,
+            },
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "CANVAS_SOURCE_NOT_FOUND", "message": str(exc)},
+        )
+    except (sqlite3.IntegrityError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_CANVAS_DOCUMENT", "message": str(exc)},
         )
 
 
@@ -2664,6 +2747,20 @@ class JobCreateRequest(BaseModel):
         extra = "forbid"
 
 
+class CommandExecutionRequest(BaseModel):
+    client_request_id: str
+    source_asset_ids: list[str]
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    requested_concurrency: Optional[int] = None
+    max_attempts: int = 2
+    canvas_document_id: Optional[str] = None
+    expected_canvas_revision: Optional[int] = None
+    canvas_operation_id: Optional[str] = None
+
+    class Config:
+        extra = "forbid"
+
+
 class JobRetryRequest(BaseModel):
     item_ids: Optional[list[str]] = None
 
@@ -2856,6 +2953,83 @@ def _wake_job_engine():
     engine = JOB_ENGINE
     if engine is not None and engine.is_running:
         engine.wake()
+
+
+@app.get("/api/commands")
+async def get_registered_commands():
+    return {
+        "contract_version": COMMAND_REGISTRY_VERSION,
+        "commands": list_commands(),
+    }
+
+
+@app.post("/api/commands/{command_id}/execute")
+async def execute_registered_command(command_id: str, request: CommandExecutionRequest):
+    try:
+        command = get_command(command_id)
+        if command["execution_kind"] != "durable-job":
+            raise ValueError("canvas mutation commands are persisted by saving a canvas version")
+        mode = str(command["mode"])
+        source_asset_ids = [str(asset_id).strip() for asset_id in request.source_asset_ids]
+        validate_command_sources(command, source_asset_ids)
+        refresh_runtime_config()
+        parameters = _normalize_job_parameters(mode, request.parameters or {})
+        _validate_job_request(mode, source_asset_ids, parameters)
+        requested_concurrency = (
+            request.requested_concurrency
+            if request.requested_concurrency is not None
+            else _default_job_concurrency(mode, len(source_asset_ids))
+        )
+        job, created = LEDGER.create_job(
+            mode,
+            source_asset_ids,
+            engine_key=str(command["engine_key"]),
+            parameters=parameters,
+            idempotency_key=str(request.client_request_id or "").strip(),
+            requested_concurrency=requested_concurrency,
+            max_attempts=request.max_attempts,
+            title=str(command["label"]),
+            command_id=str(command["id"]),
+            canvas_document_id=request.canvas_document_id,
+            expected_canvas_revision=request.expected_canvas_revision,
+            canvas_operation_id=request.canvas_operation_id,
+        )
+        _wake_job_engine()
+        return {"job": job, "created": created, "command": command}
+    except CanvasRevisionConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CANVAS_REVISION_CONFLICT",
+                "message": str(exc),
+                "current": exc.current,
+            },
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "COMMAND_REFERENCE_NOT_FOUND", "message": str(exc)},
+        )
+    except OutputRootError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "message": exc.message},
+        )
+    except SemanticCutoutError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "stage": exc.stage, "message": exc.message},
+        )
+    except (sqlite3.IntegrityError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_COMMAND_REQUEST", "message": str(exc)},
+        )
 
 
 @app.post("/api/jobs")

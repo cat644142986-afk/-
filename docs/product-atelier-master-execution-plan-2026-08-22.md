@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-01<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `911b352713e91f5da1caf8072b5618cba49af852`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0 增长前置门禁与不修改正式 `src/` 的 G1A Fabric.js 独立原型均已关闭，当前执行游标进入 G1B 正式数据合同、SQLite 文档版本与统一命令接入。情境式创作副驾仅在画布、SKU 与局部处理底座完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `911b352713e91f5da1caf8072b5618cba49af852`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1A 与 G1B 第一检查点（schema v4 不可变画布版本、统一命令注册表和 API 合同）已关闭，当前执行游标仍在 G1B，进入 Fabric.js 正式最小画布壳、SQLite 恢复、分段图层列表与逐像素导出实现。正式 artifact 和用户账本仍保持 schema v3，必须等正式 UI 与 Windows 门禁通过后才 candidate-first 提升。情境式创作副驾仅在画布、SKU 与局部处理底座完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1538,8 +1538,8 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 
 - 用户已用持续目标明确授权按唯一总计划推进当前可在本机、零付费完成的增长路线；单个检查点不再作为停止点。Agent、付费模型、付费生图和大型模型下载仍不在授权内。
 - 增长前回滚标签 `baseline-2026-09-01-before-growth-route` 已同时存在于本地和 GitHub；带注释标签对象为 `a00e019a47507fe700d8af38f1fcf4d1e0c7e4cc`，剥离后精确指向正式增长前基线 `98b3afb12069238f491c5b43536b4ae1d0d24c41`。
-- `docs/contracts/growth-foundation-v1.schema.json` 冻结 `CanvasDocument / Artboard / Layer / Operation / Mask / ROI / ProductProfile / QualityIssue / Recipe` 九个最小草案合同。结构层拒绝未知字段、Base64/绝对路径引用和未确认付费操作；语义门禁额外锁定实体引用存在、集合内 ID 唯一、源素材声明、ROI 边界、撤销游标范围和 mutation 目标存在。G1A 实际实现撤销/重做后，合同校正为每个可逆操作显式保存严格的 `mutation.before / mutation.after` 图层快照，避免重启恢复依赖前端私有旁路；校正后的 Schema SHA-256 为 `5783DBB78046C53AB26AF24F3ECA5CEC13CE016407058F2E80CD0142D301DD3C`。
-- G1A 测试入口只使用 `tests/fixtures/growth_foundation/minimal-contract.json` 的纯合成元数据，不包含真实图片字节、用户 Prompt、API Key、绝对路径或正式 SQLite 内容；加入必填 `mutation` 边界后的 fixture SHA-256 为 `4144CEE886D983FB23F726FA39077290717143599C306252DC7F3823D5BC45E8`。测试依赖显式锁定 MIT 许可的 `rfc3339-validator==0.1.4`，避免 `jsonschema` 在缺少可选后端时静默跳过 `date-time` 校验。
+- `docs/contracts/growth-foundation-v1.schema.json` 冻结 `CanvasDocument / Artboard / Layer / Operation / Mask / ROI / ProductProfile / QualityIssue / Recipe` 九个最小草案合同。结构层拒绝未知字段、Base64/绝对路径引用和未确认付费操作；语义门禁额外锁定实体引用存在、集合内 ID 唯一、源素材声明、ROI 边界、撤销游标范围和 mutation 目标存在。G1A 实际实现撤销/重做后，合同校正为每个可逆操作显式保存严格的 `mutation.before / mutation.after` 图层快照；G1B 又把 `schema_version=1`、`canvas-pixel / top-left / right / down` 坐标合同和必填 `proxy_ref` 冻结进同一 Schema，并把文件定位校正为“CanvasDocument 已生产化、G2+ 定义仍受阶段门禁”，当前 SHA-256 为 `26ACE1AC19C2BDFE461F21ECF379748BC94927E7ADB5C0BBA6A442E532A1DEFD`。
+- G1 测试入口只使用 `tests/fixtures/growth_foundation/minimal-contract.json` 的纯合成元数据，不包含真实图片字节、用户 Prompt、API Key、绝对路径或正式 SQLite 内容；加入 G1B 坐标合同后的 fixture SHA-256 为 `8542427C5B2BB84254713071B2D68854AE31FDDDCF0EBEE267B1ACF5C0AC5CE9`。测试依赖显式锁定 MIT 许可的 `rfc3339-validator==0.1.4`，避免 `jsonschema` 在缺少可选后端时静默跳过 `date-time` 校验。
 - 合同专项因上述 G1A 反馈由 11 项增加为 12/12；最终全量门禁为 Python 281 项（280 通过、1 项平台预期跳过）、前端 132/132、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall、51 个 Git 跟踪或本轮新增 JavaScript/ESM 文件语法和 Git whitespace 全绿。被忽略的 `src/js/_appjs_parts/` 与旧 `src/v133-killer.js` 是不进入 Git 和构建的本机历史草稿，未修改也未作为生产门禁结果。
 - 合同检查点提交 `a211e5b728efe87900d0fdb3b33694ec15001816` 已推送。此前已关闭默认生图基线决策、`app.js` 低耦合拆分和生产视觉 token 收口；公开 NSIS 继续明确冻结在外部代码签名证书条件，不冒充已签名公开安装包。
 - 本检查点只改变文档、测试依赖和合成合同夹具，没有修改 `src/`、Python sidecar 运行依赖、Rust/Tauri 或正式资源，因此不构建并提升一个字节相同但 Git 身份不同的伪运行制品。正式便携 artifact、桌面快捷方式和已验证健康证据继续保持 `911b352713e91f5da1caf8072b5618cba49af852`；candidate-first 规则没有被绕过。
@@ -1556,6 +1556,17 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 正式 artifact 仍保持 `911b352713e91f5da1caf8072b5618cba49af852`，因为 G1A 没有运行时改动，不构造 Git 身份变化但字节相同的伪正式包。正式便携版已用临时隔离账本再次通过完整应用 smoke：contract `2026-08-31.2`、schema v3、动态端口 `51179`、隔离账本 319488 bytes、内嵌 custom protocol 与 shell 日志验证通过；测试启动的应用和 sidecar 已清理，用户原有正式进程未被关闭。
 - Fabric.js 通过 G1A 门槛，Konva 替代 PoC 不启动。G1A 仍是合成原型而不是生产能力：200 条图层的面板在 G1B 必须改成分段/虚拟化，localStorage 必须替换为 SQLite 文档版本，代理缓存必须可重建，快捷命令必须进入正式幂等任务链，画板导出必须增加逐像素门禁。
 - 下一执行游标：进入 G1B 的合同冻结检查点。先把 `CanvasDocument` 版本、图层坐标原点、操作 mutation、SQLite 文档版本/乐观并发、代理引用/重建、统一命令注册表和快捷模式兼容边界写成生产合同与失败测试；这些合同转绿后，才把 Fabric 依赖和最小画布壳接入正式 `src/`，不直接复制原型 localStorage 或 200 行 DOM 图层列表。
+
+### 2026-09-01 G1B schema v4 与统一命令第一检查点关闭
+
+- `SCHEMA_VERSION` 从 3 升到 4，新增 `canvas_documents / canvas_document_versions / canvas_version_sources`。每个工作流草稿最多绑定一个画布文档；每次保存追加不可变版本、父版本、文档 SHA-256、幂等请求指纹与素材/结果来源引用，数据库触发器拒绝修改或删除历史版本和来源。
+- 正式 `CanvasDocument v1` 坐标冻结为 `canvas-pixel / top-left / X right / Y down`。保存接口执行严格字段、有限数值、素材/结果角色、原始像素、工作流素材域和可重建代理校验；Base64、绝对路径、错误尺寸、跨域素材和不存在的引用均失败关闭。代理图只返回 `/api/assets/{id}/thumbnail` 重建地址，`assets.id` 继续是事实源。
+- 画布保存具备乐观并发、相同请求幂等重放、同 key 不同内容冲突和历史版本读取；画布不再借用 `workflow_drafts.ui_state`，因此后续版本不会覆盖历史。`job_snapshots` 与 `execution_traces` 新增 `command_id / canvas_document_version_id / canvas_operation_id`，把任务和 trace 精确绑定到触发它的命令、画布版本和操作。
+- `python/command_registry.py` 统一登记四个既有 durable quick workflow 与三个本地画布 mutation。快捷入口和画布入口不创建第二套执行器；`GET/PUT /api/workspaces/{mode}/canvas`、`GET /api/commands`、`POST /api/commands/{command_id}/execute` 均进入现有 durable jobs、snapshot 与 trace 事实链，工作区恢复响应同时包含当前 canvas。
+- 发布审计发现新注册表最初未进入 sidecar source fingerprint；已把 `python/command_registry.py` 加入 `Build-Sidecar.ps1` 清单并用现有发布回归锁定。新增 `tools/test_schema_v4_candidate.py` 使用纯临时 v3 账本和自己启动的候选 EXE，验证 online backup、v3→v4、重启幂等、健康合同、7 个命令与空画布恢复；临时目录和候选进程均清理，正式运行进程未被停止。
+- 源码门禁通过：G1B 画布/命令专项 10/10；Canvas、迁移、命令及旧迁移组合 25/25；完整 Python 292 项（291 通过、1 项平台预期跳过）；前端 132/132；Vite production build；Rust/Tauri locked custom-protocol check；Python compileall、51 个 Git 跟踪 JavaScript/ESM 语法、JSON 解析与 Git whitespace。隔离 PyInstaller 候选两次启动确认 contract `2026-09-01.1`、schema `3→4`、重启后仍只有 1 个 v3 备份、command contract `canvas-command-v1` 与 7 个命令。
+- 本检查点没有读取 API Key、用户图片、用户 Prompt、正式 SQLite 或付费调用结果，没有修改正式便携目录、NSIS、桌面快捷方式或用户账本。正式 artifact 继续是 `911b352713e91f5da1caf8072b5618cba49af852`、schema v3；v4 进入正式数据前必须重新构建干净 Git 身份候选并按 candidate-first 备份、提升、正式复验与失败回滚。
+- 下一执行游标：在生产依赖中锁定 `fabric@7.4.0`，把最小画布壳接入正式 `src/`；从第一版即通过 schema v4 API 恢复/保存，不复制原型 localStorage。图层列表使用分段或虚拟化而不是 200 行 DOM，先完成素材入画布、选择/变换、显隐/锁定、撤销/重做和重启恢复，再增加严格按画板像素导出与正式 WebView/DPI 门禁。
 
 ## 11. 下一位开发者的执行入口
 
@@ -1646,7 +1657,7 @@ Product Atelier 的长期定位收敛为：**以无限画布为核心，以商�
 
 #### G1：画布核心与统一命令（70–110 小时）
 
-当前状态（2026-09-01）：`G1A` 已关闭，Fabric.js 通过独立原型门槛；`G1B` 从生产合同与失败测试开始，尚未把 Fabric 接入正式 `src/`。
+当前状态（2026-09-01）：`G1A` 与 `G1B` 第一检查点已关闭，Fabric.js 通过独立原型门槛，schema v4、不可变画布版本、统一命令注册表和后端 API 已转绿；Fabric 仍未接入正式 `src/`，正式 artifact/账本仍为 schema v3。
 
 `G1A` 先用 24–40 小时建立独立 Fabric.js 原型，只验证无限工作空间、有限画板、图层、选择/变换、撤销/重做、重启恢复、一个现有快捷命令复用，以及 200 张代理图和 4K 原图引用的内存/缩放/序列化。原型不读取用户正式账本、不进入 `src/`、不改变正式包。
 
@@ -1734,4 +1745,4 @@ G1–G8 预计 `330–560` 小时有效开发与验证，G0 另需 `12–24` 小
 
 ### 13.7 下一执行入口
 
-用户明确说“开始增长路线”后，从 G0 门禁开始；第一个代码动作是独立 G1A Fabric.js 技术原型，不直接改正式 Studio。原型先证明画板、图层、撤销/重做、重启恢复、代理图性能和一个现有后端命令复用；通过后才冻结正式 Canvas schema 并进入 G1B。当前请求只授权把计划并入总路线，不授权提前启动 Agent、下载模型或调用付费 API。
+G0、G1A 与 G1B 第一检查点已经关闭。当前从 G1B 的正式 UI 接入继续：锁定生产 Fabric 依赖，接入最小画布壳、schema v4 恢复/保存、分段图层列表和逐像素导出；完成源码、正式 WebView/DPI 与 candidate-first Windows 发布门禁后才提升 schema v4 正式便携版。Agent、模型下载和付费 API 继续不在当前授权内。

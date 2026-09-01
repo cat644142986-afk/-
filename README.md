@@ -17,6 +17,7 @@
 - **参数调节**: 模型选择、器皿保留/去除、拍摄角度、美化度、生成数量
 - **配置持久化**: API密钥和偏好设置本地存储，重启自动保留
 - **可解释成长记录**: 保存实际 Prompt、采用/忽略知识、模型参数、失败阶段和结果评审，避免反馈无去向
+- **画布数据底座**: schema v4 保存不可变画布版本、乐观并发、素材血缘和统一命令身份，为正式 Fabric 画布接入提供可恢复事实链
 - **原生交互**: 拖拽上传、Ctrl+V粘贴、系统保存对话框
 - **真实能力边界**: 快速抠图只显示会被执行器读取的控制，不把文字描述伪装成语义选物
 
@@ -36,7 +37,7 @@
 | 桌面外壳 | Tauri v2 (Rust) |
 | 前端 | 原生 HTML/CSS/JS + Vite |
 | 后端 | Python FastAPI |
-| 本地数据 | SQLite schema v3 + 分域工作区 + 内容寻址素材目录 |
+| 本地数据 | SQLite schema v4 + 分域工作区 + 不可变画布版本 + 内容寻址素材目录 |
 | 任务执行 | 持久 JobEngine + 有界线程池 + 分资源并发闸门 |
 | AI生成 | LK AI API (GPT-Image-2, Gemini Nano Banana, 千问等) |
 | 本地抠图 | BiRefNet-General (ONNX Runtime) |
@@ -193,4 +194,4 @@ npm run test:frontend
 npm run build
 ```
 
-测试使用临时数据库、mock 引擎和被强制终止的测试子进程；不会调用真实云端生成或消耗额度。底层任务契约见 `docs/ledger-schema-v2.md`，分域工作区与不可变快照见 `docs/ledger-schema-v3.md`。
+测试使用临时数据库、mock 引擎和被强制终止的测试子进程；不会调用真实云端生成或消耗额度。底层任务契约见 `docs/ledger-schema-v2.md`，分域工作区、不可变任务快照与 v4 画布版本见 `docs/ledger-schema-v3.md`。

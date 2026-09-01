@@ -366,3 +366,21 @@ NSIS 已完成隔离安装、安装态双 smoke 与静默卸载，但没有 Auth
 - promotion evidence SHA-256：`262B0410833E3EB73806B8044E0C42E12261CBEF23E744B31EC5B2F3A0C615F4`
 
 本检查点没有 schema 迁移。回退到 `f0dc544` 不需要转换账本，但旧版再次遇到非严格 VLM JSON 时会让单产品任务在生图前失败，并把失败终态显示为 100%。降级前先完成或取消排队/运行任务，退出正式 EXE 与对应 sidecar，为当前正式目录和 `%APPDATA%\ProductAtelier` 另留副本，再从目标提交重走 candidate-first 发布链；不要直接覆盖运行中的正式目录。回退不应删除现有失败任务与 trace，它们是诊断证据。本轮未重建 NSIS，也未调用付费 VLM/生图。
+
+## 2026-09-01 G1B schema v4 画布合同源码检查点
+
+- 性质：源码、迁移、API 与隔离 sidecar 候选检查点；在 Fabric 正式 UI、逐像素导出和 Windows WebView 门禁完成前，不提升正式便携目录、NSIS 或桌面快捷方式。
+- sidecar 源码合同：`2026-09-01.1`；数据库 schema：v4。
+- 上一个已验证正式 artifact 仍为 `911b352713e91f5da1caf8072b5618cba49af852`，正式用户账本仍为 schema v3。
+
+schema v4 首次打开 v1、v2 或 v3 账本前，会用 SQLite online backup API 在原数据库旁生成带原 schema 版本的可查询备份，然后在单个 `BEGIN IMMEDIATE` 事务中升级。迁移失败会回滚本轮 DDL、数据和 schema marker；检测到不完整 v4 对象时拒绝启动，不猜测补齐。
+
+v4 新增不可变画布版本、素材/结果来源引用，以及任务快照和 trace 的统一命令/画布版本绑定。旧 schema v3 sidecar 会把 v4 判断为未来版本并拒绝打开，不能直接用旧程序继续写 v4 账本。需要降级时：
+
+1. 完成或取消排队/运行任务，退出目标桌面 EXE 和它启动的 sidecar，并核实进程路径；
+2. 为当前 v4 数据库和正式应用目录另留完整副本；
+3. 找到本次升级自动生成且经 `integrity_check`/外键检查验证的 `.backup-v3-*.sqlite3`；
+4. 从目标 v3 Git 提交重走 candidate-first 发布链，并只把该 v3 备份恢复到隔离数据目录验证；
+5. 验证通过后再按发布事务恢复正式数据，不得让 v3 程序覆盖或修改 v4 文件。
+
+恢复 v3 备份会失去升级后新增的画布版本、画布操作绑定和 v4 期间写入的数据，因此这是有明确数据边界的降级，不是无损 schema down-migration。正常修复优先前滚到支持 v4 的版本。

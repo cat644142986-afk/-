@@ -2,6 +2,13 @@
   "contract_version": "growth-foundation-v1",
   "canvas_document": {
     "id": "canvas:synthetic-demo",
+    "schema_version": 1,
+    "coordinate_system": {
+      "unit": "canvas-pixel",
+      "origin": "top-left",
+      "x_axis": "right",
+      "y_axis": "down"
+    },
     "revision": 0,
     "active_artboard_id": "artboard:synthetic-main",
     "source_asset_ids": ["asset:synthetic-product-001"],

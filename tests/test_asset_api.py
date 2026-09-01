@@ -754,6 +754,161 @@ class AssetApiTests(unittest.TestCase):
             connection.close()
         self.assertEqual(event_count, 1)
 
+    def test_canvas_api_and_command_api_share_the_durable_job_contract(self) -> None:
+        source = self.client.post(
+            "/api/assets/import?collection=cutout",
+            files={"file": ("canvas-source.png", png_bytes(), "image/png")},
+        ).json()
+        document = {
+            "id": "canvas:api-cutout",
+            "schema_version": 1,
+            "coordinate_system": {
+                "unit": "canvas-pixel",
+                "origin": "top-left",
+                "x_axis": "right",
+                "y_axis": "down",
+            },
+            "revision": 0,
+            "active_artboard_id": "artboard:api-main",
+            "source_asset_ids": [source["id"]],
+            "artboards": [{
+                "id": "artboard:api-main",
+                "name": "API 画板",
+                "rect": {"x": 0, "y": 0, "width": 24, "height": 18},
+                "export": {
+                    "pixel_width": 24,
+                    "pixel_height": 18,
+                    "color_space": "srgb",
+                },
+            }],
+            "layers": [{
+                "id": "layer:api-source",
+                "artboard_id": "artboard:api-main",
+                "source": {
+                    "kind": "asset",
+                    "id": source["id"],
+                    "proxy_ref": "proxy:thumbnail:512",
+                    "original_pixel_width": 24,
+                    "original_pixel_height": 18,
+                },
+                "transform": {
+                    "x": 0,
+                    "y": 0,
+                    "scale_x": 1,
+                    "scale_y": 1,
+                    "rotation_degrees": 0,
+                    "opacity": 1,
+                },
+                "z_index": 0,
+                "visible": True,
+                "locked": False,
+            }],
+            "operations": [],
+            "undo_cursor": -1,
+            "created_at": "2026-09-01T00:00:00Z",
+            "updated_at": "2026-09-01T00:00:00Z",
+        }
+        saved = self.client.put(
+            "/api/workspaces/cutout-batch/canvas",
+            json={
+                "expected_revision": 0,
+                "client_request_id": "api-canvas-save-1",
+                "document": document,
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json()["document"]["revision"], 1)
+        current = self.client.get("/api/workspaces/cutout-batch/canvas")
+        self.assertEqual(current.status_code, 200, current.text)
+        self.assertEqual(
+            current.json()["version"]["id"], saved.json()["version"]["id"]
+        )
+        self.assertNotIn("storage_path", str(current.json()))
+        workspace = self.client.get("/api/workspaces/cutout-batch")
+        self.assertEqual(workspace.status_code, 200, workspace.text)
+        self.assertEqual(
+            workspace.json()["canvas"]["version"]["id"],
+            saved.json()["version"]["id"],
+        )
+
+        registry = self.client.get("/api/commands")
+        self.assertEqual(registry.status_code, 200, registry.text)
+        self.assertEqual(registry.json()["contract_version"], "canvas-command-v1")
+
+        parameters = {"cutout_selection": {"strategy": "foreground"}}
+        canvas_job = self.client.post(
+            "/api/commands/command:existing-remove-background/execute",
+            json={
+                "client_request_id": "api-canvas-command-1",
+                "source_asset_ids": [source["id"]],
+                "parameters": parameters,
+                "canvas_document_id": document["id"],
+                "expected_canvas_revision": 1,
+                "canvas_operation_id": "operation:api-cutout",
+            },
+        )
+        quick_job = self.client.post("/api/jobs", json={
+            "mode": "cutout-batch",
+            "source_asset_ids": [source["id"]],
+            "parameters": parameters,
+            "client_request_id": "api-quick-command-1",
+        })
+        self.assertEqual(canvas_job.status_code, 200, canvas_job.text)
+        self.assertEqual(quick_job.status_code, 200, quick_job.text)
+        canvas_snapshot = canvas_job.json()["job"]["snapshot"]
+        quick_snapshot = quick_job.json()["job"]["snapshot"]
+        self.assertEqual(
+            canvas_snapshot["command_id"], quick_snapshot["command_id"]
+        )
+        self.assertEqual(
+            canvas_snapshot["command_id"],
+            "command:existing-remove-background",
+        )
+        self.assertEqual(
+            canvas_snapshot["canvas_document_version_id"],
+            saved.json()["version"]["id"],
+        )
+        self.assertIsNone(quick_snapshot["canvas_document_version_id"])
+
+        trace = self.client.post(
+            f"/api/jobs/{canvas_job.json()['job']['id']}/traces",
+            json={
+                "client_request_id": "api-canvas-command-trace-1",
+                "stage": "command.accepted",
+                "status": "completed",
+                "user_input": {},
+            },
+        )
+        self.assertEqual(trace.status_code, 200, trace.text)
+        self.assertEqual(
+            trace.json()["trace"]["command_id"],
+            "command:existing-remove-background",
+        )
+        self.assertEqual(
+            trace.json()["trace"]["canvas_document_version_id"],
+            saved.json()["version"]["id"],
+        )
+        self.assertEqual(
+            trace.json()["trace"]["canvas_operation_id"],
+            "operation:api-cutout",
+        )
+
+        stale = self.client.post(
+            "/api/commands/command:existing-remove-background/execute",
+            json={
+                "client_request_id": "api-canvas-command-stale",
+                "source_asset_ids": [source["id"]],
+                "parameters": parameters,
+                "canvas_document_id": document["id"],
+                "expected_canvas_revision": 0,
+                "canvas_operation_id": "operation:stale",
+            },
+        )
+        self.assertEqual(stale.status_code, 409, stale.text)
+        self.assertEqual(
+            stale.json()["detail"]["code"], "CANVAS_REVISION_CONFLICT"
+        )
+
     def test_suggest_review_returns_the_actual_pending_suggestion_and_stable_receipt(self) -> None:
         def create_reviewable_job(index: int):
             source = self.client.post(

@@ -53,6 +53,7 @@ test('sidecar build cannot overwrite the formal portable release', () => {
 
   assert.doesNotMatch(script, /DeployPortable/);
   assert.doesNotMatch(script, /release\\ProductAtelier-Portable/);
+  assert.match(script, /"python\/command_registry\.py"/);
   assert.match(script, /\.replacement-\$token/);
   assert.match(script, /\.previous-\$token/);
   assert.match(script, /sidecar-build\.lock/);

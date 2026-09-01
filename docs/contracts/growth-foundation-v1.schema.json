@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://productatelier.local/contracts/growth-foundation-v1.schema.json",
   "title": "Product Atelier Growth Foundation v1",
-  "description": "G0 contract envelope for the isolated G1A prototype. It is not a production SQLite schema.",
+  "description": "Shared growth JSON envelope. CanvasDocument is the production v1 document contract; later-stage definitions remain gated growth contracts. This file is not physical SQLite DDL.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -58,6 +58,8 @@
       "additionalProperties": false,
       "required": [
         "id",
+        "schema_version",
+        "coordinate_system",
         "revision",
         "active_artboard_id",
         "source_asset_ids",
@@ -72,6 +74,20 @@
         "id": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9._:-]{2,127}$"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "coordinate_system": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["unit", "origin", "x_axis", "y_axis"],
+          "properties": {
+            "unit": {"const": "canvas-pixel"},
+            "origin": {"const": "top-left"},
+            "x_axis": {"const": "right"},
+            "y_axis": {"const": "down"}
+          }
         },
         "revision": {
           "type": "integer",
@@ -184,7 +200,7 @@
         "source": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "id", "original_pixel_width", "original_pixel_height"],
+          "required": ["kind", "id", "proxy_ref", "original_pixel_width", "original_pixel_height"],
           "properties": {
             "kind": {"enum": ["asset", "result"]},
             "id": {
