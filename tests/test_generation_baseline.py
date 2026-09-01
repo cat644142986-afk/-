@@ -5,6 +5,7 @@ import unittest
 from python.generation_baseline import (
     GENERATION_TRACE_CONTRACT_VERSION,
     LEGACY_DOUBLE_PASS,
+    MATERIAL_PROMPT_ROUTE_VERSION,
     PROMPT_COMPILER_VERSION,
     PROMPT_V2_FEATURE_ENV,
     PROMPT_V3_FEATURE_ENV,
@@ -17,6 +18,7 @@ from python.generation_baseline import (
     prompt_adapter_profile,
     prompt_snapshot,
     prompt_v3_render_plan,
+    resolve_material_prompt_route,
     summarize_trace_timings,
     unavailable_billing_evidence,
 )
@@ -151,6 +153,49 @@ class GenerationBaselineTests(unittest.TestCase):
             ),
             SINGLE_PASS,
         )
+
+    def test_material_route_is_explicit_conservative_and_never_upgrades(self) -> None:
+        baseline = resolve_material_prompt_route(
+            "prompt_v1",
+            {"material_profile": "opaque", "category": "packaging"},
+        )
+        self.assertEqual(baseline["effective_prompt_version"], "prompt_v1")
+        self.assertEqual(baseline["reason"], "requested-version-preserved")
+
+        eligible = resolve_material_prompt_route(
+            "prompt_v3",
+            {
+                "material_profile": "opaque",
+                "category": "general",
+                "product_count": 3,
+            },
+        )
+        self.assertEqual(eligible["contract_version"], MATERIAL_PROMPT_ROUTE_VERSION)
+        self.assertEqual(eligible["effective_prompt_version"], "prompt_v3")
+        self.assertEqual(eligible["reason"], "eligible-opaque-structured")
+
+        for profile in ("transparent", "reflective", "mixed"):
+            route = resolve_material_prompt_route(
+                "prompt_v3",
+                {"material_profile": profile, "category": "packaging"},
+            )
+            self.assertEqual(route["effective_prompt_version"], "prompt_v1")
+            self.assertEqual(route["reason"], "sensitive-material-baseline")
+            self.assertFalse(route["provider_retry_authorized"])
+
+        unknown = resolve_material_prompt_route(
+            "prompt_v3",
+            {"product_name": "透明水瓶", "category": "packaging"},
+        )
+        self.assertEqual(unknown["effective_prompt_version"], "prompt_v1")
+        self.assertEqual(unknown["reason"], "material-evidence-required")
+
+        low_signal = resolve_material_prompt_route(
+            "prompt_v3",
+            {"material_profile": "opaque", "category": "food", "product_count": 1},
+        )
+        self.assertEqual(low_signal["effective_prompt_version"], "prompt_v1")
+        self.assertEqual(low_signal["reason"], "compact-benefit-not-demonstrated")
 
     def test_prompt_snapshot_changes_for_each_reproducibility_input(self) -> None:
         baseline = prompt_snapshot(

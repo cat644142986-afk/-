@@ -19,10 +19,24 @@ class PromptV3AuditTests(unittest.TestCase):
         self.assertEqual(report["fixtures"]["sample_count"], 9)
         self.assertEqual(report["fixtures"]["passed_count"], 9)
         self.assertTrue(report["fixtures"]["all_passed"])
-        self.assertTrue(report["ready_for_paid_pilot"])
+        self.assertTrue(report["offline_contract_passed"])
+        self.assertFalse(report["paid_pilot_authorized"])
+        self.assertFalse(report["formal_promotion_ready"])
+        self.assertEqual(report["route_summary"]["fixture_prompt_v3"], 2)
+        self.assertEqual(report["route_summary"]["fixture_prompt_v1_fallback"], 7)
         self.assertFalse(report["privacy"]["images_read"])
         self.assertFalse(report["privacy"]["providers_called"])
         self.assertNotIn("prompt", report["fixtures"]["cases"][0]["primary"])
+        transparent = next(
+            case for case in report["fixtures"]["cases"]
+            if case["case_key"] == "transparent-bottle-real"
+        )
+        self.assertEqual(
+            transparent["prompt_route"]["effective_prompt_version"], "prompt_v1"
+        )
+        self.assertEqual(
+            transparent["prompt_route"]["reason"], "sensitive-material-baseline"
+        )
 
     def test_history_replay_hashes_identity_and_preserves_request_and_spec(self) -> None:
         rows = [{
@@ -58,6 +72,10 @@ class PromptV3AuditTests(unittest.TestCase):
         self.assertTrue(case["checks"]["product_count_preserved"])
         self.assertTrue(case["checks"]["output_ratio_preserved"])
         self.assertTrue(case["checks"]["output_resolution_preserved"])
+        self.assertEqual(
+            case["prompt_route"]["effective_prompt_version"], "prompt_v1"
+        )
+        self.assertEqual(case["prompt_route"]["reason"], "material-evidence-required")
 
 
 if __name__ == "__main__":

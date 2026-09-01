@@ -35,6 +35,7 @@ try:
     from generation_baseline import (
         GENERATION_TRACE_CONTRACT_VERSION,
         LEGACY_DOUBLE_PASS,
+        MATERIAL_PROMPT_ROUTE_VERSION,
         PROMPT_COMPILER_VERSION,
         PROMPT_V3_RENDER_PLAN_VERSION,
         PROMPT_V2_FEATURE_ENV,
@@ -47,6 +48,7 @@ try:
         normalize_prompt_version,
         prompt_adapter_profile,
         prompt_snapshot,
+        resolve_material_prompt_route,
         unavailable_billing_evidence,
     )
     from generation_quality_gate import (
@@ -101,6 +103,7 @@ except ImportError:  # Allows importing as python.server during local tests.
     from python.generation_baseline import (
         GENERATION_TRACE_CONTRACT_VERSION,
         LEGACY_DOUBLE_PASS,
+        MATERIAL_PROMPT_ROUTE_VERSION,
         PROMPT_COMPILER_VERSION,
         PROMPT_V3_RENDER_PLAN_VERSION,
         PROMPT_V2_FEATURE_ENV,
@@ -113,6 +116,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         normalize_prompt_version,
         prompt_adapter_profile,
         prompt_snapshot,
+        resolve_material_prompt_route,
         unavailable_billing_evidence,
     )
     from python.generation_quality_gate import (
@@ -4173,7 +4177,13 @@ def _record_job_prompt(
     applied_evidence = KnowledgeCompiler.execution_evidence(knowledge_bundle)
     base_prompt = str(base_prompt or prompt)
     template_prompt = str(template_prompt or base_prompt)
-    prompt_version = str(trace.get("prompt_version") or PROMPT_COMPILER_VERSION)
+    requested_prompt_version = str(
+        trace.get("prompt_version") or PROMPT_COMPILER_VERSION
+    )
+    prompt_route = dict(trace.get("prompt_route") or {})
+    prompt_version = str(
+        prompt_route.get("effective_prompt_version") or requested_prompt_version
+    )
     snapshot = prompt_snapshot(
         template_prompt=template_prompt,
         base_prompt=base_prompt,
@@ -4199,6 +4209,9 @@ def _record_job_prompt(
             "prompt": prompt,
             "negative_prompt": negative_prompt,
             "knowledge_refs": knowledge_refs or [],
+            "prompt_version": prompt_version,
+            "prompt_version_requested": requested_prompt_version,
+            "prompt_route": prompt_route,
         },
         generation_id=generation_id,
     )
@@ -4213,6 +4226,11 @@ def _record_job_prompt(
             **dict(trace.get("parameters") or {}),
             "trace_contract_version": GENERATION_TRACE_CONTRACT_VERSION,
             "prompt_version": prompt_version,
+            "prompt_version_requested": requested_prompt_version,
+            "prompt_route_contract_version": (
+                prompt_route.get("contract_version") or MATERIAL_PROMPT_ROUTE_VERSION
+            ),
+            "prompt_route": prompt_route,
             "prompt_adapter_profile": (
                 prompt_adapter_profile(str(trace.get("model") or ""))["id"]
                 if prompt_version == "prompt_v3"
@@ -4684,9 +4702,18 @@ def _job_knowledge_context(trace, **values):
 
 
 def _compile_job_base_prompt(trace, template_prompt, knowledge_context, stage):
+    requested_prompt_version = str(
+        trace.get("prompt_version") or PROMPT_COMPILER_VERSION
+    )
+    prompt_route = resolve_material_prompt_route(
+        requested_prompt_version,
+        knowledge_context,
+    )
+    trace["prompt_route"] = prompt_route
+    knowledge_context["prompt_version"] = prompt_route["effective_prompt_version"]
     return compile_prompt_version(
         template_prompt,
-        prompt_version=str(trace.get("prompt_version") or PROMPT_COMPILER_VERSION),
+        prompt_version=prompt_route["effective_prompt_version"],
         context=knowledge_context,
         stage=stage,
     )

@@ -1438,6 +1438,14 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 正式 artifact 提交为 `39ca4e59aeb1077c1367ecf2ed7496a4549bc1df`；正式 EXE / sidecar / manifest SHA-256 分别为 `E360A7E4329EBCA900D92B7F30FAEF08CBE1E0D4D7443B438D862CE35EFDC14B`、`079EC520515372D0C38D26D152AD72DEC95746E9DBB0E6D7CEC27D3672FCD896`、`064DC8C6C28DB0A2F4600531E07E01D20247F32F6EC53096FE79AF4740D5A095`；正式目录 tree SHA-256 为 `E0ED16332EDB63FAF2A25CFF2058A6CFDEF273CCA722325774DBEDE811CDEEE84`。
 - 已 finalized 事务 `65fbdba328b642ee879021ce248cbae8`；上一正式目录备份为 `D:\ProductAtelier-Backups\release-before-20260901-101926-39ca4e59aeb1`，promotion evidence SHA-256 为 `262B0410833E3EB73806B8044E0C42E12261CBEF23E744B31EC5B2F3A0C615F4`。桌面快捷方式、正式应用和单一 sidecar 均指向正式目录，动态端口 `57220` 的 `/api/health` 返回 status `ok`、manifest `ok`、schema v3 与相同 Git 提交。
 
+### 2026-09-01 材质感知 Prompt 路由源码检查点
+
+- 新增 `prompt-material-route-2026-09-01.1`：不升级 v1/v2，只约束已经显式请求 v3 的实验任务。仅结构化 `material_profile=opaque` 且存在包装、文字、品牌色或多数量收益信号时保留 v3；透明、反光、混合、未知或无效材质均在供应商调用前回退 v1，不从产品名称等自然语言猜测材质。
+- generation trace 合同升级为 `generation-baseline-2026-09-01.3`，同时记录请求版本、实际版本、材质证据来源、路由原因和 `provider_retry_authorized=false`。正式默认仍为 `prompt_v1 + legacy_double_pass`，失败不会自动重做或消耗新额度。
+- 对 9 个冻结输入的离线回放为 2 个保留 v3、7 个回退 v1；9 个历史任务元数据为 0 个保留 v3、9 个回退 v1，两组均 9/9 通过。报告仅在忽略的 `build/` 目录，未打开图片、读取 Key、连接供应商或保存原 Prompt/用户要求。
+- 全量门禁通过：Python 260 项（259 通过、1 项平台预期跳过）、前端 116/116、Vite production build、Rust/Tauri locked custom-protocol check、compileall 与 Git whitespace。`paid_pilot_authorized=false`、`formal_promotion_ready=false`，本检查点只提交源码与测试，不提升正式便携目录、NSIS 或桌面快捷方式。
+- 下一执行游标：建立可信的结构化材质证据来源，设计用户可见且可回退的显式 UI 接线；在此之前不做新付费实验。完成后再进入 candidate-first 正式便携门禁。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：
@@ -1445,7 +1453,7 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 从 Phase 4 剩余门禁开始，不重复 Phase 0–3，也不退回历史 `vXX-fixes.css` 补丁路线。
-4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理，以及 R9 两批外观/无障碍/大素材渲染优化均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。下一质量游标是离线定义材质感知 Prompt 路由和透明/反光安全约束，不调用供应商、不自动付费重做；之后回到 R9 的正式 WebView DPI/截图矩阵、真实结果页键盘复验、原生工作集记录和遗留样式/token 收口。不要重复已完成功能，不要继续堆叠相似检测器或把模型依赖塞入主 sidecar。
+4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理，以及 R9 两批外观/无障碍/大素材渲染优化均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。材质感知 Prompt 路由与透明/反光安全回退已完成源码和离线门禁，但尚未接入可信材质证据、正式 UI 或便携版。下一质量游标是补齐结构化材质证据来源和显式 UI 回退，再进入 candidate-first 正式门禁；之后回到 R9 的正式 WebView DPI/截图矩阵、真实结果页键盘复验、原生工作集记录和遗留样式/token 收口。不要重复已完成功能，不要继续堆叠相似检测器或把模型依赖塞入主 sidecar。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 

@@ -568,6 +568,7 @@ class DurableJobApiTests(unittest.TestCase):
                         "brief": {
                             "user_request": "保留茶盒正面的金色文字，只优化背景光线",
                             "quantity": 3,
+                            "material_profile": "opaque",
                         },
                         "prompt_version": "prompt_v3",
                         "generation_strategy": "single_pass",
@@ -665,6 +666,7 @@ class DurableJobApiTests(unittest.TestCase):
                         "model": "gpt-image-2",
                         "prompt_version": "prompt_v3",
                         "generation_strategy": "single_pass",
+                        "brief": {"material_profile": "opaque"},
                     },
                 })
                 final = self.wait_for_job(created["job"]["id"])
@@ -678,6 +680,56 @@ class DurableJobApiTests(unittest.TestCase):
                 primary = next(item for item in traces if item["stage"] == "prompt.primary")
                 self.assertIn("产品数量严格保持为3", primary["parameters"]["base_prompt"])
                 self.assertEqual(self.vlm_mock.call_count, 1)
+                self.assertEqual(self.ai_mock.call_count, 1)
+                self.network_request.assert_not_called()
+
+    def test_prompt_v3_sensitive_material_falls_back_before_provider_trace(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                server.PROMPT_V3_FEATURE_ENV: "1",
+                server.SINGLE_PASS_FEATURE_ENV: "1",
+            },
+            clear=False,
+        ):
+            with self.live_client() as client:
+                source = self.import_asset(client, "transparent-route.png", (190, 220, 235))
+                created = self.create_job(client, {
+                    "mode": "single",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "batch": 1,
+                        "product_name": "透明水瓶",
+                        "model": "gpt-image-2",
+                        "prompt_version": "prompt_v3",
+                        "generation_strategy": "single_pass",
+                        "brief": {"material_profile": "transparent"},
+                    },
+                    "client_request_id": "prompt-v3-transparent-fallback",
+                })
+                final = self.wait_for_job(created["job"]["id"])
+
+                self.assertEqual(final["status"], "completed")
+                self.assertEqual(final["parameters"]["prompt_version"], "prompt_v3")
+                generation = server.LEDGER.get_generation(
+                    final["items"][0]["generation_id"]
+                )
+                self.assertEqual(generation["prompt_version"], "prompt_v1")
+                traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
+                primary = next(item for item in traces if item["stage"] == "prompt.primary")
+                self.assertEqual(primary["parameters"]["prompt_version"], "prompt_v1")
+                self.assertEqual(
+                    primary["parameters"]["prompt_version_requested"], "prompt_v3"
+                )
+                route = primary["parameters"]["prompt_route"]
+                self.assertEqual(route["material_profile"], "transparent")
+                self.assertEqual(route["reason"], "sensitive-material-baseline")
+                self.assertFalse(route["provider_retry_authorized"])
+                self.assertIn("8K超清", primary["parameters"]["base_prompt"])
+                self.assertEqual(
+                    primary["output"]["prompt_snapshot"]["prompt_version"],
+                    "prompt_v1",
+                )
                 self.assertEqual(self.ai_mock.call_count, 1)
                 self.network_request.assert_not_called()
 

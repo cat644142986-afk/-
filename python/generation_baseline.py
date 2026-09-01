@@ -13,7 +13,7 @@ import os
 from typing import Any, Iterable, Mapping
 
 
-GENERATION_TRACE_CONTRACT_VERSION = "generation-baseline-2026-08-31.2"
+GENERATION_TRACE_CONTRACT_VERSION = "generation-baseline-2026-09-01.3"
 PROMPT_COMPILER_VERSION = "prompt_v1"
 PROMPT_V1 = "prompt_v1"
 PROMPT_V2 = "prompt_v2"
@@ -27,6 +27,8 @@ SUPPORTED_GENERATION_STRATEGIES = frozenset({LEGACY_DOUBLE_PASS, SINGLE_PASS})
 SINGLE_PASS_FEATURE_ENV = "PRODUCT_ATELIER_ENABLE_SINGLE_PASS"
 PROVIDER_ADAPTER_VERSION = "lk-media-generate-v1"
 PROMPT_V3_RENDER_PLAN_VERSION = "prompt-v3-render-plan-2026-09-01.1"
+MATERIAL_PROMPT_ROUTE_VERSION = "prompt-material-route-2026-09-01.1"
+MATERIAL_PROFILES = frozenset({"unknown", "opaque", "transparent", "reflective", "mixed"})
 
 
 _CAPABILITY_CONTRACTS: dict[str, dict[str, Any]] = {
@@ -129,6 +131,82 @@ def normalize_generation_strategy(
             f"{SINGLE_PASS} is disabled; enable {SINGLE_PASS_FEATURE_ENV} only for an approved A/B"
         )
     return strategy
+
+
+def _material_profile(context: Mapping[str, Any] | None) -> tuple[str, str]:
+    values = dict(context or {})
+    raw = values.get("material_profile")
+    source = "material_profile" if raw is not None else "none"
+    if isinstance(raw, Mapping):
+        raw = raw.get("profile", raw.get("type"))
+        source = "material_profile.profile"
+    profile = str(raw or "unknown").strip().lower()
+    aliases = {
+        "opaque-material": "opaque",
+        "transparent-material": "transparent",
+        "reflective-material": "reflective",
+        "mixed-material": "mixed",
+    }
+    profile = aliases.get(profile, profile)
+    if profile not in MATERIAL_PROFILES:
+        return "unknown", "invalid-material-profile"
+    return profile, source
+
+
+def resolve_material_prompt_route(
+    requested_prompt_version: Any,
+    context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Restrict compact prompts to explicit, low-risk material evidence.
+
+    This router never upgrades a baseline request to prompt_v3. It only decides
+    whether an already experiment-gated prompt_v3 request may remain compact.
+    Missing or sensitive material evidence falls back before provider work.
+    """
+    requested = str(requested_prompt_version or PROMPT_V1).strip().lower()
+    if requested not in SUPPORTED_PROMPT_VERSIONS:
+        raise ValueError(f"unsupported prompt version: {requested}")
+    values = dict(context or {})
+    profile, evidence_source = _material_profile(values)
+    locks = values.get("intent_locks")
+    locks = locks if isinstance(locks, Mapping) else {}
+    count = _prompt_product_count(values)
+    category = _clean_prompt_value(values.get("category") or "general").lower()
+    structured_benefit = bool(
+        category == "packaging"
+        or (count is not None and count > 1)
+        or locks.get("packaging_text")
+        or locks.get("brand_color")
+    )
+
+    effective = requested
+    eligible = False
+    reason = "requested-version-preserved"
+    if requested == PROMPT_V3:
+        if profile in {"transparent", "reflective", "mixed"}:
+            effective = PROMPT_V1
+            reason = "sensitive-material-baseline"
+        elif profile != "opaque":
+            effective = PROMPT_V1
+            reason = "material-evidence-required"
+        elif not structured_benefit:
+            effective = PROMPT_V1
+            reason = "compact-benefit-not-demonstrated"
+        else:
+            eligible = True
+            reason = "eligible-opaque-structured"
+
+    return {
+        "contract_version": MATERIAL_PROMPT_ROUTE_VERSION,
+        "requested_prompt_version": requested,
+        "effective_prompt_version": effective,
+        "material_profile": profile,
+        "material_evidence_source": evidence_source,
+        "compact_candidate_eligible": eligible,
+        "structured_benefit_signal": structured_benefit,
+        "reason": reason,
+        "provider_retry_authorized": False,
+    }
 
 
 def prompt_adapter_profile(model: str) -> dict[str, str]:

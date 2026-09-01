@@ -80,6 +80,16 @@ trace 合同由此升级为 `generation-baseline-2026-08-31.2`。候选本身不
 
 执行后全量源码门禁为 Python 258 项（257 通过、1 项平台预期跳过）、前端 116/116、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall 和 Git whitespace 全绿。仓库中的计划副本已改为“授权已消费、不可执行”，避免另一台电脑把历史授权误当成新的付费许可；原始已授权计划哈希保留在结果报告中。
 
+## 材质证据驱动的 Prompt 路由零成本收口（2026-09-01）
+
+针对 `prompt_v3` 在真实透明瓶上出现阻断失败的问题，新增 `prompt-material-route-2026-09-01.1` 路由合同。路由器绝不把 `prompt_v1` 或 `prompt_v2` 自动升级为 v3；它只判断一个已经通过实验开关请求 v3 的任务是否允许继续使用紧凑 Prompt。只有结构化 `material_profile=opaque`，并同时存在包装、包装文字、品牌色或多数量信号时才保留 v3。透明、反光、混合材质以及证据缺失或无效时，均在供应商调用前回退到 `prompt_v1`。自然语言中的“透明水瓶”等词不会被当作可靠材质证据。
+
+generation trace 合同升级为 `generation-baseline-2026-09-01.3`，固定记录请求版本、实际版本、材质证据来源、路由原因和 `provider_retry_authorized=false`。历史任务仍保留原请求快照，实际 generation 与 Prompt trace 使用路由后的版本，便于复现和诊断。正式默认没有变化，仍为 `prompt_v1 + legacy_double_pass`；本检查点也没有给质量失败增加自动付费重做。
+
+只读审计对 9 个冻结输入和 9 个历史任务元数据分别达到 9/9 合同通过。冻结输入中只有不透明包装文字和三瓶数量 2 个样本保留 v3，其余 7 个安全回退 v1；历史任务因没有可信结构化材质证据，0 个保留 v3、9 个全部回退 v1。审计未打开图片、未读取 API Key、未连接供应商，也未保存原 Prompt 或原用户要求；忽略目录报告为 `build/prompt-material-route-offline-audit-2026-09-01.json`，SHA-256 为 `1F86A9227E84747D4CDEC34CC07F70E451D914D27D7CBA179FFA9F78DD874396`。
+
+本检查点全量源码门禁为 Python 260 项（259 通过、1 项平台预期跳过）、前端 116/116、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall 和 Git whitespace 全绿。`paid_pilot_authorized=false`、`formal_promotion_ready=false`；没有重建或提升正式便携版。下一步是建立可靠的结构化材质证据来源并完成显式 UI 接线，而不是继续消耗额度做新实验。
+
 ## 本地质量检查 trace（2026-08-31）
 
 新增 `generation-quality-gate-2026-08-31.1` 本地合同。它只使用生成结果像素和冻结输出规格，检查比例、最低像素、白底边界、画布碰边/疑似裁切和空白漏生成；主生成与最终生成分别保存报告，因此可以在真实 A/B 中观察第二阶段是否改善确定性缺陷。

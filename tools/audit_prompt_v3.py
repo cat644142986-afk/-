@@ -23,15 +23,23 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from python.generation_baseline import (  # noqa: E402
+    MATERIAL_PROMPT_ROUTE_VERSION,
     PROMPT_V3_RENDER_PLAN_VERSION,
     compile_prompt_version,
     prompt_v3_render_plan,
+    resolve_material_prompt_route,
 )
 
 
 DEFAULT_MANIFEST = ROOT / "tests" / "fixtures" / "generation_quality" / "manifest.json"
 LEGACY_SENTINEL = "LEGACY_STACK_MUST_NOT_APPEAR"
 MAX_AUTOMATIC_CHARACTERS = 460
+FIXTURE_MATERIAL_PROFILES = {
+    "packaging-text-brand-procedural": "opaque",
+    "multi-count-procedural": "opaque",
+    "transparent-bottle-real": "transparent",
+    "reflective-material-procedural": "reflective",
+}
 
 
 def _decode_object(value: Any) -> dict[str, Any]:
@@ -52,6 +60,7 @@ def _fixture_context(case: Mapping[str, Any]) -> dict[str, Any]:
     coverage = {str(item) for item in case.get("coverage") or []}
     brief = _decode_object(case.get("brief"))
     invariants = [str(item).strip() for item in case.get("invariants") or [] if str(item).strip()]
+    case_id = str(case.get("id") or "")
     return {
         "product_name": str(brief.get("product_name") or "fixture product"),
         "quantity": brief.get("quantity"),
@@ -61,6 +70,7 @@ def _fixture_context(case: Mapping[str, Any]) -> dict[str, Any]:
         "model": "gpt-image-2",
         "output_kind": "ecommerce-main",
         "source_cutoff": "truncation-completion" in coverage,
+        "material_profile": FIXTURE_MATERIAL_PROFILES.get(case_id, "unknown"),
         "user_request": "; ".join(invariants),
         "intent_locks": {
             "subject_shape": True,
@@ -80,6 +90,7 @@ def _audit_context(
 ) -> dict[str, Any]:
     coverage_set = {str(item) for item in coverage}
     primary_plan = prompt_v3_render_plan(context=context, stage="primary")
+    prompt_route = resolve_material_prompt_route("prompt_v3", context)
     primary = compile_prompt_version(
         LEGACY_SENTINEL,
         prompt_version="prompt_v3",
@@ -143,11 +154,26 @@ def _audit_context(
             automatic_primary <= MAX_AUTOMATIC_CHARACTERS
             and automatic_refine <= MAX_AUTOMATIC_CHARACTERS
         ),
+        "material_route_version": (
+            prompt_route.get("contract_version") == MATERIAL_PROMPT_ROUTE_VERSION
+        ),
+        "material_route_is_fail_closed": (
+            prompt_route.get("effective_prompt_version") == (
+                "prompt_v3"
+                if prompt_route.get("material_profile") == "opaque"
+                and prompt_route.get("structured_benefit_signal")
+                else "prompt_v1"
+            )
+        ),
+        "material_route_never_retries": (
+            prompt_route.get("provider_retry_authorized") is False
+        ),
     }
     return {
         "case_key": case_id,
         "passed": all(checks.values()),
         "checks": checks,
+        "prompt_route": prompt_route,
         "primary": {
             "sha256": _sha256(primary),
             "characters": len(primary),
@@ -229,6 +255,7 @@ def _history_context(row: Mapping[str, Any]) -> dict[str, Any]:
                 or ""
             ),
         },
+        "material_profile": str(brief.get("material_profile") or "unknown"),
     }
 
 
@@ -252,9 +279,13 @@ def build_report(
 ) -> dict[str, Any]:
     fixtures = audit_fixture_manifest(manifest)
     history = audit_history_rows(history_rows)
+    fixture_routes = [case["prompt_route"] for case in fixtures["cases"]]
+    history_routes = [case["prompt_route"] for case in history["cases"]]
+    offline_contract_passed = fixtures["all_passed"] and history["all_passed"]
     return {
         "schema_version": "1.0",
         "render_plan_version": PROMPT_V3_RENDER_PLAN_VERSION,
+        "material_route_version": MATERIAL_PROMPT_ROUTE_VERSION,
         "mode": "offline-read-only",
         "privacy": {
             "images_read": False,
@@ -267,7 +298,27 @@ def build_report(
         "limits": {"max_automatic_characters_per_stage": MAX_AUTOMATIC_CHARACTERS},
         "fixtures": fixtures,
         "history": history,
-        "ready_for_paid_pilot": fixtures["all_passed"] and history["all_passed"],
+        "route_summary": {
+            "fixture_prompt_v3": sum(
+                route["effective_prompt_version"] == "prompt_v3"
+                for route in fixture_routes
+            ),
+            "fixture_prompt_v1_fallback": sum(
+                route["effective_prompt_version"] == "prompt_v1"
+                for route in fixture_routes
+            ),
+            "history_prompt_v3": sum(
+                route["effective_prompt_version"] == "prompt_v3"
+                for route in history_routes
+            ),
+            "history_prompt_v1_fallback": sum(
+                route["effective_prompt_version"] == "prompt_v1"
+                for route in history_routes
+            ),
+        },
+        "offline_contract_passed": offline_contract_passed,
+        "paid_pilot_authorized": False,
+        "formal_promotion_ready": False,
     }
 
 
@@ -299,10 +350,11 @@ def main() -> int:
             "samples": report["history"]["sample_count"],
             "passed": report["history"]["passed_count"],
         },
-        "ready_for_paid_pilot": report["ready_for_paid_pilot"],
+        "offline_contract_passed": report["offline_contract_passed"],
+        "paid_pilot_authorized": report["paid_pilot_authorized"],
         "output": str(args.output.resolve()),
     }, ensure_ascii=False))
-    return 0 if report["ready_for_paid_pilot"] else 1
+    return 0 if report["offline_contract_passed"] else 1
 
 
 if __name__ == "__main__":
