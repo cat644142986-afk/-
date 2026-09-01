@@ -283,6 +283,12 @@ test('narrow windows turn workflow controls into an accessible drawer instead of
   assert.doesNotMatch(app, /closeWorkflowDock|openWorkflowDock|syncWorkflowDockLayout|compactWorkflowDock/);
 });
 
+test('narrow growth filters use a stable two-column grid without horizontal scrolling', () => {
+  assert.match(html, /class="memory-filter-tabs"[^>]*role="tablist"/);
+  assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.memory-filter-tabs \{[^}]*display: grid;[^}]*grid-template-columns: repeat\(2,minmax\(0,1fr\)\);[^}]*overflow: visible/);
+  assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.memory-filter-tabs button \{[^}]*width: 100%;[^}]*min-width: 0/);
+});
+
 test('primary studio copy uses readable type tokens instead of shrinking every label', () => {
   assert.match(css, /--type-caption: 11px/);
   assert.match(css, /--type-control: 13px/);

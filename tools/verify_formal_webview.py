@@ -246,6 +246,33 @@ def wait_for(client: CdpClient, expression: str, timeout: float = 12.0) -> Any:
     raise VerificationError(f"Timed out waiting for WebView condition: {expression}; last={last_value!r}")
 
 
+def wait_for_stable(
+    client: CdpClient,
+    expression: str,
+    *,
+    stable_for: float = 0.6,
+    timeout: float = 15.0,
+    poll_interval: float = 0.1,
+) -> Any:
+    deadline = time.perf_counter() + timeout
+    stable_since: float | None = None
+    last_value: Any = None
+    while time.perf_counter() < deadline:
+        last_value = client.evaluate(expression)
+        now = time.perf_counter()
+        if last_value:
+            if stable_since is None:
+                stable_since = now
+            elif now - stable_since >= stable_for:
+                return last_value
+        else:
+            stable_since = None
+        time.sleep(poll_interval)
+    raise VerificationError(
+        f"Timed out waiting for stable WebView condition: {expression}; last={last_value!r}"
+    )
+
+
 def click(client: CdpClient, selector: str) -> dict[str, Any]:
     encoded = json.dumps(selector)
     result = client.evaluate(f"""
@@ -365,8 +392,13 @@ def open_result_view(client: CdpClient) -> dict[str, Any]:
     """)
     if not result.get("ok"):
         raise VerificationError("No historical job with results was available")
-    wait_for(client, "!document.querySelector('#canvas-results').hidden", timeout=15)
-    wait_for(client, "document.querySelector('#viewer-main-img').complete && document.querySelector('#viewer-main-img').naturalWidth > 0", timeout=15)
+    wait_for_stable(client, """
+      (() => {
+        const result = document.querySelector('#canvas-results');
+        const image = document.querySelector('#viewer-main-img');
+        return Boolean(result && !result.hidden && image?.complete && image.naturalWidth > 0);
+      })()
+    """)
     return result
 
 
@@ -391,8 +423,44 @@ def open_surface(client: CdpClient, surface: str) -> dict[str, Any]:
         click(client, "#btn-open-compare")
         wait_for(client, "!document.querySelector('#page-compare').hidden")
         wait_for(client, "!document.querySelector('#compare-view').hidden", timeout=15)
+        reset_result_review_view(client)
         return {"surface": surface, **job}
     raise VerificationError(f"Unknown surface: {surface}")
+
+
+def reset_result_review_view(client: CdpClient) -> dict[str, Any]:
+    result = client.evaluate("""
+      (() => {
+        const reset = document.querySelector('#btn-compare-reset');
+        reset?.click();
+        const guide = document.querySelector('#review-guide');
+        if (guide && !guide.hidden) document.querySelector('#btn-review-guide-done')?.click();
+        const reason = document.querySelector('#review-reason');
+        if (reason) reason.hidden = true;
+        document.querySelectorAll('[data-review-decision]').forEach((button) => {
+          button.classList.remove('is-selected');
+        });
+        document.querySelector('.review-page')?.scrollTo({top: 0, left: 0, behavior: 'instant'});
+        document.querySelector('.review-decision-panel')?.scrollTo({top: 0, left: 0, behavior: 'instant'});
+        return {
+          ok: Boolean(reset),
+          divider: document.querySelector('#compare-slider')?.getAttribute('aria-valuenow') || '',
+          zoom: document.querySelector('#compare-zoom-value')?.textContent || '',
+          reasonHidden: Boolean(reason?.hidden),
+          guideHidden: Boolean(guide?.hidden),
+        };
+      })()
+    """)
+    if not result.get("ok"):
+        raise VerificationError("Could not restore the result review baseline")
+    wait_for_stable(client, """
+      (() => {
+        const images = [...document.querySelectorAll('#page-compare img')]
+          .filter((image) => !image.closest('[hidden]') && image.getClientRects().length > 0);
+        return images.length > 0 && images.every((image) => image.complete);
+      })()
+    """)
+    return result
 
 
 def apply_profile(client: CdpClient, profile: str) -> dict[str, Any]:
@@ -450,6 +518,17 @@ def dom_snapshot(client: CdpClient) -> dict[str, Any]:
           .filter(visible);
         const unnamed = visibleControls.filter((element) => !named(element));
         const positiveTabIndex = visibleControls.filter((element) => element.tabIndex > 0);
+        const brokenImages = [...document.querySelectorAll('img')]
+          .filter(visible)
+          .filter((image) => !image.complete || image.naturalWidth <= 0)
+          .map((image) => ({
+            id: image.id || '',
+            alt: image.getAttribute('alt') || '',
+            src: image.currentSrc || image.getAttribute('src') || '',
+            complete: image.complete,
+            naturalWidth: image.naturalWidth,
+            naturalHeight: image.naturalHeight,
+          }));
         const boundsIssues = [...document.querySelectorAll('.app-page:not([hidden]), .drawer-layer:not([hidden]) .drawer')]
           .filter(visible)
           .map((element) => ({id: element.id || element.className, rect: element.getBoundingClientRect()}))
@@ -469,6 +548,7 @@ def dom_snapshot(client: CdpClient) -> dict[str, Any]:
           visibleControlCount: visibleControls.length,
           unnamedControls: unnamed.map((element) => element.id || element.outerHTML.slice(0, 100)),
           positiveTabIndex: positiveTabIndex.map((element) => element.id || element.outerHTML.slice(0, 100)),
+          brokenImages,
           boundsIssues,
           resultImage: {
             visible: visible(document.querySelector('#viewer-main-img')),
@@ -479,6 +559,16 @@ def dom_snapshot(client: CdpClient) -> dict[str, Any]:
         };
       })()
     """)
+
+
+def snapshot_passes(snapshot: dict[str, Any]) -> bool:
+    return all((
+        snapshot["documentOverflowX"] <= 1,
+        not snapshot["unnamedControls"],
+        not snapshot["positiveTabIndex"],
+        not snapshot["brokenImages"],
+        not snapshot["boundsIssues"],
+    ))
 
 
 def focus_snapshot(client: CdpClient) -> dict[str, Any]:
@@ -678,12 +768,7 @@ def main() -> int:
                 f"{size[0]}x{size[1]}-{profile}-{surface}.png"
             )
             screenshot = client.screenshot(output_dir / filename)
-            case_passed = all((
-                snapshot["documentOverflowX"] <= 1,
-                not snapshot["unnamedControls"],
-                not snapshot["positiveTabIndex"],
-                not snapshot["boundsIssues"],
-            ))
+            case_passed = snapshot_passes(snapshot)
             report["cases"].append({
                 "index": index,
                 "size": list(size),

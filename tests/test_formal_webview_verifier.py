@@ -60,6 +60,47 @@ class FormalWebViewVerifierTests(unittest.TestCase):
             with self.assertRaisesRegex(verifier.VerificationError, "Windows only"):
                 verifier.load_windows_runtime()
 
+    def test_stable_wait_resets_after_a_transient_true_value(self) -> None:
+        class SequenceClient:
+            def __init__(self) -> None:
+                self.values = iter((True, False, True, True, True, True, True, True))
+                self.calls = 0
+
+            def evaluate(self, _expression: str) -> bool:
+                self.calls += 1
+                return next(self.values, True)
+
+        client = SequenceClient()
+        self.assertTrue(verifier.wait_for_stable(
+            client,
+            "ready",
+            stable_for=0.008,
+            timeout=0.1,
+            poll_interval=0.002,
+        ))
+        self.assertGreaterEqual(client.calls, 6)
+
+    def test_snapshot_passes_only_when_visual_and_accessibility_checks_are_clean(self) -> None:
+        snapshot = {
+            "documentOverflowX": 0,
+            "unnamedControls": [],
+            "positiveTabIndex": [],
+            "brokenImages": [],
+            "boundsIssues": [],
+        }
+        self.assertTrue(verifier.snapshot_passes(snapshot))
+
+        for field, failure in (
+            ("documentOverflowX", 2),
+            ("unnamedControls", ["button"]),
+            ("positiveTabIndex", ["input"]),
+            ("brokenImages", [{"id": "thumbnail"}]),
+            ("boundsIssues", [{"id": "page-memory"}]),
+        ):
+            failing = {**snapshot, field: failure}
+            with self.subTest(field=field):
+                self.assertFalse(verifier.snapshot_passes(failing))
+
     def test_keyboard_events_include_windows_virtual_key_codes(self) -> None:
         self.assertEqual(verifier.key_event_params("Enter")["windowsVirtualKeyCode"], 13)
         self.assertEqual(verifier.key_event_params("ArrowRight")["nativeVirtualKeyCode"], 39)

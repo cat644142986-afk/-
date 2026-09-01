@@ -1095,6 +1095,8 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 
 @media (max-width: 980px) {
   .app-page { padding-right: 12px; }
+  .memory-filter-tabs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; overflow: visible; padding-bottom: 0; }
+  .memory-filter-tabs button { width: 100%; min-width: 0; padding-inline: 8px; }
   .studio-grid { grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(330px,1fr) 140px; }
   .canvas-card { grid-column: 1; grid-row: 1; }
   .studio-context-panel { grid-column: 1; grid-row: 2; }
