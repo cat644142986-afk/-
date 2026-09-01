@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-01<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `4779aee3a62e7eecac0aaa83ea150dd74aa00c45`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8：无限画布为核心方向，情境式创作副驾仅在画布、SKU 与局部处理底座完成后进入条件式阶段；常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已提升到 `0201a4cd724976c267699a39d449a3bbbf9c5f3d`；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8：无限画布为核心方向，情境式创作副驾仅在画布、SKU 与局部处理底座完成后进入条件式阶段；常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1508,7 +1508,9 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 新增 3 个纯函数/渲染专项用例，覆盖全部筛选计数、中文空态与历史动作、HTML 转义、精确 job/result 来源游标、编辑表单和需要确认的治理动作；静态回归和无障碍回归同步改为检查新控制器边界。
 - 全量门禁通过：前端 127/127；Python 269 项（268 通过、1 项平台预期跳过）；Vite production build；Rust/Tauri locked custom-protocol check；Python compileall、JavaScript syntax 和 Git whitespace。真实浏览器烟测确认离线启动壳可进入成长页，知识队列显示可重试的明确离线状态；“已采用”空态正确，方向键可切换到“已停用”，`aria-selected` 与唯一 tab stop 同步，控制台 0 error / 0 warning。
 - 源码提交 `d2cb5490632d6104c49a019060e72b6a9c63f960` 已推送。该检查点未改动知识账本、SQLite/API 合同、任务提交、生图参数、结果评审或来源恢复语义；未读取用户图片、Prompt、SQLite 或 API Key，未连接付费供应商。
-- 下一执行游标：先按 candidate-first Windows 发布链把本检查点提升为正式便携版；完成后审计 compare 画布手势/状态边界，继续选择一个不改变对比持久化和图像语义的低耦合控制器。
+- 记录本检查点的总计划提交 `0201a4cd724976c267699a39d449a3bbbf9c5f3d` 已按 candidate-first Windows 发布链进入正式便携目录。正式 EXE / sidecar / manifest SHA-256 分别为 `5BAAEFD99721D36207C59574A70A80C0F90A9995B00EAC77155FA6C571A44868`、`DD099C5BA282C1457774B7A856538ADE14241C0BBC882C63F406CF105C53C71A`、`386BF5461B1E9F566F26AADA0BBA8476E46E216C1D71D4B5E73B52578F6D3FBE`；正式目录为 1747 个文件、271 个目录、375682710 bytes，tree SHA-256 为 `6D3F4BEE9B2E039DD19C6CF851C62050D39EB1A8144E226025FDB20CBC7BE82A`。
+- 发布事务 `d8419f10b70044359128e5a38964023d` 已 `finalized`，事务文件和发布锁均已清除；上一正式版完整备份为 `D:\ProductAtelier-Backups\release-before-20260901-194100-0201a4cd7249`，promotion evidence SHA-256 为 `A8D5E55E99A64B0ABB3CF5F1B8EEF9A64B9EA154619DE532977FC94DE0E978DE`。候选与正式目录的 sidecar、动态端口、manifest、schema v3、隔离账本和应用启动 smoke 均通过；桌面快捷方式、正式应用和正式 sidecar 进程均已复核为正式目录身份。
+- 下一执行游标：审计 compare 画布手势/状态边界，继续选择一个不改变 A/B 目标、分隔线、缩放、平移、workspace 持久化和图像语义的低耦合控制器；保持单检查点提交、完整门禁与自动继续。
 
 ## 11. 下一位开发者的执行入口
 
