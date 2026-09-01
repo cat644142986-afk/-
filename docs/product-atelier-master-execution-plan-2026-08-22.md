@@ -1502,6 +1502,14 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 发布事务 `6f2e5964ade645dd91372664e067e36c` 已 `finalized`；上一正式版完整备份为 `D:\ProductAtelier-Backups\release-before-20260901-190343-4779aee3a62e`，promotion evidence SHA-256 为 `8237B7EA851D559ACF2E3E8308C7B5B1DAE7B426F986538162BCC8C3B7556EA6`。候选与正式目录的 sidecar、动态端口、manifest、schema v3 和隔离账本 smoke 均通过；桌面快捷方式已指向正式 EXE，新正式软件正在运行。
 - 下一执行游标：审计 knowledge 与 compare 边界，优先选择不改动任务提交、数据持久化和图像处理的展示/交互控制器；每次只拆一个低耦合边界并继续完整回归。
 
+### 2026-09-01 G0 知识建议治理控制器源码检查点
+
+- 新增 `studio-knowledge.js`，将知识建议计数与筛选、空态文案、卡片与证据渲染、编辑校验、治理动作、撤销、修订冲突恢复、目标建议加载和筛选事件绑定整体移出主编排文件。`app.js` 从 4364 行降为 4075 行，只保留需要跨工作区恢复任务和结果版本的 `openMemorySourceResult`，没有复制第二套队列逻辑。
+- 新增 3 个纯函数/渲染专项用例，覆盖全部筛选计数、中文空态与历史动作、HTML 转义、精确 job/result 来源游标、编辑表单和需要确认的治理动作；静态回归和无障碍回归同步改为检查新控制器边界。
+- 全量门禁通过：前端 127/127；Python 269 项（268 通过、1 项平台预期跳过）；Vite production build；Rust/Tauri locked custom-protocol check；Python compileall、JavaScript syntax 和 Git whitespace。真实浏览器烟测确认离线启动壳可进入成长页，知识队列显示可重试的明确离线状态；“已采用”空态正确，方向键可切换到“已停用”，`aria-selected` 与唯一 tab stop 同步，控制台 0 error / 0 warning。
+- 源码提交 `d2cb5490632d6104c49a019060e72b6a9c63f960` 已推送。该检查点未改动知识账本、SQLite/API 合同、任务提交、生图参数、结果评审或来源恢复语义；未读取用户图片、Prompt、SQLite 或 API Key，未连接付费供应商。
+- 下一执行游标：先按 candidate-first Windows 发布链把本检查点提升为正式便携版；完成后审计 compare 画布手势/状态边界，继续选择一个不改变对比持久化和图像语义的低耦合控制器。
+
 ## 11. 下一位开发者的执行入口
 
 开始任何代码修改前按顺序执行：
