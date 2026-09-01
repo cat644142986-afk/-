@@ -1194,6 +1194,7 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .meta-card__body p { display: none; }
   .canvas-workspace { grid-template-rows: 54px minmax(0,1fr) 46px; }
   .canvas-workspace__toolbar { padding-block: 4px; }
+  .canvas-empty-state { align-content: center; padding-bottom: 0; }
   .canvas-tool-group { min-height: 42px; }
   .canvas-save-state small { display: none; }
 }

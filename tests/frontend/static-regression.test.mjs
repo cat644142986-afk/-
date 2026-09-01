@@ -536,3 +536,10 @@ test('rendering a workspace queue must commit items before appending the add slo
   assert.match(app, /const renderedAssets = boundedAssetRenderList\(state\.assets, selection, 60\);/);
   assert.match(app, /const items = renderedAssets\.map[\s\S]*?\.join\(''\);/);
 });
+
+test('compact production canvas keeps its empty guidance clear of the footer', () => {
+  assert.match(
+    css,
+    /@media \(max-height: 680px\) \{[\s\S]*?\.canvas-empty-state \{[^}]*align-content: center;[^}]*padding-bottom: 0;[^}]*\}/,
+  );
+});
