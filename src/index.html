@@ -87,6 +87,7 @@
       <header class="app-header" data-tauri-drag-region>
         <div class="page-heading" data-tauri-drag-region><p class="sr-only" id="page-eyebrow">PRODUCT ATELIER</p><div class="page-heading__line" data-tauri-drag-region><h1 id="page-title">创作</h1><p id="page-subtitle">素材与任务现场</p></div></div>
         <div class="header-actions" data-tauri-no-drag>
+          <div class="studio-view-switch" id="studio-view-switch" role="group" aria-label="创作方式"><button class="is-active" type="button" data-studio-view="quick" aria-pressed="true">快捷处理</button><button type="button" data-studio-view="canvas" aria-pressed="false">自由画布</button></div>
           <button class="knowledge-pill" id="btn-open-intelligence" type="button"><span class="knowledge-pulse"></span><span><strong>设计依据</strong><small id="knowledge-pill-text">正在连接知识库</small></span><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button>
           <button class="job-dock-pill" id="btn-job-dock" type="button" aria-haspopup="dialog" aria-expanded="false"><span class="job-dock-dot" id="job-dock-dot"></span><span><strong>任务中心</strong><small id="job-dock-summary">正在恢复任务</small></span><output id="job-dock-progress">0%</output></button>
           <div class="traffic-lights" aria-label="窗口控制"><button class="traffic-light traffic-light--close" id="btn-close-dot" type="button" aria-label="关闭"></button><button class="traffic-light traffic-light--min" id="btn-min-dot" type="button" aria-label="最小化"></button><button class="traffic-light traffic-light--max" id="btn-max-dot" type="button" aria-label="最大化"></button></div>
@@ -95,7 +96,7 @@
 
       <main class="page-stack" id="content-wrapper">
         <section class="app-page active" id="page-process" data-page-name="process">
-          <div class="studio-grid">
+          <div class="studio-grid" id="quick-workspace">
             <section class="canvas-card" id="preview-card" data-stage="empty">
               <div class="canvas-toolbar"><div class="canvas-title"><span class="canvas-index">01</span><div><p>CURRENT WORKSPACE</p><strong id="canvas-title">单产品 · 商业精修</strong></div></div><div class="canvas-actions"><span class="asset-count" id="asset-count">0 素材</span><span class="mode-badge" id="info-mode-badge">单产品</span><button class="ghost-icon workflow-drawer-trigger" id="btn-workflow-drawer" type="button" aria-label="打开任务控制" aria-controls="settings-panel" aria-expanded="false" title="任务控制"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button><button class="ghost-icon" id="btn-asset-manager" type="button" aria-label="管理当前素材域" aria-haspopup="dialog" title="素材管理"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3Z"/><path d="M7 5h4l2 2"/></svg></button><button class="ghost-icon" id="btn-new-session" type="button" aria-label="新建当前工作草稿" title="新建当前工作草稿"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button><button class="ghost-icon" id="btn-replace" type="button" aria-label="导入更多图片" title="导入更多素材"><svg viewBox="0 0 24 24"><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2M12 15V4M8 8l4-4 4 4"/></svg></button><button class="ghost-icon" id="btn-clear" type="button" aria-label="清空当前模式的选择" title="清空当前选择" hidden><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/></svg></button></div></div>
               <div class="preview-canvas" id="preview-canvas">
@@ -147,6 +148,43 @@
               <div class="workspace-context-meta"><span class="context-mode" id="summary-mode">单产品商业精修</span><span id="summary-note">一张主图，保真生成与透明底同步输出</span><span id="summary-result-note">共享素材和已有任务不会被清空</span></div>
             </article>
           </div>
+
+          <section class="canvas-workspace" id="canvas-workspace" aria-label="自由画布" hidden>
+            <header class="canvas-workspace__toolbar">
+              <div class="canvas-workspace__identity"><span class="canvas-index">01</span><div><p>CANVAS WORKSPACE</p><strong id="canvas-mode-label">single · 尚未创建</strong></div></div>
+              <div class="canvas-tool-groups">
+                <div class="canvas-tool-group" role="group" aria-label="画布工具"><button class="canvas-icon-button is-active" type="button" data-canvas-tool="select" aria-pressed="true" aria-label="选择工具" title="选择工具"><i data-lucide="mouse-pointer-2" aria-hidden="true"></i></button><button class="canvas-icon-button" type="button" data-canvas-tool="pan" aria-pressed="false" aria-label="抓手工具" title="抓手工具（按住空格临时启用）"><i data-lucide="hand" aria-hidden="true"></i></button></div>
+                <div class="canvas-tool-group" role="group" aria-label="历史操作"><button class="canvas-icon-button" id="canvas-undo" type="button" data-canvas-edit-action aria-label="撤销" title="撤销（Ctrl+Z）"><i data-lucide="undo-2" aria-hidden="true"></i></button><button class="canvas-icon-button" id="canvas-redo" type="button" data-canvas-edit-action aria-label="重做" title="重做（Ctrl+Y）"><i data-lucide="redo-2" aria-hidden="true"></i></button></div>
+                <div class="canvas-tool-group" role="group" aria-label="画布缩放"><button class="canvas-icon-button" id="canvas-zoom-out" type="button" aria-label="缩小画布" title="缩小"><i data-lucide="zoom-out" aria-hidden="true"></i></button><output id="canvas-zoom-output" aria-live="polite">100%</output><button class="canvas-icon-button" id="canvas-zoom-in" type="button" aria-label="放大画布" title="放大"><i data-lucide="zoom-in" aria-hidden="true"></i></button><button class="canvas-icon-button" id="canvas-fit" type="button" aria-label="适合画板" title="适合画板"><i data-lucide="focus" aria-hidden="true"></i></button></div>
+                <div class="canvas-tool-group" role="group" aria-label="画板导出"><button class="canvas-icon-button" id="canvas-export" type="button" aria-label="导出当前画板" title="导出当前画板 PNG" disabled><i data-lucide="download" aria-hidden="true"></i></button></div>
+              </div>
+            </header>
+
+            <div class="canvas-workspace__body">
+              <div class="canvas-stage" id="canvas-stage" tabindex="0" aria-label="商品自由画布；方向键移动选中图层，Shift 加方向键移动十像素">
+                <canvas id="studio-fabric-canvas"></canvas>
+                <div class="canvas-stage-loading" id="canvas-stage-loading" role="status"><span></span><strong>正在恢复画布</strong></div>
+                <div class="canvas-empty-state" id="canvas-empty-state"><span><i data-lucide="package-plus" aria-hidden="true"></i></span><h2>从一张素材开始</h2><p>右侧切换到“素材”，将图片添加到当前模式的画布。</p></div>
+              </div>
+
+              <aside class="canvas-inspector" aria-label="画布检查器">
+                <div class="canvas-panel-tabs" role="tablist" aria-label="画布侧栏"><button class="is-active" type="button" role="tab" data-canvas-panel="layers" aria-selected="true">图层</button><button type="button" role="tab" data-canvas-panel="assets" aria-selected="false">素材</button></div>
+                <section class="canvas-panel" id="canvas-panel-layers" role="tabpanel">
+                  <div class="canvas-selection" aria-live="polite"><div><strong id="canvas-selection-title">未选择图层</strong><small id="canvas-selection-detail">从画板或图层列表选择素材</small></div><div class="canvas-transform-controls" id="canvas-transform-controls" hidden><label>X<input id="canvas-transform-x" type="number" step="1" inputmode="decimal" /></label><label>Y<input id="canvas-transform-y" type="number" step="1" inputmode="decimal" /></label><label>缩放 %<input id="canvas-transform-scale" type="number" min="1" max="1000" step="1" inputmode="decimal" /></label><label>旋转 °<input id="canvas-transform-rotation" type="number" min="-360" max="360" step="1" inputmode="decimal" /></label><button id="canvas-apply-transform" type="button" data-canvas-edit-action>应用</button></div></div>
+                  <div class="canvas-list-meta"><span id="canvas-layer-segment-status">已显示 0 / 0</span><small>每段 40 条</small></div>
+                  <div class="canvas-layer-list" id="canvas-layer-list" role="listbox" aria-label="画布图层"></div>
+                  <button class="canvas-list-more" id="canvas-layer-more" type="button" hidden>加载下一段图层</button>
+                </section>
+                <section class="canvas-panel" id="canvas-panel-assets" role="tabpanel" hidden>
+                  <div class="canvas-list-meta"><span id="canvas-asset-segment-status">已显示 0 / 0</span><small>当前素材域</small></div>
+                  <div class="canvas-asset-list" id="canvas-asset-list" aria-label="可加入画布的素材"></div>
+                  <button class="canvas-list-more" id="canvas-asset-more" type="button" hidden>加载下一段素材</button>
+                </section>
+              </aside>
+            </div>
+
+            <footer class="canvas-workspace__footer"><div class="canvas-save-state" id="canvas-save-state" data-kind="saved" role="status" aria-live="polite"><span></span><p><strong id="canvas-save-title">画布尚未创建</strong><small id="canvas-save-detail">添加素材后写入本地版本账本</small></p><button id="canvas-save-retry" type="button" hidden><i data-lucide="refresh-cw" aria-hidden="true"></i>重试保存</button><button id="canvas-save-reload" type="button" hidden><i data-lucide="rotate-ccw" aria-hidden="true"></i>重新同步</button></div><div class="canvas-document-meta"><span id="canvas-layer-count">0 图层</span><strong id="canvas-artboard-spec">1600 × 1200 px</strong></div></footer>
+          </section>
         </section>
 
         <section class="app-page" id="page-compare" data-page-name="compare" hidden>

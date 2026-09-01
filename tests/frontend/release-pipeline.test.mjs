@@ -54,6 +54,7 @@ test('sidecar build cannot overwrite the formal portable release', () => {
   assert.doesNotMatch(script, /DeployPortable/);
   assert.doesNotMatch(script, /release\\ProductAtelier-Portable/);
   assert.match(script, /"python\/command_registry\.py"/);
+  assert.match(script, /"python\/canvas_export\.py"/);
   assert.match(script, /\.replacement-\$token/);
   assert.match(script, /\.previous-\$token/);
   assert.match(script, /sidecar-build\.lock/);
@@ -71,6 +72,14 @@ test('sidecar build cannot overwrite the formal portable release', () => {
   assert.match(script, /"python\/semantic_grounding\.py"/);
   assert.match(script, /"python\/semantic_query\.py"/);
   assert.match(script, /"python\/semantic_query_lexicon\.json"/);
+});
+
+test('production frontend carries pinned third-party license notices', () => {
+  const notices = read('src/public/THIRD_PARTY_NOTICES.txt');
+  assert.match(notices, /Fabric\.js 7\.4\.0/);
+  assert.match(notices, /Copyright \(c\) 2016-present Andrea Bogazzi/);
+  assert.match(notices, /Lucide 1\.31\.0/);
+  assert.match(notices, /Copyright \(c\) 2013-present Cole Bemis/);
 });
 
 test('portable smoke binds runtime identity to the candidate artifacts', () => {

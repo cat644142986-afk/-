@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Optional
+from urllib.parse import urlsplit
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import requests
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
@@ -22,6 +23,7 @@ import uvicorn
 
 try:
     from asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
+    from canvas_export import CanvasExportError, render_canvas_png
     from atelier_ledger import (
         AssetPurgeBlockedError,
         AtelierLedger,
@@ -98,6 +100,7 @@ try:
     )
 except ImportError:  # Allows importing as python.server during local tests.
     from python.asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
+    from python.canvas_export import CanvasExportError, render_canvas_png
     from python.atelier_ledger import (
         AssetPurgeBlockedError,
         AtelierLedger,
@@ -248,7 +251,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-09-01.1"
+SIDECAR_CONTRACT_VERSION = "2026-09-02.1"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -1555,15 +1558,43 @@ async def app_lifespan(_app):
             JOB_ENGINE = None
 
 
-TRUSTED_LOCAL_ORIGINS = frozenset({
-    # Tauri's packaged custom-protocol origins across supported WebView hosts.
-    "tauri://localhost",
-    "http://tauri.localhost",
-    "https://tauri.localhost",
-    # The checked-in Vite development URL and its loopback equivalent.
-    "http://localhost:1420",
-    "http://127.0.0.1:1420",
-})
+def trusted_local_origins(dev_origin: str | None = None) -> frozenset[str]:
+    origins = {
+        # Tauri's packaged custom-protocol origins across supported WebView hosts.
+        "tauri://localhost",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        # The checked-in Vite development URL and its loopback equivalent.
+        "http://localhost:1420",
+        "http://127.0.0.1:1420",
+    }
+    candidate = str(
+        os.environ.get("PRODUCT_ATELIER_DEV_ORIGIN", "")
+        if dev_origin is None else dev_origin
+    ).strip()
+    if candidate:
+        try:
+            parsed = urlsplit(candidate)
+            valid_host = parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+            valid_shape = (
+                parsed.scheme == "http"
+                and valid_host
+                and parsed.port is not None
+                and parsed.username is None
+                and parsed.password is None
+                and parsed.path in {"", "/"}
+                and not parsed.query
+                and not parsed.fragment
+            )
+            if valid_shape:
+                host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+                origins.add(f"http://{host}:{parsed.port}")
+        except (TypeError, ValueError):
+            pass
+    return frozenset(origins)
+
+
+TRUSTED_LOCAL_ORIGINS = trusted_local_origins()
 
 
 app = FastAPI(title="Product Atelier API", lifespan=app_lifespan)
@@ -1573,6 +1604,15 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Accept", "Content-Type"],
+    expose_headers=[
+        "Content-Disposition",
+        "X-Canvas-Revision",
+        "X-Canvas-Artboard",
+        "X-Canvas-Pixel-Width",
+        "X-Canvas-Pixel-Height",
+        "X-Canvas-Rendered-Layers",
+        "X-Canvas-Source",
+    ],
 )
 
 
@@ -2000,6 +2040,15 @@ class CanvasDocumentSaveRequest(BaseModel):
     expected_revision: int
     client_request_id: str
     document: dict[str, Any]
+
+    class Config:
+        extra = "forbid"
+
+
+class CanvasExportRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
+    artboard_id: Optional[str] = None
+    format: str = "png"
 
     class Config:
         extra = "forbid"
@@ -2492,6 +2541,97 @@ async def save_workflow_canvas(mode: str, request: CanvasDocumentSaveRequest):
         raise HTTPException(
             status_code=400,
             detail={"code": "INVALID_CANVAS_DOCUMENT", "message": str(exc)},
+        )
+
+
+def _resolve_canvas_source_path(source: dict[str, Any]) -> Path:
+    source_id = str(source.get("id") or "")
+    if source.get("kind") == "asset":
+        _, path = ASSET_STORE.resolve_asset_path(source_id)
+        return path
+    if source.get("kind") == "result":
+        return _resolve_result_asset_path(LEDGER.get_asset(source_id))
+    raise CanvasExportError("Canvas source kind is unsupported", code="CANVAS_SOURCE_UNSUPPORTED")
+
+
+@app.post("/api/workspaces/{mode}/canvas/export")
+async def export_workflow_canvas(mode: str, request: CanvasExportRequest):
+    if request.format != "png":
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "CANVAS_EXPORT_FORMAT_UNSUPPORTED", "message": "Only PNG export is supported"},
+        )
+    try:
+        canvas = LEDGER.get_canvas_document(mode)
+        if canvas is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "CANVAS_NOT_FOUND", "message": "This workflow has no saved canvas"},
+            )
+        current_revision = int(canvas["current_revision"])
+        if current_revision != request.expected_revision:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "CANVAS_REVISION_CONFLICT",
+                    "message": (
+                        f"canvas is revision {current_revision}, "
+                        f"not {request.expected_revision}"
+                    ),
+                    "current": {
+                        "id": canvas["id"],
+                        "revision": current_revision,
+                        "version_id": canvas["current_version_id"],
+                    },
+                },
+            )
+        content, metadata = await run_in_threadpool(
+            render_canvas_png,
+            canvas["document"],
+            _resolve_canvas_source_path,
+            artboard_id=request.artboard_id,
+        )
+        filename = (
+            f"ProductAtelier-{mode}-r{current_revision}-"
+            f"{metadata['pixel_width']}x{metadata['pixel_height']}.png"
+        )
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type="image/png",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(content)),
+                "Cache-Control": "no-store",
+                "X-Canvas-Revision": str(current_revision),
+                "X-Canvas-Artboard": metadata["artboard_id"],
+                "X-Canvas-Pixel-Width": str(metadata["pixel_width"]),
+                "X-Canvas-Pixel-Height": str(metadata["pixel_height"]),
+                "X-Canvas-Rendered-Layers": str(metadata["rendered_layer_count"]),
+                "X-Canvas-Source": metadata["source"],
+            },
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_WORKFLOW", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "CANVAS_SOURCE_NOT_FOUND", "message": str(exc)},
+        )
+    except AssetStoreError as exc:
+        raise_asset_http_error(exc)
+    except CanvasExportError as exc:
+        status_code = 404 if exc.code in {
+            "CANVAS_SOURCE_UNAVAILABLE",
+            "CANVAS_SOURCE_DIMENSION_MISMATCH",
+        } else 400
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code, "message": str(exc)},
         )
 
 

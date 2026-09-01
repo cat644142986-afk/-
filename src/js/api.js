@@ -5,6 +5,17 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 const isTauriRuntime = typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
+const DEV_API_BASE = (() => {
+  const candidate = String(import.meta.env?.DEV ? import.meta.env?.VITE_API_BASE || '' : '').trim();
+  if (!candidate) return '';
+  try {
+    const url = new URL(candidate);
+    const loopback = ['127.0.0.1', 'localhost', '::1'].includes(url.hostname);
+    return url.protocol === 'http:' && loopback ? url.origin : '';
+  } catch (_) {
+    return '';
+  }
+})();
 let API_BASE = null;
 let progressPollTimer = null;
 let batchPollTimer = null;
@@ -22,7 +33,7 @@ function currentWindow() {
 async function getPort() {
   if (API_BASE) return API_BASE;
   if (!isTauriRuntime) {
-    API_BASE = 'http://127.0.0.1:8765';
+    API_BASE = DEV_API_BASE || 'http://127.0.0.1:8765';
     return API_BASE;
   }
   const port = await invoke('get_api_port');
@@ -137,6 +148,41 @@ export async function saveSettings(settings) {
     throw new Error(detail?.message || detail || `设置保存失败（HTTP ${resp.status}）`);
   }
   return resp.json();
+}
+
+async function fetchBinary(url, options) {
+  options = options || {};
+  const base = await getPort();
+  const resp = await fetchWithTimeout(base + url, Object.assign({}, options, {
+    headers: Object.assign({}, options.headers || {}),
+  }), options.timeoutMs || DEFAULT_TIMEOUT_MS);
+  if (!resp.ok) {
+    const text = await resp.text().catch(function() { return ''; });
+    let message = text.slice(0, 300);
+    let detail = null;
+    try {
+      const parsed = JSON.parse(text);
+      detail = parsed?.detail || parsed;
+      message = parsed?.detail?.message || parsed?.detail || parsed?.message || message;
+    } catch (_) { /* keep the response text */ }
+    const error = new Error('HTTP ' + resp.status + ': ' + message);
+    error.status = resp.status;
+    error.code = 'HTTP_ERROR';
+    error.detail = detail;
+    throw error;
+  }
+  const disposition = resp.headers.get('Content-Disposition') || '';
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return {
+    blob: await resp.blob(),
+    filename: filenameMatch?.[1] || 'ProductAtelier-canvas.png',
+    revision: Number(resp.headers.get('X-Canvas-Revision') || 0),
+    artboardId: resp.headers.get('X-Canvas-Artboard') || '',
+    pixelWidth: Number(resp.headers.get('X-Canvas-Pixel-Width') || 0),
+    pixelHeight: Number(resp.headers.get('X-Canvas-Pixel-Height') || 0),
+    renderedLayerCount: Number(resp.headers.get('X-Canvas-Rendered-Layers') || 0),
+    source: resp.headers.get('X-Canvas-Source') || '',
+  };
 }
 export async function verifyGroundingPack() {
   return fetchJSON('/api/grounding-pack/verify', {
@@ -290,6 +336,41 @@ export async function saveWorkspaceDraft(mode, payload, options = {}) {
   return fetchJSON('/api/workspaces/' + encodeURIComponent(mode) + '/draft', {
     ...options,
     method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function getCanvas(mode, options = {}) {
+  return fetchJSON('/api/workspaces/' + encodeURIComponent(mode) + '/canvas', options);
+}
+
+export async function saveCanvas(mode, payload, options = {}) {
+  return fetchJSON('/api/workspaces/' + encodeURIComponent(mode) + '/canvas', {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function exportCanvas(mode, payload, options = {}) {
+  return fetchBinary('/api/workspaces/' + encodeURIComponent(mode) + '/canvas/export', {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function getCommands(options = {}) {
+  return fetchJSON('/api/commands', options);
+}
+
+export async function executeCommand(commandId, payload, options = {}) {
+  return fetchJSON('/api/commands/' + encodeURIComponent(commandId) + '/execute', {
+    ...options,
+    method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     body: JSON.stringify(payload || {}),
   });

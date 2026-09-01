@@ -168,11 +168,15 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     source_hashes = manifest.get("source_hashes") or {}
-    registry_key = "python/command_registry.py"
-    if registry_key not in source_hashes:
-        raise RuntimeError("sidecar manifest does not fingerprint command_registry.py")
-    if _sha256(ROOT / registry_key) != str(source_hashes[registry_key]).upper():
-        raise RuntimeError("sidecar manifest command registry hash is stale")
+    required_sources = {
+        "python/command_registry.py": "command registry",
+        "python/canvas_export.py": "canvas export renderer",
+    }
+    for source_key, label in required_sources.items():
+        if source_key not in source_hashes:
+            raise RuntimeError(f"sidecar manifest does not fingerprint {label}")
+        if _sha256(ROOT / source_key) != str(source_hashes[source_key]).upper():
+            raise RuntimeError(f"sidecar manifest {label} hash is stale")
     if int(manifest.get("ledger_schema_version", 0)) != 4:
         raise RuntimeError("candidate manifest is not bound to schema v4")
 

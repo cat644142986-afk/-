@@ -51,6 +51,7 @@ import { createKnowledgeController } from './studio-knowledge.js';
 import { createMemoryProjectionController } from './studio-memory.js';
 import { createReviewController } from './studio-review.js';
 import { createCompareController } from './studio-compare.js';
+import { createCanvasController } from './studio-canvas.js';
 import { createSessionsController, formatStudioTime } from './studio-sessions.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 import { statusPanelHtml } from './status-view.js';
@@ -123,6 +124,19 @@ const assetManager = createAssetManagerController({
   toggleAssetSelection,
   toast,
   openDrawer,
+});
+const canvasController = createCanvasController({
+  api: API,
+  state,
+  query: $,
+  queryAll: $$,
+  escapeHtml,
+  assetUrl,
+  toast,
+  formatApiError,
+  onViewChange: (view) => {
+    if (view === 'canvas') workflowDock.close(false);
+  },
 });
 const sessionsController = createSessionsController({
   api: API,
@@ -534,6 +548,7 @@ function hydrateWorkspace(mode, payload) {
       state.resultReviews = Array.isArray(payload?.recent_reviews) ? payload.recent_reviews : [];
     }
     if (MODE_CONFIG[state.currentMode]?.collection === collection) state.assets = assets;
+    canvasController.hydrate(mode, payload?.canvas);
     state.workspaceLoaded.add(mode);
     state.restoredModes.add(mode);
   } finally {
@@ -550,6 +565,7 @@ async function loadWorkspace(mode = state.currentMode, silent = false) {
     if (requestVersion !== state.workspaceRequestVersions[mode]) return null;
     hydrateWorkspace(mode, payload);
     await hydrateAssetUrls(payload.assets || []);
+    canvasController.syncAssets();
     const currentCollectionMatches = MODE_CONFIG[state.currentMode]?.collection === (payload.collection || MODE_CONFIG[mode].collection);
     if (mode === state.currentMode || currentCollectionMatches) {
       state.assets = state.assetsByCollection[MODE_CONFIG[state.currentMode].collection] || [];
@@ -874,6 +890,7 @@ function switchPage(page) {
   $('#page-title').textContent = config.title;
   $('#page-subtitle').textContent = config.subtitle;
   if (page !== 'process') workflowDock.close(false);
+  canvasController.setPage(page === 'process');
   if (page === 'history') sessionsController.load();
   if (page === 'memory') knowledgeController.load();
   if (page === 'settings') settingsController.load();
@@ -1127,6 +1144,7 @@ function switchMode(mode, preserveCurrent = true, loadDurable = true) {
     state.knowledgeBundle = null;
     renderKnowledge(null);
   }
+  canvasController.setMode(mode);
   assetManager.sync();
 }
 
@@ -3743,6 +3761,7 @@ function bindEvents() {
   workflowDock.bind();
   window.addEventListener('beforeunload', () => {
     workflowDock.destroy();
+    canvasController.flush();
     if (state.jobPollTimer) window.clearTimeout(state.jobPollTimer);
     state.draftSaveTimers.forEach((timer) => window.clearTimeout(timer));
     state.draftSaveTimers.clear();
@@ -3805,6 +3824,7 @@ async function init() {
   }));
   setupAppearance();
   bindEvents();
+  canvasController.bind();
   workflowDock.sync();
   compareController.bind();
   restoreWorkspaceState();

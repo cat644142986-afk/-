@@ -246,6 +246,21 @@ class AssetApiTests(unittest.TestCase):
         health = self.client.get("/api/health")
         self.assertEqual(health.status_code, 200, health.text)
 
+    def test_optional_dev_origin_accepts_only_explicit_loopback_http_origins(self) -> None:
+        allowed = server.trusted_local_origins("http://localhost:1421/")
+        self.assertIn("http://localhost:1421", allowed)
+        self.assertIn("http://localhost:1420", allowed)
+
+        for candidate in (
+            "https://localhost:1421",
+            "http://attacker.example:1421",
+            "http://localhost:1421/path",
+            "http://user@localhost:1421",
+            "http://localhost",
+        ):
+            with self.subTest(candidate=candidate):
+                self.assertNotIn(candidate.rstrip("/"), server.trusted_local_origins(candidate))
+
     def test_import_list_metadata_content_thumbnail_duplicate_and_restart(self) -> None:
         data = png_bytes()
         response = self.client.post(
@@ -908,6 +923,141 @@ class AssetApiTests(unittest.TestCase):
         self.assertEqual(
             stale.json()["detail"]["code"], "CANVAS_REVISION_CONFLICT"
         )
+
+    def test_canvas_export_uses_original_pixels_and_protects_revision_and_paths(self) -> None:
+        original = Image.new("RGB", (800, 600), (220, 40, 30))
+        original.paste((20, 190, 80), (400, 0, 800, 300))
+        original.paste((30, 80, 220), (0, 300, 400, 600))
+        original.paste((240, 210, 30), (400, 300, 800, 600))
+        original_buffer = io.BytesIO()
+        original.save(original_buffer, "PNG")
+        source = self.client.post(
+            "/api/assets/import?collection=cutout",
+            files={"file": ("original-800x600.png", original_buffer.getvalue(), "image/png")},
+        ).json()
+        document = {
+            "id": "canvas:export-cutout",
+            "schema_version": 1,
+            "coordinate_system": {
+                "unit": "canvas-pixel",
+                "origin": "top-left",
+                "x_axis": "right",
+                "y_axis": "down",
+            },
+            "revision": 0,
+            "active_artboard_id": "artboard:export-main",
+            "source_asset_ids": [source["id"]],
+            "artboards": [{
+                "id": "artboard:export-main",
+                "name": "原图导出画板",
+                "rect": {"x": 0, "y": 0, "width": 800, "height": 600},
+                "export": {
+                    "pixel_width": 800,
+                    "pixel_height": 600,
+                    "color_space": "srgb",
+                },
+            }],
+            "layers": [{
+                "id": "layer:export-source",
+                "artboard_id": "artboard:export-main",
+                "source": {
+                    "kind": "asset",
+                    "id": source["id"],
+                    "proxy_ref": "proxy:thumbnail:512",
+                    "original_pixel_width": 800,
+                    "original_pixel_height": 600,
+                },
+                "transform": {
+                    "x": 0,
+                    "y": 0,
+                    "scale_x": 1,
+                    "scale_y": 1,
+                    "rotation_degrees": 0,
+                    "opacity": 1,
+                },
+                "z_index": 0,
+                "visible": True,
+                "locked": False,
+            }],
+            "operations": [],
+            "undo_cursor": -1,
+            "created_at": "2026-09-02T00:00:00Z",
+            "updated_at": "2026-09-02T00:00:00Z",
+        }
+        saved = self.client.put(
+            "/api/workspaces/cutout-batch/canvas",
+            json={
+                "expected_revision": 0,
+                "client_request_id": "api-canvas-export-save-1",
+                "document": document,
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+
+        with mock.patch.object(
+            self.store,
+            "thumbnail_bytes",
+            side_effect=AssertionError("Fabric proxy must not be used for export"),
+        ), mock.patch.object(
+            self.store,
+            "resolve_asset_path",
+            wraps=self.store.resolve_asset_path,
+        ) as resolve_original:
+            exported = self.client.post(
+                "/api/workspaces/cutout-batch/canvas/export",
+                json={
+                    "expected_revision": 1,
+                    "artboard_id": "artboard:export-main",
+                    "format": "png",
+                },
+                headers={"Origin": "http://localhost:1420"},
+            )
+
+        self.assertEqual(exported.status_code, 200, exported.text)
+        resolve_original.assert_called_once_with(source["id"])
+        self.assertEqual(exported.headers["content-type"], "image/png")
+        self.assertEqual(exported.headers["x-canvas-source"], "original-assets")
+        self.assertEqual(exported.headers["x-canvas-revision"], "1")
+        self.assertEqual(exported.headers["x-canvas-pixel-width"], "800")
+        self.assertEqual(exported.headers["x-canvas-pixel-height"], "600")
+        self.assertNotIn(str(self.root), str(exported.headers))
+        exposed = exported.headers.get("access-control-expose-headers", "").lower()
+        self.assertIn("content-disposition", exposed)
+        self.assertIn("x-canvas-source", exposed)
+        with Image.open(io.BytesIO(exported.content)) as image:
+            self.assertEqual(image.size, (800, 600))
+            self.assertEqual(image.getpixel((100, 100)), (220, 40, 30, 255))
+            self.assertEqual(image.getpixel((700, 100)), (20, 190, 80, 255))
+            self.assertEqual(image.getpixel((100, 500)), (30, 80, 220, 255))
+            self.assertEqual(image.getpixel((700, 500)), (240, 210, 30, 255))
+
+        stale = self.client.post(
+            "/api/workspaces/cutout-batch/canvas/export",
+            json={"expected_revision": 0, "format": "png"},
+        )
+        self.assertEqual(stale.status_code, 409, stale.text)
+        self.assertEqual(stale.json()["detail"]["code"], "CANVAS_REVISION_CONFLICT")
+
+        _, original_path = self.store.resolve_asset_path(source["id"])
+        original_path.unlink()
+        missing = self.client.post(
+            "/api/workspaces/cutout-batch/canvas/export",
+            json={"expected_revision": 1, "format": "png"},
+        )
+        self.assertEqual(missing.status_code, 404, missing.text)
+        self.assertEqual(missing.json()["detail"]["code"], "ASSET_FILE_MISSING")
+        self.assertNotIn(str(self.root), missing.text)
+
+        cors = self.client.options(
+            "/api/workspaces/cutout-batch/canvas/export",
+            headers={
+                "Origin": "http://localhost:1420",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        self.assertEqual(cors.status_code, 200, cors.text)
+        self.assertIn("POST", cors.headers.get("access-control-allow-methods", ""))
 
     def test_suggest_review_returns_the_actual_pending_suggestion_and_stable_receipt(self) -> None:
         def create_reviewable_job(index: int):
