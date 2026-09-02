@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-02<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `93539f0c9ec857d22d3751bb836ff722579cd8db`，contract `2026-09-02.3`、SQLite schema v7、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo 和 outpaint 只写新增区域均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。同一 artifact 的 NSIS 已完成重建、隔离安装、安装态应用/sidecar/schema-outpaint 门禁、静默卸载和快捷方式恢复，形成未签名内部候选；代码签名的一键构建、先签后记 manifest、验签、隔离安装与失败保护也已固化，但由于没有外部代码签名证书，仍不能生成公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0–G3 已完成并正式发布，`app.js` 低耦合拆分与生产视觉 token 已在 G0 关闭。G4 情境式创作副驾继续等待用户重新确认预算；用户于 2026-09-02 把独立无限画布提升为当前优先级，G1C 的 ADR、隔离 PoC、IC2 生产一级入口/懒加载/画布列表、IC3 schema v8/不可变 scene 版本和 IC4 业务内容/Fabric 精修桥均已完成源码检查点，下一游标为 IC5 视频第一阶段；G5 确定性质检基础顺延。正式便携版仍保持 `93539f0 / contract .3 / schema v7`，尚未提升本分支。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `93539f0c9ec857d22d3751bb836ff722579cd8db`，contract `2026-09-02.3`、SQLite schema v7、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo 和 outpaint 只写新增区域均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。同一 artifact 的 NSIS 已完成重建、隔离安装、安装态应用/sidecar/schema-outpaint 门禁、静默卸载和快捷方式恢复，形成未签名内部候选；代码签名的一键构建、先签后记 manifest、验签、隔离安装与失败保护也已固化，但由于没有外部代码签名证书，仍不能生成公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0–G3 已完成并正式发布，`app.js` 低耦合拆分与生产视觉 token 已在 G0 关闭。G4 情境式创作副驾继续等待用户重新确认预算；用户于 2026-09-02 把独立无限画布提升为当前优先级，G1C 的 ADR、隔离 PoC、IC2 生产一级入口/懒加载/画布列表、IC3 schema v8/不可变 scene 版本、IC4 业务内容/Fabric 精修桥和“描述修改→确认一次调用→AI 候选→严格合成”的局部编辑生成链均已完成源码检查点，下一游标为 IC5 视频第一阶段；G5 确定性质检基础顺延。正式便携版仍保持 `93539f0 / contract .3 / schema v7`，尚未提升本分支。<br>
 > 当前开发分支：`codex/excalidraw-infinite-canvas`（基于 `codex/master-roadmap-phase-0-1` 的 `9faf87e`）<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1945,6 +1945,16 @@ G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁
 - 前端 171/171；Python 352 项（351 通过、1 跳过）；Vite、bundle、Rust/Tauri、compileall 和 Git whitespace 全绿。production dist 为 `10,604,026 bytes`，预计正式目录 368.67 MiB；正式 `93539f0 / contract .3 / schema v7` 未修改。
 - 详细证据：`docs/infinite-canvas-ic4-checkpoint-2026-09-02.md` 与 `artifacts/excalidraw-spatial-ic4/metrics.json`；检查点标签 `checkpoint-2026-09-02-infinite-canvas-ic4`。Tauri WebView、DWM、真实 DPI 和系统级拖拽留到用户空闲及候选阶段复验，不得误报为通过。
 
+#### G3L：AI 局部编辑候选生成链（已完成源码检查点）
+
+- 新增 `command:local-edit-generate` 与独立 `cloud-local-edit` 执行器。任务必须绑定一个不可变 LocalEditSpec、精确 CanvasDocument 版本和源图层；只允许 `max_attempts=1`、显式 `provider_call_confirmed=true` 和 `automatic_paid_retry=false`。
+- inpaint 只把 ROI 周边上下文交给图像 provider，返回后恢复为原图尺寸候选；outpaint 使用冻结输出尺寸和源图位置。候选永远不直接覆盖画布，用户仍须通过现有严格 compose，inpaint 选区外像素变化为 0，outpaint 被保护源区域变化为 0。
+- 结果图层可以继续作为下一次局部编辑源，但该权限只开放给局部编辑生成命令；现有快捷生成仍拒绝 `result_*` 资产，未扩大普通任务输入边界。
+- Fabric 局部面板增加描述、单次调用确认、生成、进度、取消、失败说明和重启恢复。任务完成后自动刷新并选中新候选；API 幂等重放直接返回 completed 时也走同一收尾，避免“任务已完成但面板没有结果”。
+- 实现提交 `dae910c8afec4c9ef4faa6ad94b4b1e6d719c727`。离线假 provider 端到端覆盖 inpaint、outpaint、结果源、候选尺寸、严格像素保护、一次调用和无网络；不代表已验证真实 provider 的图像质量。
+- 前端 171/171；Python 354 项通过、1 项平台预期跳过；Vite production build、画布 bundle、Rust/Tauri custom-protocol、compileall 和 Git whitespace 全绿。production dist 为 `10,613,142 bytes`，预计正式目录 368.68 MiB。
+- 详细证据：`docs/ai-local-edit-candidate-checkpoint-2026-09-02.md` 与 `artifacts/ai-local-edit-candidate/metrics.json`。正式版、正式用户账本、API Key 和付费 provider 均未触碰。
+
 #### IC5：视频第一阶段
 
 - 视频节点通过 `renderEmbeddable` 显示封面、时长、尺寸和状态，只在选中或主动播放时加载，不自动播放全部视频。
@@ -1960,4 +1970,4 @@ G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁
 
 #### 当前游标
 
-IC4 检查点提交并推送后进入 IC5 视频第一阶段：先用现有任务队列和离线假处理器完成参数、排队、进度、取消、失败解释、重试、结果回填、版本和导出，不调用未授权付费 provider，不打包本地视频模型。Tauri WebView、DWM、真实 DPI 和系统级拖拽保留为候选前 Windows 门禁；G4 Agent、G5 质检、公开签名证书、多轨时间线和本地大模型均不在当前游标内。
+AI 局部编辑候选生成链检查点提交并推送后进入 IC5 视频第一阶段：先用现有任务队列和离线假处理器完成参数、排队、进度、取消、失败解释、重试、结果回填、版本和导出，不调用未授权付费 provider，不打包本地视频模型。2026-09-02 20:00 后执行真实 Tauri WebView、DWM、DPI、系统级拖拽和安装包门禁，但未通过候选双 smoke 前不得提升正式便携版；G4 Agent、公开签名证书、多轨时间线和本地大模型继续顺延，IC5 完成后自动进入 G5。

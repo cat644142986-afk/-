@@ -1,0 +1,41 @@
+{
+  "checkpoint": "ai-local-edit-candidate-2026-09-02",
+  "branch": "codex/excalidraw-infinite-canvas",
+  "implementation_commit": "dae910c8afec4c9ef4faa6ad94b4b1e6d719c727",
+  "rollback_commit": "29b4f06f9338426c1ced6f0efbb76ce854970537",
+  "rollback_tag": "checkpoint-2026-09-02-infinite-canvas-ic4",
+  "sidecar_contract": "2026-09-02.4",
+  "development_schema": 8,
+  "formal_release": {
+    "git_commit": "93539f0c9ec857d22d3751bb836ff722579cd8db",
+    "sidecar_contract": "2026-09-02.3",
+    "schema": 7,
+    "modified": false
+  },
+  "tests": {
+    "frontend_passed": 171,
+    "python_passed": 354,
+    "python_skipped": 1,
+    "vite_build": "passed",
+    "canvas_lazy_bundle": "passed",
+    "rust_custom_protocol": "passed",
+    "python_compileall": "passed",
+    "git_diff_check": "passed"
+  },
+  "offline_local_edit": {
+    "provider_calls": 2,
+    "network_calls": 0,
+    "inpaint_candidate": {"width": 28, "height": 20, "outside_mask_changed_pixels": 0},
+    "outpaint_candidate": {"width": 36, "height": 24, "protected_changed_pixels": 0},
+    "automatic_paid_retry": false
+  },
+  "bundle": {
+    "dist_bytes": 10613142,
+    "projected_formal_mib": 368.68,
+    "formal_limit_mib": 450,
+    "initial_modulepreload_count": 0
+  },
+  "paid_provider_called": false,
+  "api_key_read": false,
+  "formal_ledger_read": false
+}
