@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PIL import Image
 
@@ -36,6 +37,18 @@ class PackagedSchemaUpgradeFixtureTests(unittest.TestCase):
                         packaged_gate._source_content_sentinel(ledger_path),
                         expected_sentinel,
                     )
+                    expected_business_content = packaged_gate._source_business_content(
+                        ledger_path, source_version
+                    )
+                    self.assertTrue(all(expected_business_content.values()))
+                    connection = packaged_gate.sqlite3.connect(ledger_path)
+                    try:
+                        profile_count = connection.execute(
+                            "SELECT COUNT(*) FROM product_profiles"
+                        ).fetchone()[0]
+                    finally:
+                        connection.close()
+                    self.assertEqual(profile_count, 1 if source_version == 5 else 0)
 
                     first = packaged_gate.AtelierLedger(ledger_path)
                     backups = sorted(
@@ -65,6 +78,10 @@ class PackagedSchemaUpgradeFixtureTests(unittest.TestCase):
                         packaged_gate._source_content_sentinel(ledger_path),
                         expected_sentinel,
                     )
+                    self.assertEqual(
+                        packaged_gate._source_business_content(ledger_path, source_version),
+                        expected_business_content,
+                    )
                     backup_sha256 = packaged_gate._sha256(backups[0])
 
                     second = packaged_gate.AtelierLedger(ledger_path)
@@ -87,6 +104,10 @@ class PackagedSchemaUpgradeFixtureTests(unittest.TestCase):
                         packaged_gate._source_content_sentinel(ledger_path),
                         expected_sentinel,
                     )
+                    self.assertEqual(
+                        packaged_gate._source_business_content(ledger_path, source_version),
+                        expected_business_content,
+                    )
 
     def test_fixture_builder_rejects_non_release_schema(self) -> None:
         with tempfile.TemporaryDirectory(
@@ -95,6 +116,106 @@ class PackagedSchemaUpgradeFixtureTests(unittest.TestCase):
             ledger_path = Path(temporary_dir) / "atelier.sqlite3"
             with self.assertRaisesRegex(ValueError, "unsupported.*v6"):
                 packaged_gate._create_source_database(ledger_path, 6)
+
+    def test_legacy_gate_starts_packaged_candidate_twice_and_preserves_backup(self) -> None:
+        starts = []
+
+        class StoppedProcess:
+            @staticmethod
+            def poll() -> int:
+                return 0
+
+        def start_candidate(_executable, _sidecar_dir, data_dir, _log_path):
+            starts.append(data_dir)
+            packaged_gate.AtelierLedger(data_dir / "atelier.sqlite3")
+            health = {
+                "status": "ok",
+                "service": {
+                    "contract_version": "test-contract",
+                    "manifest_status": "ok",
+                },
+                "ledger": {"schema_version": packaged_gate.SCHEMA_VERSION},
+            }
+            return StoppedProcess(), 0, health
+
+        with mock.patch.object(
+            packaged_gate, "_start_candidate", side_effect=start_candidate
+        ):
+            metrics = packaged_gate._verify_packaged_legacy_migration(
+                sidecar_dir=Path("packaged-sidecar"),
+                executable=Path("packaged-sidecar/python-server.exe"),
+                manifest={"contract_version": "test-contract"},
+                packaged_schema=packaged_gate.SCHEMA_VERSION,
+                source_version=5,
+            )
+
+        self.assertEqual(len(starts), 2)
+        self.assertEqual(metrics["schema_before"], 5)
+        self.assertEqual(metrics["schema_after"], packaged_gate.SCHEMA_VERSION)
+        self.assertEqual(metrics["backup_source_schema"], 5)
+        self.assertEqual(metrics["backup_count_after_restart"], 1)
+        self.assertEqual(metrics["packaged_process_starts"], 2)
+        self.assertTrue(metrics["backup_content_preserved"])
+        self.assertTrue(metrics["source_content_preserved"])
+        self.assertEqual(
+            metrics["business_rows_preserved"],
+            [
+                "asset",
+                "execution_trace",
+                "job",
+                "job_snapshot",
+                "product_profile",
+                "product_profile_asset",
+                "product_profile_version",
+                "session",
+            ],
+        )
+        self.assertFalse(metrics["restart_created_additional_backup"])
+
+    def test_legacy_gate_rejects_product_profile_mutation(self) -> None:
+        class StoppedProcess:
+            @staticmethod
+            def poll() -> int:
+                return 0
+
+        def start_candidate(_executable, _sidecar_dir, data_dir, _log_path):
+            ledger_path = data_dir / "atelier.sqlite3"
+            packaged_gate.AtelierLedger(ledger_path)
+            with packaged_gate.sqlite3.connect(ledger_path) as connection:
+                connection.execute(
+                    "UPDATE product_profiles SET sku = 'MUTATED' WHERE id = ?",
+                    ("profile-packaged-upgrade-v5",),
+                )
+            return StoppedProcess(), 0, {
+                "status": "ok",
+                "service": {
+                    "contract_version": "test-contract",
+                    "manifest_status": "ok",
+                },
+                "ledger": {"schema_version": packaged_gate.SCHEMA_VERSION},
+            }
+
+        with mock.patch.object(
+            packaged_gate, "_start_candidate", side_effect=start_candidate
+        ):
+            with self.assertRaisesRegex(RuntimeError, "source business graph changed"):
+                packaged_gate._verify_packaged_legacy_migration(
+                    sidecar_dir=Path("packaged-sidecar"),
+                    executable=Path("packaged-sidecar/python-server.exe"),
+                    manifest={"contract_version": "test-contract"},
+                    packaged_schema=packaged_gate.SCHEMA_VERSION,
+                    source_version=5,
+                )
+
+    def test_legacy_gate_rejects_non_legacy_source_schema(self) -> None:
+        with self.assertRaisesRegex(ValueError, "not a supported legacy"):
+            packaged_gate._verify_packaged_legacy_migration(
+                sidecar_dir=Path("packaged-sidecar"),
+                executable=Path("packaged-sidecar/python-server.exe"),
+                manifest={"contract_version": "test-contract"},
+                packaged_schema=packaged_gate.SCHEMA_VERSION,
+                source_version=packaged_gate.FORMAL_SOURCE_SCHEMA_VERSION,
+            )
 
 
 class PackagedSchemaUpgradeVideoGateTests(unittest.TestCase):

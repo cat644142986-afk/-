@@ -189,6 +189,41 @@ test('signed Windows release is fail-closed and candidate-first', () => {
   assert.match(installerGate, /verify_packaged_schema_upgrade\.py/);
   assert.match(installerGate, /NSIS uninstall did not remove the isolated install directory/);
   assert.match(installerGate, /Restore-Shortcut/);
+  assert.match(installerGate, /\[ValidateSet\("Signed", "UnsignedInternal"\)\]/);
+  assert.match(installerGate, /\[string\]\$TrustMode = "Signed"/);
+  assert.match(installerGate, /Assert-UnsignedArtifacts/);
+  assert.match(installerGate, /UnsignedInternal requires Authenticode NotSigned/);
+  assert.match(installerGate, /@\("\/S", "\/NS", "\/D=\$installDirectory"\)/);
+  assert.match(installerGate, /Get-ShortcutFingerprintViolation/);
+  assert.match(installerGate, /if \(-not \$violation\) \{ return \$false \}/);
+  assert.match(installerGate, /post-install changed protected Start Menu content/);
+  assert.match(installerGate, /@\("\/S", "\/UPDATE"\)/);
+  assert.match(installerGate, /Get-RegistryValueState/);
+  assert.match(installerGate, /Restore-RegistryValueState/);
+  assert.match(installerGate, /Restore-RegistryValueIfOwned/);
+  assert.match(installerGate, /protected registry value changed by another actor/);
+  assert.match(installerGate, /\$identifierParts\[1\]/);
+  assert.match(installerGate, /Software\\\$NsisManufacturer/);
+  assert.match(installerGate, /registry-state\.clixml/);
+  assert.match(installerGate, /Export-Clixml/);
+  assert.match(installerGate, /Installer Language/);
+  assert.match(installerGate, /\$cleanupErrors\.Count -eq 0/);
+  assert.match(installerGate, /Shortcut safety backup retained at/);
+  assert.match(installerGate, /SkipAppSmoke is only allowed for an explicit UnsignedInternal headless preflight/);
+
+  const shortcutBackup = installerGate.indexOf('$shortcutStates += Backup-Shortcut');
+  const installLaunch = installerGate.indexOf('$installProcess = Start-Process');
+  const postUninstallFingerprint = installerGate.indexOf('"post-uninstall"');
+  const shortcutRestore = installerGate.lastIndexOf('Restore-Shortcut `');
+  const registryRestore = installerGate.lastIndexOf('Restore-RegistryValueState $registryState');
+  const postRecoveryFingerprint = installerGate.indexOf('"post-recovery"');
+  const finalReport = installerGate.indexOf('$failures =');
+  assert.ok(shortcutBackup >= 0 && shortcutBackup < installLaunch, 'shortcut backup must precede install');
+  assert.ok(postUninstallFingerprint > installLaunch, 'post-uninstall fingerprints must follow install');
+  assert.ok(shortcutRestore > postUninstallFingerprint, 'shortcut recovery must follow violation capture');
+  assert.ok(registryRestore > postUninstallFingerprint, 'registry recovery must follow uninstall');
+  assert.ok(postRecoveryFingerprint > shortcutRestore, 'post-recovery verification must follow restore');
+  assert.ok(finalReport > postRecoveryFingerprint, 'final reporting must follow recovery verification');
 });
 
 test('Windows build-tool verification uses a file entry point instead of fragile python -c quoting', () => {

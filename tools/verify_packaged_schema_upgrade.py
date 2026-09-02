@@ -34,6 +34,7 @@ SUPPORTED_SOURCE_SCHEMA_VERSIONS = frozenset(
     (*LEGACY_SOURCE_SCHEMA_VERSIONS, FORMAL_SOURCE_SCHEMA_VERSION)
 )
 SOURCE_CONTENT_SENTINEL_KEY = "packaged_upgrade_source_sentinel"
+SOURCE_BUSINESS_FIXTURE_PREFIX = "packaged-upgrade"
 SOURCE_SIZE = (24, 18)
 OUTPAINT_SIZE = (32, 24)
 OUTPAINT_OFFSET = (4, 3)
@@ -41,6 +42,108 @@ SOURCE_COLOR = (220, 100, 40)
 CANDIDATE_COLOR = (30, 120, 230)
 VIDEO_SIZE = (320, 180)
 VIDEO_DURATION_SECONDS = 3
+
+
+def _seed_v5_business_graph(
+    connection: sqlite3.Connection,
+    *,
+    fixture_id: str,
+    source_version: int,
+    fixture_time: str,
+) -> None:
+    profile_id = f"profile-{fixture_id}"
+    profile_version_id = f"profile-version-{fixture_id}"
+    profile_json = json.dumps(
+        {
+            "sku": f"SKU-V{source_version}",
+            "approved_reference_ids": [f"ast-{fixture_id}"],
+            "commercial_facts": {"category": "food"},
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    profile_sha256 = hashlib.sha256(profile_json.encode("utf-8")).hexdigest()
+    request_fingerprint = hashlib.sha256(
+        f"profile-request-{fixture_id}".encode("utf-8")
+    ).hexdigest()
+    connection.execute(
+        """
+        INSERT INTO product_profiles(
+            id, sku, current_version_id, current_revision, created_at, updated_at
+        ) VALUES(?, ?, NULL, 0, ?, ?)
+        """,
+        (profile_id, f"SKU-V{source_version}", fixture_time, fixture_time),
+    )
+    connection.execute(
+        """
+        INSERT INTO product_profile_versions(
+            id, profile_id, revision, parent_version_id, client_request_id,
+            request_fingerprint, profile_json, profile_sha256, created_at
+        ) VALUES(?, ?, 1, NULL, ?, ?, ?, ?, ?)
+        """,
+        (
+            profile_version_id,
+            profile_id,
+            f"profile-request-{fixture_id}",
+            request_fingerprint,
+            profile_json,
+            profile_sha256,
+            fixture_time,
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO product_profile_version_assets(version_id, asset_id, role)
+        VALUES(?, ?, 'approved_reference')
+        """,
+        (profile_version_id, f"ast-{fixture_id}"),
+    )
+    connection.execute(
+        """
+        UPDATE product_profiles
+        SET current_version_id = ?, current_revision = 1
+        WHERE id = ?
+        """,
+        (profile_version_id, profile_id),
+    )
+    connection.execute(
+        """
+        INSERT INTO job_snapshots(
+            job_id, draft_id, draft_revision, mode, source_asset_ids_json,
+            brief_json, intent_json, parameters_json, knowledge_refs_json,
+            ui_context_json, created_at, command_id,
+            canvas_document_version_id, canvas_operation_id,
+            product_profile_version_id
+        ) VALUES(?, NULL, 0, 'single', ?, '{"goal":"preserve"}',
+                 '{"locked":true}', '{"fixture":true}', '["K-V5"]',
+                 '{"surface":"migration-gate"}', ?,
+                 'command:existing-generate-single', NULL, NULL, ?)
+        """,
+        (
+            f"job-{fixture_id}",
+            json.dumps([f"ast-{fixture_id}"], separators=(",", ":")),
+            fixture_time,
+            profile_version_id,
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO execution_traces(
+            id, job_id, job_item_id, generation_id, stage, status,
+            user_input_json, compiled_prompt, applied_knowledge_json,
+            ignored_fields_json, model, parameters_json, output_json,
+            error_code, error_message, created_at, command_id,
+            canvas_document_version_id, canvas_operation_id,
+            product_profile_version_id
+        ) VALUES(?, ?, NULL, NULL, 'compile', 'completed',
+                 '{"fixture":true}', 'preserve profile binding', '["K-V5"]',
+                 '[]', 'offline-fixture', '{"temperature":0}',
+                 '{"accepted":true}', '', '', ?,
+                 'command:existing-generate-single', NULL, NULL, ?)
+        """,
+        (f"trace-{fixture_id}", f"job-{fixture_id}", fixture_time, profile_version_id),
+    )
 
 
 def _create_source_database(path: Path, source_version: int) -> None:
@@ -72,6 +175,63 @@ def _create_source_database(path: Path, source_version: int) -> None:
                 break
             migrate(connection)
             AtelierLedger._write_schema_version(connection, target_version)
+        fixture_id = f"{SOURCE_BUSINESS_FIXTURE_PREFIX}-v{source_version}"
+        fixture_time = "2026-09-03T00:00:00+00:00"
+        connection.execute(
+            """
+            INSERT INTO sessions(
+                id, mode, status, title, project_name, designer_profile,
+                brand_profile, category, brief_json, intent_locks_json,
+                started_at, updated_at
+            ) VALUES(?, 'single', 'active', ?, 'migration-gate', 'fixture-designer',
+                     'fixture-brand', 'food', '{"goal":"preserve"}',
+                     '{"logo":true}', ?, ?)
+            """,
+            (f"ses-{fixture_id}", f"Schema v{source_version} business fixture", fixture_time, fixture_time),
+        )
+        connection.execute(
+            """
+            INSERT INTO assets(
+                id, session_id, parent_asset_id, role, kind, path, name, mime,
+                width, height, sha256, metadata_json, created_at
+            ) VALUES(?, ?, NULL, 'source', 'image', ?, ?, 'image/png',
+                     640, 480, ?, '{"fixture":true}', ?)
+            """,
+            (
+                f"ast-{fixture_id}",
+                f"ses-{fixture_id}",
+                f"D:/fixtures/schema-v{source_version}.png",
+                f"schema-v{source_version}.png",
+                hashlib.sha256(fixture_id.encode("utf-8")).hexdigest(),
+                fixture_time,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO jobs(
+                id, session_id, mode, status, priority, total_items,
+                completed_items, failed_items, canceled_items,
+                requested_concurrency, idempotency_key, parameters_json,
+                created_at, queued_at, updated_at
+            ) VALUES(?, ?, 'single', 'queued', 7, 1, 0, 0, 0, 1, ?,
+                     '{"fixture":true}', ?, ?, ?)
+            """,
+            (
+                f"job-{fixture_id}",
+                f"ses-{fixture_id}",
+                f"request-{fixture_id}",
+                fixture_time,
+                fixture_time,
+                fixture_time,
+            ),
+        )
+        if source_version == 5:
+            _seed_v5_business_graph(
+                connection,
+                fixture_id=fixture_id,
+                source_version=source_version,
+                fixture_time=fixture_time,
+            )
         connection.execute(
             "INSERT INTO ledger_meta(key, value) VALUES(?, ?)",
             (SOURCE_CONTENT_SENTINEL_KEY, f"schema-v{source_version}-content"),
@@ -771,6 +931,84 @@ def _source_content_sentinel(path: Path) -> str:
         connection.close()
 
 
+def _source_business_content(path: Path, source_version: int) -> dict[str, Any]:
+    fixture_id = f"{SOURCE_BUSINESS_FIXTURE_PREFIX}-v{source_version}"
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    try:
+        queries = {
+            "session": (
+                "SELECT id, mode, status, title, project_name, designer_profile, "
+                "brand_profile, category, brief_json, intent_locks_json, started_at, "
+                "updated_at, completed_at FROM sessions WHERE id = ?",
+                f"ses-{fixture_id}",
+            ),
+            "asset": (
+                "SELECT id, session_id, parent_asset_id, role, kind, path, name, mime, "
+                "width, height, sha256, metadata_json, created_at, blob_id "
+                "FROM assets WHERE id = ?",
+                f"ast-{fixture_id}",
+            ),
+            "job": (
+                "SELECT id, session_id, mode, status, priority, total_items, "
+                "completed_items, failed_items, canceled_items, requested_concurrency, "
+                "idempotency_key, parameters_json, created_at, queued_at, started_at, "
+                "updated_at, completed_at "
+                "FROM jobs WHERE id = ?",
+                f"job-{fixture_id}",
+            ),
+            "product_profile": (
+                "SELECT id, sku, current_version_id, current_revision, created_at, "
+                "updated_at FROM product_profiles WHERE id = ?",
+                f"profile-{fixture_id}",
+            ),
+            "product_profile_version": (
+                "SELECT id, profile_id, revision, parent_version_id, client_request_id, "
+                "request_fingerprint, profile_json, profile_sha256, created_at "
+                "FROM product_profile_versions WHERE id = ?",
+                f"profile-version-{fixture_id}",
+            ),
+            "product_profile_asset": (
+                "SELECT version_id, asset_id, role FROM product_profile_version_assets "
+                "WHERE version_id = ?",
+                f"profile-version-{fixture_id}",
+            ),
+            "job_snapshot": (
+                "SELECT job_id, draft_id, draft_revision, mode, source_asset_ids_json, "
+                "brief_json, intent_json, parameters_json, knowledge_refs_json, "
+                "ui_context_json, created_at, command_id, canvas_document_version_id, "
+                "canvas_operation_id, product_profile_version_id "
+                "FROM job_snapshots WHERE job_id = ?",
+                f"job-{fixture_id}",
+            ),
+            "execution_trace": (
+                "SELECT id, job_id, job_item_id, generation_id, stage, status, "
+                "user_input_json, compiled_prompt, applied_knowledge_json, "
+                "ignored_fields_json, model, parameters_json, output_json, error_code, "
+                "error_message, created_at, command_id, canvas_document_version_id, "
+                "canvas_operation_id, product_profile_version_id "
+                "FROM execution_traces WHERE id = ?",
+                f"trace-{fixture_id}",
+            ),
+        }
+        if source_version != 5:
+            for label in (
+                "product_profile",
+                "product_profile_version",
+                "product_profile_asset",
+                "job_snapshot",
+                "execution_trace",
+            ):
+                queries.pop(label)
+        content: dict[str, Any] = {}
+        for label, (query, record_id) in queries.items():
+            row = connection.execute(query, (record_id,)).fetchone()
+            content[label] = None if row is None else dict(row)
+        return content
+    finally:
+        connection.close()
+
+
 @contextmanager
 def _temporary_data_dir():
     prefix = "ProductAtelier-packaged-schema-upgrade-"
@@ -790,6 +1028,154 @@ def _temporary_data_dir():
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.25)
+
+
+def _verify_packaged_legacy_migration(
+    *,
+    sidecar_dir: Path,
+    executable: Path,
+    manifest: dict[str, Any],
+    packaged_schema: int,
+    source_version: int,
+) -> dict[str, Any]:
+    if source_version not in LEGACY_SOURCE_SCHEMA_VERSIONS:
+        raise ValueError(f"v{source_version} is not a supported legacy release schema")
+
+    with _temporary_data_dir() as data_dir:
+        ledger_path = data_dir / "atelier.sqlite3"
+        log_path = data_dir / "candidate.log"
+        _create_source_database(ledger_path, source_version)
+        if _schema_version(ledger_path) != source_version:
+            raise RuntimeError(f"isolated legacy fixture is not schema v{source_version}")
+
+        source_fixture_sha256 = _sha256(ledger_path)
+        source_fixture_content = _sqlite_content_snapshot(ledger_path)
+        expected_source_sentinel = f"schema-v{source_version}-content"
+        if _source_content_sentinel(ledger_path) != expected_source_sentinel:
+            raise RuntimeError(f"legacy v{source_version} content sentinel is missing")
+        expected_business_content = _source_business_content(ledger_path, source_version)
+        missing_business_rows = sorted(
+            label for label, row in expected_business_content.items() if row is None
+        )
+        if missing_business_rows:
+            raise RuntimeError(
+                f"legacy v{source_version} fixture lacks business rows: "
+                + ", ".join(missing_business_rows)
+            )
+
+        first_process: subprocess.Popen[bytes] | None = None
+        second_process: subprocess.Popen[bytes] | None = None
+        try:
+            first_process, _first_port, first_health = _start_candidate(
+                executable, sidecar_dir, data_dir, log_path
+            )
+        finally:
+            _stop_owned_process(first_process)
+
+        backups = sorted(
+            data_dir.glob(f"atelier.sqlite3.backup-v{source_version}-*.sqlite3")
+        )
+        all_backups = sorted(data_dir.glob("atelier.sqlite3.backup-v*-*.sqlite3"))
+        if len(backups) != 1 or all_backups != backups:
+            raise RuntimeError(
+                f"expected exactly one migration backup from legacy schema v{source_version}, "
+                f"found {len(all_backups)} total"
+            )
+        backup = backups[0]
+        if _schema_version(backup) != source_version:
+            raise RuntimeError(f"legacy backup is not schema v{source_version}")
+        if _schema_version(ledger_path) != packaged_schema:
+            raise RuntimeError(
+                f"packaged sidecar did not migrate v{source_version} to v{packaged_schema}"
+            )
+
+        backup_content_before_restart = _sqlite_content_snapshot(backup)
+        if backup_content_before_restart != source_fixture_content:
+            raise RuntimeError(
+                f"legacy v{source_version} backup content differs from the source fixture"
+            )
+        if (
+            _source_content_sentinel(backup) != expected_source_sentinel
+            or _source_content_sentinel(ledger_path) != expected_source_sentinel
+        ):
+            raise RuntimeError(
+                f"legacy v{source_version} content was not preserved by the migration"
+            )
+        if _source_business_content(ledger_path, source_version) != expected_business_content:
+            raise RuntimeError(
+                f"legacy v{source_version} source business graph changed during migration"
+            )
+        backup_sha256_before_restart = _sha256(backup)
+
+        try:
+            second_process, _second_port, second_health = _start_candidate(
+                executable, sidecar_dir, data_dir, log_path
+            )
+        finally:
+            _stop_owned_process(second_process)
+
+        backups_after_restart = sorted(
+            data_dir.glob(f"atelier.sqlite3.backup-v{source_version}-*.sqlite3")
+        )
+        all_backups_after_restart = sorted(
+            data_dir.glob("atelier.sqlite3.backup-v*-*.sqlite3")
+        )
+        if backups_after_restart != backups or all_backups_after_restart != backups:
+            raise RuntimeError(
+                f"idempotent v{packaged_schema} restart changed the v{source_version} backup set"
+            )
+        backup_sha256_after_restart = _sha256(backup)
+        if backup_sha256_after_restart != backup_sha256_before_restart:
+            raise RuntimeError(
+                f"legacy v{source_version} backup bytes changed after restart"
+            )
+        if _sqlite_content_snapshot(backup) != backup_content_before_restart:
+            raise RuntimeError(
+                f"legacy v{source_version} backup content changed after restart"
+            )
+        if _source_content_sentinel(ledger_path) != expected_source_sentinel:
+            raise RuntimeError(
+                f"legacy v{source_version} source content changed after restart"
+            )
+        if _source_business_content(ledger_path, source_version) != expected_business_content:
+            raise RuntimeError(
+                f"legacy v{source_version} source business graph changed after restart"
+            )
+
+        for phase, health in (("first", first_health), ("second", second_health)):
+            if health.get("status") != "ok":
+                raise RuntimeError(f"legacy v{source_version} {phase} health is not ok")
+            if health.get("service", {}).get("contract_version") != manifest.get(
+                "contract_version"
+            ):
+                raise RuntimeError(
+                    f"legacy v{source_version} {phase} health contract does not match manifest"
+                )
+            if health.get("service", {}).get("manifest_status") != "ok":
+                raise RuntimeError(
+                    f"legacy v{source_version} {phase} process rejected its manifest"
+                )
+            if int(health.get("ledger", {}).get("schema_version", 0)) != packaged_schema:
+                raise RuntimeError(
+                    f"legacy v{source_version} {phase} health does not report schema "
+                    f"v{packaged_schema}"
+                )
+
+        return {
+            "status": "passed",
+            "schema_before": source_version,
+            "schema_after": packaged_schema,
+            "backup_source_schema": source_version,
+            "backup_count_after_restart": len(backups_after_restart),
+            "source_fixture_sha256": source_fixture_sha256,
+            "backup_sha256_before_restart": backup_sha256_before_restart,
+            "backup_sha256_after_restart": backup_sha256_after_restart,
+            "backup_content_preserved": True,
+            "source_content_preserved": True,
+            "business_rows_preserved": sorted(expected_business_content),
+            "restart_created_additional_backup": False,
+            "packaged_process_starts": 2,
+        }
 
 
 def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
@@ -844,6 +1230,17 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
         "command:toggle-layer",
         "command:toggle-layer-lock",
         "command:local-edit-compose",
+    }
+
+    legacy_migrations = {
+        f"v{source_version}": _verify_packaged_legacy_migration(
+            sidecar_dir=sidecar_dir,
+            executable=executable,
+            manifest=manifest,
+            packaged_schema=packaged_schema,
+            source_version=source_version,
+        )
+        for source_version in LEGACY_SOURCE_SCHEMA_VERSIONS
     }
 
     with _temporary_data_dir() as data_dir:
@@ -1321,6 +1718,8 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             "backup_content_preserved": True,
             "formal_source_content_preserved": True,
             "restart_created_additional_backup": False,
+            "supported_source_schemas": sorted(SUPPORTED_SOURCE_SCHEMA_VERSIONS),
+            "legacy_migrations": legacy_migrations,
             "command_contract": second_commands["contract_version"],
             "command_count": len(second_commands["commands"]),
             "empty_canvas_response": "stable-empty-envelope",
@@ -1350,8 +1749,9 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify one packaged sidecar upgrade from formal schema "
-            f"v{FORMAL_SOURCE_SCHEMA_VERSION} to v{SCHEMA_VERSION}, "
+            "Verify packaged sidecar upgrades from supported release schemas "
+            f"v{min(SUPPORTED_SOURCE_SCHEMA_VERSIONS)} and "
+            f"v{max(SUPPORTED_SOURCE_SCHEMA_VERSIONS)} to v{SCHEMA_VERSION}, "
             "including immutable outpaint composition and offline video recovery."
         )
     )

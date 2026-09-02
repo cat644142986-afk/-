@@ -1,10 +1,13 @@
-# Installs a signed NSIS candidate into a unique temporary directory, runs the
-# packaged gates, uninstalls it, and restores any pre-existing shortcuts.
+# Installs an NSIS candidate into a unique temporary directory, runs the
+# packaged gates, uninstalls it, and protects pre-existing shortcuts.
 param(
     [Parameter(Mandatory = $true)]
     [string]$InstallerPath,
     [string]$ExpectedGitCommit = "",
     [string]$CertificateThumbprint = $env:PRODUCT_ATELIER_SIGN_CERT_SHA1,
+    [ValidateSet("Signed", "UnsignedInternal")]
+    [string]$TrustMode = "Signed",
+    [switch]$SkipAppSmoke,
     [int]$CleanupTimeoutSeconds = 45
 )
 
@@ -13,6 +16,20 @@ $ProjectRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $InstallerPath = [System.IO.Path]::GetFullPath($InstallerPath)
 $CodeSigningTool = Join-Path $PSScriptRoot "Windows-CodeSigning.ps1"
 $SchemaGate = Join-Path $PSScriptRoot "verify_packaged_schema_upgrade.py"
+$TauriConfigPath = Join-Path $ProjectRoot "src-tauri\tauri.conf.json"
+
+if (-not (Test-Path -LiteralPath $TauriConfigPath -PathType Leaf)) {
+    throw "Tauri bundle config is missing: $TauriConfigPath"
+}
+$tauriConfig = Get-Content -LiteralPath $TauriConfigPath -Raw | ConvertFrom-Json
+$ProductName = ([string]$tauriConfig.productName).Trim()
+$bundleIdentifier = ([string]$tauriConfig.identifier).Trim()
+$identifierParts = @($bundleIdentifier.Split('.'))
+if (-not $ProductName -or $identifierParts.Count -lt 2 -or -not $identifierParts[1]) {
+    throw "Tauri productName and bundle identifier must define the NSIS registry contract"
+}
+# Tauri CLI 2.11.4 derives the default NSIS manufacturer from identifier segment 2.
+$NsisManufacturer = $identifierParts[1]
 
 if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
     throw "Signed installer candidate is missing: $InstallerPath"
@@ -24,11 +41,14 @@ if (-not $ExpectedGitCommit) {
 if ($ExpectedGitCommit -notmatch '^[0-9a-fA-F]{40}$') {
     throw "Expected Git commit must be a full 40-character hash"
 }
-if (-not (Test-Path -LiteralPath $CodeSigningTool -PathType Leaf)) {
+if ($TrustMode -eq "Signed" -and -not (Test-Path -LiteralPath $CodeSigningTool -PathType Leaf)) {
     throw "Windows code-signing helper is missing: $CodeSigningTool"
 }
 if (-not (Test-Path -LiteralPath $SchemaGate -PathType Leaf)) {
     throw "Packaged schema gate is missing: $SchemaGate"
+}
+if ($SkipAppSmoke -and $TrustMode -ne "UnsignedInternal") {
+    throw "SkipAppSmoke is only allowed for an explicit UnsignedInternal headless preflight"
 }
 
 function Get-ProductUninstallEntries {
@@ -39,7 +59,7 @@ function Get-ProductUninstallEntries {
     )
     return @(
         Get-ItemProperty -Path $roots -ErrorAction SilentlyContinue |
-            Where-Object { ([string]$_.DisplayName).Trim() -like "Product Atelier*" }
+            Where-Object { ([string]$_.DisplayName).Trim() -like "$ProductName*" }
     )
 }
 
@@ -61,6 +81,203 @@ function Test-PathInside([string]$PathToCheck, [string]$Directory) {
         return $false
     }
     return $fullPath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-UnsignedArtifacts([string[]]$ArtifactPaths) {
+    foreach ($artifact in $ArtifactPaths) {
+        if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+            throw "Unsigned internal artifact is missing: $artifact"
+        }
+        $signature = Get-AuthenticodeSignature -LiteralPath $artifact
+        if ([string]$signature.Status -ne "NotSigned") {
+            throw "UnsignedInternal requires Authenticode NotSigned, got $($signature.Status): $artifact"
+        }
+    }
+}
+
+function Get-ShortcutFingerprint([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return [pscustomobject]@{
+            Path = $Path
+            Exists = $false
+            Sha256 = ""
+            TargetPath = ""
+            WorkingDirectory = ""
+        }
+    }
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($Path)
+    return [pscustomobject]@{
+        Path = $Path
+        Exists = $true
+        Sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+        TargetPath = [string]$shortcut.TargetPath
+        WorkingDirectory = [string]$shortcut.WorkingDirectory
+    }
+}
+
+function Get-ShortcutFingerprintViolation($Before, [string]$Phase) {
+    $after = Get-ShortcutFingerprint $Before.Path
+    foreach ($property in @("Exists", "Sha256", "TargetPath", "WorkingDirectory")) {
+        if ($after.$property -ne $Before.$property) {
+            return "$Phase changed protected shortcut $($Before.Path) ($property)"
+        }
+    }
+    return ""
+}
+
+function ConvertTo-RegistryValueFingerprint($Value) {
+    if ($null -eq $Value) { return "<null>" }
+    if ($Value -is [byte[]]) {
+        return "binary:" + [Convert]::ToBase64String($Value)
+    }
+    if ($Value -is [string[]]) {
+        return "multi-string:" + (ConvertTo-Json -InputObject @($Value) -Compress)
+    }
+    return "$($Value.GetType().FullName):$Value"
+}
+
+function Get-RegistryValueState([string]$SubKeyPath, [string]$ValueName) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKeyPath, $false)
+    if ($null -eq $key) {
+        return [pscustomobject]@{
+            SubKeyPath = $SubKeyPath
+            ValueName = $ValueName
+            KeyExists = $false
+            ValueExists = $false
+            Kind = ""
+            Value = $null
+            Fingerprint = ""
+        }
+    }
+    try {
+        $valueExists = @($key.GetValueNames()) -contains $ValueName
+        if (-not $valueExists) {
+            return [pscustomobject]@{
+                SubKeyPath = $SubKeyPath
+                ValueName = $ValueName
+                KeyExists = $true
+                ValueExists = $false
+                Kind = ""
+                Value = $null
+                Fingerprint = ""
+            }
+        }
+        $value = $key.GetValue(
+            $ValueName,
+            $null,
+            [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+        )
+        return [pscustomobject]@{
+            SubKeyPath = $SubKeyPath
+            ValueName = $ValueName
+            KeyExists = $true
+            ValueExists = $true
+            Kind = [string]$key.GetValueKind($ValueName)
+            Value = $value
+            Fingerprint = ConvertTo-RegistryValueFingerprint $value
+        }
+    } finally {
+        $key.Dispose()
+    }
+}
+
+function Get-RegistryValueViolation($Before, [string]$Phase) {
+    $after = Get-RegistryValueState $Before.SubKeyPath $Before.ValueName
+    foreach ($property in @("KeyExists", "ValueExists", "Kind", "Fingerprint")) {
+        if ($after.$property -ne $Before.$property) {
+            $displayName = if ($Before.ValueName) { $Before.ValueName } else { "(Default)" }
+            return "$Phase changed protected registry value HKCU\$($Before.SubKeyPath)\$displayName ($property)"
+        }
+    }
+    return ""
+}
+
+function Restore-RegistryValueState($State) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($State.SubKeyPath, $true)
+    try {
+        if ($State.ValueExists) {
+            if ($null -eq $key) {
+                $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($State.SubKeyPath, $true)
+            }
+            $kind = [System.Enum]::Parse(
+                [Microsoft.Win32.RegistryValueKind],
+                [string]$State.Kind
+            )
+            $key.SetValue($State.ValueName, $State.Value, $kind)
+        } elseif ($null -ne $key) {
+            $key.DeleteValue($State.ValueName, $false)
+        }
+    } finally {
+        if ($null -ne $key) { $key.Dispose() }
+    }
+}
+
+function Restore-RegistryValueIfOwned($Before, [string]$InstallDirectory) {
+    $violation = Get-RegistryValueViolation $Before "pre-recovery"
+    if (-not $violation) { return $false }
+
+    $after = Get-RegistryValueState $Before.SubKeyPath $Before.ValueName
+    $referencesIsolatedInstall = (
+        $after.ValueExists -and
+        $after.Value -is [string] -and
+        ([string]$after.Value).IndexOf(
+            $InstallDirectory,
+            [System.StringComparison]::OrdinalIgnoreCase
+        ) -ge 0
+    )
+    if (($Before.ValueExists -and -not $after.ValueExists) -or $referencesIsolatedInstall) {
+        Restore-RegistryValueState $Before
+        return $true
+    }
+    throw (
+        "Refusing to overwrite a protected registry value changed by another actor: " +
+        "HKCU\$($Before.SubKeyPath)\$($Before.ValueName)"
+    )
+}
+
+function Test-RegistryKeyExists([string]$SubKeyPath) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKeyPath, $false)
+    if ($null -eq $key) { return $false }
+    $key.Dispose()
+    return $true
+}
+
+function Remove-RegistryKeyIfEmpty([string]$SubKeyPath) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKeyPath, $false)
+    if ($null -eq $key) { return }
+    try {
+        $isEmpty = $key.GetValueNames().Count -eq 0 -and $key.GetSubKeyNames().Count -eq 0
+    } finally {
+        $key.Dispose()
+    }
+    if ($isEmpty) {
+        [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey($SubKeyPath, $false)
+    }
+}
+
+function Get-DirectoryFingerprint([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return '{"exists":false,"entries":[]}'
+    }
+    $root = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $entries = @(
+        Get-ChildItem -LiteralPath $root -Recurse -Force |
+            Sort-Object FullName |
+            ForEach-Object {
+                $relative = $_.FullName.Substring($root.Length).TrimStart('\')
+                if ($_.PSIsContainer) {
+                    [pscustomobject]@{ path = $relative; kind = "directory"; sha256 = "" }
+                } else {
+                    [pscustomobject]@{
+                        path = $relative
+                        kind = "file"
+                        sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+                    }
+                }
+            }
+    )
+    return ([pscustomobject]@{ exists = $true; entries = $entries } | ConvertTo-Json -Depth 4 -Compress)
 }
 
 function Stop-TestProcesses([string]$Directory) {
@@ -92,23 +309,29 @@ function Backup-Shortcut([string]$Path, [string]$BackupRoot, [int]$Index) {
     }
 }
 
-function Restore-Shortcut($State, [string]$InstallDirectory) {
+function Restore-Shortcut($State, $Before, [string]$InstallDirectory) {
+    $violation = Get-ShortcutFingerprintViolation $Before "pre-recovery"
+    if (-not $violation) { return $false }
+
+    $after = Get-ShortcutFingerprint $State.Path
     if ($State.Existed) {
+        if ($after.Exists -and -not (Test-PathInside $after.TargetPath $InstallDirectory)) {
+            throw "Refusing to overwrite a protected shortcut changed by another actor: $($State.Path)"
+        }
         if (-not (Test-Path -LiteralPath $State.Backup -PathType Leaf)) {
             throw "Shortcut backup is missing: $($State.Backup)"
         }
         $parent = Split-Path -Parent $State.Path
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
         Copy-Item -LiteralPath $State.Backup -Destination $State.Path -Force
-        return
+        return $true
     }
-    if (-not (Test-Path -LiteralPath $State.Path -PathType Leaf)) { return }
-    $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut($State.Path)
-    if (-not (Test-PathInside ([string]$shortcut.TargetPath) $InstallDirectory)) {
+    if (-not $after.Exists) { return $false }
+    if (-not (Test-PathInside $after.TargetPath $InstallDirectory)) {
         throw "Refusing to remove a shortcut not created for the isolated install: $($State.Path)"
     }
     Remove-Item -LiteralPath $State.Path -Force
+    return $true
 }
 
 $existingInstallations = Get-ProductUninstallEntries
@@ -116,10 +339,14 @@ if ($existingInstallations.Count -gt 0) {
     throw "A registered Product Atelier installation already exists; refusing an isolated installer test that could overwrite it."
 }
 
-& $CodeSigningTool `
-    -Mode Verify `
-    -ArtifactPath $InstallerPath `
-    -CertificateThumbprint $CertificateThumbprint
+if ($TrustMode -eq "Signed") {
+    & $CodeSigningTool `
+        -Mode Verify `
+        -ArtifactPath $InstallerPath `
+        -CertificateThumbprint $CertificateThumbprint
+} else {
+    Assert-UnsignedArtifacts @($InstallerPath)
+}
 
 $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $testToken = [guid]::NewGuid().ToString("N")
@@ -133,29 +360,78 @@ if (Test-Path -LiteralPath $installDirectory) {
 }
 New-Item -ItemType Directory -Path $safetyRoot | Out-Null
 
-$desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "Product Atelier.lnk"
+$desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "$ProductName.lnk"
 $programsDirectory = [Environment]::GetFolderPath("Programs")
-$programFolder = Join-Path $programsDirectory "Product Atelier"
+$programFolder = Join-Path $programsDirectory $ProductName
 $programFolderExisted = Test-Path -LiteralPath $programFolder -PathType Container
 $shortcutPaths = @(
     $desktopShortcut,
-    (Join-Path $programsDirectory "Product Atelier.lnk"),
-    (Join-Path $programFolder "Product Atelier.lnk")
+    (Join-Path $programsDirectory "$ProductName.lnk"),
+    (Join-Path $programFolder "$ProductName.lnk")
 )
 $shortcutStates = @()
+$shortcutFingerprints = @($shortcutPaths | ForEach-Object { Get-ShortcutFingerprint $_ })
+$programFolderFingerprint = Get-DirectoryFingerprint $programFolder
 for ($index = 0; $index -lt $shortcutPaths.Count; $index++) {
     $shortcutStates += Backup-Shortcut $shortcutPaths[$index] $safetyRoot $index
 }
+
+$manufacturerRegistryPath = "Software\$NsisManufacturer"
+$productRegistryPath = "$manufacturerRegistryPath\$ProductName"
+$manufacturerRegistryKeyExisted = Test-RegistryKeyExists $manufacturerRegistryPath
+$productRegistryKeyExisted = Test-RegistryKeyExists $productRegistryPath
+$productRegistryStates = @(
+    (Get-RegistryValueState $productRegistryPath ""),
+    (Get-RegistryValueState $productRegistryPath "Installer Language")
+)
+$runRegistryState = Get-RegistryValueState `
+    "Software\Microsoft\Windows\CurrentVersion\Run" `
+    $ProductName
+$registrySnapshotPath = Join-Path $safetyRoot "registry-state.clixml"
+[pscustomobject]@{
+    format_version = 1
+    captured_at = [DateTimeOffset]::UtcNow.ToString("o")
+    product_name = $ProductName
+    bundle_identifier = $bundleIdentifier
+    manufacturer_registry_path = $manufacturerRegistryPath
+    manufacturer_key_existed = $manufacturerRegistryKeyExisted
+    product_registry_path = $productRegistryPath
+    product_key_existed = $productRegistryKeyExisted
+    product_values = $productRegistryStates
+    run_value = $runRegistryState
+} | Export-Clixml -LiteralPath $registrySnapshotPath -Encoding UTF8 -Depth 6
+$recoveryNotePath = Join-Path $safetyRoot "RECOVERY.txt"
+[System.IO.File]::WriteAllLines(
+    $recoveryNotePath,
+    @(
+        "Product Atelier isolated installer safety backup.",
+        "Do not delete this directory unless the gate reports successful recovery.",
+        "registry-state.clixml contains the typed pre-install HKCU value snapshot.",
+        "Shortcut backups are named shortcut-*.lnk."
+    ),
+    [System.Text.UTF8Encoding]::new($true)
+)
+Write-Host "Installer safety backup prepared: $safetyRoot"
 
 $installSucceeded = $false
 $installAttempted = $false
 $uninstallAttempted = $false
 $uninstaller = ""
+$gateError = $null
+$protectionViolations = [System.Collections.Generic.List[string]]::new()
+$cleanupErrors = [System.Collections.Generic.List[string]]::new()
+$safetyBackupRetained = $false
 try {
     $installAttempted = $true
+    $installerArguments = @("/S", "/D=$installDirectory")
+    if ($TrustMode -eq "UnsignedInternal") {
+        # Tauri CLI 2.11.4 maps /NS to NoShortcutMode. Backups below remain
+        # the recovery boundary if a future installer ever ignores the switch.
+        $installerArguments = @("/S", "/NS", "/D=$installDirectory")
+    }
     $installProcess = Start-Process `
         -FilePath $InstallerPath `
-        -ArgumentList @("/S", "/D=$installDirectory") `
+        -ArgumentList $installerArguments `
         -Wait `
         -PassThru `
         -WindowStyle Hidden
@@ -163,6 +439,20 @@ try {
         throw "NSIS installer returned exit code $($installProcess.ExitCode)"
     }
     $installSucceeded = $true
+    if ($TrustMode -eq "UnsignedInternal") {
+        foreach ($shortcutFingerprint in $shortcutFingerprints) {
+            $violation = Get-ShortcutFingerprintViolation $shortcutFingerprint "post-install"
+            if ($violation) { $protectionViolations.Add($violation) }
+        }
+        if ((Get-DirectoryFingerprint $programFolder) -ne $programFolderFingerprint) {
+            $protectionViolations.Add(
+                "post-install changed protected Start Menu content: $programFolder"
+            )
+        }
+        if ($protectionViolations.Count -gt 0) {
+            throw "Unsigned internal installer changed protected shortcuts; recovery is required"
+        }
+    }
 
     $appExe = Join-Path $installDirectory "Product Atelier.exe"
     $sidecarExe = Join-Path $installDirectory "python-server\python-server.exe"
@@ -178,50 +468,204 @@ try {
     }
     $uninstaller = $uninstallers[0].FullName
 
-    & $CodeSigningTool `
-        -Mode Verify `
-        -ArtifactPath @($appExe, $sidecarExe, $uninstaller) `
-        -CertificateThumbprint $CertificateThumbprint
+    if ($TrustMode -eq "Signed") {
+        & $CodeSigningTool `
+            -Mode Verify `
+            -ArtifactPath @($appExe, $sidecarExe, $uninstaller) `
+            -CertificateThumbprint $CertificateThumbprint
+    } else {
+        Assert-UnsignedArtifacts @($appExe, $sidecarExe, $uninstaller)
+    }
     & "$PSScriptRoot\Test-Portable.ps1" `
         -PortableDir $installDirectory `
         -ExpectedGitCommit $ExpectedGitCommit
-    & "$PSScriptRoot\Test-Portable-App.ps1" `
-        -PortableDir $installDirectory `
-        -ExpectedGitCommit $ExpectedGitCommit
+    if (-not $SkipAppSmoke) {
+        & "$PSScriptRoot\Test-Portable-App.ps1" `
+            -PortableDir $installDirectory `
+            -ExpectedGitCommit $ExpectedGitCommit
+    }
     & python.exe $SchemaGate --sidecar-dir (Join-Path $installDirectory "python-server")
     if ($LASTEXITCODE -ne 0) {
         throw "Installed schema upgrade and local-edit gate failed"
     }
+} catch {
+    $gateError = $_
 } finally {
-    Stop-TestProcesses $installDirectory
-    if (-not $uninstaller -and (Test-Path -LiteralPath $installDirectory -PathType Container)) {
-        $cleanupUninstallers = @(Get-ChildItem -LiteralPath $installDirectory -File -Filter "uninstall*.exe")
-        if ($cleanupUninstallers.Count -eq 1) {
-            $uninstaller = $cleanupUninstallers[0].FullName
+    try {
+        Stop-TestProcesses $installDirectory
+    } catch {
+        $cleanupErrors.Add("Could not stop isolated test processes: $($_.Exception.Message)")
+    }
+    try {
+        if (-not $uninstaller -and (Test-Path -LiteralPath $installDirectory -PathType Container)) {
+            $cleanupUninstallers = @(
+                Get-ChildItem -LiteralPath $installDirectory -File -Filter "uninstall*.exe"
+            )
+            if ($cleanupUninstallers.Count -eq 1) {
+                $uninstaller = $cleanupUninstallers[0].FullName
+            }
         }
+    } catch {
+        $cleanupErrors.Add("Could not inspect the isolated uninstaller: $($_.Exception.Message)")
     }
     if ($installAttempted -and $uninstaller -and (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
         $uninstallAttempted = $true
-        $uninstallProcess = Start-Process `
-            -FilePath $uninstaller `
-            -ArgumentList "/S" `
-            -Wait `
-            -PassThru `
-            -WindowStyle Hidden
-        if ($uninstallProcess.ExitCode -ne 0) {
-            throw "NSIS uninstaller returned exit code $($uninstallProcess.ExitCode)"
+        try {
+            $uninstallProcess = Start-Process `
+                -FilePath $uninstaller `
+                -ArgumentList @("/S", "/UPDATE") `
+                -Wait `
+                -PassThru `
+                -WindowStyle Hidden
+            if ($uninstallProcess.ExitCode -ne 0) {
+                $cleanupErrors.Add(
+                    "NSIS uninstaller returned exit code $($uninstallProcess.ExitCode)"
+                )
+            }
+        } catch {
+            $cleanupErrors.Add("NSIS uninstaller failed: $($_.Exception.Message)")
         }
     }
 
-    foreach ($shortcutState in $shortcutStates) {
-        Restore-Shortcut $shortcutState $installDirectory
+    if ($TrustMode -eq "UnsignedInternal") {
+        foreach ($shortcutFingerprint in $shortcutFingerprints) {
+            try {
+                $violation = Get-ShortcutFingerprintViolation $shortcutFingerprint "post-uninstall"
+                if ($violation) { $protectionViolations.Add($violation) }
+            } catch {
+                $cleanupErrors.Add(
+                    "Could not inspect protected shortcut $($shortcutFingerprint.Path): " +
+                    $_.Exception.Message
+                )
+            }
+        }
+        try {
+            if ((Get-DirectoryFingerprint $programFolder) -ne $programFolderFingerprint) {
+                $protectionViolations.Add(
+                    "post-uninstall changed protected Start Menu content: $programFolder"
+                )
+            }
+        } catch {
+            $cleanupErrors.Add(
+                "Could not inspect protected Start Menu content: $($_.Exception.Message)"
+            )
+        }
+    }
+
+    try {
+        $runViolation = Get-RegistryValueViolation $runRegistryState "post-uninstall"
+        if ($runViolation) {
+            $protectionViolations.Add($runViolation)
+            Restore-RegistryValueIfOwned $runRegistryState $installDirectory | Out-Null
+        }
+    } catch {
+        $cleanupErrors.Add(
+            "Could not inspect or recover the protected Product Atelier autostart value: " +
+            $_.Exception.Message
+        )
+    }
+
+    for ($index = 0; $index -lt $shortcutStates.Count; $index++) {
+        try {
+            Restore-Shortcut `
+                $shortcutStates[$index] `
+                $shortcutFingerprints[$index] `
+                $installDirectory | Out-Null
+        } catch {
+            $cleanupErrors.Add(
+                "Could not restore protected shortcut $($shortcutStates[$index].Path): " +
+                $_.Exception.Message
+            )
+        }
     }
     if (-not $programFolderExisted -and (Test-Path -LiteralPath $programFolder -PathType Container)) {
-        $remainingProgramEntries = @(Get-ChildItem -LiteralPath $programFolder -Force)
-        if ($remainingProgramEntries.Count -gt 0) {
-            throw "The isolated installer left unexpected Start Menu content: $programFolder"
+        try {
+            $remainingProgramEntries = @(Get-ChildItem -LiteralPath $programFolder -Force)
+            if ($remainingProgramEntries.Count -gt 0) {
+                $cleanupErrors.Add(
+                    "The isolated installer left unexpected Start Menu content: $programFolder"
+                )
+            } else {
+                Remove-Item -LiteralPath $programFolder -Force
+            }
+        } catch {
+            $cleanupErrors.Add("Could not clean the isolated Start Menu folder: $($_.Exception.Message)")
         }
-        Remove-Item -LiteralPath $programFolder -Force
+    }
+
+    foreach ($shortcutFingerprint in $shortcutFingerprints) {
+        try {
+            $violation = Get-ShortcutFingerprintViolation $shortcutFingerprint "post-recovery"
+            if ($violation) {
+                $cleanupErrors.Add("Shortcut recovery is incomplete: $violation")
+            }
+        } catch {
+            $cleanupErrors.Add(
+                "Could not verify recovered shortcut $($shortcutFingerprint.Path): " +
+                $_.Exception.Message
+            )
+        }
+    }
+    try {
+        if ((Get-DirectoryFingerprint $programFolder) -ne $programFolderFingerprint) {
+            $cleanupErrors.Add(
+                "Start Menu recovery is incomplete: $programFolder"
+            )
+        }
+    } catch {
+        $cleanupErrors.Add("Could not verify Start Menu recovery: $($_.Exception.Message)")
+    }
+
+    foreach ($registryState in $productRegistryStates) {
+        try {
+            Restore-RegistryValueState $registryState
+        } catch {
+            $displayName = if ($registryState.ValueName) {
+                $registryState.ValueName
+            } else {
+                "(Default)"
+            }
+            $cleanupErrors.Add(
+                "Could not restore HKCU\$productRegistryPath\$displayName`: " +
+                $_.Exception.Message
+            )
+        }
+    }
+    try {
+        if (-not $productRegistryKeyExisted) {
+            Remove-RegistryKeyIfEmpty $productRegistryPath
+        }
+        if (-not $manufacturerRegistryKeyExisted) {
+            Remove-RegistryKeyIfEmpty $manufacturerRegistryPath
+        }
+    } catch {
+        $cleanupErrors.Add("Could not remove empty installer registry keys: $($_.Exception.Message)")
+    }
+    foreach ($registryState in $productRegistryStates) {
+        try {
+            $violation = Get-RegistryValueViolation $registryState "post-recovery"
+            if ($violation) {
+                $cleanupErrors.Add("Installer registry recovery is incomplete: $violation")
+            }
+        } catch {
+            $cleanupErrors.Add(
+                "Could not verify recovered installer registry state: $($_.Exception.Message)"
+            )
+        }
+    }
+    try {
+        if ((Test-RegistryKeyExists $productRegistryPath) -ne $productRegistryKeyExisted) {
+            $cleanupErrors.Add("Installer registry key existence was not restored: HKCU\$productRegistryPath")
+        }
+        if ((Test-RegistryKeyExists $manufacturerRegistryPath) -ne $manufacturerRegistryKeyExisted) {
+            $cleanupErrors.Add("Manufacturer registry key existence was not restored: HKCU\$manufacturerRegistryPath")
+        }
+        $runViolation = Get-RegistryValueViolation $runRegistryState "post-recovery"
+        if ($runViolation) {
+            $cleanupErrors.Add("Autostart registry recovery is incomplete: $runViolation")
+        }
+    } catch {
+        $cleanupErrors.Add("Could not verify final protected registry state: $($_.Exception.Message)")
     }
 
     if ($installAttempted) {
@@ -231,21 +675,55 @@ try {
             Start-Sleep -Milliseconds 500
         }
         if (Test-Path -LiteralPath $installDirectory) {
-            throw "NSIS uninstall did not remove the isolated install directory: $installDirectory"
+            $cleanupErrors.Add(
+                "NSIS uninstall did not remove the isolated install directory: $installDirectory"
+            )
         }
         if ((Get-ProductUninstallEntries).Count -gt 0) {
-            throw "NSIS uninstall left a Product Atelier registry entry"
+            $cleanupErrors.Add("NSIS uninstall left a Product Atelier registry entry")
         }
         if ($installSucceeded -and -not $uninstallAttempted) {
-            throw "The isolated installation succeeded but no uninstaller could be executed"
+            $cleanupErrors.Add(
+                "The isolated installation succeeded but no uninstaller could be executed"
+            )
         }
     }
 
     if (Test-Path -LiteralPath $safetyRoot) {
-        Remove-Item -LiteralPath $safetyRoot -Recurse -Force
+        if ($cleanupErrors.Count -eq 0) {
+            try {
+                Remove-Item -LiteralPath $safetyRoot -Recurse -Force
+            } catch {
+                $cleanupErrors.Add("Could not remove the shortcut safety backup: $($_.Exception.Message)")
+            }
+        }
+        if (Test-Path -LiteralPath $safetyRoot) {
+            $safetyBackupRetained = $true
+        }
     }
 }
 
-Write-Host "Signed NSIS installation, packaged gates, uninstall, and shortcut restoration passed." -ForegroundColor Green
+$failures = [System.Collections.Generic.List[string]]::new()
+if ($gateError) {
+    $failures.Add("Installed-state gate failed: $($gateError.Exception.Message)")
+}
+if ($protectionViolations.Count -gt 0) {
+    $failures.Add(
+        "Protected user-state violation detected and recovery attempted: " +
+        ($protectionViolations -join "; ")
+    )
+}
+if ($cleanupErrors.Count -gt 0) {
+    $failures.Add("Cleanup or recovery failed: " + ($cleanupErrors -join "; "))
+}
+if ($safetyBackupRetained) {
+    $failures.Add("Shortcut safety backup retained at: $safetyRoot")
+}
+if ($failures.Count -gt 0) {
+    throw ($failures -join [Environment]::NewLine)
+}
+
+$scope = if ($SkipAppSmoke) { "headless preflight" } else { "full installed-state gate" }
+Write-Host "$TrustMode NSIS $scope, uninstall, and shortcut protection passed." -ForegroundColor Green
 Write-Host "Installer SHA-256: $((Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash)"
 Write-Host "Git commit: $ExpectedGitCommit"

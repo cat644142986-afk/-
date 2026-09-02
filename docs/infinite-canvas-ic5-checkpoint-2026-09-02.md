@@ -21,7 +21,7 @@ IC5 视频第一阶段已完成源码、隔离账本和零付费离线闭环。�
 ## 隔离验证
 
 - 离线视频任务验证创建、完成、原始二进制 SHA-256、封面尺寸、trace、重启恢复和同 request ID 幂等重放；网络和付费 provider 调用均为 0。
-- schema 打包门禁已扩展为正式 v7 -> v8 与旧 v5 -> v8：分别保留唯一 backup-v7/backup-v5，校验备份字节、sentinel、SQLite 内容和重启幂等。
+- schema 迁移 fixture 覆盖正式 v7 -> v8 与旧 v5 -> v8：分别保留唯一 backup-v7/backup-v5，校验备份内容、sentinel 和重启幂等。v5 fixture 还包含完整字段的 session、asset、job，以及 v5 新增的 ProductProfile、不可变版本、参考素材关系、job snapshot 和 execution trace 版本绑定；迁移与第二次启动后逐字段一致才算内容保留。2026-09-03 IC6 复核发现，当时的真实 PyInstaller sidecar 门禁只启动验证了 v7，v5 仍停留在源码内 ledger fixture；IC6 已补入 v5 打包进程两次启动门禁，须由绑定修正后新 HEAD 的 sidecar 复跑后才能关闭该证据缺口。
 - 画布竞态专项覆盖切换画布、延迟回填、409 冲突副本、保存失败、关闭重试、永久引用错误和视频 owner 约束。
 - 原视频二进制导出 Rust 测试覆盖合法 ID/文件名、精确 loopback 端点、拒绝重定向、截断不覆盖目标、成功原子替换。
 
@@ -45,4 +45,8 @@ IC5 视频第一阶段已完成源码、隔离账本和零付费离线闭环。�
 
 ## 下一游标
 
-进入 IC6：从干净检查点构建隔离 sidecar、Tauri EXE、portable 和未签名 NSIS；完成 packaged v7 -> v8、候选双 smoke、真实 Tauri WebView、DWM、三档 DPI、Explorer 系统拖拽、视频播放/暂停/seek/导出、重启恢复和 NSIS 安装卸载。全部门禁通过前不提升正式便携版；IC6 关闭后自动进入 G5 结构化质量检查。
+进入 IC6：从干净检查点构建隔离 sidecar、Tauri EXE、portable 和未签名 NSIS；完成 packaged v7 -> v8 与 v5 -> v8、候选双 smoke、真实 Tauri WebView、DWM、三档 DPI、Explorer 系统拖拽、视频播放/暂停/seek/导出、重启恢复和 NSIS 安装卸载。全部门禁通过前不提升正式便携版；IC6 关闭后自动进入 G5 结构化质量检查。
+
+未签名 NSIS 只能使用显式 `UnsignedInternal` 验收模式：安装器及安装后的 App、sidecar、uninstaller 必须全部为 `NotSigned`，安装使用 `/NS` 禁止创建快捷方式，并对既有桌面/开始菜单入口做安装前、安装后和卸载后的只读指纹不变断言。允许在 20:00 前跳过 App smoke 做无窗口预检，但不得把预检写成完整安装态通过；真实 App smoke 仍须在获准的桌面窗口完成。
+
+开发机隔离卸载固定使用 `/S /UPDATE`：它验证隔离目录、卸载注册项和受保护用户状态能够恢复，同时避免普通卸载会清理的 Jump List、最近记录和开机启动项。安装前同时在 safetyRoot 持久化快捷方式副本和类型化 HKCU 注册表快照；恢复失败时必须保留并报告该目录。该门禁不冒充普通用户卸载的完整语义；普通卸载体验只能在可丢弃的 Windows Sandbox/虚拟机中另行验收，不得拿当前正式用户环境做破坏性测试。
