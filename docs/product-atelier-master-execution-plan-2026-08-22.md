@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-02<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `93539f0c9ec857d22d3751bb836ff722579cd8db`，contract `2026-09-02.3`、SQLite schema v7、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo 和 outpaint 只写新增区域均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。同一 artifact 的 NSIS 已完成重建、隔离安装、安装态应用/sidecar/schema-outpaint 门禁、静默卸载和快捷方式恢复，形成未签名内部候选；由于 `NotSigned`，仍不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0–G3 已完成并正式发布。当前执行游标为完成无需证书的代码签名发布准备，然后继续 `app.js` 职责拆分与视觉 token 收口；代码签名证书本身属于外部依赖。情境式创作副驾只有用户重新确认预算后才可进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `93539f0c9ec857d22d3751bb836ff722579cd8db`，contract `2026-09-02.3`、SQLite schema v7、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo 和 outpaint 只写新增区域均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。同一 artifact 的 NSIS 已完成重建、隔离安装、安装态应用/sidecar/schema-outpaint 门禁、静默卸载和快捷方式恢复，形成未签名内部候选；代码签名的一键构建、先签后记 manifest、验签、隔离安装与失败保护也已固化，但由于没有外部代码签名证书，仍不能生成公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0–G3 已完成并正式发布，`app.js` 低耦合拆分与生产视觉 token 已在 G0 关闭。G4 情境式创作副驾继续等待用户重新确认预算；当前执行游标转为不依赖 Agent、付费 API 或大型模型的 G5 确定性质量门禁基础。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -27,7 +27,7 @@
 | Phase 7 智能选物与模型质量 | **人工可恢复闭环与安全材质路由已进入正式版；自动定位和全局 v3 未达门槛** | 名称/数量、人工修正、柔边 Alpha、Prompt/知识/参考请求快照、9 个固定输入、盲评与预算熔断保持不变；v1/v3 三输入付费执行 12/12 成功。用户偏好 v3 2:1，AI 偏好 v1 2:1，且 v3 在真实透明瓶产生唯一阻断失败，因此不替换默认。结构化材质证据与显式 v3 安全回退已经落地；双阶段仍为正式默认，用户显式单次继续可用 |
 | Phase 8 可解释成长系统 | **已完成并进入正式便携版** | Growth 已支持证据、原始反馈、反例、作用域、阈值、预期影响、来源结果和版本历史；编辑、采纳、拒绝、稍后、停用、启用、重开、撤销/重做均为持久且受 revision 保护的操作；项目/品牌 > 品类 > 个人规则优先级、当次意图最高优先级、禁用规则不进入新任务均有自动化门禁 |
 | Phase 9 主题、无障碍与性能 | **当前范围已完成并进入正式便携版** | 外观偏好、系统主题/减少动效、舒适字号、高对比、键盘路径、抽屉语义、异步图片解码、50/200 素材和三档正式 WebView 189/189 全部通过；9 张联络表目视无破图、遮挡、横向滚动或状态污染，原生工作集已记录 |
-| Phase 10 正式发布与灾备 | **正式便携版与未签名内部安装候选完成；公开签名安装器未完成** | 正式 EXE、sidecar、manifest、外部完整备份、事务证据、桌面快捷方式、DWM/DPI 与候选/正式双 smoke 已验证；同一源码身份的 NSIS 已通过隔离安装、安装态三重 smoke、静默卸载和入口恢复，但仍为 `NotSigned`，只供内部验证 |
+| Phase 10 正式发布与灾备 | **正式便携版、未签名内部候选和签名发布工具链完成；公开签名安装器等待外部证书** | 正式 EXE、sidecar、manifest、外部完整备份、事务证据、桌面快捷方式、DWM/DPI 与候选/正式双 smoke 已验证；同一源码身份的 NSIS 已通过隔离安装、安装态三重 smoke、静默卸载和入口恢复。签名路径已锁定证书 EKU/私钥/有效期、HTTPS RFC 3161 时间戳、EXE/sidecar/安装器/卸载器验签和 candidate-first 发布，但当前文件仍为 `NotSigned` |
 
 ## 2026-08-26 实机反馈校准与续作断点
 
@@ -1876,4 +1876,14 @@ G1–G8 预计 `330–560` 小时有效开发与验证，G0 另需 `12–24` 小
 - 桌面快捷方式已恢复为 `D:\ProductAtelier-Desktop\release\ProductAtelier-Portable\Product Atelier.exe`，工作目录为正式便携目录，目标存在；正式 manifest 身份未被安装测试改变。
 - 结论：内部安装候选与本机可完成的安装态门禁已关闭。公开发行仍必须取得代码签名证书，签名 EXE/sidecar/安装器并重新记录签名后哈希、时间戳与 SmartScreen/安装态证据；不得把当前未签名文件对外宣称为正式安装包。
 
-G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁移、candidate-first Windows 提升、正式目录、快捷方式和同一身份 NSIS 隔离安装复验。下一执行入口是审计并固化无需证书即可完成的签名输入、顺序、校验与失败保护，然后继续 `app.js` 职责拆分和视觉 token 整理；证书、账号或密钥仍作为外部依赖单独保留，不能因此停止其他本机工作。Agent、模型下载和付费 API 继续不在当前授权内。
+#### 2026-09-02 Windows 代码签名发布准备检查点
+
+- 源码提交：`dcfd5e19782a7d69dedf869dd0e234ddf93bd01a`。新增根入口 `build-signed-installer.bat`，并由 `tools/Build-SignedInstaller.ps1` 统一执行签名便携候选、Tauri NSIS、签名验收、隔离安装门禁和最终发布复制。
+- `tools/Windows-CodeSigning.ps1` 只接受 Windows 证书存储或硬件提供程序中的 SHA-1 thumbprint，不接受 PFX、密码或私钥路径；预检强制证书存在、私钥可访问、有效期正确、Code Signing EKU `1.3.6.1.5.5.7.3.3`、`signtool.exe` 可用和 HTTPS RFC 3161 时间戳。
+- sidecar 先签名、验签，再把签名后 EXE 哈希和 Authenticode 身份写入 manifest；Tauri 应用在 portable candidate 组装前签名。带 `authenticode.required=true` 的候选在 `Test-Portable.ps1` 中强制同时验证应用和 sidecar 的 signer、时间戳及 Windows Authenticode policy。
+- 签名 NSIS 在复制到 `release/ProductAtelier-Installer` 前，必须先验证安装器签名，拒绝覆盖已有正式安装记录，在系统临时目录完成安装态应用/sidecar/卸载器验签、sidecar smoke、应用 smoke、schema v5→v7/outpaint 门禁、静默卸载、注册表清理和桌面/开始菜单入口恢复；任一失败都不会发布目标文件。
+- 失败保护已用两条真实负向路径验证：虚构证书在构建前返回“证书不存在”，现有 `93539f0` 未签名 NSIS 在安装前返回 `NotSigned`；均未触发签名、安装或网络调用。由于本机没有代码签名证书，没有伪造“已签名成功”证据。
+- 完整门禁：前端 `154/154`；Python 共运行 `339` 项（`338` 通过、`1` 项平台预期跳过）；Vite production build、Rust/Tauri locked custom-protocol check、Python compileall、全量 JavaScript syntax、PowerShell parser 和 Git whitespace 全绿。当前正式 `93539f0 / contract .3 / schema v7` 另行通过 sidecar、应用启动与 schema/outpaint 三重 smoke，正式目录未被本检查点修改。
+- 公开发行唯一剩余条件是用户取得可用代码签名证书及其时间戳服务配置；证书到位后运行 `build-signed-installer.bat`，以脚本最终输出的新 SHA-256、签名主体、时间戳和安装态证据关闭门禁。当前 `NotSigned` 内部候选不能改名冒充公开包。
+
+G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁移、candidate-first Windows 提升、正式目录、快捷方式和同一身份 NSIS 隔离安装复验；默认生图决策、`app.js` 低耦合拆分、生产视觉 token 和无需证书的签名准备均已关闭。G4 因 Agent 预算未重新授权继续暂停。下一执行入口转为 G5 的零付费确定性基础：先冻结 `QualityIssue` 证据、严重度、问题区域、未验证轴和建议动作合同，并把现有可验证的尺寸、安全区、透明通道、SKU/数量声明等事实接入结构化质量报告；不启动 OCR/VLM/IQA 模型，不自动付费重做。代码签名证书、模型下载和付费 API 继续作为外部或未授权事项单独保留，不能阻断这一游标。
