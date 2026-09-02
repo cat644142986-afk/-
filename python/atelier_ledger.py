@@ -39,8 +39,23 @@ except ImportError:
         normalize_local_edit_contract,
     )
 
+try:
+    from spatial_canvas_contract import (
+        empty_spatial_scene,
+        normalize_spatial_scene,
+        spatial_scene_references,
+        spatial_scene_thumbnail,
+    )
+except ImportError:
+    from .spatial_canvas_contract import (
+        empty_spatial_scene,
+        normalize_spatial_scene,
+        spatial_scene_references,
+        spatial_scene_thumbnail,
+    )
 
-SCHEMA_VERSION = 7
+
+SCHEMA_VERSION = 8
 CANVAS_DOCUMENT_SCHEMA_VERSION = 1
 PRODUCT_PROFILE_SCHEMA_VERSION = 1
 CANVAS_COORDINATE_SYSTEM = {
@@ -133,6 +148,18 @@ class CanvasRevisionConflictError(ValueError):
     def __init__(self, message: str, current: Mapping[str, Any]):
         super().__init__(message)
         self.current = dict(current)
+
+
+class SpatialCanvasRevisionConflictError(ValueError):
+    """Raised when a stale spatial scene save targets an older revision."""
+
+    def __init__(self, message: str, current: Mapping[str, Any]):
+        super().__init__(message)
+        self.current = dict(current)
+
+
+class SpatialSceneCorruptedError(LedgerSchemaError):
+    """Raised when a stored spatial scene no longer matches its immutable receipt."""
 
 
 class ProductProfileRevisionConflictError(ValueError):
@@ -376,6 +403,42 @@ V7_REQUIRED_INDEXES = frozenset({
 V7_REQUIRED_TRIGGERS = frozenset({
     "trg_local_edit_compositions_no_update",
     "trg_local_edit_compositions_no_delete",
+})
+
+V8_TABLE_COLUMNS = {
+    "spatial_canvas_documents": frozenset({
+        "id", "name", "current_version_id", "current_revision",
+        "create_request_id", "create_request_fingerprint",
+        "created_at", "updated_at", "last_opened_at",
+    }),
+    "spatial_canvas_scene_versions": frozenset({
+        "id", "document_id", "revision", "parent_version_id",
+        "client_request_id", "request_fingerprint", "scene_json",
+        "scene_sha256", "thumbnail_json", "thumbnail_sha256", "created_at",
+    }),
+    "spatial_scene_requests": frozenset({
+        "client_request_id", "document_id", "expected_revision",
+        "request_fingerprint", "resulting_version_id", "outcome", "created_at",
+    }),
+    "spatial_scene_references": frozenset({
+        "version_id", "element_id", "ref_kind", "ref_id",
+    }),
+}
+
+V8_REQUIRED_INDEXES = frozenset({
+    "idx_spatial_documents_recent",
+    "idx_spatial_versions_document",
+    "idx_spatial_requests_document",
+    "idx_spatial_references_lookup",
+})
+
+V8_REQUIRED_TRIGGERS = frozenset({
+    "trg_spatial_scene_versions_no_update",
+    "trg_spatial_scene_versions_no_delete",
+    "trg_spatial_scene_requests_no_update",
+    "trg_spatial_scene_requests_no_delete",
+    "trg_spatial_scene_references_no_update",
+    "trg_spatial_scene_references_no_delete",
 })
 
 V1_SCHEMA_STATEMENTS = (
@@ -1668,6 +1731,59 @@ class AtelierLedger:
             issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
         return issues
 
+    @classmethod
+    def _v8_objects_present(cls, connection: sqlite3.Connection) -> bool:
+        tables = cls._table_names(connection)
+        if tables.intersection(V8_TABLE_COLUMNS):
+            return True
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        return bool(triggers.intersection(V8_REQUIRED_TRIGGERS))
+
+    @classmethod
+    def _v8_contract_issues(cls, connection: sqlite3.Connection) -> list[str]:
+        issues: list[str] = []
+        tables = cls._table_names(connection)
+        for table, required_columns in V8_TABLE_COLUMNS.items():
+            if table not in tables:
+                issues.append(f"missing table {table}")
+                continue
+            actual_columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing_columns = sorted(required_columns - actual_columns)
+            if missing_columns:
+                issues.append(f"{table} missing columns: {', '.join(missing_columns)}")
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        missing_indexes = sorted(V8_REQUIRED_INDEXES - indexes)
+        if missing_indexes:
+            issues.append(f"missing indexes: {', '.join(missing_indexes)}")
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        missing_triggers = sorted(V8_REQUIRED_TRIGGERS - triggers)
+        if missing_triggers:
+            issues.append(f"missing triggers: {', '.join(missing_triggers)}")
+        integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
+        if integrity_rows != ["ok"]:
+            issues.append(f"integrity_check failed: {'; '.join(integrity_rows[:3])}")
+        foreign_key_rows = list(connection.execute("PRAGMA foreign_key_check"))
+        if foreign_key_rows:
+            issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
+        return issues
+
     def _migration_backup_path(self, version: int) -> Path:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         return self.db_path.with_name(
@@ -2470,6 +2586,144 @@ class AtelierLedger:
                 """
             )
 
+    @staticmethod
+    def _migrate_v7_to_v8(connection: sqlite3.Connection) -> None:
+        """Add durable spatial canvases without changing Fabric CanvasDocument v1."""
+        connection.execute(
+            """
+            CREATE TABLE spatial_canvas_documents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 60),
+                current_version_id TEXT,
+                current_revision INTEGER NOT NULL DEFAULT 0 CHECK(current_revision >= 0),
+                create_request_id TEXT NOT NULL UNIQUE,
+                create_request_fingerprint TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_opened_at TEXT NOT NULL,
+                FOREIGN KEY(current_version_id)
+                    REFERENCES spatial_canvas_scene_versions(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE spatial_canvas_scene_versions (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                parent_version_id TEXT,
+                client_request_id TEXT NOT NULL UNIQUE,
+                request_fingerprint TEXT NOT NULL,
+                scene_json TEXT NOT NULL,
+                scene_sha256 TEXT NOT NULL,
+                thumbnail_json TEXT NOT NULL,
+                thumbnail_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(document_id)
+                    REFERENCES spatial_canvas_documents(id) ON DELETE RESTRICT,
+                FOREIGN KEY(parent_version_id)
+                    REFERENCES spatial_canvas_scene_versions(id) ON DELETE RESTRICT,
+                UNIQUE(document_id, revision)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE spatial_scene_requests (
+                client_request_id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                expected_revision INTEGER NOT NULL CHECK(expected_revision >= 1),
+                request_fingerprint TEXT NOT NULL,
+                resulting_version_id TEXT NOT NULL,
+                outcome TEXT NOT NULL CHECK(outcome IN ('created','unchanged')),
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(document_id)
+                    REFERENCES spatial_canvas_documents(id) ON DELETE RESTRICT,
+                FOREIGN KEY(resulting_version_id)
+                    REFERENCES spatial_canvas_scene_versions(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE spatial_scene_references (
+                version_id TEXT NOT NULL,
+                element_id TEXT NOT NULL,
+                ref_kind TEXT NOT NULL CHECK(ref_kind IN (
+                    'asset','result','task','product_profile_version','lineage_parent'
+                )),
+                ref_id TEXT NOT NULL,
+                PRIMARY KEY(version_id, element_id, ref_kind),
+                FOREIGN KEY(version_id)
+                    REFERENCES spatial_canvas_scene_versions(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX idx_spatial_documents_recent "
+            "ON spatial_canvas_documents(last_opened_at DESC, updated_at DESC)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_spatial_versions_document "
+            "ON spatial_canvas_scene_versions(document_id, revision DESC)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_spatial_requests_document "
+            "ON spatial_scene_requests(document_id, created_at DESC)"
+        )
+        connection.execute(
+            "CREATE INDEX idx_spatial_references_lookup "
+            "ON spatial_scene_references(ref_kind, ref_id)"
+        )
+        for trigger_name, table, action, message in (
+            (
+                "trg_spatial_scene_versions_no_update",
+                "spatial_canvas_scene_versions",
+                "UPDATE",
+                "spatial canvas scene versions are immutable",
+            ),
+            (
+                "trg_spatial_scene_versions_no_delete",
+                "spatial_canvas_scene_versions",
+                "DELETE",
+                "spatial canvas scene versions are immutable",
+            ),
+            (
+                "trg_spatial_scene_requests_no_update",
+                "spatial_scene_requests",
+                "UPDATE",
+                "spatial scene requests are immutable",
+            ),
+            (
+                "trg_spatial_scene_requests_no_delete",
+                "spatial_scene_requests",
+                "DELETE",
+                "spatial scene requests are immutable",
+            ),
+            (
+                "trg_spatial_scene_references_no_update",
+                "spatial_scene_references",
+                "UPDATE",
+                "spatial scene references are immutable",
+            ),
+            (
+                "trg_spatial_scene_references_no_delete",
+                "spatial_scene_references",
+                "DELETE",
+                "spatial scene references are immutable",
+            ),
+        ):
+            connection.execute(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {action} ON {table}
+                BEGIN
+                    SELECT RAISE(ABORT, '{message}');
+                END
+                """
+            )
+
     def _ensure_schema(self) -> None:
         with self._schema_lock:
             # Probe the version without changing journal mode. An older app must
@@ -2608,6 +2862,23 @@ class AtelierLedger:
                                     else:
                                         self._migrate_v6_to_v7(connection)
                                     current_version = 7
+                                elif current_version == 7:
+                                    if self._v8_objects_present(connection):
+                                        issues = self._v8_contract_issues(connection)
+                                        if issues:
+                                            raise PartialSchemaError(
+                                                "Detected an incomplete v8 ledger while schema metadata says v7; "
+                                                "the database was not changed. Restore the automatic backup or "
+                                                f"repair these objects first: {' | '.join(issues)}"
+                                            )
+                                        repair = "recovered complete v8 schema with stale v7 metadata"
+                                        self.last_schema_repair = (
+                                            f"{self.last_schema_repair}; {repair}"
+                                            if self.last_schema_repair else repair
+                                        )
+                                    else:
+                                        self._migrate_v7_to_v8(connection)
+                                    current_version = 8
                                 else:
                                     raise LedgerSchemaError(
                                         f"No migration path from schema v{current_version}"
@@ -3205,6 +3476,14 @@ class AtelierLedger:
                     (asset_id,),
                 )
             ],
+            "spatial_scene_versions": [
+                str(row["version_id"])
+                for row in connection.execute(
+                    "SELECT DISTINCT version_id FROM spatial_scene_references "
+                    "WHERE ref_kind = 'asset' AND ref_id = ?",
+                    (asset_id,),
+                )
+            ],
             "product_profile_versions": [
                 str(row["version_id"])
                 for row in connection.execute(
@@ -3651,6 +3930,489 @@ class AtelierLedger:
                 assert document_row is not None and version_row is not None
 
         return self._canvas_result(document_row, version_row, replayed=replayed)
+
+    @staticmethod
+    def _spatial_canvas_name(value: Any, fallback: str = "未命名画布") -> str:
+        name = re.sub(r"\s+", " ", str(value or "").strip())[:60]
+        return name or fallback
+
+    @staticmethod
+    def _spatial_scene_thumbnail_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        thumbnail_json = str(item.pop("thumbnail_json", ""))
+        expected_sha256 = str(item.get("thumbnail_sha256") or "")
+        actual_sha256 = hashlib.sha256(thumbnail_json.encode("utf-8")).hexdigest()
+        if not thumbnail_json or actual_sha256 != expected_sha256:
+            raise SpatialSceneCorruptedError(
+                f"spatial scene version {item.get('id')} failed its thumbnail SHA-256 receipt"
+            )
+        try:
+            thumbnail = json.loads(thumbnail_json)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise SpatialSceneCorruptedError(
+                f"spatial scene version {item.get('id')} has an invalid thumbnail"
+            ) from exc
+        if not isinstance(thumbnail, Mapping):
+            raise SpatialSceneCorruptedError(
+                f"spatial scene version {item.get('id')} has an invalid thumbnail"
+            )
+        item["thumbnail"] = dict(thumbnail)
+        item.pop("request_fingerprint", None)
+        return item
+
+    @classmethod
+    def _spatial_scene_version_row(cls, row: sqlite3.Row) -> dict[str, Any]:
+        item = cls._spatial_scene_thumbnail_row(row)
+        thumbnail = item.pop("thumbnail")
+        scene_json = str(item.pop("scene_json", ""))
+        expected_sha256 = str(item.get("scene_sha256") or "")
+        actual_sha256 = hashlib.sha256(scene_json.encode("utf-8")).hexdigest()
+        if not scene_json or actual_sha256 != expected_sha256:
+            raise SpatialSceneCorruptedError(
+                f"spatial scene version {item.get('id')} failed its SHA-256 receipt"
+            )
+        try:
+            decoded_scene = json.loads(scene_json)
+            scene = normalize_spatial_scene(decoded_scene)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise SpatialSceneCorruptedError(
+                f"spatial scene version {item.get('id')} is not a valid scene"
+            ) from exc
+        if canonical_json(spatial_scene_thumbnail(scene)) != canonical_json(thumbnail):
+            raise SpatialSceneCorruptedError(
+                f"spatial scene version {item.get('id')} thumbnail does not match its scene"
+            )
+        item["scene"] = scene
+        item["thumbnail"] = thumbnail
+        return item
+
+    @classmethod
+    def _spatial_canvas_result(
+        cls,
+        document_row: sqlite3.Row,
+        version_row: sqlite3.Row,
+        *,
+        include_scene: bool,
+        replayed: bool = False,
+        unchanged: bool = False,
+    ) -> dict[str, Any]:
+        version = (
+            cls._spatial_scene_version_row(version_row)
+            if include_scene else cls._spatial_scene_thumbnail_row(version_row)
+        )
+        scene = version.pop("scene", None)
+        thumbnail = version.pop("thumbnail")
+        version.pop("scene_json", None)
+        result = {
+            "id": str(document_row["id"]),
+            "name": str(document_row["name"]),
+            "created_at": str(document_row["created_at"]),
+            "updated_at": str(document_row["updated_at"]),
+            "last_opened_at": str(document_row["last_opened_at"]),
+            "current_revision": int(document_row["current_revision"]),
+            "current_version_id": str(document_row["current_version_id"]),
+            "version": version,
+            "thumbnail": thumbnail,
+            "summary": {
+                key: thumbnail.get(key, 0)
+                for key in ("element_count", "image_count", "video_count", "frame_count")
+            },
+            "replayed": replayed,
+            "unchanged": unchanged,
+        }
+        if include_scene:
+            result["scene"] = scene
+        return result
+
+    def list_spatial_canvases(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        limit = _canvas_integer(limit, "limit", minimum=1, maximum=200)
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM spatial_canvas_documents
+                ORDER BY last_opened_at DESC, updated_at DESC, id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            results: list[dict[str, Any]] = []
+            for row in rows:
+                version = connection.execute(
+                    """
+                    SELECT id, document_id, revision, parent_version_id,
+                           client_request_id, request_fingerprint, scene_sha256,
+                           thumbnail_json, thumbnail_sha256, created_at
+                    FROM spatial_canvas_scene_versions WHERE id = ?
+                    """,
+                    (row["current_version_id"],),
+                ).fetchone()
+                if version is None:
+                    raise SpatialSceneCorruptedError(
+                        f"spatial canvas {row['id']} has no current scene version"
+                    )
+                results.append(
+                    self._spatial_canvas_result(row, version, include_scene=False)
+                )
+        return results
+
+    def get_spatial_canvas(self, document_id: str) -> dict[str, Any]:
+        document_id = _canvas_id(document_id, "spatial_canvas_id")
+        with self._connection() as connection:
+            document = connection.execute(
+                "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+            ).fetchone()
+            if document is None:
+                raise KeyError(f"unknown spatial canvas: {document_id}")
+            version = connection.execute(
+                "SELECT * FROM spatial_canvas_scene_versions WHERE id = ?",
+                (document["current_version_id"],),
+            ).fetchone()
+            if version is None:
+                raise SpatialSceneCorruptedError(
+                    f"spatial canvas {document_id} has no current scene version"
+                )
+        return self._spatial_canvas_result(document, version, include_scene=True)
+
+    def open_spatial_canvas(self, document_id: str) -> dict[str, Any]:
+        document_id = _canvas_id(document_id, "spatial_canvas_id")
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            updated = connection.execute(
+                "UPDATE spatial_canvas_documents SET last_opened_at = ? WHERE id = ?",
+                (now, document_id),
+            )
+            if updated.rowcount != 1:
+                raise KeyError(f"unknown spatial canvas: {document_id}")
+            document = connection.execute(
+                "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+            ).fetchone()
+            assert document is not None
+            version = connection.execute(
+                "SELECT * FROM spatial_canvas_scene_versions WHERE id = ?",
+                (document["current_version_id"],),
+            ).fetchone()
+            if version is None:
+                raise SpatialSceneCorruptedError(
+                    f"spatial canvas {document_id} has no current scene version"
+                )
+        return self._spatial_canvas_result(document, version, include_scene=True)
+
+    def create_spatial_canvas(
+        self, *, name: str, client_request_id: str
+    ) -> dict[str, Any]:
+        normalized_name = self._spatial_canvas_name(name)
+        request_id = str(client_request_id or "").strip()
+        document_id = idempotent_id("spatial", request_id)
+        version_id = idempotent_id("spatialver", f"{request_id}:initial")
+        fingerprint = hashlib.sha256(canonical_json({
+            "name": normalized_name,
+        }).encode("utf-8")).hexdigest()
+        scene = normalize_spatial_scene(empty_spatial_scene())
+        scene_json = canonical_json(scene)
+        scene_sha256 = hashlib.sha256(scene_json.encode("utf-8")).hexdigest()
+        thumbnail_json = canonical_json(spatial_scene_thumbnail(scene))
+        thumbnail_sha256 = hashlib.sha256(thumbnail_json.encode("utf-8")).hexdigest()
+        replayed = False
+
+        with self._immediate_connection() as connection:
+            prior = connection.execute(
+                "SELECT * FROM spatial_canvas_documents WHERE create_request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if prior is not None:
+                if str(prior["create_request_fingerprint"]) != fingerprint:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different spatial canvas"
+                    )
+                document = prior
+                version = connection.execute(
+                    "SELECT * FROM spatial_canvas_scene_versions WHERE id = ?",
+                    (document["current_version_id"],),
+                ).fetchone()
+                if version is None:
+                    raise SpatialSceneCorruptedError(
+                        f"spatial canvas {document['id']} has no current scene version"
+                    )
+                replayed = True
+            else:
+                now = utc_now()
+                connection.execute(
+                    """
+                    INSERT INTO spatial_canvas_documents(
+                        id, name, current_version_id, current_revision,
+                        create_request_id, create_request_fingerprint,
+                        created_at, updated_at, last_opened_at
+                    ) VALUES(?, ?, NULL, 0, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        document_id, normalized_name, request_id, fingerprint,
+                        now, now, now,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO spatial_canvas_scene_versions(
+                        id, document_id, revision, parent_version_id,
+                        client_request_id, request_fingerprint, scene_json,
+                        scene_sha256, thumbnail_json, thumbnail_sha256, created_at
+                    ) VALUES(?, ?, 1, NULL, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        version_id, document_id, f"{request_id}:initial", fingerprint,
+                        scene_json, scene_sha256, thumbnail_json, thumbnail_sha256, now,
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE spatial_canvas_documents
+                    SET current_version_id = ?, current_revision = 1
+                    WHERE id = ?
+                    """,
+                    (version_id, document_id),
+                )
+                document = connection.execute(
+                    "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+                ).fetchone()
+                version = connection.execute(
+                    "SELECT * FROM spatial_canvas_scene_versions WHERE id = ?", (version_id,)
+                ).fetchone()
+                assert document is not None and version is not None
+        return self._spatial_canvas_result(
+            document, version, include_scene=True, replayed=replayed
+        )
+
+    def rename_spatial_canvas(self, document_id: str, name: str) -> dict[str, Any]:
+        document_id = _canvas_id(document_id, "spatial_canvas_id")
+        normalized_name = self._spatial_canvas_name(name)
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            updated = connection.execute(
+                """
+                UPDATE spatial_canvas_documents
+                SET name = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (normalized_name, now, document_id),
+            )
+            if updated.rowcount != 1:
+                raise KeyError(f"unknown spatial canvas: {document_id}")
+            document = connection.execute(
+                "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+            ).fetchone()
+            assert document is not None
+            version = connection.execute(
+                "SELECT * FROM spatial_canvas_scene_versions WHERE id = ?",
+                (document["current_version_id"],),
+            ).fetchone()
+            if version is None:
+                raise SpatialSceneCorruptedError(
+                    f"spatial canvas {document_id} has no current scene version"
+                )
+        return self._spatial_canvas_result(document, version, include_scene=False)
+
+    @staticmethod
+    def _validate_spatial_references(
+        connection: sqlite3.Connection, references: list[dict[str, str]]
+    ) -> None:
+        for reference in references:
+            ref_kind = reference["ref_kind"]
+            ref_id = reference["ref_id"]
+            found = True
+            if ref_kind == "asset":
+                found = connection.execute(
+                    "SELECT 1 FROM assets WHERE id = ?", (ref_id,)
+                ).fetchone() is not None
+            elif ref_kind == "result":
+                found = (
+                    connection.execute(
+                        "SELECT 1 FROM assets WHERE id = ?", (ref_id,)
+                    ).fetchone() is not None
+                    or connection.execute(
+                        "SELECT 1 FROM generations WHERE id = ?", (ref_id,)
+                    ).fetchone() is not None
+                )
+            elif ref_kind == "lineage_parent":
+                found = connection.execute(
+                    "SELECT 1 FROM assets WHERE id = ?", (ref_id,)
+                ).fetchone() is not None
+            elif ref_kind == "task":
+                found = connection.execute(
+                    "SELECT 1 FROM jobs WHERE id = ?", (ref_id,)
+                ).fetchone() is not None
+            elif ref_kind == "product_profile_version":
+                found = connection.execute(
+                    "SELECT 1 FROM product_profile_versions WHERE id = ?", (ref_id,)
+                ).fetchone() is not None
+            if not found:
+                raise KeyError(f"unknown spatial {ref_kind} reference: {ref_id}")
+
+    def save_spatial_canvas_scene(
+        self,
+        document_id: str,
+        *,
+        expected_revision: int,
+        client_request_id: str,
+        scene: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        document_id = _canvas_id(document_id, "spatial_canvas_id")
+        expected_revision = _canvas_integer(
+            expected_revision, "expected_revision", minimum=1
+        )
+        request_id = str(client_request_id or "").strip()
+        version_id = idempotent_id("spatialver", request_id)
+        normalized_scene = normalize_spatial_scene(scene)
+        scene_json = canonical_json(normalized_scene)
+        scene_sha256 = hashlib.sha256(scene_json.encode("utf-8")).hexdigest()
+        thumbnail_json = canonical_json(spatial_scene_thumbnail(normalized_scene))
+        thumbnail_sha256 = hashlib.sha256(thumbnail_json.encode("utf-8")).hexdigest()
+        references = spatial_scene_references(normalized_scene)
+        fingerprint = hashlib.sha256(canonical_json({
+            "document_id": document_id,
+            "expected_revision": expected_revision,
+            "scene_sha256": scene_sha256,
+        }).encode("utf-8")).hexdigest()
+
+        with self._immediate_connection() as connection:
+            prior_request = connection.execute(
+                "SELECT * FROM spatial_scene_requests WHERE client_request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if prior_request is not None:
+                if (
+                    str(prior_request["document_id"]) != document_id
+                    or str(prior_request["request_fingerprint"]) != fingerprint
+                ):
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different spatial scene save"
+                    )
+                document = connection.execute(
+                    "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+                ).fetchone()
+                version = connection.execute(
+                    "SELECT * FROM spatial_canvas_scene_versions WHERE id = ?",
+                    (prior_request["resulting_version_id"],),
+                ).fetchone()
+                if document is None or version is None:
+                    raise SpatialSceneCorruptedError(
+                        f"spatial scene request {request_id} has broken references"
+                    )
+                return self._spatial_canvas_result(
+                    document,
+                    version,
+                    include_scene=True,
+                    replayed=True,
+                    unchanged=str(prior_request["outcome"]) == "unchanged",
+                )
+
+            document = connection.execute(
+                "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+            ).fetchone()
+            if document is None:
+                raise KeyError(f"unknown spatial canvas: {document_id}")
+            current_revision = int(document["current_revision"])
+            if current_revision != expected_revision:
+                raise SpatialCanvasRevisionConflictError(
+                    f"spatial canvas {document_id} is revision {current_revision}, "
+                    f"not {expected_revision}",
+                    {
+                        "id": document_id,
+                        "current_revision": current_revision,
+                        "current_version_id": str(document["current_version_id"]),
+                    },
+                )
+            self._validate_spatial_references(connection, references)
+            current_version = connection.execute(
+                "SELECT * FROM spatial_canvas_scene_versions WHERE id = ?",
+                (document["current_version_id"],),
+            ).fetchone()
+            if current_version is None:
+                raise SpatialSceneCorruptedError(
+                    f"spatial canvas {document_id} has no current scene version"
+                )
+            now = utc_now()
+            if str(current_version["scene_sha256"]) == scene_sha256:
+                connection.execute(
+                    """
+                    INSERT INTO spatial_scene_requests(
+                        client_request_id, document_id, expected_revision,
+                        request_fingerprint, resulting_version_id, outcome, created_at
+                    ) VALUES(?, ?, ?, ?, ?, 'unchanged', ?)
+                    """,
+                    (
+                        request_id, document_id, expected_revision, fingerprint,
+                        current_version["id"], now,
+                    ),
+                )
+                return self._spatial_canvas_result(
+                    document,
+                    current_version,
+                    include_scene=True,
+                    replayed=False,
+                    unchanged=True,
+                )
+
+            next_revision = current_revision + 1
+            connection.execute(
+                """
+                INSERT INTO spatial_canvas_scene_versions(
+                    id, document_id, revision, parent_version_id,
+                    client_request_id, request_fingerprint, scene_json,
+                    scene_sha256, thumbnail_json, thumbnail_sha256, created_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    version_id, document_id, next_revision,
+                    current_version["id"], request_id, fingerprint, scene_json,
+                    scene_sha256, thumbnail_json, thumbnail_sha256, now,
+                ),
+            )
+            for reference in references:
+                connection.execute(
+                    """
+                    INSERT INTO spatial_scene_references(
+                        version_id, element_id, ref_kind, ref_id
+                    ) VALUES(?, ?, ?, ?)
+                    """,
+                    (
+                        version_id, reference["element_id"],
+                        reference["ref_kind"], reference["ref_id"],
+                    ),
+                )
+            connection.execute(
+                """
+                INSERT INTO spatial_scene_requests(
+                    client_request_id, document_id, expected_revision,
+                    request_fingerprint, resulting_version_id, outcome, created_at
+                ) VALUES(?, ?, ?, ?, ?, 'created', ?)
+                """,
+                (request_id, document_id, expected_revision, fingerprint, version_id, now),
+            )
+            connection.execute(
+                """
+                UPDATE spatial_canvas_documents
+                SET current_version_id = ?, current_revision = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (version_id, next_revision, now, document_id),
+            )
+            document = connection.execute(
+                "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+            ).fetchone()
+            version = connection.execute(
+                "SELECT * FROM spatial_canvas_scene_versions WHERE id = ?", (version_id,)
+            ).fetchone()
+            assert document is not None and version is not None
+        return self._spatial_canvas_result(document, version, include_scene=True)
+
+    def get_spatial_canvas_version(self, version_id: str) -> dict[str, Any]:
+        version_id = _canvas_id(version_id, "spatial_scene_version_id")
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM spatial_canvas_scene_versions WHERE id = ?", (version_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown spatial scene version: {version_id}")
+        return self._spatial_scene_version_row(row)
 
     @staticmethod
     def _canvas_roi_row(

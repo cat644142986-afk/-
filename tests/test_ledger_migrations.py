@@ -288,7 +288,8 @@ class LedgerMigrationTests(unittest.TestCase):
             "recovered complete v4 schema with stale v3 metadata; "
             "recovered complete v5 schema with stale v4 metadata; "
             "recovered complete v6 schema with stale v5 metadata; "
-            "recovered complete v7 schema with stale v6 metadata",
+            "recovered complete v7 schema with stale v6 metadata; "
+            "recovered complete v8 schema with stale v7 metadata",
         )
         self.assertIsNotNone(repaired.last_migration_backup)
         backup_path = repaired.last_migration_backup
@@ -370,7 +371,8 @@ class LedgerMigrationTests(unittest.TestCase):
             "recovered complete v4 schema with stale v3 metadata; "
             "recovered complete v5 schema with stale v4 metadata; "
             "recovered complete v6 schema with stale v5 metadata; "
-            "recovered complete v7 schema with stale v6 metadata",
+            "recovered complete v7 schema with stale v6 metadata; "
+            "recovered complete v8 schema with stale v7 metadata",
         )
         self.assertIsNotNone(repaired.last_migration_backup)
         backup_path = repaired.last_migration_backup

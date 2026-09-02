@@ -192,6 +192,7 @@ try {
             "python/command_registry.py",
             "python/canvas_export.py",
             "python/local_edit_contract.py",
+            "python/spatial_canvas_contract.py",
             "python/asset_store.py",
             "python/job_engine.py",
             "python/knowledge_engine.py",

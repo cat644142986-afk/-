@@ -33,6 +33,8 @@ try:
         InvalidStatusTransitionError,
         MemorySuggestionRevisionConflictError,
         ProductProfileRevisionConflictError,
+        SpatialCanvasRevisionConflictError,
+        SpatialSceneCorruptedError,
         idempotent_id,
     )
     from command_registry import (
@@ -118,6 +120,8 @@ except ImportError:  # Allows importing as python.server during local tests.
         InvalidStatusTransitionError,
         MemorySuggestionRevisionConflictError,
         ProductProfileRevisionConflictError,
+        SpatialCanvasRevisionConflictError,
+        SpatialSceneCorruptedError,
         idempotent_id,
     )
     from python.command_registry import (
@@ -267,7 +271,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-09-02.3"
+SIDECAR_CONTRACT_VERSION = "2026-09-02.4"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -2122,6 +2126,30 @@ class CanvasDocumentSaveRequest(BaseModel):
         extra = "forbid"
 
 
+class SpatialCanvasCreateRequest(BaseModel):
+    name: str = "未命名画布"
+    client_request_id: str
+
+    class Config:
+        extra = "forbid"
+
+
+class SpatialCanvasRenameRequest(BaseModel):
+    name: str
+
+    class Config:
+        extra = "forbid"
+
+
+class SpatialSceneSaveRequest(BaseModel):
+    expected_revision: int = Field(ge=1)
+    client_request_id: str
+    scene: dict[str, Any]
+
+    class Config:
+        extra = "forbid"
+
+
 class CanvasRoiCreateRequest(BaseModel):
     canvas_document_id: str
     expected_canvas_revision: int = Field(ge=0)
@@ -2669,6 +2697,96 @@ async def save_workflow_canvas(mode: str, request: CanvasDocumentSaveRequest):
             status_code=400,
             detail={"code": "INVALID_CANVAS_DOCUMENT", "message": str(exc)},
         )
+
+
+def raise_spatial_canvas_http_error(exc: Exception) -> None:
+    if isinstance(exc, SpatialCanvasRevisionConflictError):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "SPATIAL_CANVAS_REVISION_CONFLICT",
+                "message": str(exc),
+                "current": exc.current,
+            },
+        )
+    if isinstance(exc, IdempotencyConflictError):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)},
+        )
+    if isinstance(exc, SpatialSceneCorruptedError):
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "SPATIAL_SCENE_CORRUPTED", "message": str(exc)},
+        )
+    if isinstance(exc, KeyError):
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "SPATIAL_CANVAS_REFERENCE_NOT_FOUND", "message": str(exc)},
+        )
+    if isinstance(exc, (sqlite3.IntegrityError, ValueError)):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_SPATIAL_CANVAS", "message": str(exc)},
+        )
+    raise exc
+
+
+@app.get("/api/spatial-canvases")
+async def list_spatial_canvases(limit: int = 100):
+    try:
+        canvases = LEDGER.list_spatial_canvases(limit=limit)
+        return {"canvases": canvases, "count": len(canvases)}
+    except Exception as exc:
+        raise_spatial_canvas_http_error(exc)
+
+
+@app.post("/api/spatial-canvases")
+async def create_spatial_canvas(request: SpatialCanvasCreateRequest):
+    try:
+        return LEDGER.create_spatial_canvas(
+            name=request.name,
+            client_request_id=request.client_request_id,
+        )
+    except Exception as exc:
+        raise_spatial_canvas_http_error(exc)
+
+
+@app.get("/api/spatial-canvases/{canvas_id}")
+async def open_spatial_canvas(canvas_id: str):
+    try:
+        return LEDGER.open_spatial_canvas(canvas_id)
+    except Exception as exc:
+        raise_spatial_canvas_http_error(exc)
+
+
+@app.patch("/api/spatial-canvases/{canvas_id}")
+async def rename_spatial_canvas(canvas_id: str, request: SpatialCanvasRenameRequest):
+    try:
+        return LEDGER.rename_spatial_canvas(canvas_id, request.name)
+    except Exception as exc:
+        raise_spatial_canvas_http_error(exc)
+
+
+@app.put("/api/spatial-canvases/{canvas_id}/scene")
+async def save_spatial_canvas_scene(canvas_id: str, request: SpatialSceneSaveRequest):
+    try:
+        return LEDGER.save_spatial_canvas_scene(
+            canvas_id,
+            expected_revision=request.expected_revision,
+            client_request_id=request.client_request_id,
+            scene=request.scene,
+        )
+    except Exception as exc:
+        raise_spatial_canvas_http_error(exc)
+
+
+@app.get("/api/spatial-scene-versions/{version_id}")
+async def get_spatial_scene_version(version_id: str):
+    try:
+        return LEDGER.get_spatial_canvas_version(version_id)
+    except Exception as exc:
+        raise_spatial_canvas_http_error(exc)
 
 
 def raise_local_edit_http_error(

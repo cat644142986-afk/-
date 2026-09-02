@@ -1306,6 +1306,9 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .spatial-editor { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--canvas); }
 .spatial-canvas-host { width: 100%; height: 100%; min-width: 0; min-height: 0; outline: 0; }
 .spatial-canvas-host .excalidraw { --color-primary: var(--coral); --color-primary-darker: var(--coral-deep); --color-primary-light: var(--coral-soft); font-family: inherit; }
+.spatial-canvas-host .App-toolbar__extra-tools-dropdown [data-testid="toolbar-embeddable"],
+.spatial-canvas-host .App-toolbar__extra-tools-dropdown [data-testid="toolbar-laser"],
+.spatial-canvas-host .App-toolbar__extra-tools-dropdown [data-testid="toolbar-laser"] + div { display: none !important; }
 .spatial-editor-loading { position: absolute; z-index: 3; inset: 0; display: grid; place-items: center; align-content: center; gap: 12px; background: var(--canvas); color: var(--ink-2); }
 .spatial-editor-loading span { width: 26px; height: 26px; border: 3px solid var(--line-2); border-top-color: var(--coral); border-radius: 50%; animation: spatialSpin .8s linear infinite; }
 .spatial-editor-loading button { min-height: 38px; padding: 0 14px; border-radius: 11px; background: var(--dark); color: #fff; font-weight: 800; }

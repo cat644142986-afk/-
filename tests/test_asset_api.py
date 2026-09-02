@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import copy
 import os
 import sqlite3
 import tempfile
@@ -909,6 +910,127 @@ class AssetApiTests(unittest.TestCase):
         finally:
             connection.close()
         self.assertEqual(event_count, 1)
+
+    def test_spatial_canvas_api_persists_scene_versions_without_file_bytes(self) -> None:
+        empty = self.client.get("/api/spatial-canvases")
+        self.assertEqual(empty.status_code, 200, empty.text)
+        self.assertEqual(empty.json(), {"canvases": [], "count": 0})
+
+        source = self.client.post(
+            "/api/assets/import?collection=product",
+            files={"file": ("spatial-source.png", png_bytes(), "image/png")},
+        ).json()
+        created = self.client.post("/api/spatial-canvases", json={
+            "name": "商品主图方案",
+            "client_request_id": "api-spatial-create-1",
+        })
+        self.assertEqual(created.status_code, 200, created.text)
+        created_payload = created.json()
+        self.assertEqual(created_payload["current_revision"], 1)
+        self.assertEqual(created_payload["scene"]["files"], {})
+        replay = self.client.post("/api/spatial-canvases", json={
+            "name": "商品主图方案",
+            "client_request_id": "api-spatial-create-1",
+        })
+        self.assertTrue(replay.json()["replayed"])
+        self.assertEqual(replay.json()["id"], created_payload["id"])
+
+        scene = {
+            "schema_version": 1,
+            "elements": [{
+                "id": "image-main",
+                "type": "image",
+                "x": 240,
+                "y": 180,
+                "width": 640,
+                "height": 480,
+                "angle": 0,
+                "isDeleted": False,
+                "locked": False,
+                "groupIds": ["group-api"],
+                "customData": {
+                    "asset_id": source["id"],
+                    "result_id": None,
+                    "task_id": None,
+                    "product_profile_version_id": None,
+                    "lineage_parent_id": None,
+                },
+            }],
+            "app_state": {
+                "viewBackgroundColor": "#d4d0cb",
+                "currentItemRoughness": 0,
+                "currentItemStrokeStyle": "solid",
+                "currentItemFillStyle": "solid",
+                "gridSize": 20,
+                "gridStep": 5,
+                "gridModeEnabled": False,
+                "zoom": {"value": 0.75},
+                "scrollX": -120,
+                "scrollY": -80,
+            },
+            "files": {},
+        }
+        saved = self.client.put(
+            f"/api/spatial-canvases/{created_payload['id']}/scene",
+            json={
+                "expected_revision": 1,
+                "client_request_id": "api-spatial-save-1",
+                "scene": scene,
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        saved_payload = saved.json()
+        self.assertEqual(saved_payload["current_revision"], 2)
+        self.assertEqual(saved_payload["summary"]["image_count"], 1)
+        self.assertNotIn("storage_path", saved.text)
+        listing = self.client.get("/api/spatial-canvases").json()["canvases"]
+        self.assertEqual(listing[0]["id"], created_payload["id"])
+        self.assertNotIn("scene", listing[0])
+        self.assertEqual(listing[0]["thumbnail"]["elements"][0]["type"], "image")
+
+        renamed = self.client.patch(
+            f"/api/spatial-canvases/{created_payload['id']}",
+            json={"name": "白底图对比"},
+        )
+        self.assertEqual(renamed.status_code, 200, renamed.text)
+        self.assertEqual(renamed.json()["name"], "白底图对比")
+
+        server.LEDGER = AtelierLedger(self.ledger.db_path)
+        restored = self.client.get(
+            f"/api/spatial-canvases/{created_payload['id']}"
+        )
+        self.assertEqual(restored.status_code, 200, restored.text)
+        self.assertEqual(restored.json()["scene"]["app_state"]["zoom"]["value"], 0.75)
+        self.assertEqual(restored.json()["scene"]["elements"][0]["groupIds"], ["group-api"])
+        version = self.client.get(
+            f"/api/spatial-scene-versions/{saved_payload['current_version_id']}"
+        )
+        self.assertEqual(version.status_code, 200, version.text)
+        self.assertEqual(version.json()["scene"]["elements"][0]["x"], 240)
+
+        stale = self.client.put(
+            f"/api/spatial-canvases/{created_payload['id']}/scene",
+            json={
+                "expected_revision": 1,
+                "client_request_id": "api-spatial-save-stale",
+                "scene": scene,
+            },
+        )
+        self.assertEqual(stale.status_code, 409, stale.text)
+        self.assertEqual(stale.json()["detail"]["code"], "SPATIAL_CANVAS_REVISION_CONFLICT")
+
+        unsafe = copy.deepcopy(scene)
+        unsafe["files"] = {"file": {"dataURL": "data:image/png;base64,AAAA"}}
+        rejected = self.client.put(
+            f"/api/spatial-canvases/{created_payload['id']}/scene",
+            json={
+                "expected_revision": 2,
+                "client_request_id": "api-spatial-save-unsafe",
+                "scene": unsafe,
+            },
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.text)
+        self.assertEqual(rejected.json()["detail"]["code"], "INVALID_SPATIAL_CANVAS")
 
     def test_canvas_api_and_command_api_share_the_durable_job_contract(self) -> None:
         source = self.client.post(

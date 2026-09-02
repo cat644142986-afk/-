@@ -415,6 +415,7 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
         "python/command_registry.py": "command registry",
         "python/canvas_export.py": "canvas export renderer",
         "python/local_edit_contract.py": "strict local edit compositor",
+        "python/spatial_canvas_contract.py": "spatial canvas scene contract",
     }
     for source_key, label in required_sources.items():
         if source_key not in source_hashes:
@@ -558,7 +559,9 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             _schema_version(backup) != SOURCE_SCHEMA_VERSION
             or _schema_version(ledger_path) != packaged_schema
         ):
-            raise RuntimeError("candidate did not preserve v5 backup and migrate to v7")
+            raise RuntimeError(
+                f"candidate did not preserve v5 backup and migrate to v{packaged_schema}"
+            )
 
         candidate = _register_outpaint_candidate(
             ledger_path,
@@ -646,7 +649,9 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             data_dir.glob("atelier.sqlite3.backup-v5-*.sqlite3")
         )
         if backups_after_restart != backups:
-            raise RuntimeError("idempotent v7 restart created another migration backup")
+            raise RuntimeError(
+                f"idempotent v{packaged_schema} restart created another migration backup"
+            )
         for health in (first_health, second_health):
             if health.get("status") != "ok":
                 raise RuntimeError("candidate health is not ok")
@@ -774,6 +779,7 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             "product_profile_revisions": revisions,
             "manifest_tracks_command_registry": True,
             "manifest_tracks_local_edit_contract": True,
+            "manifest_tracks_spatial_canvas_contract": True,
             "outpaint_api": "freeze-restart-compose-replay-stale-revision",
             "outpaint_result_size": list(OUTPAINT_SIZE),
             "outpaint_artboard_size": list(SOURCE_SIZE),

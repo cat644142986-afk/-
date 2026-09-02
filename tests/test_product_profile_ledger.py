@@ -132,7 +132,7 @@ class ProductProfileLedgerTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_current_schema_has_immutable_profile_versions_and_job_bindings(self) -> None:
-        self.assertEqual(SCHEMA_VERSION, 7)
+        self.assertEqual(SCHEMA_VERSION, 8)
         connection = sqlite3.connect(self.db_path)
         try:
             tables = {
@@ -326,7 +326,7 @@ class ProductProfileMigrationTests(unittest.TestCase):
     def test_v4_upgrade_creates_current_schema_and_a_queryable_v4_backup(self) -> None:
         create_v4_database(self.db_path)
         ledger = AtelierLedger(self.db_path)
-        self.assertEqual(ledger.stats()["schema_version"], 7)
+        self.assertEqual(ledger.stats()["schema_version"], 8)
         self.assertIsNotNone(ledger.last_migration_backup)
         backup = ledger.last_migration_backup
         assert backup is not None
@@ -366,12 +366,13 @@ class ProductProfileMigrationTests(unittest.TestCase):
         finally:
             connection.close()
         repaired = AtelierLedger(self.db_path)
-        self.assertEqual(repaired.stats()["schema_version"], 7)
+        self.assertEqual(repaired.stats()["schema_version"], 8)
         self.assertEqual(
             repaired.last_schema_repair,
             "recovered complete v5 schema with stale v4 metadata; "
             "recovered complete v6 schema with stale v5 metadata; "
-            "recovered complete v7 schema with stale v6 metadata",
+            "recovered complete v7 schema with stale v6 metadata; "
+            "recovered complete v8 schema with stale v7 metadata",
         )
 
     def test_v5_migration_failure_rolls_back_all_profile_objects(self) -> None:

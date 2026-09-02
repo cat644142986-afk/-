@@ -56,6 +56,7 @@ test('sidecar build cannot overwrite the formal portable release', () => {
   assert.match(script, /"python\/command_registry\.py"/);
   assert.match(script, /"python\/canvas_export\.py"/);
   assert.match(script, /"python\/local_edit_contract\.py"/);
+  assert.match(script, /"python\/spatial_canvas_contract\.py"/);
   assert.match(script, /\.replacement-\$token/);
   assert.match(script, /\.previous-\$token/);
   assert.match(script, /sidecar-build\.lock/);

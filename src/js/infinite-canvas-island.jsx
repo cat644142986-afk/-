@@ -29,6 +29,7 @@ function SpatialCanvas({ canvasDocument, onChange, onReady }) {
       langCode="zh-CN"
       name={canvasDocument.name}
       theme={theme}
+      aiEnabled={false}
       autoFocus
       handleKeyboardGlobally={false}
       objectsSnapModeEnabled
@@ -49,7 +50,22 @@ function SpatialCanvas({ canvasDocument, onChange, onReady }) {
 }
 
 export function mountInfiniteCanvas(host, options) {
+  let canvasApi = null;
   const root = createRoot(host);
-  root.render(<SpatialCanvas {...options} />);
-  return { unmount: () => root.unmount() };
+  root.render(
+    <SpatialCanvas
+      {...options}
+      onReady={(api) => {
+        canvasApi = api;
+        options.onReady?.(api);
+      }}
+    />,
+  );
+  return {
+    unmount: () => root.unmount(),
+    updateScene: (scene) => canvasApi?.updateScene({
+      elements: scene?.elements || [],
+      appState: scene?.appState || {},
+    }),
+  };
 }

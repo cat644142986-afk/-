@@ -354,6 +354,45 @@ export async function saveCanvas(mode, payload, options = {}) {
   });
 }
 
+export async function listSpatialCanvases(limit = 100, options = {}) {
+  return fetchJSON('/api/spatial-canvases?limit=' + encodeURIComponent(limit), options);
+}
+
+export async function createSpatialCanvas(payload, options = {}) {
+  return fetchJSON('/api/spatial-canvases', {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function openSpatialCanvas(canvasId, options = {}) {
+  return fetchJSON('/api/spatial-canvases/' + encodeURIComponent(canvasId), options);
+}
+
+export async function renameSpatialCanvas(canvasId, payload, options = {}) {
+  return fetchJSON('/api/spatial-canvases/' + encodeURIComponent(canvasId), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function saveSpatialCanvasScene(canvasId, payload, options = {}) {
+  return fetchJSON('/api/spatial-canvases/' + encodeURIComponent(canvasId) + '/scene', {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function getSpatialSceneVersion(versionId, options = {}) {
+  return fetchJSON('/api/spatial-scene-versions/' + encodeURIComponent(versionId), options);
+}
+
 export async function exportCanvas(mode, payload, options = {}) {
   return fetchBinary('/api/workspaces/' + encodeURIComponent(mode) + '/canvas/export', {
     ...options,
