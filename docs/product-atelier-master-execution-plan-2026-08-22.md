@@ -1976,9 +1976,10 @@ G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁
 
 - 候选 Tauri 启动新增显式隔离 marker，并同时强制绑定随机系统临时根下的 data、WebView2、旧配置禁用哨兵和空知识库；正式默认数据、旧配置、知识库、源码和正式发布目录均为受保护根。候选业务树拒绝 reparse point 和多硬链接，并在启动期间用句柄固定已存在文件与目录身份；测试助手只按候选绝对路径、PID、创建时间和父子进程关系清理本轮 App/sidecar，不再按进程名影响正式实例。
 - portable staging 会发布绑定 Git、App、sidecar、manifest 和完整目录 inventory 的 candidate identity receipt；正式 `begin` 必须提交此前已 smoke 的精确 receipt SHA-256，同 commit 重新换包也会在读取正式目录前失败。未签名 NSIS 入口在同一 promotion lock 内复核同一 receipt，并把 receipt 身份写入 installer manifest；旧候选清理中断、raw junction、硬链接 lock、事务恢复和失败回滚均有负向覆盖。
+- 第一次 clean detached-worktree 候选构建按门禁安全失败，暴露截图输出保护曾先检查父目录存在、后识别正式发布路径，因而被主仓库已有正式目录掩盖。现在 lexical 正式路径拒绝早于文件系统解析，同时保留解析后别名/链接复核；新增“不存在的 clean checkout 正式路径”回归，`launch_and_shoot` 专项 `42/42` 与完整 Python `491 + 4 skip` 均通过。失败构建没有发布候选，独立 worktree 和本轮临时构建目录已清理。
 - 稳定顺序复验：前端 `222/222`；Python 共 `495` 项（`491` 通过、`4` 项平台条件跳过）；Rust/Tauri `42/42`；Vite production build、画布 bundle、Rust release `custom-protocol` check、95 个 Python 文件 compileall、Ruff `--select F`、73 个首方 JavaScript 语法、PowerShell AST/UTF-8 BOM/CRLF 和 Git whitespace 全绿。production dist 为 `10,659,989 bytes`，预计正式目录 `368.73 MiB`；源码候选仍为 contract `2026-09-02.4`、schema v8。
 - 正式冻结基线已重新只读核对：Git `93539f0c9ec857d22d3751bb836ff722579cd8db`、contract `2026-09-02.3`、schema v7；App / sidecar SHA-256 分别为 `F0D1A07313A47258CD17FA4143DF4F0069D6E075CAA9D22B00EB7220A15685A7`、`2AF3FC31A90961D77A41BE6CECAFD3559E0D0FFFB505FD9BBEA9EC7C61293894`，正式目录 `375,974,706 bytes`（358.56 MiB），桌面快捷方式仍指向正式目录。本检查点没有启动 GUI、读取 API Key/正式账本、调用付费 API、修改正式便携版或正式快捷方式。
-- 本检查点标签为 `checkpoint-2026-09-03-infinite-canvas-ic6-preflight`；上一个可回滚源码点为 IC5 提交 `b2e06ec77b753e3a303b7546f842ad83a64b3ee2`。候选 artifact 和 installer receipt 必须在该干净且已推送的 Git 身份上重新构建，不能把当前源码测试结果冒充打包或真实 GUI 证据。
+- 初版预检标签 `checkpoint-2026-09-03-infinite-canvas-ic6-preflight` 保留为审计历史；修复 clean-worktree 顺序问题后的候选基线标签为 `checkpoint-2026-09-03-infinite-canvas-ic6-preflight-r1`，它取代初版作为本轮构建入口。上一个功能回滚点仍为 IC5 提交 `b2e06ec77b753e3a303b7546f842ad83a64b3ee2`。候选 artifact 和 installer receipt 必须在 r1 的干净、已推送 Git 身份上重新构建，不能把源码测试结果冒充打包或真实 GUI 证据。
 
 #### 当前游标
 

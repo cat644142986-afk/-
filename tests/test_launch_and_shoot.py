@@ -449,6 +449,11 @@ class LaunchAndShootSafetyTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir).resolve()
+            missing_formal_output = (
+                root / "release" / "ProductAtelier-Portable" / "capture.png"
+            )
+            with self.assertRaisesRegex(launcher.LaunchSafetyError, "formal"):
+                launcher.resolve_output_path(missing_formal_output)
             with self.assertRaisesRegex(launcher.LaunchSafetyError, "parent"):
                 launcher.resolve_output_path(root / "missing" / "capture.png")
             existing = root / "existing.png"

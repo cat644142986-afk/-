@@ -413,6 +413,8 @@ def resolve_output_path(value: str | os.PathLike[str]) -> Path:
     requested = Path(value)
     if not requested.is_absolute():
         raise LaunchSafetyError("Screenshot output path must be absolute")
+    if _contains_formal_release_marker(requested):
+        raise LaunchSafetyError("Refusing to write a screenshot into the formal portable release")
     try:
         output_parent = requested.parent.resolve(strict=True)
     except OSError as error:
@@ -422,7 +424,7 @@ def resolve_output_path(value: str | os.PathLike[str]) -> Path:
     if not output_parent.is_dir():
         raise LaunchSafetyError(f"Screenshot output parent is not a directory: {output_parent}")
     output_path = output_parent / requested.name
-    if _contains_formal_release_marker(requested) or _contains_formal_release_marker(output_path):
+    if _contains_formal_release_marker(output_path):
         raise LaunchSafetyError("Refusing to write a screenshot into the formal portable release")
     if output_path.exists() or output_path.is_symlink():
         raise LaunchSafetyError(f"Refusing to overwrite existing screenshot evidence: {output_path}")
