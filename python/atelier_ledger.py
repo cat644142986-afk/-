@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
 import threading
@@ -53,6 +54,11 @@ except ImportError:
         spatial_scene_references,
         spatial_scene_thumbnail,
     )
+
+try:
+    from storage_paths import native_io_path
+except ImportError:
+    from .storage_paths import native_io_path
 
 
 SCHEMA_VERSION = 8
@@ -6937,9 +6943,9 @@ class AtelierLedger:
                 if role in {"result_video", "result_video_cover"}:
                     output_path = Path(path)
                     try:
-                        actual_size = output_path.stat().st_size
+                        actual_size = os.stat(native_io_path(output_path)).st_size
                         digest = hashlib.sha256()
-                        with output_path.open("rb") as handle:
+                        with open(native_io_path(output_path), "rb") as handle:
                             while chunk := handle.read(1024 * 1024):
                                 digest.update(chunk)
                     except OSError as exc:

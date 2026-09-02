@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 from python.storage_paths import (
     OutputRootError,
-    _native_io_path,
+    canonicalize_output_root,
     job_delivery_directory,
+    native_io_path,
     output_root_status,
     publish_staged_file,
     validate_output_root,
@@ -18,8 +21,8 @@ from python.storage_paths import (
 class StoragePathTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows extended paths only")
     def test_native_io_path_uses_extended_length_windows_syntax(self) -> None:
-        local = _native_io_path(Path("C:/") / ("a" * 270))
-        unc = _native_io_path(Path("//server/share") / ("b" * 270))
+        local = native_io_path(Path("C:/") / ("a" * 270))
+        unc = native_io_path(Path("//server/share") / ("b" * 270))
 
         self.assertTrue(local.startswith("\\\\?\\C:\\"))
         self.assertTrue(unc.startswith("\\\\?\\UNC\\server\\share\\"))
@@ -91,6 +94,69 @@ class StoragePathTests(unittest.TestCase):
             self.assertEqual(published.read_bytes(), b"finished-result")
             self.assertFalse(source.exists())
             self.assertFalse(any(target.parent.glob(".*.tmp")))
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction behavior only")
+    def test_deep_junction_resolves_before_output_root_safety_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            allowed = root / "allowed"
+            outside = root / "outside"
+            allowed.mkdir()
+            outside.mkdir()
+            deep_allowed = allowed / Path(*(
+                f"deep-{index}-{'d' * 38}"
+                for index in range(5)
+            ))
+            os.makedirs(native_io_path(deep_allowed), exist_ok=True)
+            junction = deep_allowed / "escape"
+            self.assertGreater(len(str(junction)), 260)
+            created = subprocess.run(
+                [
+                    "cmd.exe",
+                    "/d",
+                    "/c",
+                    "mklink",
+                    "/J",
+                    native_io_path(junction),
+                    native_io_path(outside),
+                ],
+                capture_output=True,
+                text=False,
+                check=False,
+            )
+            if created.returncode != 0:
+                shutil.rmtree(native_io_path(allowed))
+                shutil.rmtree(native_io_path(outside))
+                self.skipTest("directory junction creation is unavailable")
+
+            tail = Path("result.png")
+            physical = outside / tail
+            try:
+                os.makedirs(native_io_path(physical.parent), exist_ok=True)
+                with open(native_io_path(physical), "wb") as handle:
+                    handle.write(b"junction-boundary-probe")
+                lexical = junction / tail
+                self.assertGreater(len(str(lexical)), 260)
+
+                resolved = canonicalize_output_root(lexical, strict=True)
+                resolved_allowed = canonicalize_output_root(allowed, strict=True)
+                resolved_outside = canonicalize_output_root(outside, strict=True)
+                self.assertFalse(resolved.is_relative_to(resolved_allowed))
+                self.assertTrue(resolved.is_relative_to(resolved_outside))
+
+                with self.assertRaises(OutputRootError) as protected_error:
+                    validate_output_root(
+                        junction,
+                        default_root=allowed / "default",
+                        protected_roots=(outside,),
+                    )
+                self.assertEqual(protected_error.exception.code, "OUTPUT_ROOT_PROTECTED")
+            finally:
+                os.rmdir(native_io_path(junction))
+                if os.path.exists(native_io_path(allowed)):
+                    shutil.rmtree(native_io_path(allowed))
+                if os.path.exists(native_io_path(outside)):
+                    shutil.rmtree(native_io_path(outside))
 
 
 if __name__ == "__main__":

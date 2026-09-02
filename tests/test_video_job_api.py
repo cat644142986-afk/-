@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import os
+import shutil
 import tempfile
 import threading
 import unittest
@@ -30,6 +31,7 @@ from python import server  # noqa: E402
 from python.asset_store import AssetStore  # noqa: E402
 from python.atelier_ledger import AtelierLedger  # noqa: E402
 from python.job_engine import JobExecutionError  # noqa: E402
+from python.storage_paths import native_io_path  # noqa: E402
 
 
 def png_bytes(color: tuple[int, int, int], size: tuple[int, int] = (96, 64)) -> bytes:
@@ -317,6 +319,96 @@ class OfflineVideoJobApiTests(unittest.TestCase):
                 {asset["id"] for asset in projection["recent_results"]},
             )
             self.assert_zero_network()
+
+    @unittest.skipUnless(os.name == "nt", "Windows extended paths only")
+    def test_offline_video_round_trip_supports_deep_windows_output_root(self) -> None:
+        long_output = (
+            self.root
+            / ("delivery-" + "a" * 50)
+            / ("nested-" + "b" * 45)
+        )
+        os.makedirs(native_io_path(long_output), exist_ok=False)
+        self.output_dir = long_output
+        server.OUTPUT_DIR = long_output
+        server._RUNTIME_OUTPUT_ROOT = long_output
+        server.save_config({
+            "output_root": str(long_output),
+            "known_output_roots": [str(long_output)],
+        })
+
+        try:
+            with self.live_client() as client:
+                first = self.import_asset(client, "long-path-frame.png", (186, 92, 48))
+                created = self.create_video_job(
+                    client,
+                    first["id"],
+                    request_id="video-api-long-windows-path",
+                )
+                final = self.wait_for_job(created["job"]["id"])
+                self.assertEqual(final["status"], "completed")
+
+                assets = [
+                    self.ledger.get_asset(asset_id)
+                    for asset_id in final["items"][0]["result_asset_ids"]
+                ]
+                by_role = {asset["role"]: asset for asset in assets}
+                video = by_role["result_video"]
+                cover = by_role["result_video_cover"]
+                self.assertGreater(len(video["path"]), 260)
+                self.assertGreater(len(cover["path"]), 260)
+                self.assertFalse(video["path"].startswith("\\\\?\\"))
+                self.assertFalse(cover["path"].startswith("\\\\?\\"))
+
+                inline = client.get(f"/api/assets/{video['id']}/content")
+                download = client.get(
+                    f"/api/assets/{video['id']}/content?download=true"
+                )
+                thumbnail = client.get(f"/api/assets/{video['id']}/thumbnail")
+                legacy_thumbnail = client.get(
+                    "/api/thumbnail",
+                    params={"path": cover["path"]},
+                )
+                self.assertEqual(inline.status_code, 200, inline.text)
+                self.assertEqual(download.status_code, 200, download.text)
+                self.assertEqual(thumbnail.status_code, 200, thumbnail.text)
+                self.assertEqual(
+                    legacy_thumbnail.status_code,
+                    200,
+                    legacy_thumbnail.text,
+                )
+                self.assertEqual(hashlib.sha256(inline.content).hexdigest(), video["sha256"])
+                self.assertEqual(download.content, inline.content)
+                with Image.open(io.BytesIO(thumbnail.content)) as preview:
+                    self.assertEqual(preview.size, (320, 180))
+            self.assert_zero_network()
+        finally:
+            if os.path.exists(native_io_path(long_output)):
+                shutil.rmtree(native_io_path(long_output))
+
+    def test_cleanup_failure_does_not_replace_video_publish_error(self) -> None:
+        with mock.patch.object(
+            server,
+            "publish_staged_file",
+            side_effect=OSError("synthetic publish fault"),
+        ), mock.patch.object(
+            server,
+            "_io_remove_tree",
+            side_effect=OSError("synthetic cleanup fault"),
+        ):
+            with self.live_client() as client:
+                first = self.import_asset(client, "cleanup-frame.png", (105, 72, 190))
+                created = self.create_video_job(
+                    client,
+                    first["id"],
+                    request_id="video-api-cleanup-preserves-error",
+                )
+                final = self.wait_for_job(created["job"]["id"])
+
+        self.assertEqual(final["status"], "failed")
+        item = final["items"][0]
+        self.assertEqual(item["error_code"], "OUTPUT_ROOT_WRITE_FAILED")
+        self.assertIn("交付目录", item["error_message"])
+        self.assert_zero_network()
 
     def test_video_command_requires_an_existing_durable_spatial_canvas(self) -> None:
         with self.live_client() as client:

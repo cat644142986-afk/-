@@ -110,6 +110,7 @@ try:
         OutputRootError,
         canonicalize_output_root,
         job_delivery_directory,
+        native_io_path,
         output_root_status,
         publish_staged_file,
         validate_output_root,
@@ -203,6 +204,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         OutputRootError,
         canonicalize_output_root,
         job_delivery_directory,
+        native_io_path,
         output_root_status,
         publish_staged_file,
         validate_output_root,
@@ -1765,10 +1767,47 @@ def _video_cover_asset(asset: dict) -> dict:
     return cover
 
 
+def _io_exists(path: str | Path) -> bool:
+    return os.path.exists(native_io_path(path))
+
+
+def _io_is_file(path: str | Path) -> bool:
+    return os.path.isfile(native_io_path(path))
+
+
+def _io_file_size(path: str | Path) -> int:
+    return int(os.stat(native_io_path(path)).st_size)
+
+
+def _io_unlink(path: str | Path) -> None:
+    try:
+        os.unlink(native_io_path(path))
+    except FileNotFoundError:
+        pass
+
+
+def _io_remove_tree(path: str | Path) -> None:
+    try:
+        shutil.rmtree(native_io_path(path))
+    except FileNotFoundError:
+        pass
+
+
+def _io_directory_is_empty(path: str | Path) -> bool:
+    with os.scandir(native_io_path(path)) as entries:
+        return next(entries, None) is None
+
+
 def _resolve_result_asset_path(asset: dict) -> Path:
     if not str(asset.get("role") or "").startswith("result_"):
         raise AssetAccessError("Asset is not an exported generation result", code="ASSET_NOT_FOUND")
-    candidate = Path(str(asset.get("path", ""))).resolve(strict=False)
+    try:
+        candidate = canonicalize_output_root(str(asset.get("path", "")), strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise AssetAccessError(
+            "Generation result file is unavailable",
+            code="ASSET_FILE_MISSING",
+        ) from exc
     allowed_roots = _configured_output_roots()
     asset_metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
     declared_value = str(asset_metadata.get("output_root") or "").strip()
@@ -1781,11 +1820,9 @@ def _resolve_result_asset_path(asset: dict) -> Path:
         roots = tuple(root for root in allowed_roots if candidate.is_relative_to(root))
     if not roots or not any(candidate.is_relative_to(root) for root in roots):
         raise AssetAccessError("Generation result path is outside the allowed root")
-    try:
-        resolved = candidate.resolve(strict=True)
-    except (FileNotFoundError, OSError) as exc:
-        raise AssetAccessError("Generation result file is unavailable", code="ASSET_FILE_MISSING") from exc
-    if not resolved.is_file() or not any(resolved.is_relative_to(root) for root in roots):
+    if not _io_is_file(candidate):
+        raise AssetAccessError("Generation result file is unavailable", code="ASSET_FILE_MISSING")
+    if not any(candidate.is_relative_to(root) for root in roots):
         raise AssetAccessError("Generation result path is outside the allowed root")
     expected_sha256 = str(asset.get("sha256") or "").lower()
     if not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
@@ -1793,17 +1830,17 @@ def _resolve_result_asset_path(asset: dict) -> Path:
             "Generation result has no valid content hash",
             code="ASSET_HASH_MISMATCH",
         )
-    if _file_sha256(resolved) != expected_sha256:
+    if _file_sha256(candidate) != expected_sha256:
         raise AssetAccessError(
             "Generation result content hash does not match",
             code="ASSET_HASH_MISMATCH",
         )
-    return resolved
+    return candidate
 
 
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    with open(native_io_path(path), "rb") as handle:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
@@ -1827,7 +1864,7 @@ def _authoritative_local_edit_contract(contract: dict[str, Any]) -> tuple[dict[s
     path = _resolve_canvas_source_path(source)
     file_sha256 = _file_sha256(path).upper()
     try:
-        with Image.open(path) as opened:
+        with Image.open(native_io_path(path)) as opened:
             opened.load()
             image = opened.copy()
     except (OSError, ValueError) as exc:
@@ -1852,7 +1889,7 @@ def _authoritative_local_edit_contract(contract: dict[str, Any]) -> tuple[dict[s
 
 def _thumbnail_for_path(path: Path, max_size: int = 512) -> bytes:
     max_size = max(32, min(int(max_size), 1024))
-    with Image.open(path) as image:
+    with Image.open(native_io_path(path)) as image:
         image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
         if image.mode in {"RGBA", "LA"}:
             background = Image.new("RGB", image.size, "white")
@@ -2107,7 +2144,7 @@ async def get_workspace_asset_content(asset_id: str, download: bool = False):
         kind = str(asset.get("kind") or "image")
         disposition = "inline" if kind == "video" and not download else "attachment"
         return FileResponse(
-            str(path),
+            native_io_path(path),
             media_type=asset["mime"],
             filename=asset["name"],
             content_disposition_type=disposition,
@@ -3133,10 +3170,10 @@ def _execute_local_edit_compose(
     candidate_asset = LEDGER.get_asset(request.candidate_asset_id)
     candidate_path = _resolve_result_asset_path(candidate_asset)
     try:
-        with Image.open(source_path) as opened:
+        with Image.open(native_io_path(source_path)) as opened:
             opened.load()
             source = opened.copy()
-        with Image.open(candidate_path) as opened:
+        with Image.open(native_io_path(candidate_path)) as opened:
             opened.load()
             candidate = opened.copy()
     except (OSError, ValueError) as exc:
@@ -3171,10 +3208,10 @@ def _execute_local_edit_compose(
         / f"编辑-{request_digest[:16]}"
     )
     target_path = target_dir / f"result-{uuid.uuid4().hex[:12]}.png"
-    stage_dir.mkdir(parents=True, exist_ok=False)
+    os.makedirs(native_io_path(stage_dir), exist_ok=False)
     published = False
     try:
-        composed.save(stage_path, "PNG")
+        composed.save(native_io_path(stage_path), "PNG")
         file_sha256 = _file_sha256(stage_path)
         publish_staged_file(stage_path, target_path)
         published = True
@@ -3199,7 +3236,7 @@ def _execute_local_edit_compose(
         )
         committed_path = Path(str(composition["result_asset"].get("path") or ""))
         if composition.get("replayed") and committed_path != target_path:
-            target_path.unlink(missing_ok=True)
+            _io_unlink(target_path)
             published = False
         return _local_edit_composition_response(mode, composition)
     except Exception:
@@ -3216,16 +3253,16 @@ def _execute_local_edit_compose(
                 except (KeyError, TypeError):
                     committed_path = None
             if committed_path != target_path:
-                target_path.unlink(missing_ok=True)
+                _io_unlink(target_path)
         raise
     finally:
-        stage_path.unlink(missing_ok=True)
+        _io_unlink(stage_path)
         try:
-            stage_dir.rmdir()
+            os.rmdir(native_io_path(stage_dir))
         except OSError:
             pass
         try:
-            target_dir.rmdir()
+            os.rmdir(native_io_path(target_dir))
         except OSError:
             pass
 
@@ -3512,7 +3549,7 @@ async def preview_semantic_cutout(request: SemanticCutoutRequest):
     height = int(asset.get("height") or 0)
     if width <= 0 or height <= 0:
         try:
-            with Image.open(path) as source:
+            with Image.open(native_io_path(path)) as source:
                 width, height = source.size
         except Exception as exc:
             raise HTTPException(
@@ -3622,7 +3659,7 @@ def _render_semantic_mask_preview(
     regions: list[dict[str, Any]],
     mask_edits: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    with Image.open(path) as source:
+    with Image.open(native_io_path(path)) as source:
         segmented = remove_bg_hd(source.copy())
     segmented = apply_confirmed_regions(segmented, regions)
     segmented = apply_mask_edits(segmented, mask_edits, regions)
@@ -3955,7 +3992,7 @@ def _video_frame_asset(asset_id: str, label: str) -> dict[str, Any]:
             _, path = ASSET_STORE.resolve_asset_path(str(asset_id))
         else:
             path = _resolve_result_asset_path(asset)
-        with Image.open(path) as opened:
+        with Image.open(native_io_path(path)) as opened:
             opened.verify()
     except (AssetStoreError, KeyError, OSError, ValueError) as exc:
         raise VideoContractError("VIDEO_FRAME_INVALID", f"{label} is not a readable image") from exc
@@ -5569,19 +5606,19 @@ def _attempt_directory(ctx):
     item_part = safe_stem(str(ctx.item_id), "item")
     attempt = max(1, int(ctx.item.get("attempt_count", 1)))
     directory = OUTPUT_DIR / "_attempts" / job_part / item_part / f"attempt-{attempt}-{uuid.uuid4().hex}"
-    directory.mkdir(parents=True, exist_ok=False)
+    os.makedirs(native_io_path(directory), exist_ok=False)
     return directory
 
 
 def _stage_output(image, directory, name, role):
     path = directory / name
     if role == "result_cutout":
-        image.save(path, "PNG")
+        image.save(native_io_path(path), "PNG")
         mime = "image/png"
     else:
         if image.mode != "RGB":
             image = image.convert("RGB")
-        image.save(path, "JPEG", quality=96)
+        image.save(native_io_path(path), "JPEG", quality=96)
         mime = "image/jpeg"
     return {
         "temp_path": path,
@@ -5590,7 +5627,7 @@ def _stage_output(image, directory, name, role):
         "mime": mime,
         "width": image.width,
         "height": image.height,
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "sha256": _file_sha256(path),
     }
 
 
@@ -5604,7 +5641,8 @@ def _offline_video_fixture(parameters: dict[str, Any]) -> tuple[Path, dict[str, 
     relative_path = f"{slug}/{duration_seconds}s.webm"
     manifest_path = VIDEO_FIXTURE_ROOT / "manifest.json"
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        with open(native_io_path(manifest_path), encoding="utf-8") as handle:
+            manifest = json.load(handle)
         records = manifest.get("fixtures") if isinstance(manifest, dict) else None
         record = next(
             (
@@ -5613,14 +5651,17 @@ def _offline_video_fixture(parameters: dict[str, Any]) -> tuple[Path, dict[str, 
             ),
             None,
         )
-        fixture_path = (VIDEO_FIXTURE_ROOT / relative_path).resolve(strict=True)
+        fixture_path = canonicalize_output_root(
+            VIDEO_FIXTURE_ROOT / relative_path,
+            strict=True,
+        )
     except (OSError, ValueError, TypeError) as exc:
         raise JobExecutionError(
             "VIDEO_FIXTURE_UNAVAILABLE",
             "The offline video preview fixture is unavailable",
         ) from exc
-    root = VIDEO_FIXTURE_ROOT.resolve(strict=True)
-    if record is None or not fixture_path.is_file() or not fixture_path.is_relative_to(root):
+    root = canonicalize_output_root(VIDEO_FIXTURE_ROOT, strict=True)
+    if record is None or not _io_is_file(fixture_path) or not fixture_path.is_relative_to(root):
         raise JobExecutionError(
             "VIDEO_FIXTURE_UNAVAILABLE",
             "The offline video preview fixture is unavailable",
@@ -5629,7 +5670,7 @@ def _offline_video_fixture(parameters: dict[str, Any]) -> tuple[Path, dict[str, 
         "width": dimensions[0],
         "height": dimensions[1],
         "duration_seconds": duration_seconds,
-        "size_bytes": fixture_path.stat().st_size,
+        "size_bytes": _io_file_size(fixture_path),
         "sha256": _file_sha256(fixture_path),
     }
     if any(record.get(key) != value for key, value in expected.items()):
@@ -5668,7 +5709,7 @@ def _execute_image_to_video_preview(ctx, source_asset, image, stage_dir, trace):
         f"{parameters['duration_seconds']}s.webm"
     )
     video_path = stage_dir / video_name
-    shutil.copy2(fixture_path, video_path)
+    shutil.copy2(native_io_path(fixture_path), native_io_path(video_path))
     if _file_sha256(video_path) != str(fixture["sha256"]):
         raise JobExecutionError(
             "VIDEO_FIXTURE_INTEGRITY_FAILED",
@@ -5698,7 +5739,7 @@ def _execute_image_to_video_preview(ctx, source_asset, image, stage_dir, trace):
         "contract_version": parameters["contract_version"],
         "provider": parameters["provider"],
         "source_video_output_index": 0,
-        "size_bytes": int(Path(cover_output["temp_path"]).stat().st_size),
+        "size_bytes": _io_file_size(cover_output["temp_path"]),
     }
     ctx.progress(0.76, {"phase": "video-cover-ready"})
     ctx.checkpoint()
@@ -5909,7 +5950,7 @@ def _execute_local_edit_candidate_job(ctx, source_asset, image, stage_dir, trace
         candidate = generated
 
     candidate_path = stage_dir / "local-edit-candidate.png"
-    candidate.save(candidate_path, "PNG", optimize=True)
+    candidate.save(native_io_path(candidate_path), "PNG", optimize=True)
     output = {
         "temp_path": candidate_path,
         "name": "local-edit-candidate.png",
@@ -5917,7 +5958,7 @@ def _execute_local_edit_candidate_job(ctx, source_asset, image, stage_dir, trace
         "mime": "image/png",
         "width": candidate.width,
         "height": candidate.height,
-        "sha256": hashlib.sha256(candidate_path.read_bytes()).hexdigest(),
+        "sha256": _file_sha256(candidate_path),
         "parent_asset_id": str(trace["source_asset_id"]),
         "metadata": {
             "local_edit_spec_id": spec_id,
@@ -5969,7 +6010,7 @@ def _publish_folder_delivery(ctx, source_asset, published_outputs):
             label = "结果"
             suffix = Path(str(output.get("name") or "")).suffix.lower() or ".bin"
         category_dir = delivery_root / category
-        category_dir.mkdir(parents=True, exist_ok=True)
+        os.makedirs(native_io_path(category_dir), exist_ok=True)
         target_name = (
             f"{source_stem}__P{part_index:02d}-I{item_index:03d}"
             f"-{label}{role_counts[role]:02d}{suffix}"
@@ -5977,10 +6018,13 @@ def _publish_folder_delivery(ctx, source_asset, published_outputs):
         target = category_dir / target_name
         temp = category_dir / f".{target_name}.{uuid.uuid4().hex}.tmp"
         try:
-            shutil.copy2(Path(str(output["path"])), temp)
-            os.replace(temp, target)
+            shutil.copy2(
+                native_io_path(Path(str(output["path"]))),
+                native_io_path(temp),
+            )
+            os.replace(native_io_path(temp), native_io_path(target))
         finally:
-            temp.unlink(missing_ok=True)
+            _io_unlink(temp)
         delivered.append({
             "role": role,
             "path": str(target),
@@ -6002,9 +6046,10 @@ def _update_folder_delivery_manifest(ctx, source_asset, delivered, delivery):
             "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "items": {},
         }
-        if manifest_path.exists():
+        if _io_exists(manifest_path):
             try:
-                existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+                with open(native_io_path(manifest_path), encoding="utf-8") as handle:
+                    existing = json.load(handle)
                 if isinstance(existing, dict):
                     manifest.update(existing)
                     manifest["items"] = dict(existing.get("items") or {})
@@ -6020,13 +6065,11 @@ def _update_folder_delivery_manifest(ctx, source_asset, delivered, delivery):
         }
         temp_path = delivery_root / f".{manifest_path.name}.{uuid.uuid4().hex}.tmp"
         try:
-            temp_path.write_text(
-                json.dumps(manifest, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            os.replace(temp_path, manifest_path)
+            with open(native_io_path(temp_path), "x", encoding="utf-8") as handle:
+                json.dump(manifest, handle, ensure_ascii=False, indent=2)
+            os.replace(native_io_path(temp_path), native_io_path(manifest_path))
         finally:
-            temp_path.unlink(missing_ok=True)
+            _io_unlink(temp_path)
     return str(manifest_path)
 
 
@@ -6065,15 +6108,15 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, o
             )
             committed_asset_ids.clear()
         for path in list(moved_paths):
-            Path(path).unlink(missing_ok=True)
+            _io_unlink(path)
         moved_paths.clear()
         for path in list(delivered_paths):
-            Path(path).unlink(missing_ok=True)
+            _io_unlink(path)
         delivered_paths.clear()
-        if stage_dir.exists():
-            shutil.rmtree(stage_dir)
-        if target_dir.exists() and not any(target_dir.iterdir()):
-            target_dir.rmdir()
+        if _io_exists(stage_dir):
+            _io_remove_tree(stage_dir)
+        if _io_exists(target_dir) and _io_directory_is_empty(target_dir):
+            os.rmdir(native_io_path(target_dir))
 
     def commit():
         nonlocal durable_committed
@@ -6082,7 +6125,7 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, o
         try:
             try:
                 _job_output_root(ctx, test_write=True)
-                target_dir.mkdir(parents=True, exist_ok=False)
+                os.makedirs(native_io_path(target_dir), exist_ok=False)
             except (OSError, OutputRootError) as exc:
                 raise JobExecutionError(
                     "OUTPUT_ROOT_WRITE_FAILED",
@@ -6110,8 +6153,8 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, o
             # Remove the now-empty private stage before the durable transaction.
             # Once the transaction returns, there must be no fallible cleanup
             # step capable of turning a completed item into a result-less one.
-            if stage_dir.exists():
-                shutil.rmtree(stage_dir)
+            if _io_exists(stage_dir):
+                _io_remove_tree(stage_dir)
             delivered, delivery = _publish_folder_delivery(ctx, source_asset, published)
             delivered_paths.extend(entry["path"] for entry in delivered)
             asset_ids = LEDGER.commit_generation_results(
@@ -6178,8 +6221,16 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, o
                 "delivery_files": [entry["relative_path"] for entry in delivered],
                 "delivery_manifest": manifest_path,
             }
-        except Exception:
-            cleanup()
+        except Exception as exc:
+            try:
+                cleanup()
+            except Exception as cleanup_exc:
+                exc.add_note(f"result cleanup also failed: {cleanup_exc}")
+                print(
+                    f"[job-cleanup] result cleanup failed: {cleanup_exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             raise
 
     return JobProcessorResult(
@@ -7313,7 +7364,7 @@ def execute_job_workflow(ctx):
     output_root = _job_output_root(ctx, test_write=True)
     source_asset, source_path = _resolve_job_source_asset(str(ctx.item["source_asset_id"]))
     try:
-        with Image.open(source_path) as opened:
+        with Image.open(native_io_path(source_path)) as opened:
             image = opened.copy()
     except Exception as exc:
         raise JobExecutionError("INVALID_SOURCE_IMAGE", "The persisted source image cannot be decoded") from exc
@@ -7354,7 +7405,7 @@ def execute_job_workflow(ctx):
                     str(adjustment.get("parent_result_asset_id") or "")
                 )
                 reference_path = _resolve_result_asset_path(reference_asset)
-                with Image.open(reference_path) as opened:
+                with Image.open(native_io_path(reference_path)) as opened:
                     reference_image = opened.copy()
             except (AssetStoreError, KeyError, OSError, ValueError) as exc:
                 raise JobExecutionError(
@@ -7411,8 +7462,16 @@ def execute_job_workflow(ctx):
                 ),
             },
         )
-        if stage_dir.exists():
-            shutil.rmtree(stage_dir)
+        try:
+            if _io_exists(stage_dir):
+                _io_remove_tree(stage_dir)
+        except Exception as cleanup_exc:
+            exc.add_note(f"attempt cleanup also failed: {cleanup_exc}")
+            print(
+                f"[job-cleanup] attempt cleanup failed: {cleanup_exc}",
+                file=sys.stderr,
+                flush=True,
+            )
         raise
 
 
@@ -7637,18 +7696,23 @@ async def cutout_only(
 async def get_thumbnail(path: str):
     """Serve a local image file for display in the UI."""
     try:
-        allowed_roots = (*_configured_output_roots(), ASSET_DIR.resolve())
-        candidate = Path(path).resolve(strict=False)
+        allowed_roots = (
+            *_configured_output_roots(),
+            canonicalize_output_root(ASSET_DIR, strict=True),
+        )
+        lexical_candidate = canonicalize_output_root(path)
+        if not any(lexical_candidate.is_relative_to(root) for root in allowed_roots):
+            return JSONResponse({"error": "access denied"}, status_code=403)
+        candidate = canonicalize_output_root(path, strict=True)
         if not any(candidate.is_relative_to(root) for root in allowed_roots):
             return JSONResponse({"error": "access denied"}, status_code=403)
-        p = Path(path).resolve(strict=True)
-        if not p.is_file():
+        if not _io_is_file(candidate):
             return JSONResponse({"error": "file not found"}, status_code=404)
-        ext = p.suffix.lower()
+        ext = candidate.suffix.lower()
         media_type = "image/jpeg"
         if ext == ".png": media_type = "image/png"
         elif ext == ".webp": media_type = "image/webp"
-        return FileResponse(str(p), media_type=media_type)
+        return FileResponse(native_io_path(candidate), media_type=media_type)
     except FileNotFoundError:
         return JSONResponse({"error": "file not found"}, status_code=404)
     except Exception as e:
