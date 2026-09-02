@@ -1693,6 +1693,7 @@ def workspace_asset_response(asset: dict) -> dict:
         "sha256": asset.get("sha256", ""),
         "created_at": asset.get("created_at"),
         "metadata": asset.get("metadata", {}),
+        "role": asset.get("role", "workspace_source"),
         "thumbnail_url": f"/api/assets/{asset['id']}/thumbnail",
         "content_url": f"/api/assets/{asset['id']}/content",
     }
@@ -1713,6 +1714,7 @@ def result_asset_response(asset: dict) -> dict:
         "created_at": asset.get("created_at"),
         "metadata": asset.get("metadata", {}),
         "role": asset.get("role", ""),
+        "lineage_parent_id": asset.get("parent_asset_id"),
         "thumbnail_url": f"/api/assets/{asset['id']}/thumbnail",
         "content_url": f"/api/assets/{asset['id']}/content",
     }

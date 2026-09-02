@@ -135,6 +135,7 @@ function formatBytes(value) {
 export function createAssetManagerController({
   api, state, query, queryAll, modeConfig, escapeHtml, assetUrl, hydrateAssetUrls,
   loadWorkspace, syncLegacySelection, renderQueue, toggleAssetSelection, toast, openDrawer,
+  onSendToCanvas = () => {}, writeSpatialDragData = () => {},
 }) {
   let view = 'active';
   let trash = [];
@@ -234,11 +235,15 @@ export function createAssetManagerController({
       const stateAction = view === 'trash'
         ? `<button class="is-primary" type="button" data-asset-restore-id="${escapeHtml(assetId)}">恢复</button>`
         : `<button class="is-danger" type="button" data-asset-remove-id="${escapeHtml(assetId)}">移出</button>`;
-      return `<article class="asset-manager-item ${checked ? 'is-checked' : ''}">
+      const canvasAction = view === 'active'
+        ? `<button type="button" data-asset-canvas-id="${escapeHtml(assetId)}">画布</button>` : '';
+      const spatialAttributes = view === 'active'
+        ? ` data-spatial-manager-asset-id="${escapeHtml(assetId)}" draggable="true"` : '';
+      return `<article class="asset-manager-item ${checked ? 'is-checked' : ''}"${spatialAttributes}>
         <label class="asset-manager-item__check"><input type="checkbox" data-asset-select-id="${escapeHtml(assetId)}" ${checked ? 'checked' : ''} /><span aria-hidden="true">${checked ? '✓' : ''}</span><span class="sr-only">批量选择 ${escapeHtml(asset.name)}</span></label>
         <img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" decoding="async" />
         <div class="asset-manager-item__copy"><strong title="${escapeHtml(asset.name)}">${escapeHtml(asset.name || '未命名素材')}</strong><small>${escapeHtml([dimensions, bytes, view === 'trash' ? '可恢复' : '当前素材域'].filter(Boolean).join(' · '))}</small></div>
-        ${orderActions}<div class="asset-manager-item__actions">${taskAction}<button type="button" data-asset-reference-id="${escapeHtml(assetId)}">占用</button>${stateAction}</div>
+        ${orderActions}<div class="asset-manager-item__actions">${taskAction}${canvasAction}<button type="button" data-asset-reference-id="${escapeHtml(assetId)}">占用</button>${stateAction}</div>
       </article>`;
     }).join('') + (visible.length < filtered.length
       ? `<button class="asset-manager-more" id="asset-manager-more" type="button">再显示 ${Math.min(ASSET_PAGE_SIZE, filtered.length - visible.length)} 张 <small>剩余 ${filtered.length - visible.length} 张</small></button>` : '');
@@ -248,10 +253,15 @@ export function createAssetManagerController({
       renderList();
     }));
     queryAll('[data-asset-use-id]', list).forEach((button) => button.addEventListener('click', () => { toggleAssetSelection(button.dataset.assetUseId); renderList(); }));
+    queryAll('[data-asset-canvas-id]', list).forEach((button) => button.addEventListener('click', () => onSendToCanvas(button.dataset.assetCanvasId)));
     queryAll('[data-asset-remove-id]', list).forEach((button) => button.addEventListener('click', () => remove(button.dataset.assetRemoveId)));
     queryAll('[data-asset-restore-id]', list).forEach((button) => button.addEventListener('click', () => restore(collection(), button.dataset.assetRestoreId)));
     queryAll('[data-asset-reference-id]', list).forEach((button) => button.addEventListener('click', () => inspectReferences(button.dataset.assetReferenceId)));
     queryAll('[data-asset-move-id]', list).forEach((button) => button.addEventListener('click', () => reorder(button.dataset.assetMoveId, Number(button.dataset.assetMoveDelta))));
+    queryAll('[data-spatial-manager-asset-id]', list).forEach((card) => card.addEventListener('dragstart', (event) => {
+      const asset = currentItems().find((item) => String(item.id) === String(card.dataset.spatialManagerAssetId));
+      if (asset) writeSpatialDragData(event, asset);
+    }));
     query('#asset-manager-more')?.addEventListener('click', () => { visibleLimit += ASSET_PAGE_SIZE; renderList(); });
   }
 

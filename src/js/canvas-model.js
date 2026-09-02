@@ -82,6 +82,10 @@ function layerPlacement(asset, artboard, index) {
   };
 }
 
+function layerSourceKind(asset) {
+  return String(asset?.role || '').startsWith('result_') ? 'result' : 'asset';
+}
+
 function layerFromAsset(asset, artboard, index) {
   const sourceId = canvasId(asset?.id, 'asset.id');
   const dimensions = assetDimensions(asset);
@@ -90,7 +94,7 @@ function layerFromAsset(asset, artboard, index) {
     id: canvasId(`layer:${sourceId}`, 'layer.id'),
     artboard_id: artboard.id,
     source: {
-      kind: 'asset',
+      kind: layerSourceKind(asset),
       id: sourceId,
       proxy_ref: 'proxy:thumbnail:512',
       original_pixel_width: dimensions.width,
@@ -120,7 +124,7 @@ export function createCanvasDocument(mode, asset, timestamp = new Date().toISOSt
     coordinate_system: { ...CANVAS_COORDINATE_SYSTEM },
     revision: 0,
     active_artboard_id: artboard.id,
-    source_asset_ids: [layer.source.id],
+    source_asset_ids: layer.source.kind === 'asset' ? [layer.source.id] : [],
     artboards: [artboard],
     layers: [layer],
     operations: [],
@@ -132,14 +136,16 @@ export function createCanvasDocument(mode, asset, timestamp = new Date().toISOSt
 
 export function addAssetLayer(document, asset, timestamp = new Date().toISOString()) {
   const sourceId = canvasId(asset?.id, 'asset.id');
-  if (document.layers.some((layer) => layer.source.kind === 'asset' && layer.source.id === sourceId)) {
+  if (document.layers.some((layer) => layer.source.id === sourceId)) {
     return { document, layer: null, added: false };
   }
   const artboard = document.artboards.find((item) => item.id === document.active_artboard_id);
   if (!artboard) throw new Error('当前画布缺少活动画板');
   const layer = layerFromAsset(asset, artboard, document.layers.length);
   document.layers.push(layer);
-  document.source_asset_ids = [...new Set([...document.source_asset_ids, sourceId])];
+  if (layer.source.kind === 'asset') {
+    document.source_asset_ids = [...new Set([...document.source_asset_ids, sourceId])];
+  }
   document.updated_at = timestamp;
   return { document, layer, added: true };
 }

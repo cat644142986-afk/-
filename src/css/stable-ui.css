@@ -254,6 +254,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .queue-item span { color: var(--coral-deep); font-size: 7px; font-weight: 800; }
 .asset-card__check { position: absolute; right: 7px; bottom: 7px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 8px; background: rgba(255,255,255,.9); box-shadow: 0 4px 12px rgba(27,30,34,.12); }
 .asset-card__remove { position: absolute; top: 7px; right: 7px; display: grid; place-items: center; width: 25px; height: 25px; border-radius: 8px; background: rgba(32,36,42,.72); color: #fff; opacity: 0; backdrop-filter: blur(8px); transition: opacity .18s ease, background .18s ease; }
+.asset-card__canvas { position: absolute; top: 7px; left: 7px; min-height: 25px; padding: 0 7px; border-radius: 8px; background: rgba(32,36,42,.72); color: #fff; font-size: var(--type-micro); font-weight: 800; opacity: 0; backdrop-filter: blur(8px); transition: opacity .18s ease, background .18s ease; }
+.asset-card:hover .asset-card__canvas, .asset-card:focus-within .asset-card__canvas { opacity: 1; }
+.asset-card__canvas:hover { background: var(--coral-deep); }
 .asset-card:hover .asset-card__remove, .asset-card:focus-within .asset-card__remove { opacity: 1; }
 .asset-card__remove:hover { background: var(--red); }
 .asset-card__remove svg { width: 13px; height: 13px; }
@@ -293,7 +296,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .viewer-thumb { aspect-ratio: 1; padding: 0; overflow: hidden; border: 2px solid transparent; border-radius: 9px; background: var(--shell-deep); cursor: pointer; }
 .viewer-thumb.active { border-color: var(--coral); }
 .viewer-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.result-actions { display: grid; grid-template-columns: repeat(2,1fr); gap: 3px; }
+.result-actions { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 3px; }
 .result-actions button { padding: 6px 3px; border-radius: 8px; background: var(--dark); color: white; font-size: var(--type-caption); cursor: pointer; }
 .feedback-bar { display: grid; gap: 7px; min-width: 0; padding: 8px; border-radius: 12px; background: var(--dark); color: #fff; }
 .feedback-entry { display: grid; gap: 6px; min-width: 0; }
@@ -1182,6 +1185,10 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .canvas-workspace { display: grid; grid-template-rows: 64px minmax(0,1fr) 54px; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); }
 .canvas-workspace__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; padding: 8px 14px 7px 16px; border-bottom: 1px solid var(--line); }
 .canvas-workspace__identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.canvas-return-spatial { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-soft); color: var(--ink-2); font-size: var(--type-caption); font-weight: 800; white-space: nowrap; }
+.canvas-return-spatial:hover { border-color: var(--coral); color: var(--coral-deep); }
+.canvas-return-spatial i, .canvas-return-spatial svg { width: 15px; height: 15px; }
+.canvas-return-spatial[hidden] { display: none; }
 .canvas-workspace__identity p { margin: 0; color: var(--ink-3); font-size: 7.5px; font-weight: 850; letter-spacing: .16em; }
 .canvas-workspace__identity strong { display: block; max-width: 220px; overflow: hidden; margin-top: 2px; font-size: var(--type-control); white-space: nowrap; text-overflow: ellipsis; }
 .canvas-tool-groups { display: flex; align-items: center; gap: 7px; min-width: 0; }
@@ -1309,6 +1316,19 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .spatial-canvas-host .App-toolbar__extra-tools-dropdown [data-testid="toolbar-embeddable"],
 .spatial-canvas-host .App-toolbar__extra-tools-dropdown [data-testid="toolbar-laser"],
 .spatial-canvas-host .App-toolbar__extra-tools-dropdown [data-testid="toolbar-laser"] + div { display: none !important; }
+.spatial-inspector { position: absolute; z-index: 4; top: 12px; right: 12px; display: grid; width: min(292px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; border: 1px solid var(--line-2); border-radius: 8px; background: color-mix(in srgb, var(--paper) 96%, transparent); box-shadow: 0 14px 34px rgb(43 38 34 / .16); }
+.spatial-inspector[hidden] { display: none; }
+.spatial-inspector header { display: flex; align-items: center; justify-content: space-between; min-height: 38px; padding: 0 10px 0 12px; border-bottom: 1px solid var(--line); }
+.spatial-inspector header span { color: var(--ink-3); font-size: var(--type-micro); font-weight: 850; }
+.spatial-inspector header button { width: 28px; height: 28px; color: var(--ink-2); font-size: 20px; }
+.spatial-inspector__copy { display: grid; gap: 3px; min-width: 0; padding: 12px; }
+.spatial-inspector__copy strong, .spatial-inspector__copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spatial-inspector__copy strong { color: var(--ink); font-size: var(--type-control); }
+.spatial-inspector__copy small { color: var(--ink-3); font-size: var(--type-micro); }
+.spatial-inspector__actions { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; padding: 0 12px 12px; }
+.spatial-inspector__actions button { min-height: 34px; padding: 0 7px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper-2); color: var(--ink-2); font-size: var(--type-micro); font-weight: 800; }
+.spatial-inspector__actions button:hover { border-color: var(--coral); color: var(--coral-deep); }
+.spatial-inspector__actions button.is-primary { grid-column: 1 / -1; background: var(--dark); color: #fff; }
 .spatial-editor-loading { position: absolute; z-index: 3; inset: 0; display: grid; place-items: center; align-content: center; gap: 12px; background: var(--canvas); color: var(--ink-2); }
 .spatial-editor-loading span { width: 26px; height: 26px; border: 3px solid var(--line-2); border-top-color: var(--coral); border-radius: 50%; animation: spatialSpin .8s linear infinite; }
 .spatial-editor-loading button { min-height: 38px; padding: 0 14px; border-radius: 11px; background: var(--dark); color: #fff; font-weight: 800; }
@@ -1324,6 +1344,7 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .spatial-secondary-button { width: 38px; padding: 0; }
   .spatial-rename-form input { width: 150px; }
   .spatial-library { padding: 22px; }
+  .spatial-inspector { top: 72px; max-height: calc(100% - 84px); }
 }
 
 @media (max-width: 760px) {
@@ -1548,6 +1569,8 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .studio-view-switch button { padding-inline: 5px; font-size: var(--type-micro); }
   .canvas-workspace__toolbar { gap: 7px; padding-inline: 9px; }
   .canvas-workspace__identity .canvas-index { display: none; }
+  .canvas-return-spatial span { display: none; }
+  .canvas-return-spatial { width: 36px; padding: 0; justify-content: center; }
   .canvas-workspace__identity p { display: none; }
   .canvas-workspace__identity strong { max-width: 92px; font-size: var(--type-caption); }
   .canvas-tool-groups { gap: 3px; }

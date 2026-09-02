@@ -54,6 +54,7 @@ test('Excalidraw is isolated behind a user-triggered dynamic import', () => {
   assert.match(island, /aiEnabled=\{false\}/);
   assert.match(stableUiCss, /\.spatial-canvas-host \.App-toolbar__extra-tools-dropdown \[data-testid="toolbar-embeddable"\]/);
   assert.match(stableUiCss, /\[data-testid="toolbar-laser"\]/);
+  assert.match(stableUiCss, /@media \(max-width: 1080px\)[\s\S]*?\.spatial-inspector \{ top: 72px;/);
   assert.match(viteConfig, /manifest:\s*true/);
   assert.match(bundleVerifier, /isDynamicEntry/);
   assert.match(bundleVerifier, /modulepreload/);
@@ -213,4 +214,36 @@ test('scene adapter keeps clean Excalidraw defaults and no embedded file bytes',
   assert.equal(record.scene.appState.currentItemStrokeStyle, 'solid');
   assert.deepEqual(record.scene.files, {});
   assert.doesNotMatch(JSON.stringify(record.scene), /data:image|;base64,/i);
+});
+
+test('IC4 connects durable assets, tasks, results and Fabric without automatic paid execution', () => {
+  assert.match(html, /id="btn-spatial-assets"[^>]*aria-label="打开素材库"/);
+  assert.match(html, /id="btn-spatial-jobs"[^>]*aria-label="打开任务中心"/);
+  assert.match(html, /id="btn-send-result-canvas"/);
+  assert.match(app, /onSendToCanvas: sendAssetToCanvas/);
+  assert.match(app, /onSpatialResult: handleSpatialFineEditResult/);
+  assert.match(app, /onAction: handleSpatialAction/);
+  assert.match(app, /onFineEdit: handleSpatialFineEdit/);
+  assert.match(app, /writeSpatialDragData\(event, spatialItemFromJob\(job\)\)/);
+  assert.match(app, /lineage_parent_id: asset\.lineage_parent_id \|\| ''/);
+  assert.match(app, /已打开并预填快捷处理；尚未发起生成调用/);
+  assert.doesNotMatch(app, /prepareSpatialQuickAction[\s\S]{0,2500}handleGenerate\(/);
+  assert.match(workspace, /documentRef\.addEventListener\('drop', onDrop\)/);
+  assert.match(workspace, /addBusinessItems/);
+  assert.match(workspace, /onOpenFineEdit/);
+  assert.match(island, /convertToExcalidrawElements/);
+  assert.match(island, /api\.addFiles/);
+  assert.match(island, /api\.getAppState\(\)\?\.isLoading/);
+  assert.match(island, /appState: \{ selectedElementIds \}/);
+  assert.match(island, /await synchronizeScene\?\.\(nextElements, nextAppState\)/);
+  assert.match(island, /waitForVisibleCanvasViewport\(canvasApi, host\)/);
+  assert.match(island, /readyFrames >= 2/);
+  assert.match(island, /mergeSpatialNodeBatch\(existing, additions, batch\.lineageBindings\)/);
+  assert.match(island, /captureUpdate: CaptureUpdateAction\.IMMEDIATELY/);
+  assert.match(island, /captureUpdate: CaptureUpdateAction\.NEVER/);
+  assert.match(island, /spatialLineageFocusElements\(items, boundExisting, boundAdditions\)/);
+  assert.match(island, /fitToContent: focusElements\.length > inserted\.length/);
+  assert.match(island, /canvasApi\.getAppState\(\),\s*\);/);
+  assert.match(island, /synchronizeScene\?\.\(elements, appState, \{ persist: false \}\)/);
+  assert.match(workspace, /正在保存`;\s*return await mountedIsland\.addBusinessItems/);
 });

@@ -230,7 +230,8 @@ test('unsupported Folder action is absent and export handles all result roles in
   assert.match(app, /function getAllResultItems/);
   assert.match(app, /processResultItems\(items/);
   assert.match(html, /id="btn-save-all"[^>]*>导出全部</);
-  assert.match(css, /\.result-actions \{[^}]*repeat\(2,1fr\)/);
+  assert.match(html, /id="btn-send-result-canvas"[^>]*>发送到画布</);
+  assert.match(css, /\.result-actions \{[^}]*repeat\(3,minmax\(0,1fr\)\)/);
 });
 
 test('production shell uses DWM system corners without a hard-clipped resize region', () => {
@@ -342,6 +343,13 @@ test('narrow growth filters use a stable two-column grid without horizontal scro
   assert.match(html, /class="memory-filter-tabs"[^>]*role="tablist"/);
   assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.memory-filter-tabs \{[^}]*display: grid;[^}]*grid-template-columns: repeat\(2,minmax\(0,1fr\)\);[^}]*overflow: visible/);
   assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.memory-filter-tabs button \{[^}]*width: 100%;[^}]*min-width: 0/);
+});
+
+test('asset trash cannot send or drag inactive assets into infinite canvas', () => {
+  assert.match(assets, /const canvasAction = view === 'active'/);
+  assert.match(assets, /const spatialAttributes = view === 'active'/);
+  assert.match(assets, /<article class="asset-manager-item[^`]+\$\{spatialAttributes\}>/);
+  assert.match(assets, /asset-manager-item__actions">\$\{taskAction\}\$\{canvasAction\}/);
 });
 
 test('primary studio copy uses readable type tokens instead of shrinking every label', () => {

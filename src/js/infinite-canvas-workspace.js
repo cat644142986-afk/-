@@ -1,5 +1,23 @@
 import * as API from './api.js';
 import { createApiSpatialCanvasAdapter } from './infinite-canvas-adapter.js';
+import {
+  SPATIAL_DRAG_MIME,
+  parseSpatialDragItem,
+  spatialContextActions,
+} from './spatial-canvas-items.js';
+
+const ACTION_COPY = Object.freeze({
+  cutout: '抠图',
+  'white-background': '白底图',
+  outpaint: '扩图',
+  'local-edit': '局部修改',
+  'generate-image': '生图',
+  'generate-video': '生视频',
+  compare: '对比',
+  export: '导出',
+  'fine-edit': '精细修改',
+  'open-task': '打开任务',
+});
 
 function escapeHtml(value) {
   return String(value || '')
@@ -50,6 +68,9 @@ export function createInfiniteCanvasWorkspaceController({
   windowRef = window,
   adapter = createApiSpatialCanvasAdapter({ api: API }),
   runtimeLoader = () => import('./infinite-canvas-island.jsx'),
+  onAction = () => {},
+  onFineEdit = () => {},
+  resolveProxyUrl = (assetId) => API.getAssetThumbnailUrl(assetId, 960),
 } = {}) {
   const query = (selector) => documentRef.querySelector(selector);
   let bound = false;
@@ -63,6 +84,10 @@ export function createInfiniteCanvasWorkspaceController({
   let savePromise = Promise.resolve();
   let openEpoch = 0;
   let renameReturnFocus = null;
+  let islandReadyPromise = null;
+  let resolveIslandReady = null;
+  let selectedElement = null;
+  let inspectorEpoch = 0;
 
   function recordsHtml(records) {
     return records.map((record, index) => `
@@ -95,11 +120,47 @@ export function createInfiniteCanvasWorkspaceController({
     query('#btn-spatial-rename').hidden = !record;
   }
 
+  async function renderInspector(element) {
+    const inspector = query('#spatial-inspector');
+    if (!inspector) return;
+    const epoch = ++inspectorEpoch;
+    selectedElement = element || null;
+    const actions = spatialContextActions(element || {});
+    if (!element || !actions.length) {
+      inspector.hidden = true;
+      inspector.innerHTML = '';
+      return;
+    }
+    const refs = element.customData || {};
+    let name = refs.task_id ? '创作任务' : refs.result_id ? '生成结果' : '素材图片';
+    let detail = refs.task_id || refs.result_id || refs.asset_id || '';
+    if (refs.asset_id) {
+      try {
+        const response = await API.getAsset(refs.asset_id, { timeoutMs: 10000 });
+        if (epoch !== inspectorEpoch) return;
+        const asset = response?.asset || response || {};
+        name = asset.name || name;
+        detail = asset.width && asset.height
+          ? `${asset.width} × ${asset.height} px`
+          : refs.result_id ? '结果版本' : '原始素材';
+      } catch (_) { /* the immutable reference is still enough for actions */ }
+    }
+    inspector.innerHTML = `
+      <header><span>${refs.result_id ? 'RESULT' : refs.task_id ? 'TASK' : 'ASSET'}</span><button type="button" data-spatial-inspector-close aria-label="收起对象操作">×</button></header>
+      <div class="spatial-inspector__copy"><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></div>
+      <div class="spatial-inspector__actions">${actions.map((action) => `<button type="button" data-spatial-action="${action}"${action === 'fine-edit' ? ' class="is-primary"' : ''}>${ACTION_COPY[action]}</button>`).join('')}</div>
+    `;
+    inspector.hidden = false;
+  }
+
   function showLibrary({ restoreFocus = false } = {}) {
     openEpoch += 1;
     flushScene();
     mountedIsland?.unmount?.();
     mountedIsland = null;
+    islandReadyPromise = null;
+    resolveIslandReady = null;
+    renderInspector(null);
     query('#spatial-library').hidden = false;
     query('#spatial-editor').hidden = true;
     query('#btn-spatial-home').hidden = true;
@@ -183,6 +244,8 @@ export function createInfiniteCanvasWorkspaceController({
     const epoch = ++openEpoch;
     mountedIsland?.unmount?.();
     mountedIsland = null;
+    islandReadyPromise = new Promise((resolve) => { resolveIslandReady = resolve; });
+    renderInspector(null);
     query('#spatial-library').hidden = true;
     query('#spatial-editor').hidden = false;
     query('#btn-spatial-home').hidden = false;
@@ -201,19 +264,67 @@ export function createInfiniteCanvasWorkspaceController({
       mountedIsland = runtime.mountInfiniteCanvas(host, {
         canvasDocument: adapter.get(record.id),
         onChange: queueScene,
+        onOpenFineEdit: (element) => onFineEdit({ canvasId: currentId, element }),
+        onSelectionChange: renderInspector,
+        resolveProxyUrl,
         onReady: () => {
           documentRef.documentElement.dataset.spatialRuntime = 'loaded';
           query('#spatial-editor-loading').hidden = true;
           host.hidden = false;
           query('#spatial-save-state').textContent = '本次会话 · 已打开';
+          resolveIslandReady?.();
+          resolveIslandReady = null;
         },
       });
     } catch (error) {
+      resolveIslandReady?.();
+      resolveIslandReady = null;
       query('#spatial-editor-loading').hidden = false;
       query('#spatial-editor-loading').innerHTML = '<strong>画布加载失败</strong><button type="button" data-spatial-retry>重试</button>';
       query('#spatial-save-state').textContent = '画布暂不可用';
       console.error('Infinite canvas runtime failed to load', error);
     }
+  }
+
+  async function ensureCanvasForImport() {
+    await ensureRecords();
+    let targetId = currentId || adapter.list()[0]?.id || '';
+    if (!targetId) {
+      const record = await adapter.create({ name: `未命名画布 ${adapter.list().length + 1}` });
+      renderLibrary();
+      targetId = record.id;
+    }
+    if (!mountedIsland || currentId !== targetId) await openCanvas(targetId);
+    await islandReadyPromise;
+    return targetId;
+  }
+
+  async function addBusinessItems(items) {
+    const normalized = Array.from(items || []).filter(Boolean);
+    if (!normalized.length) return null;
+    try {
+      await ensureCanvasForImport();
+      query('#spatial-save-state').textContent = `${normalized.length} 项已加入 · 正在保存`;
+      return await mountedIsland.addBusinessItems(normalized);
+    } catch (error) {
+      query('#spatial-save-state').textContent = '内容未能加入画布';
+      console.error('Infinite canvas business import failed', error);
+      return null;
+    }
+  }
+
+  function onDrop(event) {
+    if (!active) return;
+    const payload = event.dataTransfer?.getData(SPATIAL_DRAG_MIME);
+    if (!payload) return;
+    event.preventDefault();
+    event.stopPropagation();
+    try { addBusinessItems([parseSpatialDragItem(payload)]); }
+    catch (error) { console.error('Infinite canvas drop payload was rejected', error); }
+  }
+
+  function onDragOver(event) {
+    if (active && event.dataTransfer?.types?.includes(SPATIAL_DRAG_MIME)) event.preventDefault();
   }
 
   async function createCanvas() {
@@ -277,6 +388,14 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onClick(event) {
+    const inspectorAction = event.target.closest('[data-spatial-action]');
+    if (inspectorAction && selectedElement) {
+      return onAction(inspectorAction.dataset.spatialAction, {
+        canvasId: currentId,
+        element: selectedElement,
+      });
+    }
+    if (event.target.closest('[data-spatial-inspector-close]')) return renderInspector(null);
     const openButton = event.target.closest('[data-spatial-open]');
     if (openButton) return openCanvas(openButton.dataset.spatialOpen);
     const renameButton = event.target.closest('[data-spatial-rename]');
@@ -297,6 +416,8 @@ export function createInfiniteCanvasWorkspaceController({
       if (event.key === 'Escape') { event.preventDefault(); closeRename(); }
     });
     query('#page-canvas').addEventListener('click', onClick);
+    documentRef.addEventListener('dragover', onDragOver);
+    documentRef.addEventListener('drop', onDrop);
     renderLibrary();
   }
 
@@ -321,12 +442,15 @@ export function createInfiniteCanvasWorkspaceController({
 
   function destroy() {
     flushScene();
+    documentRef.removeEventListener('dragover', onDragOver);
+    documentRef.removeEventListener('drop', onDrop);
     mountedIsland?.unmount?.();
     mountedIsland = null;
   }
 
   return {
     adapter,
+    addBusinessItems,
     bind,
     createCanvas,
     destroy,

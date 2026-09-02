@@ -56,6 +56,12 @@ import { createSessionsController, formatStudioTime } from './studio-sessions.js
 import { createProductProfileController } from './studio-product-profiles.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 import { createInfiniteCanvasWorkspaceController } from './infinite-canvas-workspace.js';
+import {
+  SPATIAL_DRAG_MIME,
+  serializeSpatialDragItem,
+  spatialItemFromAsset,
+  spatialItemFromJob,
+} from './spatial-canvas-items.js';
 import { statusPanelHtml } from './status-view.js';
 import {
   SEMANTIC_CANVAS_PALETTE,
@@ -142,6 +148,8 @@ const assetManager = createAssetManagerController({
   toggleAssetSelection,
   toast,
   openDrawer,
+  onSendToCanvas: sendAssetToCanvas,
+  writeSpatialDragData,
 });
 const canvasController = createCanvasController({
   api: API,
@@ -155,8 +163,13 @@ const canvasController = createCanvasController({
   onViewChange: (view) => {
     if (view === 'canvas') workflowDock.close(false);
   },
+  onReturnToSpatial: () => switchPage('canvas'),
+  onSpatialResult: handleSpatialFineEditResult,
 });
-const infiniteCanvasWorkspace = createInfiniteCanvasWorkspaceController();
+const infiniteCanvasWorkspace = createInfiniteCanvasWorkspaceController({
+  onAction: handleSpatialAction,
+  onFineEdit: handleSpatialFineEdit,
+});
 const sessionsController = createSessionsController({
   api: API,
   state,
@@ -685,11 +698,14 @@ async function restoreWorkspaceResult(mode, payload) {
       content_url: asset.content_url || '',
       thumbnail_url: asset.thumbnail_url || '',
       role: asset.role || (mode === 'cutout-batch' ? 'result_cutout' : 'result_main'),
+      mime: asset.mime || (mode === 'cutout-batch' ? 'image/png' : 'image/jpeg'),
       id: assetId,
       generation_id: generationByResult.get(String(assetId)) || '',
       job_id: job.id,
       width: asset.width || null,
       height: asset.height || null,
+      lineage_parent_id: asset.lineage_parent_id || '',
+      product_profile_version_id: job.snapshot?.product_profile_version_id || '',
       version_label: ownVersion ? `V${ownVersion}` : '',
     };
   });
@@ -850,6 +866,220 @@ function toast(message, type = 'info', duration = 1800, action = null) {
     item.style.transform = 'translateX(12px)';
     window.setTimeout(() => item.remove(), 220);
   }, duration);
+}
+
+function spatialItemForResult(item, overrides = {}) {
+  const assetId = String(item?.asset_id || item?.id || '');
+  return spatialItemFromAsset({
+    id: assetId,
+    name: item?.name,
+    role: item?.role || 'result_main',
+    mime: item?.mime || (item?.role === 'result_cutout' ? 'image/png' : 'image/jpeg'),
+    width: item?.width,
+    height: item?.height,
+    lineage_parent_id: item?.lineage_parent_id,
+  }, {
+    kind: 'result',
+    result_id: assetId,
+    task_id: overrides.task_id || item?.job_id,
+    product_profile_version_id: overrides.product_profile_version_id,
+    lineage_parent_id: overrides.lineage_parent_id || item?.lineage_parent_id,
+  });
+}
+
+function writeSpatialDragData(event, value) {
+  if (!event?.dataTransfer) return;
+  const item = value?.references ? value : spatialItemFromAsset(value);
+  event.dataTransfer.effectAllowed = 'copy';
+  event.dataTransfer.setData(SPATIAL_DRAG_MIME, serializeSpatialDragItem(item));
+}
+
+async function addItemsToSpatialCanvas(items, successCopy) {
+  if (!$('#asset-drawer').hidden) closeDrawer('assets');
+  if (!$('#job-drawer').hidden) closeDrawer('jobs');
+  switchPage('canvas');
+  const result = await infiniteCanvasWorkspace.addBusinessItems(items);
+  if (!result) {
+    toast('内容未能加入无限画布，请稍后重试', 'error', 5200);
+    return false;
+  }
+  toast(successCopy || `${items.length} 项已发送到无限画布`, 'success');
+  return true;
+}
+
+async function sendAssetToCanvas(assetOrId) {
+  try {
+    const assetId = typeof assetOrId === 'string' ? assetOrId : assetOrId?.id;
+    let asset = typeof assetOrId === 'object' ? assetOrId : null;
+    if (!asset?.id) {
+      const response = await API.getAsset(assetId, { timeoutMs: 10000 });
+      asset = response?.asset || response;
+    }
+    return await addItemsToSpatialCanvas(
+      [spatialItemFromAsset(asset)],
+      `${asset.name || '素材'} 已发送到无限画布`,
+    );
+  } catch (error) {
+    toast(`素材未能发送到无限画布：${formatApiError(error)}`, 'error', 6000);
+    return false;
+  }
+}
+
+async function sendCurrentResultToCanvas() {
+  const item = getResultItems()[state.viewerIndex];
+  if (!item?.asset_id) {
+    toast('当前没有可发送的结果版本', 'error');
+    return false;
+  }
+  const job = state.jobs.find((entry) => String(entry.id) === String(item.job_id || state.currentTaskId));
+  return addItemsToSpatialCanvas([spatialItemForResult(item, {
+    task_id: item.job_id || state.currentTaskId,
+    product_profile_version_id: job?.snapshot?.product_profile_version_id,
+  })], `${item.name || '当前结果'} 已发送到无限画布`);
+}
+
+async function sendJobToCanvas(jobOrId) {
+  let job = typeof jobOrId === 'object' ? jobOrId : state.jobs.find((entry) => entry.id === jobOrId);
+  if (!job?.id) {
+    const response = await API.getJob(String(jobOrId || ''));
+    job = response?.job || response;
+  }
+  return addItemsToSpatialCanvas([spatialItemFromJob(job)], `${job.title || '任务'} 已发送到无限画布`);
+}
+
+async function resolveWorkspaceSource(assetId) {
+  let currentId = String(assetId || '');
+  const visited = new Set();
+  for (let depth = 0; currentId && depth < 16 && !visited.has(currentId); depth += 1) {
+    visited.add(currentId);
+    const response = await API.getAsset(currentId, { timeoutMs: 10000 });
+    const asset = response?.asset || response;
+    if (asset?.role === 'workspace_source') return asset;
+    currentId = String(asset?.lineage_parent_id || '');
+  }
+  throw new Error('没有找到可用于快捷处理的原始素材');
+}
+
+async function prepareSpatialQuickAction(action, context) {
+  const refs = context?.element?.customData || {};
+  const source = await resolveWorkspaceSource(refs.asset_id);
+  const mode = action === 'cutout' ? 'cutout-batch' : 'single';
+  const collection = MODE_CONFIG[mode].collection;
+  await API.restoreAssetToCollection(collection, source.id);
+  await canvasController.setView('quick');
+  if (state.currentMode !== mode) switchMode(mode, true, false);
+  await loadWorkspace(mode, true);
+  state.modeSelections[mode] = [source.id];
+  syncLegacySelection();
+  const brief = {
+    cutout: '移除背景，完整保留全部前景主体',
+    'white-background': '保留商品结构、数量和包装文字，生成干净纯白背景电商主图',
+    'generate-image': refs.result_id
+      ? '参考当前结果方向继续生成高质量电商商品图，保留商品事实与结构'
+      : '基于当前素材生成高质量电商商品图，保留商品事实与结构',
+  }[action] || '';
+  $('#brief-input').value = brief;
+  if (action === 'cutout') selectCutoutStrategy('foreground');
+  captureModeSnapshot(mode);
+  renderQueue();
+  renderFileMeta();
+  updateQuickControls();
+  updateCtaState();
+  scheduleKnowledgeCompile();
+  switchPage('process');
+  window.setTimeout(() => {
+    const target = action === 'cutout' ? $('#btn-generate') : $('#brief-input');
+    target?.focus({ preventScroll: true });
+  }, 0);
+  toast('已打开并预填快捷处理；尚未发起生成调用', 'success', 4200);
+}
+
+async function spatialJob(context) {
+  const taskId = String(context?.element?.customData?.task_id || '');
+  if (!taskId) return null;
+  const existing = state.jobs.find((job) => String(job.id) === taskId);
+  if (existing) return existing;
+  const response = await API.getJob(taskId);
+  return response?.job || response;
+}
+
+async function handleSpatialFineEdit(context, localMode = 'inpaint') {
+  try {
+    const refs = context?.element?.customData || {};
+    if (!refs.asset_id) throw new Error('当前对象没有可编辑的素材引用');
+    const job = await spatialJob(context).catch(() => null);
+    if (job?.mode && MODE_CONFIG[job.mode] && state.currentMode !== job.mode) {
+      switchMode(job.mode, true, false);
+    }
+    switchPage('process');
+    await canvasController.openAsset(refs.asset_id, {
+      mode: job?.mode || state.currentMode,
+      localMode,
+      origin: {
+        canvasId: context.canvasId,
+        elementId: context.element?.id || '',
+        references: { ...refs },
+      },
+    });
+    toast(localMode === 'outpaint' ? '已进入精细扩图，尚未发起模型调用' : '已进入精细修改', 'success');
+  } catch (error) {
+    toast(`无法打开精细修改：${formatApiError(error)}`, 'error', 6000);
+  }
+}
+
+async function handleSpatialFineEditResult({ origin, resultAsset, replayed }) {
+  const refs = origin?.references || {};
+  const item = spatialItemForResult(resultAsset, {
+    task_id: refs.task_id,
+    product_profile_version_id: refs.product_profile_version_id,
+    lineage_parent_id: resultAsset.lineage_parent_id || refs.result_id || refs.asset_id,
+  });
+  switchPage('canvas');
+  const added = await infiniteCanvasWorkspace.addBusinessItems([item]);
+  if (!added) throw new Error('精修结果未能回填无限画布');
+  toast(replayed ? '精修结果已从账本恢复并回填画布' : '精修结果已作为新版本回填画布', 'success', 4200);
+}
+
+async function openSpatialCompare(context) {
+  const refs = context?.element?.customData || {};
+  if (!refs.task_id || !refs.result_id) throw new Error('当前结果缺少任务或版本引用');
+  await openJobResults(refs.task_id);
+  let selected = false;
+  for (const tab of ['main', 'cutout']) {
+    const index = getResultItems(tab).findIndex((item) => String(item.asset_id) === String(refs.result_id));
+    if (index >= 0) {
+      selectResultVersion(index, tab);
+      selected = true;
+      break;
+    }
+  }
+  if (!selected) throw new Error('任务账本中没有找到该结果版本');
+  compareController.render();
+  switchPage('compare');
+}
+
+async function openSpatialTask(context) {
+  const job = await spatialJob(context);
+  if (!job?.id) throw new Error('当前任务引用已不可用');
+  if (resultIdsForJob(job).length) await openJobResults(job.id);
+  else await openJobWorkspace(job);
+}
+
+async function handleSpatialAction(action, context) {
+  try {
+    if (['cutout', 'white-background', 'generate-image'].includes(action)) {
+      await prepareSpatialQuickAction(action, context);
+    } else if (action === 'outpaint') await handleSpatialFineEdit(context, 'outpaint');
+    else if (['local-edit', 'fine-edit'].includes(action)) await handleSpatialFineEdit(context, 'inpaint');
+    else if (action === 'compare') await openSpatialCompare(context);
+    else if (action === 'export') await exportSpatialResult(context);
+    else if (action === 'open-task') await openSpatialTask(context);
+    else if (action === 'generate-video') {
+      toast('图生视频将在 IC5 接入；本次没有调用接口或消耗额度', 'info', 5200);
+    }
+  } catch (error) {
+    toast(`画布操作未完成：${formatApiError(error)}`, 'error', 6000);
+  }
 }
 
 function setBackendStatus(status, text) {
@@ -1238,11 +1468,12 @@ function renderQueue() {
   const items = renderedAssets.map((asset, index) => {
     const selected = selection.has(asset.id);
     const dimensions = asset.width && asset.height ? `${asset.width}×${asset.height}` : '已持久化';
-    return `<article class="queue-item asset-card ${selected ? 'selected' : ''}">
+    return `<article class="queue-item asset-card ${selected ? 'selected' : ''}" data-spatial-asset-id="${escapeHtml(asset.id)}" draggable="true">
       <button class="asset-card__select" type="button" data-asset-id="${escapeHtml(asset.id)}" aria-pressed="${selected}" aria-label="${selected ? '取消选择' : '选择'} ${escapeHtml(asset.name)}">
         <span class="asset-card__visual"><img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" decoding="async" /><span class="asset-card__check" aria-hidden="true">${selected ? '✓' : '+'}</span></span>
         <span class="asset-card__meta"><strong title="${escapeHtml(asset.name)}">${escapeHtml(asset.name || `素材 ${index + 1}`)}</strong><small>${escapeHtml(dimensions)}</small></span>
       </button>
+      <button class="asset-card__canvas" type="button" data-send-asset-canvas="${escapeHtml(asset.id)}" aria-label="将 ${escapeHtml(asset.name)} 发送到无限画布" title="发送到无限画布">画布</button>
       <button class="asset-card__remove" type="button" data-remove-asset-id="${escapeHtml(asset.id)}" aria-label="将 ${escapeHtml(asset.name)} 移入回收站" title="移入回收站"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/></svg></button>
     </article>`;
   }).join('');
@@ -1255,6 +1486,11 @@ function renderQueue() {
   }
   $$('[data-asset-id]', queue).forEach((button) => button.addEventListener('click', () => toggleAssetSelection(button.dataset.assetId)));
   $$('[data-remove-asset-id]', queue).forEach((button) => button.addEventListener('click', () => removeWorkspaceAsset(button.dataset.removeAssetId)));
+  $$('[data-send-asset-canvas]', queue).forEach((button) => button.addEventListener('click', () => sendAssetToCanvas(button.dataset.sendAssetCanvas)));
+  $$('[data-spatial-asset-id]', queue).forEach((card) => card.addEventListener('dragstart', (event) => {
+    const asset = state.assets.find((entry) => String(entry.id) === String(card.dataset.spatialAssetId));
+    if (asset) writeSpatialDragData(event, spatialItemFromAsset(asset));
+  }));
   $('#btn-queue-add')?.addEventListener('click', () => $('#file-input').click());
   $('#btn-queue-manage')?.addEventListener('click', () => assetManager.open());
   setStage('ready');
@@ -1961,10 +2197,13 @@ async function fetchResultItem(assetId, job, index = 0, overrides = {}) {
     content_url: contentUrl,
     thumbnail_url: asset?.thumbnail_url || '',
     role: asset?.role || (job?.mode === 'cutout-batch' ? 'result_cutout' : 'result_main'),
+    mime: asset?.mime || (job?.mode === 'cutout-batch' ? 'image/png' : 'image/jpeg'),
     generation_id: overrides.generation_id || owner?.generation_id || '',
     job_id: overrides.job_id || job?.id || '',
     width: asset?.width || null,
     height: asset?.height || null,
+    lineage_parent_id: asset?.lineage_parent_id || '',
+    product_profile_version_id: job?.snapshot?.product_profile_version_id || '',
     version_label: overrides.version_label || '',
     is_parent_version: Boolean(overrides.is_parent_version),
   };
@@ -2244,7 +2483,7 @@ function renderJobs(force = false) {
             ? '任务在后台继续推进，切换页面不会中断当前工作。'
             : '任务现场、素材选择与参数快照均已保存在本地账本。'));
       const icon = status.tone === 'completed' ? '✓' : (['partial', 'failed', 'interrupted'].includes(status.tone) ? '!' : '↻');
-      return `<article class="job-card job-card--${escapeHtml(status.tone)}" data-job-id="${escapeHtml(job.id)}" tabindex="-1">
+      return `<article class="job-card job-card--${escapeHtml(status.tone)}" data-job-id="${escapeHtml(job.id)}" data-spatial-job-id="${escapeHtml(job.id)}" draggable="true" tabindex="-1">
         <header><span><i class="job-card__icon">${icon}</i><small>${escapeHtml(MODE_CONFIG[job.mode]?.badge || '创作任务')} · ${escapeHtml(status.label)}</small><strong>${escapeHtml(job.title || MODE_CONFIG[job.mode]?.label || '创作任务')}</strong></span><span class="job-status job-status--${escapeHtml(status.tone)}">${counts.completed}/${counts.total}</span></header>
         <div class="job-progress"><span><i style="width:${progress}%"></i></span><strong>${progressCopy}</strong></div>
         <div class="job-counts"><span>${counts.total} 项</span><span>${counts.completed} 成功</span><span>${counts.failed} 失败</span><span>${counts.canceled} 取消</span><span>成功率 ${counts.successRate === null ? '—' : `${counts.successRate}%`}</span><time>${escapeHtml(formatStudioTime(job.updated_at || job.created_at))}</time></div>
@@ -2252,6 +2491,7 @@ function renderJobs(force = false) {
         ${items ? `<ul class="job-items ${itemsExpanded ? 'is-expanded' : ''}">${items}</ul>` : ''}
         ${(job.items || []).length > Math.max(5, visibleItems.length) || itemsExpanded ? `<button class="job-items-toggle" type="button" data-job-action="toggle-items" data-job-id="${escapeHtml(job.id)}" aria-expanded="${itemsExpanded}">${itemsExpanded ? '收起项目' : `查看全部 ${(job.items || []).length} 项`}</button>` : ''}
         <footer>
+          <button type="button" data-job-action="send-canvas" data-job-id="${escapeHtml(job.id)}">发送到画布</button>
           ${hasResults ? `<button type="button" data-job-action="open-results" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-results', job.id) ? 'disabled aria-busy="true"' : ''}>打开结果</button>` : ''}
           ${!hasResults ? `<button type="button" data-job-action="open-workspace" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-workspace', job.id) ? 'disabled aria-busy="true"' : ''}>回到现场</button>` : ''}
           ${retryable.length ? `<button class="primary-job-action" type="button" data-job-action="retry-failed" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('retry-failed', job.id) ? 'disabled aria-busy="true"' : ''}>只重试失败项</button>` : ''}
@@ -2265,6 +2505,10 @@ function renderJobs(force = false) {
       : '');
   }
   $$('[data-job-action]', list).forEach((button) => button.addEventListener('click', () => handleJobAction(button)));
+  $$('[data-spatial-job-id]', list).forEach((card) => card.addEventListener('dragstart', (event) => {
+    const job = state.jobs.find((entry) => String(entry.id) === String(card.dataset.spatialJobId));
+    if (job) writeSpatialDragData(event, spatialItemFromJob(job));
+  }));
   state.jobsRenderSignature = signature;
   restoreJobListView(list, view);
 }
@@ -2378,7 +2622,8 @@ async function handleJobAction(button) {
       if (!ids.length) throw new Error('没有可重试项目；永久失败项需要更换素材或设置');
       await API.retryJob(jobId, ids);
       toast(`${ids.length} 个失败项已重新入队`, 'success');
-    } else if (action === 'open-results') await openJobResults(jobId);
+    } else if (action === 'send-canvas') await sendJobToCanvas(jobId);
+    else if (action === 'open-results') await openJobResults(jobId);
     else if (action === 'open-workspace') {
       const response = await API.getJob(jobId);
       await openJobWorkspace(response?.job || response);
@@ -2581,11 +2826,45 @@ function renderResults() {
   if (viewerImage.complete) showDimensions();
   $('#viewer-nav').hidden = items.length < 2;
   $('#viewer-counter').textContent = `${state.viewerIndex + 1} / ${items.length}`;
-  $('#viewer-thumbs').innerHTML = items.map((entry, index) => `<button class="viewer-thumb ${index === state.viewerIndex ? 'active' : ''}" type="button" data-index="${index}"><img src="${resultDataUrl(entry)}" alt="结果 ${index + 1}" /></button>`).join('');
+  $('#viewer-thumbs').innerHTML = items.map((entry, index) => `<button class="viewer-thumb ${index === state.viewerIndex ? 'active' : ''}" type="button" data-index="${index}" data-spatial-result-index="${index}" draggable="true"><img src="${resultDataUrl(entry)}" alt="结果 ${index + 1}" /></button>`).join('');
   $$('.viewer-thumb').forEach((button) => button.addEventListener('click', () => {
     selectResultVersion(Number(button.dataset.index));
   }));
+  $$('[data-spatial-result-index]', $('#viewer-thumbs')).forEach((button) => button.addEventListener('dragstart', (event) => {
+    const entry = items[Number(button.dataset.spatialResultIndex)];
+    if (entry) writeSpatialDragData(event, spatialItemForResult(entry, {
+      task_id: entry.job_id || state.currentTaskId,
+      product_profile_version_id: entry.product_profile_version_id,
+    }));
+  }));
   if (state.originalDataUrl && src) state.compareData = { original: state.originalDataUrl, result: src };
+}
+
+async function saveResultItem(item, index = 0) {
+  let data = item.data ? item.data.replace(/^data:[^,]+,/, '') : '';
+  if (!data && (item.url || item.content_url || item.asset_id || item.id)) {
+    const assetId = item.asset_id || item.id;
+    const response = await fetch(item.url || item.content_url || await API.getAssetContentUrl(assetId));
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    data = btoa(binary);
+  }
+  if (!data) throw new Error('结果内容为空');
+  const isCutout = item.role === 'result_cutout';
+  await API.saveImage(item.name || `product-atelier-${index + 1}.${isCutout ? 'png' : 'jpg'}`, data);
+}
+
+async function exportSpatialResult(context) {
+  const assetId = String(context?.element?.customData?.result_id || '');
+  if (!assetId) throw new Error('当前对象不是可导出的结果版本');
+  const response = await API.getAsset(assetId, { timeoutMs: 10000 });
+  const asset = response?.asset || response;
+  await saveResultItem({ ...asset, asset_id: assetId });
+  toast(`${asset.name || '结果'} 已导出`, 'success');
 }
 
 async function saveCurrentResults() {
@@ -2599,20 +2878,7 @@ async function saveCurrentResults() {
   button.textContent = '正在导出…';
   let outcome = { succeeded: [], failed: [] };
   try {
-    outcome = await processResultItems(items, async (item, index) => {
-      let data = item.data ? item.data.replace(/^data:[^,]+,/, '') : '';
-      if (!data && (item.url || item.asset_id)) {
-        const response = await fetch(item.url || await API.getAssetContentUrl(item.asset_id));
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        let binary = '';
-        for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-        data = btoa(binary);
-      }
-      if (!data) throw new Error('结果内容为空');
-      const isCutout = item.role === 'result_cutout';
-      await API.saveImage(item.name || `product-atelier-${index + 1}.${isCutout ? 'png' : 'jpg'}`, data);
-    });
+    outcome = await processResultItems(items, saveResultItem);
   } finally {
     state.exporting = false;
     button.disabled = false;
@@ -3624,6 +3890,8 @@ function bindEvents() {
   $('#btn-open-intelligence').addEventListener('click', () => openDrawer('intelligence'));
   $('#btn-job-dock').addEventListener('click', () => openDrawer('jobs'));
   $('#btn-rail-jobs').addEventListener('click', () => openDrawer('jobs'));
+  $('#btn-spatial-assets').addEventListener('click', () => assetManager.open());
+  $('#btn-spatial-jobs').addEventListener('click', () => openDrawer('jobs'));
   $('#btn-refresh-jobs').addEventListener('click', async () => {
     const button = $('#btn-refresh-jobs');
     if (button.disabled) return;
@@ -3713,6 +3981,7 @@ function bindEvents() {
     switchPage('process');
     renderResults();
   });
+  $('#btn-send-result-canvas').addEventListener('click', sendCurrentResultToCanvas);
   $('#btn-save-all').addEventListener('click', saveCurrentResults);
   $('#btn-adopt').addEventListener('click', async () => {
     state.lastFeedbackSignal = 'adopted';

@@ -1423,6 +1423,7 @@ class AssetApiTests(unittest.TestCase):
         composition = composed.json()
         self.assertFalse(composition["replayed"])
         self.assertEqual(composition["result_asset"]["role"], "result_local_edit")
+        self.assertEqual(composition["result_asset"]["lineage_parent_id"], source["id"])
         self.assertEqual(composition["canvas"]["current_revision"], 2)
         result_id = composition["result_asset_id"]
         layer = composition["canvas"]["document"]["layers"][0]

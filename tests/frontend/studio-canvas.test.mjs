@@ -71,6 +71,18 @@ test('adding an asset is idempotent and keeps source references unique', () => {
   assert.deepEqual(document.source_asset_ids, ['asset:first', 'asset:second']);
 });
 
+test('result assets remain result-backed layers and never enter source asset membership', () => {
+  const result = { ...asset('ast:result', 1600, 1200), role: 'result_local_edit' };
+  const resultDocument = createCanvasDocument('single', result);
+  assert.equal(resultDocument.layers[0].source.kind, 'result');
+  assert.deepEqual(resultDocument.source_asset_ids, []);
+
+  const sourceDocument = createCanvasDocument('single', asset('asset:first'));
+  const added = addAssetLayer(sourceDocument, result);
+  assert.equal(added.layer.source.kind, 'result');
+  assert.deepEqual(sourceDocument.source_asset_ids, ['asset:first']);
+});
+
 test('transform, visibility, and lock mutations stay reversible', () => {
   const document = createCanvasDocument('single', asset('asset:first'));
   const layer = document.layers[0];
@@ -352,6 +364,9 @@ test('production canvas uses SQLite APIs and is wired into the Studio lifecycle'
   assert.match(controllerSource, /api\.createLocalEditSpec\(local\.specRequest/);
   assert.match(controllerSource, /api\.getLatestLocalEditSpec\(\{/);
   assert.match(controllerSource, /api\.composeLocalEdit\(currentMode, request/);
+  assert.match(controllerSource, /onSpatialResult\(\{/);
+  assert.match(controllerSource, /async function openAsset\(assetId/);
+  assert.match(htmlSource, /id="canvas-return-spatial"/);
   assert.match(controllerSource, /buildPaidOutpaintContract\(\{/);
   assert.match(controllerSource, /purpose: 'outpaint'/);
   assert.match(controllerSource, /localEditMode === 'outpaint'/);

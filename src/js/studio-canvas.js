@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Brush,
   Download,
   Eraser,
@@ -68,6 +69,7 @@ const EMPTY_ARTBOARD = Object.freeze({
   export: { pixel_width: 1600, pixel_height: 1200, color_space: 'srgb' },
 });
 const ICONS = {
+  ArrowLeft,
   Brush,
   Download,
   Eraser,
@@ -188,6 +190,8 @@ export function createCanvasController({
   toast,
   formatApiError,
   onViewChange = () => {},
+  onReturnToSpatial = () => {},
+  onSpatialResult = () => {},
 } = {}) {
   const entries = new Map();
   const objectByLayer = new Map();
@@ -210,6 +214,7 @@ export function createCanvasController({
   let localPointer = null;
   let historySyncing = false;
   let suppressSelectionCleared = false;
+  let spatialOrigin = null;
   let bound = false;
 
   function entryFor(mode = currentMode) {
@@ -641,6 +646,17 @@ export function createCanvasController({
     button.disabled = !entry.document || entry.saving || entry.exporting || entry.blocked;
     button.setAttribute('aria-busy', String(entry.exporting));
     button.title = entry.exporting ? '正在导出当前画板' : '导出当前画板 PNG';
+  }
+
+  function updateSpatialReturnControl() {
+    const button = query('#canvas-return-spatial');
+    if (!button) return;
+    button.hidden = !spatialOrigin;
+    button.textContent = '';
+    if (spatialOrigin) {
+      button.insertAdjacentHTML('beforeend', '<i data-lucide="arrow-left" aria-hidden="true"></i><span>返回无限画布</span>');
+      refreshIcons(button);
+    }
   }
 
   function applyCanvasResponse(mode, response, { rebuildCanvas = true } = {}) {
@@ -1620,6 +1636,21 @@ export function createCanvasController({
       setTool('select');
       setSaveState('saved', '画布已保存', `revision ${response.canvas.current_revision}`);
       toast(response.replayed ? '局部编辑结果已从账本恢复' : '局部编辑结果已应用到画布', 'success');
+      if (spatialOrigin && response.result_asset) {
+        const origin = { ...spatialOrigin };
+        spatialOrigin = null;
+        updateSpatialReturnControl();
+        await setView('quick');
+        try {
+          await onSpatialResult({
+            origin,
+            resultAsset: response.result_asset,
+            replayed: Boolean(response.replayed),
+          });
+        } catch (error) {
+          toast(`精修已经写入账本，但返回无限画布失败：${formatApiError(error)}`, 'error', 6500);
+        }
+      }
     } catch (error) {
       local.error = formatApiError(error, '候选结果未能应用到画布');
       if (error?.detail?.code === 'CANVAS_REVISION_CONFLICT') entry.blocked = true;
@@ -1873,19 +1904,29 @@ export function createCanvasController({
     const entry = entryFor();
     if (entry.saving || entry.blocked) return;
     const asset = assetById(assetId);
-    if (!asset) return;
+    if (!asset) return null;
     try {
-      if (!entry.document) entry.document = createCanvasDocument(currentMode, asset);
-      else addAssetLayer(entry.document, asset);
-      entry.dirty = true;
-      selectedLayerId = `layer:${asset.id}`;
+      let layer = entry.document?.layers?.find((item) => String(item.source?.id) === String(asset.id)) || null;
+      if (!entry.document) {
+        entry.document = createCanvasDocument(currentMode, asset);
+        layer = entry.document.layers[0];
+        entry.dirty = true;
+      } else if (!layer) {
+        const added = addAssetLayer(entry.document, asset);
+        layer = added.layer;
+        entry.dirty = Boolean(layer) || entry.dirty;
+      }
+      if (!layer) return null;
+      selectedLayerId = layer.id;
       updateDocumentMeta();
       updateExportControl();
       renderLists();
       await renderCanvas();
-      scheduleSave(0);
+      if (entry.dirty) scheduleSave(0);
+      return layer;
     } catch (error) {
       toast(formatApiError(error, '素材无法加入画布'), 'error', 5200);
+      return null;
     }
   }
 
@@ -1995,6 +2036,40 @@ export function createCanvasController({
     } else saveMode(currentMode);
   }
 
+  async function openAsset(assetId, {
+    mode = currentMode,
+    localMode = 'inpaint',
+    origin = null,
+  } = {}) {
+    const targetId = String(assetId || '');
+    if (!targetId) throw new Error('精细修改缺少素材引用');
+    if (mode && mode !== currentMode) setMode(mode);
+    const response = await api.getAsset(targetId, { timeoutMs: 12000 });
+    const asset = response?.asset || response;
+    assetDetails.set(targetId, asset);
+    spatialOrigin = origin ? { ...origin, assetId: targetId } : null;
+    updateSpatialReturnControl();
+    await setView('canvas');
+    await ensureHydrated(currentMode);
+    if (entryFor().blocked) throw new Error('精细修改画布暂不可用');
+    const layer = await addAsset(targetId);
+    if (!layer) throw new Error('精细修改素材无法加入画布');
+    setSelectedLayer(layer.id);
+    setLocalEditMode(localMode === 'outpaint' ? 'outpaint' : 'inpaint');
+    setActivePanel('local-edit');
+    requestAnimationFrame(() => query('#canvas-stage')?.focus({ preventScroll: true }));
+    return layer;
+  }
+
+  async function returnToSpatial() {
+    if (!spatialOrigin) return;
+    const origin = { ...spatialOrigin };
+    spatialOrigin = null;
+    updateSpatialReturnControl();
+    await setView('quick');
+    onReturnToSpatial(origin);
+  }
+
   function setPage(processActive) {
     const switcher = query('#studio-view-switch');
     if (switcher) switcher.hidden = !processActive;
@@ -2044,6 +2119,7 @@ export function createCanvasController({
     query('#canvas-zoom-in').addEventListener('click', () => setZoom((canvas?.getZoom() || 1) * 1.18));
     query('#canvas-fit').addEventListener('click', fitArtboard);
     query('#canvas-export').addEventListener('click', exportArtboard);
+    query('#canvas-return-spatial').addEventListener('click', returnToSpatial);
     query('#canvas-apply-transform').addEventListener('click', applyTransform);
     query('#canvas-save-retry').addEventListener('click', () => saveMode(currentMode, true));
     query('#canvas-save-reload').addEventListener('click', reloadCurrent);
@@ -2164,6 +2240,7 @@ export function createCanvasController({
     setPage(true);
     setMode(state.currentMode || 'single');
     setActivePanel('layers');
+    updateSpatialReturnControl();
     updateHistoryControls();
     updateSelectionPanel();
   }
@@ -2171,6 +2248,7 @@ export function createCanvasController({
   return {
     bind,
     hydrate,
+    openAsset,
     setMode,
     setPage,
     setView,
