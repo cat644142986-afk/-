@@ -1,0 +1,95 @@
+{
+  "checkpoint": "excalidraw-spatial-ic5-2026-09-02",
+  "branch": "codex/excalidraw-infinite-canvas",
+  "implementation_commit": "b2e06ec77b753e3a303b7546f842ad83a64b3ee2",
+  "rollback_commit": "6042832aef28aa3293baf2c5c4502ad5d25d29c5",
+  "rollback_tag": "checkpoint-2026-09-02-ai-local-edit-candidate",
+  "sidecar_contract": "2026-09-02.4",
+  "development_schema": 8,
+  "formal_release": {
+    "git_commit": "93539f0c9ec857d22d3751bb836ff722579cd8db",
+    "sidecar_contract": "2026-09-02.3",
+    "schema": 7,
+    "size_bytes": 375974706,
+    "size_mib": 358.56,
+    "app_sha256": "F0D1A07313A47258CD17FA4143DF4F0069D6E075CAA9D22B00EB7220A15685A7",
+    "sidecar_sha256": "2AF3FC31A90961D77A41BE6CECAFD3559E0D0FFFB505FD9BBEA9EC7C61293894",
+    "manifest_sha256": "287042C051B97CC9F60C42F670C470EBEC965042378B790E0F4F13FCC9718A38",
+    "modified": false
+  },
+  "video_contract": {
+    "version": "image-to-video-v1",
+    "provider": "offline-preview-v1",
+    "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+    "durations_seconds": [3, 5, 8, 10],
+    "motion_intensity_min": 1,
+    "motion_intensity_max": 10,
+    "automatic_paid_retry": false,
+    "paid_provider_called": false,
+    "api_key_read": false
+  },
+  "offline_fixtures": {
+    "webm_files": 20,
+    "webm_bytes": 350606,
+    "manifest_files": 1,
+    "total_bytes": 355333,
+    "models_bundled": false,
+    "user_media_included": false
+  },
+  "runtime": {
+    "durable_queue": true,
+    "cancel": true,
+    "retry_requires_new_confirmation": true,
+    "restart_recovery": true,
+    "result_backfill": true,
+    "lineage": true,
+    "cover_asset": true,
+    "original_binary_export": true,
+    "max_loaded_or_playing_videos": 1,
+    "scene_contains_video_bytes": false,
+    "conflict_copy_adopts_owner_jobs": false,
+    "close_save_handshake": true
+  },
+  "packaged_gate_contract": {
+    "schema_upgrades": ["v7-to-v8", "v5-to-v8"],
+    "backup_bytes_preserved": true,
+    "sentinel_preserved": true,
+    "restart_idempotent": true,
+    "video_create_complete_restart_replay_binary": true,
+    "actual_packaged_candidate_run": "pending-ic6"
+  },
+  "tests": {
+    "frontend_passed": 212,
+    "frontend_total": 212,
+    "python_passed": 385,
+    "python_skipped": 1,
+    "python_total": 386,
+    "rust_passed": 5,
+    "rust_total": 5,
+    "vite_build": "passed",
+    "canvas_lazy_bundle": "passed",
+    "rust_custom_protocol_check": "passed",
+    "python_compileall": "passed",
+    "pyinstaller_spec_compile": "passed",
+    "git_diff_check": "passed"
+  },
+  "bundle": {
+    "dist_bytes": 10659989,
+    "projected_formal_mib": 368.73,
+    "formal_limit_mib": 450,
+    "initial_modulepreload_count": 0,
+    "package_lock_sha256": "A0758630BC38B94F76D71D0CB74D72AE5BC20829073C2A613F0F1651719F86BD"
+  },
+  "pending_ic6": [
+    "isolated-sidecar-and-tauri-build",
+    "portable-candidate-double-smoke",
+    "packaged-schema-v7-to-v8",
+    "real-tauri-webview",
+    "dwm-corners",
+    "dpi-100-125-150",
+    "explorer-system-drag",
+    "video-play-pause-seek-export",
+    "restart-restore",
+    "unsigned-nsis-install-uninstall"
+  ]
+}
