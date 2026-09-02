@@ -1,0 +1,137 @@
+{
+  "captured_at": "2026-09-02",
+  "branch": "codex/excalidraw-infinite-canvas",
+  "implementation_parent": "739fcd4b2a11f78ca32a35d6b5df800f150fb6ea",
+  "implementation_commit": "d3d0335d17722f9126fdc41e37942695dbbc13e1",
+  "formal_release": {
+    "git_commit": "93539f0c9ec857d22d3751bb836ff722579cd8db",
+    "contract": "2026-09-02.3",
+    "schema": 7,
+    "size_bytes": 375974706,
+    "size_mib": 358.56,
+    "app_sha256": "F0D1A07313A47258CD17FA4143DF4F0069D6E075CAA9D22B00EB7220A15685A7",
+    "sidecar_sha256": "2AF3FC31A90961D77A41BE6CECAFD3559E0D0FFFB505FD9BBEA9EC7C61293894",
+    "manifest_sha256": "287042C051B97CC9F60C42F670C470EBEC965042378B790E0F4F13FCC9718A38",
+    "modified": false
+  },
+  "contract": {
+    "sidecar_version": "2026-09-02.4",
+    "schema": 8,
+    "ledger": "existing-sqlite-ledger",
+    "scene_file_bytes": false,
+    "proxy_only_media": true,
+    "public_excalidraw_api_only": true,
+    "programmatic_import_undoable": true,
+    "scene_restore_in_undo_history": false
+  },
+  "business_bridge": {
+    "asset_send": "passed",
+    "result_send": "passed",
+    "task_send": "covered-by-tests",
+    "drag_payload_without_urls_or_bytes": "passed",
+    "trash_send_or_drag": "blocked",
+    "context_actions": "passed",
+    "fabric_round_trip": "covered-by-tests-and-existing-g1-g3-regressions",
+    "paid_provider_calls": 0
+  },
+  "isolated_interaction": {
+    "formal_ledger_accessed": false,
+    "canvas_id": "spatial_763754b3e294ebee86e3226d447799d7",
+    "source_result_lineage_revision": 3,
+    "child_move_revision": 4,
+    "programmatic_send_revision": 5,
+    "undo_revision": 6,
+    "redo_revision": 7,
+    "final_elements": 5,
+    "final_images": 3,
+    "final_bound_endpoint_images": 3,
+    "final_double_bound_arrows": 2,
+    "child_move_delta_y": 5,
+    "arrow_followed_child": true,
+    "files_count": 0,
+    "restart_restore_passed": true,
+    "stable_second_reopen_revision": 5,
+    "console_errors": 0,
+    "console_warnings": 0
+  },
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 900,
+      "overflow_x": 0,
+      "overflow_y": 0,
+      "screenshot": "artifacts/excalidraw-spatial-ic4/viewport-1440x900.png",
+      "bytes": 75105,
+      "sha256": "25A328CA9DFDFF75C1031419BC856C0D5511047B97F1B91C25EF8C4ED52BC0B6"
+    },
+    {
+      "width": 1280,
+      "height": 720,
+      "overflow_x": 0,
+      "overflow_y": 0,
+      "screenshot": "artifacts/excalidraw-spatial-ic4/viewport-1280x720.png",
+      "bytes": 69490,
+      "sha256": "CA155B5894704DE076770B03C02525082DBBC71E7D847153BB964D34FE12B8BF"
+    },
+    {
+      "width": 960,
+      "height": 600,
+      "overflow_x": 0,
+      "overflow_y": 0,
+      "inspector_toolbar_gap_px": 8,
+      "screenshot": "artifacts/excalidraw-spatial-ic4/viewport-960x600.png",
+      "bytes": 62778,
+      "sha256": "AEA9EDA00DD8C34141993E2AD9A1E7B6BBECFA9349B1858A2CEFBABF6AE718D6"
+    }
+  ],
+  "additional_evidence": [
+    {
+      "kind": "lineage",
+      "path": "artifacts/excalidraw-spatial-ic4/result-lineage-1280x720.png",
+      "bytes": 69538,
+      "sha256": "A43377219E875EF465AA51A64C79364B44A03012CC75A8F8E481654E1329C31F"
+    },
+    {
+      "kind": "restart-recovery",
+      "path": "artifacts/excalidraw-spatial-ic4/restart-recovery-1280x720.png",
+      "bytes": 56202,
+      "sha256": "C3CC70E228E59BA310A4044C315375287C6A1302A19906BF92EF45605837F49B"
+    },
+    {
+      "kind": "failed-before-fix",
+      "path": "artifacts/excalidraw-spatial-ic4/failed-before-fix-viewport-960x600.png",
+      "bytes": 57906,
+      "sha256": "5871FD87AE5F6D8E34C11E30F1AE5A9FB1A85021D97D810A8E88BF40507B70A2"
+    }
+  ],
+  "build": {
+    "dist_bytes": 10604026,
+    "dist_mib": 10.11,
+    "projected_formal_portable_mib": 368.67,
+    "portable_limit_mib": 450,
+    "initial_modulepreload_count": 0,
+    "canvas_lazy_loading": "passed"
+  },
+  "dependencies": {
+    "excalidraw": "0.18.1",
+    "react": "18.3.1",
+    "react_dom": "18.3.1",
+    "package_lock_sha256": "A0758630BC38B94F76D71D0CB74D72AE5BC20829073C2A613F0F1651719F86BD"
+  },
+  "tests": {
+    "frontend": { "passed": 171, "total": 171 },
+    "python": { "passed": 351, "skipped": 1, "total": 352 },
+    "release_transaction": { "passed": 31, "total": 31 },
+    "vite_production_build": "passed",
+    "canvas_bundle_contract": "passed",
+    "rust_custom_protocol_check": "passed",
+    "python_compileall": "passed",
+    "git_whitespace": "passed"
+  },
+  "deferred_until_user_is_idle": [
+    "tauri-webview",
+    "dwm",
+    "real-dpi",
+    "system-level-cross-panel-drag"
+  ]
+}
