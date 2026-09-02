@@ -11,9 +11,14 @@ if (-not $PortableDir) {
     $PortableDir = Join-Path $ProjectRoot "release\ProductAtelier-Portable"
 }
 $PortableDir = [System.IO.Path]::GetFullPath($PortableDir)
+$AppExe = Join-Path $PortableDir "Product Atelier.exe"
+if (-not (Test-Path -LiteralPath $AppExe -PathType Leaf)) {
+    $AppExe = Join-Path $PortableDir "product-atelier.exe"
+}
 $SidecarDir = Join-Path $PortableDir "python-server"
 $SidecarExe = Join-Path $SidecarDir "python-server.exe"
 $ManifestPath = Join-Path $SidecarDir "sidecar-manifest.json"
+$CodeSigningTool = Join-Path $PSScriptRoot "Windows-CodeSigning.ps1"
 
 if (-not $ExpectedGitCommit) {
     $headOutput = @(& git.exe -C $ProjectRoot rev-parse --verify HEAD 2>&1)
@@ -42,6 +47,22 @@ if ([int]$manifest.ledger_schema_version -lt 1) {
 $actualExeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $SidecarExe).Hash
 if ($actualExeHash -ne $manifest.executable_sha256) {
     throw "Portable sidecar hash does not match its build manifest"
+}
+if ($manifest.authenticode -and [bool]$manifest.authenticode.required) {
+    if (-not (Test-Path -LiteralPath $AppExe -PathType Leaf)) {
+        throw "Signed portable app is missing: $AppExe"
+    }
+    if (-not (Test-Path -LiteralPath $CodeSigningTool -PathType Leaf)) {
+        throw "Windows code-signing helper is missing: $CodeSigningTool"
+    }
+    $expectedSigner = ([string]$manifest.authenticode.certificate_thumbprint).Trim()
+    if ($expectedSigner -notmatch '^[0-9A-Fa-f]{40}$') {
+        throw "Signed sidecar manifest has an invalid certificate thumbprint"
+    }
+    & $CodeSigningTool `
+        -Mode Verify `
+        -ArtifactPath @($AppExe, $SidecarExe) `
+        -CertificateThumbprint $expectedSigner
 }
 
 $sourceProperties = @($manifest.source_hashes.PSObject.Properties)

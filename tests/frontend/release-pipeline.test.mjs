@@ -100,6 +100,7 @@ test('portable smoke binds runtime identity to the candidate artifacts', () => {
 test('all Windows entry points use the manifest-producing release chain', () => {
   const portable = read('build-portable.bat');
   const installer = read('build-installer.bat');
+  const signedInstaller = read('build-signed-installer.bat');
   const python = read('build-python.bat');
   const buildRequirements = read('python/requirements-build.txt');
 
@@ -107,10 +108,63 @@ test('all Windows entry points use the manifest-producing release chain', () => 
   assert.match(installer, /tools\\dev\.ps1/);
   assert.match(installer, /tauri build --features custom-protocol/);
   assert.doesNotMatch(installer, /(^|\s)pyinstaller\s/im);
+  assert.match(signedInstaller, /tools\\Build-SignedInstaller\.ps1/);
+  assert.match(signedInstaller, /No public installer was published/);
   assert.match(python, /tools\\Build-Sidecar\.ps1/);
   assert.doesNotMatch(python, /(^|\s)pyinstaller\s/im);
   assert.match(buildRequirements, /^pyinstaller==6\.22\.2$/m);
   assert.match(buildRequirements, /^pyinstaller-hooks-contrib==2026\.7$/m);
+});
+
+test('signed Windows release is fail-closed and candidate-first', () => {
+  const signer = read('tools/Windows-CodeSigning.ps1');
+  const sidecar = read('tools/Build-Sidecar.ps1');
+  const portable = read('tools/dev.ps1');
+  const portableGate = read('tools/Test-Portable.ps1');
+  const builder = read('tools/Build-SignedInstaller.ps1');
+  const installerGate = read('tools/Test-SignedInstaller.ps1');
+
+  assert.match(signer, /PRODUCT_ATELIER_SIGN_CERT_SHA1/);
+  assert.match(signer, /PRODUCT_ATELIER_SIGN_TIMESTAMP_URL/);
+  assert.match(signer, /The timestamp service must use HTTPS/);
+  assert.match(signer, /1\.3\.6\.1\.5\.5\.7\.3\.3/);
+  assert.match(signer, /HasPrivateKey/);
+  assert.match(signer, /TimeStamperCertificate/);
+  assert.match(signer, /signtool\.exe is unavailable/);
+  assert.match(signer, /"verify", "\/pa", "\/all", "\/v"/);
+  assert.match(signer, /signCommand/);
+  assert.match(signer, /"%1"/);
+  assert.doesNotMatch(signer, /param\([\s\S]*Pfx/i);
+  assert.doesNotMatch(signer, /CertificatePassword|PrivateKeyPath/i);
+
+  const sidecarSign = sidecar.indexOf('-Mode Sign -ArtifactPath $stagedExecutable');
+  const sidecarHash = sidecar.indexOf('executable_sha256 =');
+  assert.ok(sidecarSign >= 0, 'signed sidecar path must be explicit');
+  assert.ok(sidecarHash > sidecarSign, 'sidecar manifest must hash the signed executable');
+  assert.match(sidecar, /manifest\["authenticode"\]/);
+
+  const appSign = portable.indexOf('-Mode Sign -ArtifactPath $SourceExe');
+  const candidateStage = portable.indexOf('$PromotionTool stage');
+  assert.ok(appSign >= 0, 'portable app must be signed explicitly');
+  assert.ok(candidateStage > appSign, 'candidate assembly must follow app signing');
+  assert.match(portable, /Build-Sidecar\.ps1" -SignArtifacts/);
+  assert.match(portable, /Windows-CodeSigning\.ps1/);
+  assert.match(portableGate, /manifest\.authenticode/);
+  assert.match(portableGate, /-ArtifactPath @\(\$AppExe, \$SidecarExe\)/);
+
+  const installGate = builder.indexOf('& $InstallerGate');
+  const publication = builder.indexOf('Move-Item -LiteralPath $temporary -Destination $destination');
+  assert.ok(installGate >= 0, 'signed installer must have an installed-state gate');
+  assert.ok(publication > installGate, 'public artifact publication must follow installed-state validation');
+  assert.match(builder, /tauri build[\s\S]*--config \$TauriSigningConfig/);
+  assert.match(builder, /Refusing to overwrite an existing signed installer/);
+
+  assert.match(installerGate, /A registered Product Atelier installation already exists/);
+  assert.match(installerGate, /Test-Portable\.ps1/);
+  assert.match(installerGate, /Test-Portable-App\.ps1/);
+  assert.match(installerGate, /verify_packaged_schema_upgrade\.py/);
+  assert.match(installerGate, /NSIS uninstall did not remove the isolated install directory/);
+  assert.match(installerGate, /Restore-Shortcut/);
 });
 
 test('Windows build-tool verification uses a file entry point instead of fragile python -c quoting', () => {

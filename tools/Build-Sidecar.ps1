@@ -3,6 +3,10 @@
 # the Tauri resource directory after the staged build succeeds. Formal portable
 # releases are promoted only by tools/dev.ps1 after candidate smoke tests.
 
+param(
+    [switch]$SignArtifacts
+)
+
 $ErrorActionPreference = "Stop"
 $ProjectRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $BuildRoot = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "build\sidecar-current"))
@@ -11,6 +15,7 @@ $WorkRoot = Join-Path $BuildRoot "work"
 $StagedDir = Join-Path $DistRoot "python-server"
 $SourceDestination = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "src-tauri\bin\python-server"))
 $SidecarBuildLockPath = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "build\sidecar-build.lock"))
+$CodeSigningTool = Join-Path $PSScriptRoot "Windows-CodeSigning.ps1"
 
 function Assert-ProjectPath([string]$PathToCheck) {
     $full = [System.IO.Path]::GetFullPath($PathToCheck)
@@ -157,6 +162,23 @@ try {
         python -m PyInstaller python-server.spec --distpath $DistRoot --workpath $WorkRoot --noconfirm
         if ($LASTEXITCODE -ne 0) { throw "PyInstaller sidecar build failed" }
 
+        $authenticode = $null
+        if ($SignArtifacts) {
+            if (-not (Test-Path -LiteralPath $CodeSigningTool -PathType Leaf)) {
+                throw "Windows code-signing helper is missing: $CodeSigningTool"
+            }
+            $stagedExecutable = Join-Path $StagedDir "python-server.exe"
+            & $CodeSigningTool -Mode Sign -ArtifactPath $stagedExecutable
+            $signature = Get-AuthenticodeSignature -LiteralPath $stagedExecutable
+            $authenticode = [ordered]@{
+                required = $true
+                status = [string]$signature.Status
+                certificate_thumbprint = ([string]$signature.SignerCertificate.Thumbprint).ToUpperInvariant()
+                timestamped = [bool]$signature.TimeStamperCertificate
+                digest_algorithm = "sha256"
+            }
+        }
+
         $contractMatch = Select-String -LiteralPath "python\server.py" -Pattern '^SIDECAR_CONTRACT_VERSION = "([^"]+)"$'
         if (-not $contractMatch) { throw "SIDECAR_CONTRACT_VERSION is missing from python/server.py" }
         $contractVersion = $contractMatch.Matches[0].Groups[1].Value
@@ -214,6 +236,9 @@ try {
             built_at = (Get-Date).ToUniversalTime().ToString("o")
             executable_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $StagedDir "python-server.exe")).Hash
             source_hashes = $sourceHashes
+        }
+        if ($authenticode) {
+            $manifest["authenticode"] = $authenticode
         }
         $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $StagedDir "sidecar-manifest.json") -Encoding utf8
 

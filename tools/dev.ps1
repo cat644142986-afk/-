@@ -10,6 +10,7 @@ param(
     [switch]$Quick,
     [switch]$SkipSidecar,
     [switch]$NoScreenshot,
+    [switch]$SignArtifacts,
     [int]$WaitSeconds = 15,
     [string]$BackupRoot = "D:\ProductAtelier-Backups"
 )
@@ -40,6 +41,7 @@ $TransactionPath = Join-Path $ProjectRoot "build\portable-promotion-transaction.
 $PromotionTool = Join-Path $PSScriptRoot "portable_release.py"
 $BuildRequirements = Join-Path $ProjectRoot "python\requirements-build.txt"
 $ReleaseLockPath = Join-Path $ProjectRoot "build\portable-release.lock"
+$CodeSigningTool = Join-Path $PSScriptRoot "Windows-CodeSigning.ps1"
 
 function Invoke-GitCapture([string[]]$Arguments) {
     $previousErrorActionPreference = $ErrorActionPreference
@@ -180,6 +182,9 @@ if (-not (Test-Path -LiteralPath $BuildRequirements -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $PromotionTool -PathType Leaf)) {
     throw "Portable promotion helper is missing: $PromotionTool"
 }
+if ($SignArtifacts -and -not (Test-Path -LiteralPath $CodeSigningTool -PathType Leaf)) {
+    throw "Windows code-signing helper is missing: $CodeSigningTool"
+}
 
 New-Item -ItemType Directory -Path (Split-Path -Parent $ReleaseLockPath) -Force | Out-Null
 $releaseLock = $null
@@ -214,9 +219,16 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Pinned PyInstaller tools are unavailable. Run: python -m pip install -r python\requirements-build.txt"
     }
+    if ($SignArtifacts) {
+        & $CodeSigningTool -Mode Preflight
+    }
 
     Write-Host "[3/11] Building current Python sidecar (candidate resource only)..." -ForegroundColor Yellow
-    & "$PSScriptRoot\Build-Sidecar.ps1"
+    if ($SignArtifacts) {
+        & "$PSScriptRoot\Build-Sidecar.ps1" -SignArtifacts
+    } else {
+        & "$PSScriptRoot\Build-Sidecar.ps1"
+    }
 
     Write-Host "[4/11] Running the complete Python test gate..." -ForegroundColor Yellow
     Push-Location $ProjectRoot
@@ -270,6 +282,9 @@ try {
     }
     if (-not (Test-Path -LiteralPath (Join-Path $SourceSidecar "python-server.exe") -PathType Leaf)) {
         throw "Built Python sidecar is missing: $SourceSidecar"
+    }
+    if ($SignArtifacts) {
+        & $CodeSigningTool -Mode Sign -ArtifactPath $SourceExe
     }
 
     Write-Host "[8/11] Assembling an isolated portable candidate..." -ForegroundColor Yellow
