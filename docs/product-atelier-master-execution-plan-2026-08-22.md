@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-02<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `fb1468bb8a518b043ae26bfb0cc5021de7874bed`，contract `2026-09-02.2`、SQLite schema v5、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出和 `ProductProfile` 商品档案均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0、G1 与 G2 已完成并正式发布。G3 的严格像素合同、schema v7 不可变 ROI / Mask / LocalEditSpec / composition 账本、sidecar 本地 API、Studio 手动画框与蒙版、strict compose、结果版本血缘、undo/redo 及 outpaint 只写新增区域现已形成完整源码候选，并通过隔离浏览器和全量工程门禁；这些能力尚未进入正式便携版。schema v5→v7 打包 sidecar 的唯一备份、重启幂等、8 命令和真实 outpaint compose 门禁也已通过；当前执行游标为提交推送该发布前门禁，再按 candidate-first 事务链完成 Windows 正式便携版与 NSIS 重建、正式目录复验和快捷方式身份校验。情境式创作副驾仅在 G3 正式提升完成且用户重新确认预算后进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `93539f0c9ec857d22d3751bb836ff722579cd8db`，contract `2026-09-02.3`、SQLite schema v7、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo 和 outpaint 只写新增区域均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。当前正式交付物是便携目录与桌面快捷方式；本 artifact 对应的 NSIS 尚未重建且没有代码签名，不能作为公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0–G3 已完成并正式发布。当前执行游标为重建 `93539f0` 对应的 NSIS、验证安装态与快捷方式身份；代码签名证书属于后续外部依赖。情境式创作副驾只有用户重新确认预算后才可进入，常驻大聊天栏和当前 Agent 开发仍暂停。<br>
 > 适用分支：`codex/master-roadmap-phase-0-1`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1675,7 +1675,16 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 - 同一打包 sidecar 完成商品档案 revision 1、幂等重放、重启恢复、revision 2 与 `[2, 1]` 不可变历史；随后冻结 `32×24` outpaint 规格，将本地测试候选 compose 到 canvas revision 2。结果仍锁定原 `24×18` 画板，原图保护区逐像素差异为 `0`，新增区域为 `336` 像素；同 key 重放不新增文件，旧 revision 以 `409 CANVAS_REVISION_CONFLICT` 失败关闭。
 - 最终源码门禁为 Python 339 项（338 通过、1 项平台预期跳过）、前端 `153/153`、Vite production build、Rust/Tauri locked custom-protocol check、Python compileall、`npm audit --omit=dev` 0 漏洞与 Git whitespace 全部通过。打包升级专项的临时进程、账本、图片和结果均已自动清理。
 - 本检查点未读取正式账本、用户图片、Prompt、API Key、付费调用结果或 build 证据目录，未调用模型、网络生图或付费 API，也未修改正式便携目录、NSIS 或桌面快捷方式。正式 artifact 仍为 `fb1468b` / contract `2026-09-02.2` / schema v5。
-- 下一执行游标：提交并推送本门禁检查点；从干净且已推送的 Git 身份运行 `tools/dev.ps1`，依次完成候选构建、双 smoke、打包 schema/outpaint 门禁、外部完整备份、身份绑定提升、正式目录复验与 finalize。随后重建当前源码 NSIS、验证安装态，并确认桌面快捷方式继续指向正式目录。
+- 本门禁检查点已由 `93539f0c9ec857d22d3751bb836ff722579cd8db` 提交推送，并由下一检查点完成正式提升。
+
+### 2026-09-02 G3 Windows 正式便携版发布关闭
+
+- 从干净且与 GitHub 一致的 `93539f0c9ec857d22d3751bb836ff722579cd8db` 运行完整 `tools/dev.ps1`。锁定 PyInstaller 6.22.2 / hooks 2026.7，完整 Python `339` 项、前端 `153/153`、Vite、Rust/Tauri custom-protocol check 与 release build 均通过；候选 sidecar smoke、应用 smoke 和 schema v5→v7/outpaint 专项再次通过。
+- 候选身份冻结为 contract `2026-09-02.3`、schema v7、source fingerprint `D5DC0C13AC921C276BCC5B3E61183708475FF915AE6DFA3CAE7B033370DB9730`。App、sidecar、manifest 和候选 tree SHA-256 分别为 `F0D1A07313A47258CD17FA4143DF4F0069D6E075CAA9D22B00EB7220A15685A7`、`2AF3FC31A90961D77A41BE6CECAFD3559E0D0FFFB505FD9BBEA9EC7C61293894`、`287042C051B97CC9F60C42F670C470EBEC965042378B790E0F4F13FCC9718A38`、`F06AB38F700E7493217C4FD53E35397B34FCFC1835527C36A4908BA3548739CA`。
+- candidate-first 事务 `f9d7d3281b4e4605bcc222d06a08b53d` 已 `finalized`；上一正式目录完整备份位于 `D:\ProductAtelier-Backups\release-before-20260902-075336-93539f0c9ec8`。正式目录换位后 sidecar 与应用双 smoke 再次通过，事务文件已清除，没有触发回滚。
+- 桌面 `Product Atelier.lnk` 已原子更新并复核，目标与工作目录均指向 `D:\ProductAtelier-Desktop\release\ProductAtelier-Portable`；最终 App 与 sidecar 也均从该正式目录运行。正式窗口截图确认首帧完整、系统圆角平滑，主画布、右侧任务控制、顶部状态和侧栏无重叠或横向溢出，未发现黑屏或新视觉回归。
+- 本次正式提升没有读取正式用户账本、用户图片、Prompt、API Key、付费结果或 build 证据目录，没有调用模型、网络生图或付费 API。G3 已进入正式便携版；NSIS 与代码签名仍未在本检查点关闭。
+- 下一执行游标：提交并推送本正式发布记录；重建 `93539f0` 对应的 NSIS，使用隔离安装目标验证安装、启动、sidecar 健康、卸载/恢复边界和安装态快捷方式。没有代码签名证书时只将未签名 NSIS 标记为内部候选，不误报为公开发行包。
 
 ## 11. 下一位开发者的执行入口
 
@@ -1684,7 +1693,7 @@ R9 当前只剩最后收口，不再重复主题和 50/200 素材实现：用正
 1. 阅读本文、`docs/phase-4-frontend-workspace-checkpoint-2026-08-22.md`、`docs/next-iteration-workspace-learning-plan-2026-08-22.md`、`docs/ledger-schema-v3.md`、`ROLLBACK.md`。
 2. 核对 `git status`、当前分支、基线提交和数据库备份。
 3. 不重复已经关闭的 R0–R9，也不退回历史 `vXX-fixes.css` 补丁路线。Git 跟踪的生产样式只有 `src/css/stable-ui.css`，入口与回归测试已锁死；本机被忽略的旧 CSS/补丁不属于跨电脑源码，也不进入构建。
-4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理、R9 外观/无障碍/大素材渲染与三档正式 WebView 终验，以及材质感知 Prompt 路由、人工结构化材质证据、显式 UI 安全回退、G1 schema v4 生产自由画布和 G2 schema v5 商品档案均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。G0、G1 与 G2 已关闭，G3 strict compose、结果血缘、undo/redo 和 outpaint 源码闭环及 schema v5→v7 打包迁移门禁已经关闭，当前从干净 Git 身份执行 Windows candidate-first 正式提升；停止堆叠同类自动定位模型，该能力由画布直接选择、SKU 约束与 G3 可修正蒙版解决。
+4. 960×600 控制抽屉、素材管理抽屉、10+20+1 离线并发、正式生产外壳、Phase 5 稳定性故障注入、比例/2K/4K 输出规格、“立即修改本张”、50/200 素材、批量任务大数据态、完整 Result Review、统一状态与冲突恢复、R6 人工可恢复智能选物、R7 零成本基线、R8 完整知识治理、R9 外观/无障碍/大素材渲染与三档正式 WebView 终验，以及材质感知 Prompt 路由、人工结构化材质证据、显式 UI 安全回退、G1 schema v4 生产自由画布、G2 schema v5 商品档案和 G3 strict compose/outpaint 均已进入正式便携版。实验自动定位模型仍因质量门禁失败保持外置；`prompt_v3` 两轮盲评已完成并因透明材质阻断失败否决全局提升。G0–G3 已关闭，当前重建并验证同一 Git 身份的 NSIS；停止堆叠同类自动定位模型，该能力由画布直接选择、SKU 约束与 G3 可修正蒙版解决。
 5. 每完成一个检查点：运行 Python、前端、Vite、Rust 和便携 sidecar 门禁，保存实测证据、更新本文并独立提交。
 6. 任意实现与本文冲突时，先更新产品决策并说明取舍，不允许代码悄悄改变产品语义。
 
@@ -1786,7 +1795,7 @@ Product Atelier 的长期定位收敛为：**以无限画布为核心，以商�
 
 #### G3：精准局部处理与扩图（50–90 小时）
 
-当前状态（2026-09-02）：严格像素合同、schema v7 不可变 ROI / Mask / LocalEditSpec / composition、sidecar API、生产 Studio 手动画框/蒙版、strict local compose、结果版本写入、undo/redo 和 outpaint 只写新增区域均已在源码完成，并通过三档界面、逐像素与完整工程回归；尚未经过 Windows candidate-first 正式提升，因此当前正式便携版仍不能使用 G3。
+当前状态（2026-09-02）：已关闭并正式发布。严格像素合同、schema v7 不可变 ROI / Mask / LocalEditSpec / composition、sidecar API、生产 Studio 手动画框/蒙版、strict local compose、结果版本写入、undo/redo 和 outpaint 只写新增区域已通过三档界面、逐像素、完整工程回归、schema v5→v7 打包迁移、candidate-first Windows 提升与正式目录复验；正式 artifact 为 `93539f0c9ec857d22d3751bb836ff722579cd8db`、contract `2026-09-02.3`、schema v7。
 
 - 在画布接入框选、点选、画笔保留/删除、反选、边缘调整、蒙版预览与恢复。
 - 云端图像编辑 provider 可以读取选区周边上下文，但返回结果必须由本地合成器按 Mask 落图。
@@ -1858,4 +1867,4 @@ G1–G8 预计 `330–560` 小时有效开发与验证，G0 另需 `12–24` 小
 
 ### 13.7 下一执行入口
 
-G0、G1 与 G2 已完成源码、构建、正式 WebView/DPI、candidate-first Windows 提升和正式目录复验。G3 已完成严格像素合同、schema v7 账本、sidecar API、生产画布手动 ROI / Mask、strict compose、结果血缘、undo/redo、outpaint 只写新增区域的源码闭环，以及 schema v5→v7 打包 sidecar 可恢复迁移专项；当前执行入口是从干净且已推送的 Git 身份完成 candidate-first Windows 正式便携版、NSIS、正式目录和快捷方式复验。Agent、模型下载和付费 API 继续不在当前授权内。
+G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁移、candidate-first Windows 提升、正式目录和快捷方式复验。当前执行入口是重建 `93539f0` 对应的 NSIS 并验证隔离安装态；未取得代码签名证书前只能形成未签名内部候选，不能关闭公开发行门禁。Agent、模型下载和付费 API 继续不在当前授权内。
