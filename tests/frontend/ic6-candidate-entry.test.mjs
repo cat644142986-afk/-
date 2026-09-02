@@ -83,19 +83,35 @@ test('IC6 candidate entry runs the required gates in order and stages last', () 
   assert.ok(pythonTests < frontendTests);
   assert.ok(frontendTests < viteBuild);
   assert.ok(viteBuild < canvasBundle);
-  assert.ok(canvasBundle < rustTests);
+  assert.ok(canvasBundle < sidecar);
+  assert.ok(sidecar < rustTests);
   assert.ok(rustTests < rustCheck);
   assert.ok(rustCheck < tauriRelease);
-  assert.ok(tauriRelease < sidecar);
-  assert.ok(sidecar < stage);
+  assert.ok(tauriRelease < stage);
+
+  assert.equal(
+    (script.match(/& \$IsolatedSidecarBuild/g) || []).length,
+    1,
+    'the isolated sidecar must be built exactly once',
+  );
+  assert.match(
+    script.slice(sidecar, rustTests),
+    /if \(\$LASTEXITCODE -ne 0\) \{[\s\S]*?throw "Python sidecar build failed/,
+    'a failed sidecar build must stop before Rust or Tauri can run',
+  );
+  assert.equal(
+    (script.match(/"stage",/g) || []).length,
+    1,
+    'the canonical candidate must be staged exactly once',
+  );
 
   assert.match(script, /\$CandidateDir = Join-Path \$ProjectRoot "build\\portable-candidate-current"/);
   assert.match(script, /"--candidate-dir", \$CandidateDir/);
   assert.match(script, /"--git-commit", \$ExpectedCommit/);
   assert.doesNotMatch(
     script.slice(stage + '"stage",'.length),
-    /Assert-(?:SourceState|IsolatedSourceState)/,
-    'no fallible source assertion may leave a valid canonical candidate behind after stage',
+    /Assert-[A-Za-z]+|Invoke-CheckedNative/,
+    'no additional gate may leave a valid canonical candidate behind after stage',
   );
 });
 

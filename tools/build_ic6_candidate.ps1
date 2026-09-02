@@ -342,7 +342,13 @@ try {
             -Arguments @("run", "verify:canvas-bundle") `
             -FailureMessage "Infinite-canvas bundle verification failed"
 
-        Write-Step "5/9" "Running the locked custom-protocol Rust tests..."
+        Write-Step "5/9" "Building the isolated Python sidecar resource..."
+        & $IsolatedSidecarBuild
+        if ($LASTEXITCODE -ne 0) {
+            throw "Python sidecar build failed (exit code $LASTEXITCODE)"
+        }
+
+        Write-Step "6/9" "Running the locked custom-protocol Rust tests..."
         Invoke-CheckedNative `
             -Command "cargo.exe" `
             -Arguments @(
@@ -351,7 +357,7 @@ try {
             ) `
             -FailureMessage "Rust custom-protocol tests failed"
 
-        Write-Step "6/9" "Checking the custom-protocol Rust target..."
+        Write-Step "7/9" "Checking the custom-protocol Rust target..."
         Invoke-CheckedNative `
             -Command "cargo.exe" `
             -Arguments @(
@@ -360,7 +366,7 @@ try {
             ) `
             -FailureMessage "Rust custom-protocol check failed"
 
-        Write-Step "7/9" "Building the custom-protocol Tauri release without a bundle..."
+        Write-Step "8/9" "Building the custom-protocol Tauri release without a bundle..."
         Invoke-CheckedNative `
             -Command "npx.cmd" `
             -Arguments @(
@@ -369,11 +375,6 @@ try {
             ) `
             -FailureMessage "Tauri release build failed"
 
-        Write-Step "8/9" "Building the isolated Python sidecar resource..."
-        & $IsolatedSidecarBuild
-        if ($LASTEXITCODE -ne 0) {
-            throw "Python sidecar build failed (exit code $LASTEXITCODE)"
-        }
     } finally {
         Pop-Location
     }
