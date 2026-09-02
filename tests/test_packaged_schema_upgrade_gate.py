@@ -181,11 +181,15 @@ class PackagedSchemaUpgradeFixtureTests(unittest.TestCase):
         def start_candidate(_executable, _sidecar_dir, data_dir, _log_path):
             ledger_path = data_dir / "atelier.sqlite3"
             packaged_gate.AtelierLedger(ledger_path)
-            with packaged_gate.sqlite3.connect(ledger_path) as connection:
+            connection = packaged_gate.sqlite3.connect(ledger_path)
+            try:
                 connection.execute(
                     "UPDATE product_profiles SET sku = 'MUTATED' WHERE id = ?",
                     ("profile-packaged-upgrade-v5",),
                 )
+                connection.commit()
+            finally:
+                connection.close()
             return StoppedProcess(), 0, {
                 "status": "ok",
                 "service": {
