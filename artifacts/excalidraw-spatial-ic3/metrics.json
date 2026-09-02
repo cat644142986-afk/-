@@ -1,0 +1,135 @@
+{
+  "captured_at": "2026-09-02",
+  "branch": "codex/excalidraw-infinite-canvas",
+  "implementation_parent": "5beda39abe86efb41ff95cd386f715d75d7f8f7f",
+  "implementation_commit": "5bd693282e816b172cb493bfb2d64bfe05da8364",
+  "formal_release": {
+    "git_commit": "93539f0c9ec857d22d3751bb836ff722579cd8db",
+    "contract": "2026-09-02.3",
+    "schema": 7,
+    "size_bytes": 375974706,
+    "size_mib": 358.56,
+    "app_sha256": "F0D1A07313A47258CD17FA4143DF4F0069D6E075CAA9D22B00EB7220A15685A7",
+    "sidecar_sha256": "2AF3FC31A90961D77A41BE6CECAFD3559E0D0FFFB505FD9BBEA9EC7C61293894",
+    "manifest_sha256": "287042C051B97CC9F60C42F670C470EBEC965042378B790E0F4F13FCC9718A38",
+    "modified": false
+  },
+  "contract": {
+    "sidecar_version": "2026-09-02.4",
+    "schema": 8,
+    "ledger": "existing-sqlite-ledger",
+    "immutable_scene_versions": true,
+    "optimistic_concurrency": true,
+    "idempotent_requests": true,
+    "content_deduplication": true,
+    "scene_sha256": true,
+    "thumbnail_sha256": true,
+    "list_reads_full_scene": false,
+    "open_reads_full_scene": true
+  },
+  "schema": {
+    "tables_added": [
+      "spatial_canvas_documents",
+      "spatial_canvas_scene_versions",
+      "spatial_scene_requests",
+      "spatial_scene_references"
+    ],
+    "migration": "v7-to-v8",
+    "formal_ledger_accessed": false,
+    "test_ledger": "isolated-temporary-sqlite"
+  },
+  "scene_safety": {
+    "base64_rejected": true,
+    "non_empty_files_rejected": true,
+    "machine_absolute_paths_rejected": true,
+    "dangling_business_references_rejected": true,
+    "corrupt_hashes_rejected": true,
+    "proxy_only_media": true
+  },
+  "interaction": {
+    "create": "passed",
+    "rename": "passed",
+    "draw": "passed",
+    "undo": "passed",
+    "redo": "passed",
+    "frame_restore": "passed",
+    "group_restore": "passed",
+    "lock_restore": "passed",
+    "viewport_restore": "passed",
+    "sidecar_restart_restore": "passed",
+    "reopen_without_empty_version": "passed",
+    "real_409_latest_scene_reload": "passed",
+    "console_errors": 0,
+    "console_warnings": 0,
+    "restored_elements": 4,
+    "restored_frames": 1,
+    "restored_locked_elements": 2,
+    "restored_grouped_elements": 2,
+    "stable_reopen_revision": 14,
+    "conflict_server_revision": 17,
+    "conflict_reloaded_zoom_percent": 55
+  },
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 900,
+      "overflow_x": 0,
+      "overflow_y": 0,
+      "screenshot": "artifacts/excalidraw-spatial-ic3/viewport-1440x900.png",
+      "bytes": 40148,
+      "sha256": "D4FA46AC7904FBB8F35C260AE0B87E79097EE900C43BE2A154DB0798C6908B53"
+    },
+    {
+      "width": 1280,
+      "height": 720,
+      "overflow_x": 0,
+      "overflow_y": 0,
+      "screenshot": "artifacts/excalidraw-spatial-ic3/viewport-1280x720.png",
+      "bytes": 35706,
+      "sha256": "EA117E4BCA7DE0CBACBEF7F6ABBC61D02B3B15FCFEE03C20A238114FE3CDA0CB"
+    },
+    {
+      "width": 960,
+      "height": 600,
+      "overflow_x": 0,
+      "overflow_y": 0,
+      "screenshot": "artifacts/excalidraw-spatial-ic3/viewport-960x600.png",
+      "bytes": 28769,
+      "sha256": "15279C3D412C588EFDC00933070786A462090617F747A5E96167B6A8CE8A64F1"
+    }
+  ],
+  "build": {
+    "dist_bytes": 10575407,
+    "dist_mib": 10.09,
+    "projected_formal_portable_mib": 368.65,
+    "portable_limit_mib": 450,
+    "initial_modulepreload_count": 0,
+    "canvas_lazy_loading": "passed"
+  },
+  "dependencies": {
+    "excalidraw": "0.18.1",
+    "react": "18.3.1",
+    "react_dom": "18.3.1",
+    "package_lock_sha256": "A0758630BC38B94F76D71D0CB74D72AE5BC20829073C2A613F0F1651719F86BD",
+    "audit": {
+      "critical": 0,
+      "high": 0,
+      "moderate": 0,
+      "low": 0,
+      "total": 0
+    }
+  },
+  "tests": {
+    "frontend": { "passed": 161, "total": 161 },
+    "python": { "passed": 351, "skipped": 1, "total": 352 },
+    "g1_g3_named_regressions": { "passed": 4, "total": 4 },
+    "release_transaction": { "passed": 31, "total": 31 },
+    "vite_production_build": "passed",
+    "canvas_bundle_contract": "passed",
+    "rust_custom_protocol_check": "passed",
+    "python_compileall": "passed",
+    "controlled_javascript_syntax_files": 64,
+    "powershell_parser": "passed",
+    "git_whitespace": "passed"
+  }
+}
