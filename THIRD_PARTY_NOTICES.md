@@ -1,7 +1,18 @@
-Product Atelier third-party notices
+# Product Atelier third-party notices
 
-Excalidraw 0.18.1
-https://github.com/excalidraw/excalidraw/tree/v0.18.1
+This file lists the direct browser runtime dependencies. The distributable plain-text copy is `src/public/THIRD_PARTY_NOTICES.txt`.
+
+## Components
+
+| Component | Version | License | Source |
+| --- | --- | --- | --- |
+| Excalidraw | 0.18.1 | MIT | https://github.com/excalidraw/excalidraw/tree/v0.18.1 |
+| React | 19.2.8 | MIT | https://github.com/facebook/react/tree/v19.2.8 |
+| React DOM | 19.2.8 | MIT | https://github.com/facebook/react/tree/v19.2.8 |
+| Fabric.js | 7.4.0 | MIT | https://github.com/fabricjs/fabric.js/tree/v7.4.0 |
+| Lucide | 1.31.0 | ISC/MIT | https://github.com/lucide-icons/lucide |
+
+## Excalidraw
 
 MIT License
 
@@ -25,10 +36,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
--------------------------------------------------------------------------------
-
-React 19.2.8 and React DOM 19.2.8
-https://github.com/facebook/react/tree/v19.2.8
+## React and React DOM
 
 MIT License
 
@@ -52,10 +60,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
--------------------------------------------------------------------------------
-
-Fabric.js 7.4.0
-https://github.com/fabricjs/fabric.js
+## Fabric.js
 
 MIT License
 
@@ -80,47 +85,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
--------------------------------------------------------------------------------
+## Lucide and Feather Icons
 
-Lucide 1.31.0
-https://github.com/lucide-icons/lucide
-
-ISC License
-
-Copyright (c) 2026 Lucide Icons and Contributors
-
-Permission to use, copy, modify, and/or distribute this software for any
-purpose with or without fee is hereby granted, provided that the above
-copyright notice and this permission notice appear in all copies.
-
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
-SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
-IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
-Lucide includes icons derived from Feather Icons:
-
-MIT License
-
-Copyright (c) 2013-present Cole Bemis
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Lucide is licensed under ISC. Icons derived from Feather Icons are licensed under MIT. The complete notices are included in `src/public/THIRD_PARTY_NOTICES.txt`.
