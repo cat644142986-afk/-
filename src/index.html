@@ -212,6 +212,12 @@
                   </fieldset>
                   <fieldset class="local-edit-fieldset" id="local-edit-compose-fields" disabled>
                     <legend>候选结果</legend>
+                    <div class="local-edit-generation">
+                      <label class="local-edit-prompt" for="local-edit-prompt"><span>描述修改</span><textarea id="local-edit-prompt" maxlength="600" rows="3" placeholder="例如：只把瓶盖改成哑光黑色，包装文字与瓶身保持不变"></textarea></label>
+                      <label class="local-edit-confirm" for="local-edit-generation-confirm"><input id="local-edit-generation-confirm" type="checkbox" /><span><strong>确认生成 1 个 AI 候选</strong><small>仅本次调用；失败不会自动追加付费重试</small></span></label>
+                      <div class="local-edit-actions"><button class="local-edit-primary" id="local-edit-generate" type="button" disabled><i data-lucide="wand-sparkles" aria-hidden="true"></i>生成候选</button><button id="local-edit-cancel-generation" type="button" hidden><i data-lucide="square" aria-hidden="true"></i>取消生成</button></div>
+                      <div class="local-edit-generation-progress" id="local-edit-generation-progress" role="status" aria-live="polite" hidden><span><i id="local-edit-generation-bar"></i></span><output id="local-edit-generation-status">等待生成</output></div>
+                    </div>
                     <label class="local-edit-candidate-label" for="local-edit-candidate"><span>兼容当前像素规格</span><output id="local-edit-candidate-count">0 个</output></label>
                     <select id="local-edit-candidate" aria-label="选择局部编辑候选结果"><option value="">暂无兼容候选</option></select>
                     <div class="local-edit-candidate-preview" id="local-edit-candidate-preview" hidden><img id="local-edit-candidate-image" alt="" /><div><strong id="local-edit-candidate-name"></strong><small id="local-edit-candidate-detail"></small></div></div>

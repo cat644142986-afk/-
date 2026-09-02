@@ -98,6 +98,7 @@ try:
         apply_strict_inpaint,
         apply_strict_outpaint,
         image_fingerprint,
+        normalize_local_edit_contract,
         render_canvas_mask_definition,
     )
     from storage_paths import (
@@ -185,6 +186,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         apply_strict_inpaint,
         apply_strict_outpaint,
         image_fingerprint,
+        normalize_local_edit_contract,
         render_canvas_mask_definition,
     )
     from python.storage_paths import (
@@ -1550,6 +1552,7 @@ def build_job_engine():
             "cloud-workflow": execute_job_workflow,
             "group-workflow": execute_job_workflow,
             "local-cutout": execute_job_workflow,
+            "cloud-local-edit": execute_job_workflow,
         },
         max_workers=worker_limit,
         resource_limits={
@@ -1561,6 +1564,7 @@ def build_job_engine():
             "cloud-workflow": "cloud-image",
             "group-workflow": "cloud-image",
             "local-cutout": "local-cutout",
+            "cloud-local-edit": "cloud-image",
         },
     )
 
@@ -3826,6 +3830,33 @@ def _validate_job_request(mode: str, source_asset_ids: list[str], parameters: di
         )
 
 
+LOCAL_EDIT_GENERATE_COMMAND_ID = "command:local-edit-generate"
+
+
+def _validate_local_edit_generate_request(
+    request: CommandExecutionRequest,
+    parameters: dict[str, Any],
+) -> None:
+    if not str(request.local_edit_spec_id or "").strip():
+        raise ValueError("local edit generation requires local_edit_spec_id")
+    if not str(request.canvas_document_id or "").strip():
+        raise ValueError("local edit generation requires canvas_document_id")
+    if request.max_attempts != 1:
+        raise ValueError("local edit generation forbids automatic paid retries")
+    description = re.sub(
+        r"\s+", " ", str(parameters.get("local_edit_prompt") or "")
+    ).strip()
+    if not 2 <= len(description) <= 600:
+        raise ValueError("local_edit_prompt must contain 2 to 600 characters")
+    if parameters.get("provider_call_confirmed") is not True:
+        raise ValueError("the provider call must be explicitly confirmed")
+    parameters["local_edit_prompt"] = description
+    parameters["provider_call_confirmed"] = True
+    parameters["automatic_paid_retry"] = False
+    parameters["batch"] = 1
+    parameters["variations"] = 1
+
+
 def _wake_job_engine():
     engine = JOB_ENGINE
     if engine is not None and engine.is_running:
@@ -3852,6 +3883,8 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
         refresh_runtime_config()
         parameters = _normalize_job_parameters(mode, request.parameters or {})
         _validate_job_request(mode, source_asset_ids, parameters)
+        if str(command["id"]) == LOCAL_EDIT_GENERATE_COMMAND_ID:
+            _validate_local_edit_generate_request(request, parameters)
         requested_concurrency = (
             request.requested_concurrency
             if request.requested_concurrency is not None
@@ -5280,7 +5313,7 @@ def _record_job_prompt(
     )
     generation_id = trace["generation_id"]
     changes = {"status": "running", "prompt_version": prompt_version}
-    if stage == "primary":
+    if stage in {"primary", "local-edit-candidate"}:
         changes.update({
             "prompt": prompt,
             "negative_prompt": negative_prompt,
@@ -5372,6 +5405,190 @@ def _stage_output(image, directory, name, role):
         "width": image.width,
         "height": image.height,
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def _resolve_job_source_asset(asset_id: str) -> tuple[dict[str, Any], Path]:
+    asset = LEDGER.get_asset(str(asset_id))
+    role = str(asset.get("role") or "")
+    if role == "workspace_source":
+        stored, path = ASSET_STORE.resolve_asset_path(str(asset_id))
+        return {**stored, "path": str(path)}, path
+    if role.startswith("result_"):
+        path = _resolve_result_asset_path(asset)
+        return {**asset, "path": str(path)}, path
+    raise JobExecutionError(
+        "INVALID_SOURCE_ASSET",
+        "The selected canvas layer is not an image source or result",
+    )
+
+
+def _local_edit_context_rect(
+    rect: dict[str, Any], source_size: tuple[int, int]
+) -> tuple[int, int, int, int]:
+    width, height = source_size
+    x = max(0, int(rect.get("x", 0)))
+    y = max(0, int(rect.get("y", 0)))
+    right = min(width, x + max(1, int(rect.get("width", 1))))
+    bottom = min(height, y + max(1, int(rect.get("height", 1))))
+    margin_x = max(24, int((right - x) * 0.35))
+    margin_y = max(24, int((bottom - y) * 0.35))
+    return (
+        max(0, x - margin_x),
+        max(0, y - margin_y),
+        min(width, right + margin_x),
+        min(height, bottom + margin_y),
+    )
+
+
+def _execute_local_edit_candidate_job(ctx, source_asset, image, stage_dir, trace):
+    params = dict(ctx.job.get("parameters") or {})
+    snapshot = dict(ctx.job.get("snapshot") or {})
+    spec_id = str(snapshot.get("local_edit_spec_id") or "")
+    if not spec_id:
+        raise JobExecutionError(
+            "LOCAL_EDIT_SPEC_MISSING", "The local edit task has no frozen specification"
+        )
+    if params.get("provider_call_confirmed") is not True:
+        raise JobExecutionError(
+            "LOCAL_EDIT_COST_NOT_CONFIRMED",
+            "The local edit provider call was not explicitly confirmed",
+        )
+    if params.get("automatic_paid_retry") is not False:
+        raise JobExecutionError(
+            "LOCAL_EDIT_AUTOMATIC_RETRY_FORBIDDEN",
+            "Local edit candidates cannot authorize an automatic paid retry",
+        )
+
+    description = re.sub(r"\s+", " ", str(params.get("local_edit_prompt") or "")).strip()
+    if not 2 <= len(description) <= 600:
+        raise JobExecutionError(
+            "LOCAL_EDIT_PROMPT_INVALID", "The local edit description is unavailable"
+        )
+    spec = LEDGER.get_local_edit_spec(spec_id)
+    contract = normalize_local_edit_contract(dict(spec.get("contract") or {}))
+    expected_source_size = (
+        int(contract["source_size"]["width"]),
+        int(contract["source_size"]["height"]),
+    )
+    if image.size != expected_source_size:
+        raise JobExecutionError(
+            "LOCAL_EDIT_SOURCE_SIZE_MISMATCH",
+            "The selected layer no longer matches the frozen local edit specification",
+        )
+
+    mode = str(contract["mode"])
+    if mode == "inpaint":
+        context_rect = _local_edit_context_rect(contract["roi"]["rect"], image.size)
+        reference = image.convert("RGB").crop(context_rect)
+        prompt = (
+            "Perform one precise commercial product retouch inside the requested area. "
+            f"Requested change: {description}. "
+            "Preserve product identity, packaging geometry, readable text, logos, material, "
+            "lighting direction, camera perspective and surrounding composition. Return only "
+            "the edited image crop without annotations, borders or comparison panels."
+        )
+    else:
+        outpaint = dict(contract["outpaint"])
+        output_size = (int(outpaint["output_width"]), int(outpaint["output_height"]))
+        reference = Image.new("RGB", output_size, (245, 245, 245))
+        reference.paste(
+            image.convert("RGB"),
+            (int(outpaint["source_x"]), int(outpaint["source_y"])),
+        )
+        context_rect = None
+        prompt = (
+            "Extend this commercial product photograph into the blank canvas area. "
+            f"Requested extension: {description}. "
+            "Keep every existing product pixel, package text, logo, geometry, perspective and "
+            "lighting unchanged. Continue only the background and scene naturally. Return one "
+            "clean full canvas image without annotations, borders or comparison panels."
+        )
+
+    model = str(params.get("model") or "gpt-image-2")
+    output_spec = resolve_output_spec(
+        model,
+        "original",
+        str(params.get("output_resolution") or "2k"),
+        reference.size,
+        explicit=True,
+    )
+    prompt_bundle = {"prompt": prompt, "negative_prompt": "", "sources": []}
+    _record_job_prompt(
+        trace,
+        prompt,
+        "",
+        "local-edit-candidate",
+        prompt_bundle,
+        base_prompt=prompt,
+        template_prompt=prompt,
+    )
+    _record_execution_trace_safe(
+        trace,
+        "local-edit.spec",
+        "completed",
+        parameters={
+            "local_edit_spec_id": spec_id,
+            "mode": mode,
+            "provider_call_confirmed": True,
+            "automatic_paid_retry": False,
+        },
+        output={
+            "source_asset_id": str(source_asset.get("id") or trace["source_asset_id"]),
+            "source_width": image.width,
+            "source_height": image.height,
+            "reference_width": reference.width,
+            "reference_height": reference.height,
+        },
+    )
+    ctx.progress(0.08, {"phase": "local-edit-provider", "mode": mode})
+    generated = _cloud_job_call(
+        ctx,
+        prompt,
+        reference,
+        model,
+        negative_prompt="",
+        stage="local-edit-candidate",
+        output_spec=output_spec,
+        trace=trace,
+    )
+    ctx.checkpoint()
+    generated = ImageOps.fit(
+        generated.convert("RGB"), reference.size, method=Image.Resampling.LANCZOS
+    )
+    if mode == "inpaint":
+        candidate = image.convert("RGB").copy()
+        assert context_rect is not None
+        candidate.paste(generated, (context_rect[0], context_rect[1]))
+    else:
+        candidate = generated
+
+    candidate_path = stage_dir / "local-edit-candidate.png"
+    candidate.save(candidate_path, "PNG", optimize=True)
+    output = {
+        "temp_path": candidate_path,
+        "name": "local-edit-candidate.png",
+        "role": "result_main",
+        "mime": "image/png",
+        "width": candidate.width,
+        "height": candidate.height,
+        "sha256": hashlib.sha256(candidate_path.read_bytes()).hexdigest(),
+        "parent_asset_id": str(trace["source_asset_id"]),
+        "metadata": {
+            "local_edit_spec_id": spec_id,
+            "local_edit_mode": mode,
+            "candidate_only": True,
+            "provider_call_confirmed": True,
+            "automatic_paid_retry": False,
+        },
+    }
+    ctx.progress(0.9, {"phase": "local-edit-candidate-ready", "mode": mode})
+    return [output], {
+        "operation": "local-edit-candidate-generation",
+        "local_edit_spec_id": spec_id,
+        "local_edit_mode": mode,
+        "provider_call_count": 1,
+        "automatic_paid_retry": False,
     }
 
 
@@ -6741,8 +6958,7 @@ def execute_job_workflow(ctx):
     refresh_runtime_config()
     ctx.checkpoint()
     output_root = _job_output_root(ctx, test_write=True)
-    source_asset, source_path = ASSET_STORE.resolve_asset_path(str(ctx.item["source_asset_id"]))
-    source_asset = {**source_asset, "path": str(source_path)}
+    source_asset, source_path = _resolve_job_source_asset(str(ctx.item["source_asset_id"]))
     try:
         with Image.open(source_path) as opened:
             image = opened.copy()
@@ -6770,7 +6986,12 @@ def execute_job_workflow(ctx):
             if isinstance(parameters.get("adjustment"), dict)
             else {}
         )
-        if adjustment:
+        command_id = str((ctx.job.get("snapshot") or {}).get("command_id") or "")
+        if command_id == LOCAL_EDIT_GENERATE_COMMAND_ID:
+            outputs, metadata = _execute_local_edit_candidate_job(
+                ctx, source_asset, image, stage_dir, trace
+            )
+        elif adjustment:
             try:
                 reference_asset = LEDGER.get_asset(
                     str(adjustment.get("parent_result_asset_id") or "")

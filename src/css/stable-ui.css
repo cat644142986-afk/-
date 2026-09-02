@@ -1399,6 +1399,14 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .local-edit-primary { background: var(--dark); color: #fff; }
 .local-edit-actions svg { width: 14px; height: 14px; }
 .local-edit-fieldset button:disabled { opacity: .42; }
+.local-edit-generation { display: grid; gap: 8px; padding-bottom: 9px; border-bottom: 1px dashed var(--line); }
+.local-edit-prompt { display: grid; gap: 5px; color: var(--ink-2); font-size: var(--type-caption); font-weight: 700; }
+.local-edit-prompt textarea { width: 100%; min-width: 0; resize: vertical; max-height: 132px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font: inherit; line-height: 1.45; }
+.local-edit-prompt textarea:focus-visible { outline: 2px solid color-mix(in srgb,var(--coral) 45%,transparent); outline-offset: 1px; border-color: var(--coral-deep); }
+.local-edit-generation-progress { display: grid; gap: 5px; }
+.local-edit-generation-progress > span { display: block; height: 5px; overflow: hidden; border-radius: 3px; background: var(--shell-deep); }
+.local-edit-generation-progress i { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--coral-deep); transition: width 180ms ease; }
+.local-edit-generation-progress output { color: var(--ink-3); font-size: var(--type-micro); line-height: 1.4; }
 .local-edit-candidate-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink-2); font-size: var(--type-caption); font-weight: 700; }
 .local-edit-candidate-label output { color: var(--ink-3); font-size: var(--type-micro); }
 #local-edit-candidate { width: 100%; min-width: 0; height: 38px; padding: 0 30px 0 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); color: var(--ink); font-size: var(--type-caption); }

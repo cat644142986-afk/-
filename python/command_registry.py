@@ -59,6 +59,18 @@ _COMMANDS: tuple[dict[str, Any], ...] = (
         "supports_canvas": True,
     },
     {
+        "id": "command:local-edit-generate",
+        "label": "生成局部编辑候选",
+        "mode": "single",
+        "engine_key": "cloud-local-edit",
+        "min_sources": 1,
+        "max_sources": 1,
+        "cost_policy": "provider-confirmed",
+        "execution_kind": "durable-job",
+        "existing_quick_mode": False,
+        "supports_canvas": True,
+    },
+    {
         "id": "command:transform-layer",
         "label": "变换图层",
         "mode": None,
@@ -113,6 +125,7 @@ _BY_MODE = {
     command["mode"]: command
     for command in _COMMANDS
     if command["execution_kind"] == "durable-job"
+    and command["existing_quick_mode"]
 }
 
 

@@ -386,7 +386,23 @@ test('production canvas uses SQLite APIs and is wired into the Studio lifecycle'
   assert.match(htmlSource, /id="canvas-panel-local-edit"/);
   assert.match(htmlSource, /id="local-edit-save-mask"/);
   assert.match(htmlSource, /id="local-edit-candidate"/);
+  assert.match(htmlSource, /id="local-edit-prompt"[^>]*maxlength="600"/);
+  assert.match(htmlSource, /id="local-edit-generation-confirm"/);
+  assert.match(htmlSource, /id="local-edit-generate"[^>]*>[\s\S]*?data-lucide="wand-sparkles"/);
+  assert.match(htmlSource, /id="local-edit-cancel-generation"/);
   assert.match(htmlSource, /id="local-edit-apply"/);
+  assert.match(controllerSource, /LOCAL_EDIT_GENERATE_COMMAND = 'command:local-edit-generate'/);
+  assert.match(controllerSource, /max_attempts: 1/);
+  assert.match(controllerSource, /provider_call_confirmed: true/);
+  assert.match(controllerSource, /automatic_paid_retry: false/);
+  assert.match(controllerSource, /api\.executeCommand\(\s*LOCAL_EDIT_GENERATE_COMMAND/);
+  assert.match(controllerSource, /api\.cancelJob\(local\.generationJobId\)/);
+  assert.match(controllerSource, /monitorLocalEditGeneration\(local, local\.generationJobId\)/);
+  assert.match(controllerSource, /async function finishLocalEditGeneration\(local, job\)/);
+  assert.equal(
+    (controllerSource.match(/await finishLocalEditGeneration\(local, job\)/g) || []).length,
+    2,
+  );
   assert.match(htmlSource, /data-local-edit-mode="outpaint"/);
   assert.match(htmlSource, /id="local-edit-outpaint-width"/);
   assert.match(htmlSource, /id="local-edit-outpaint-confirm"/);

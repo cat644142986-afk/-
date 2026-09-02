@@ -31,6 +31,7 @@ from python import server  # noqa: E402
 from python.asset_store import AssetStore  # noqa: E402
 from python.atelier_ledger import AtelierLedger  # noqa: E402
 from python.job_engine import JobExecutionError  # noqa: E402
+from python.local_edit_contract import image_fingerprint  # noqa: E402
 
 
 TERMINAL_STATUSES = {"completed", "partial", "failed", "canceled"}
@@ -40,6 +41,60 @@ def png_bytes(color: tuple[int, int, int]) -> bytes:
     buffer = io.BytesIO()
     Image.new("RGB", (28, 20), color).save(buffer, "PNG")
     return buffer.getvalue()
+
+
+def local_edit_canvas_payload(source_id: str) -> dict:
+    return {
+        "id": "canvas:job-local-edit",
+        "schema_version": 1,
+        "coordinate_system": {
+            "unit": "canvas-pixel", "origin": "top-left",
+            "x_axis": "right", "y_axis": "down",
+        },
+        "revision": 0,
+        "active_artboard_id": "artboard:job-local-edit",
+        "source_asset_ids": [source_id],
+        "artboards": [{
+            "id": "artboard:job-local-edit",
+            "name": "局部编辑画板",
+            "rect": {"x": 0, "y": 0, "width": 28, "height": 20},
+            "export": {"pixel_width": 28, "pixel_height": 20, "color_space": "srgb"},
+        }],
+        "layers": [{
+            "id": "layer:job-local-edit",
+            "artboard_id": "artboard:job-local-edit",
+            "source": {
+                "kind": "asset", "id": source_id,
+                "proxy_ref": "proxy:thumbnail:512",
+                "original_pixel_width": 28, "original_pixel_height": 20,
+            },
+            "transform": {
+                "x": 0, "y": 0, "scale_x": 1, "scale_y": 1,
+                "rotation_degrees": 0, "opacity": 1,
+            },
+            "z_index": 0, "visible": True, "locked": False,
+        }],
+        "operations": [],
+        "undo_cursor": -1,
+        "created_at": "2026-09-02T00:00:00Z",
+        "updated_at": "2026-09-02T00:00:00Z",
+    }
+
+
+def local_edit_mask_definition() -> dict:
+    return {
+        "schema_version": 1,
+        "coordinate_space": "source-pixel",
+        "width": 28,
+        "height": 20,
+        "base": "empty",
+        "strokes": [{
+            "mode": "include",
+            "radius": 2,
+            "points": [{"x": 6, "y": 7}, {"x": 11, "y": 10}],
+        }],
+        "feather_radius": 0,
+    }
 
 
 class OfflineKnowledge:
@@ -108,6 +163,7 @@ class DurableJobApiTests(unittest.TestCase):
         self.fail_prompt_once = ""
         self.failed_prompt = False
         self.force_square_output = False
+        self.local_edit_color: tuple[int, int, int] | None = None
         self.ai_started: threading.Event | None = None
         self.ai_release: threading.Event | None = None
         self.remove_calls = 0
@@ -207,6 +263,8 @@ class DurableJobApiTests(unittest.TestCase):
             })
         if should_fail:
             raise JobExecutionError("OFFLINE_INJECTED_FAILURE", "injected offline failure")
+        if self.local_edit_color is not None and isinstance(ref_img, Image.Image):
+            return Image.new("RGB", ref_img.size, self.local_edit_color)
         if output_spec and output_spec.get("strict_aspect"):
             if self.force_square_output:
                 return Image.new("RGB", (240, 240), (80, 140, 210))
@@ -327,6 +385,256 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertEqual(runtime["in_flight"], 0)
             self.assertEqual(runtime["resource_in_use"], {})
             self.assertEqual(runtime["unreconciled_workers"], [])
+
+    def test_local_edit_command_generates_one_confirmed_candidate_then_composes_strictly(self) -> None:
+        source_color = (220, 100, 40)
+        self.local_edit_color = (25, 35, 45)
+        with self.live_client() as client:
+            source = self.import_asset(client, "local-edit-source.png", source_color)
+            document = local_edit_canvas_payload(source["id"])
+            saved = client.put(
+                "/api/workspaces/single/canvas",
+                json={
+                    "expected_revision": 0,
+                    "client_request_id": "job-local-edit-canvas-1",
+                    "document": document,
+                },
+            )
+            self.assertEqual(saved.status_code, 200, saved.text)
+            roi = client.post("/api/canvas-rois", json={
+                "canvas_document_id": document["id"],
+                "expected_canvas_revision": 1,
+                "source_layer_id": "layer:job-local-edit",
+                "coordinate_space": "source-pixel",
+                "rect": {"x": 3, "y": 4, "width": 12, "height": 10},
+                "purpose": "inpaint",
+                "client_request_id": "job-local-edit-roi-1",
+            })
+            self.assertEqual(roi.status_code, 200, roi.text)
+            mask = client.put(
+                f"/api/canvas-rois/{roi.json()['id']}/mask",
+                json={
+                    "expected_revision": 0,
+                    "client_request_id": "job-local-edit-mask-1",
+                    "definition": local_edit_mask_definition(),
+                },
+            )
+            self.assertEqual(mask.status_code, 200, mask.text)
+            operation_id = "operation:job-local-edit"
+            spec = client.post("/api/local-edit-specs", json={
+                "client_request_id": "job-local-edit-spec-1",
+                "contract": {
+                    "schema_version": 1,
+                    "operation_id": operation_id,
+                    "mode": "inpaint",
+                    "source_canvas_version_id": saved.json()["version"]["id"],
+                    "source_layer_id": "layer:job-local-edit",
+                    "source_sha256": source["sha256"],
+                    "source_size": {"width": 28, "height": 20},
+                    "source_pixel_sha256": image_fingerprint(
+                        Image.new("RGB", (28, 20), source_color)
+                    ),
+                    "roi": {
+                        "id": roi.json()["id"],
+                        "coordinate_space": "source-pixel",
+                        "rect": {"x": 3, "y": 4, "width": 12, "height": 10},
+                    },
+                    "mask": {
+                        "id": mask.json()["version"]["id"],
+                        "roi_id": roi.json()["id"],
+                        "width": 28,
+                        "height": 20,
+                        "sha256": mask.json()["version"]["pixel_sha256"],
+                    },
+                    "strict_pixel_protection": True,
+                    "cost": {
+                        "mode": "free",
+                        "confirmed_call_count": 0,
+                        "user_confirmation_required": False,
+                        "user_confirmed": False,
+                        "automatic_paid_retry": False,
+                    },
+                },
+            })
+            self.assertEqual(spec.status_code, 200, spec.text)
+            spec_id = spec.json()["id"]
+            request = {
+                "client_request_id": "job-local-edit-generate-1",
+                "source_asset_ids": [source["id"]],
+                "parameters": {
+                    "model": "gpt-image-2",
+                    "output_ratio": "original",
+                    "output_resolution": "2k",
+                    "local_edit_prompt": "只把瓶盖改成哑光黑色",
+                    "provider_call_confirmed": True,
+                    "automatic_paid_retry": False,
+                    "batch": 1,
+                },
+                "requested_concurrency": 1,
+                "max_attempts": 1,
+                "canvas_document_id": document["id"],
+                "expected_canvas_revision": 1,
+                "canvas_operation_id": operation_id,
+                "local_edit_spec_id": spec_id,
+            }
+            unconfirmed = copy.deepcopy(request)
+            unconfirmed["client_request_id"] = "job-local-edit-unconfirmed"
+            unconfirmed["parameters"]["provider_call_confirmed"] = False
+            rejected = client.post(
+                "/api/commands/command:local-edit-generate/execute",
+                json=unconfirmed,
+            )
+            self.assertEqual(rejected.status_code, 400, rejected.text)
+            self.assertEqual(self.ai_mock.call_count, 0)
+
+            automatic_retry = copy.deepcopy(request)
+            automatic_retry["client_request_id"] = "job-local-edit-auto-retry"
+            automatic_retry["max_attempts"] = 2
+            rejected = client.post(
+                "/api/commands/command:local-edit-generate/execute",
+                json=automatic_retry,
+            )
+            self.assertEqual(rejected.status_code, 400, rejected.text)
+            self.assertEqual(self.ai_mock.call_count, 0)
+
+            created = client.post(
+                "/api/commands/command:local-edit-generate/execute",
+                json=request,
+            )
+            self.assertEqual(created.status_code, 200, created.text)
+            final = self.wait_for_job(created.json()["job"]["id"])
+            self.assertEqual(final["status"], "completed")
+            self.assertEqual(final["snapshot"]["command_id"], "command:local-edit-generate")
+            self.assertEqual(final["snapshot"]["local_edit_spec_id"], spec_id)
+            self.assertEqual(final["items"][0]["attempt_count"], 1)
+            self.assertEqual(self.ai_mock.call_count, 1)
+            candidate_id = final["items"][0]["result_asset_ids"][0]
+            candidate = self.ledger.get_asset(candidate_id)
+            self.assertEqual(candidate["role"], "result_main")
+            self.assertEqual((candidate["width"], candidate["height"]), (28, 20))
+            self.assertTrue(candidate["metadata"]["candidate_only"])
+            self.assertFalse(candidate["metadata"]["automatic_paid_retry"])
+
+            composed = client.post(
+                "/api/workspaces/single/local-edit/compose",
+                json={
+                    "local_edit_spec_id": spec_id,
+                    "candidate_asset_id": candidate_id,
+                    "expected_canvas_revision": 1,
+                    "client_request_id": "job-local-edit-compose-1",
+                },
+            )
+            self.assertEqual(composed.status_code, 200, composed.text)
+            receipt = composed.json()["receipt"]
+            self.assertEqual(receipt["outside_mask_changed_pixels"], 0)
+            result_id = composed.json()["result_asset_id"]
+            content = client.get(f"/api/assets/{result_id}/content")
+            self.assertEqual(content.status_code, 200, content.text)
+            with Image.open(io.BytesIO(content.content)) as result:
+                self.assertEqual(result.getpixel((27, 19))[:3], source_color)
+                self.assertEqual(result.getpixel((7, 8))[:3], self.local_edit_color)
+                result.load()
+                result_pixel_sha256 = image_fingerprint(result)
+
+            composition = composed.json()
+            outpaint_roi = client.post("/api/canvas-rois", json={
+                "canvas_document_id": document["id"],
+                "expected_canvas_revision": 2,
+                "source_layer_id": "layer:job-local-edit",
+                "coordinate_space": "output-pixel",
+                "rect": {"x": 0, "y": 0, "width": 36, "height": 24},
+                "purpose": "outpaint",
+                "client_request_id": "job-local-edit-outpaint-roi",
+            })
+            self.assertEqual(outpaint_roi.status_code, 200, outpaint_roi.text)
+            outpaint_operation_id = "operation:job-local-edit-outpaint"
+            outpaint_spec = client.post("/api/local-edit-specs", json={
+                "client_request_id": "job-local-edit-outpaint-spec",
+                "contract": {
+                    "schema_version": 1,
+                    "operation_id": outpaint_operation_id,
+                    "mode": "outpaint",
+                    "source_canvas_version_id": composition["canvas"]["current_version_id"],
+                    "source_layer_id": "layer:job-local-edit",
+                    "source_sha256": composition["result_asset"]["sha256"],
+                    "source_size": {"width": 28, "height": 20},
+                    "source_pixel_sha256": result_pixel_sha256,
+                    "roi": {
+                        "id": outpaint_roi.json()["id"],
+                        "coordinate_space": "output-pixel",
+                        "rect": {"x": 0, "y": 0, "width": 36, "height": 24},
+                    },
+                    "mask": None,
+                    "strict_pixel_protection": True,
+                    "outpaint": {
+                        "output_width": 36,
+                        "output_height": 24,
+                        "source_x": 4,
+                        "source_y": 2,
+                        "transition_width": 0,
+                    },
+                    "cost": {
+                        "mode": "paid",
+                        "confirmed_call_count": 1,
+                        "user_confirmation_required": True,
+                        "user_confirmed": True,
+                        "automatic_paid_retry": False,
+                    },
+                },
+            })
+            self.assertEqual(outpaint_spec.status_code, 200, outpaint_spec.text)
+            outpaint_spec_id = outpaint_spec.json()["id"]
+            outpaint_created = client.post(
+                "/api/commands/command:local-edit-generate/execute",
+                json={
+                    "client_request_id": "job-local-edit-outpaint-generate",
+                    "source_asset_ids": [result_id],
+                    "parameters": {
+                        "model": "gpt-image-2",
+                        "output_ratio": "original",
+                        "output_resolution": "2k",
+                        "local_edit_prompt": "向四周自然延展影棚背景",
+                        "provider_call_confirmed": True,
+                        "automatic_paid_retry": False,
+                        "batch": 1,
+                    },
+                    "requested_concurrency": 1,
+                    "max_attempts": 1,
+                    "canvas_document_id": document["id"],
+                    "expected_canvas_revision": 2,
+                    "canvas_operation_id": outpaint_operation_id,
+                    "local_edit_spec_id": outpaint_spec_id,
+                },
+            )
+            self.assertEqual(outpaint_created.status_code, 200, outpaint_created.text)
+            outpaint_final = self.wait_for_job(outpaint_created.json()["job"]["id"])
+            self.assertEqual(outpaint_final["status"], "completed")
+            self.assertEqual(self.ai_mock.call_count, 2)
+            outpaint_candidate_id = outpaint_final["items"][0]["result_asset_ids"][0]
+            outpaint_candidate = self.ledger.get_asset(outpaint_candidate_id)
+            self.assertEqual(
+                (outpaint_candidate["width"], outpaint_candidate["height"]),
+                (36, 24),
+            )
+            outpaint_composed = client.post(
+                "/api/workspaces/single/local-edit/compose",
+                json={
+                    "local_edit_spec_id": outpaint_spec_id,
+                    "candidate_asset_id": outpaint_candidate_id,
+                    "expected_canvas_revision": 2,
+                    "client_request_id": "job-local-edit-outpaint-compose",
+                },
+            )
+            self.assertEqual(outpaint_composed.status_code, 200, outpaint_composed.text)
+            self.assertEqual(outpaint_composed.json()["receipt"]["protected_changed_pixels"], 0)
+            outpaint_result_id = outpaint_composed.json()["result_asset_id"]
+            outpaint_content = client.get(f"/api/assets/{outpaint_result_id}/content")
+            self.assertEqual(outpaint_content.status_code, 200, outpaint_content.text)
+            with Image.open(io.BytesIO(outpaint_content.content)) as outpaint_result:
+                self.assertEqual(outpaint_result.size, (36, 24))
+                self.assertEqual(outpaint_result.getpixel((4, 2))[:3], source_color)
+                self.assertEqual(outpaint_result.getpixel((0, 0))[:3], self.local_edit_color)
+            self.network_request.assert_not_called()
 
     def test_single_job_api_outputs_lineage_urls_and_legacy_progress_from_db(self) -> None:
         with self.live_client() as client:

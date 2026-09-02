@@ -6125,6 +6125,7 @@ class AtelierLedger:
         if command["execution_kind"] != "durable-job" or command["mode"] != mode:
             raise ValueError(f"command {command['id']} does not execute workflow mode {mode}")
         command_id = str(command["id"])
+        allow_result_sources = command_id == "command:local-edit-generate"
         canvas_document_id = str(canvas_document_id or "").strip() or None
         canvas_operation_id = str(canvas_operation_id or "").strip() or None
         if canvas_document_id is None:
@@ -6345,14 +6346,24 @@ class AtelierLedger:
                         source_asset_ids=source_asset_ids,
                     )
                 placeholders = ",".join("?" for _ in source_asset_ids)
-                rows = connection.execute(
-                    f"""
-                    SELECT a.id FROM assets a
-                    JOIN asset_blobs b ON b.id = a.blob_id
-                    WHERE a.role = 'workspace_source' AND a.id IN ({placeholders})
-                    """,
-                    source_asset_ids,
-                ).fetchall()
+                if allow_result_sources:
+                    rows = connection.execute(
+                        f"""
+                        SELECT a.id FROM assets a
+                        WHERE (a.role = 'workspace_source' OR a.role LIKE 'result_%')
+                          AND a.id IN ({placeholders})
+                        """,
+                        source_asset_ids,
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        f"""
+                        SELECT a.id FROM assets a
+                        JOIN asset_blobs b ON b.id = a.blob_id
+                        WHERE a.role = 'workspace_source' AND a.id IN ({placeholders})
+                        """,
+                        source_asset_ids,
+                    ).fetchall()
                 found = {str(row["id"]) for row in rows}
                 missing = [asset_id for asset_id in source_asset_ids if asset_id not in found]
                 if missing:

@@ -439,6 +439,80 @@ class LocalEditLedgerTests(unittest.TestCase):
                 local_edit_spec_id=spec["id"],
             )
 
+    def test_local_edit_job_accepts_a_result_layer_without_expanding_quick_commands(self) -> None:
+        result = self.create_candidate(suffix="2")
+        changed = copy.deepcopy(self.canvas["document"])
+        result_layer = copy.deepcopy(changed["layers"][0])
+        result_layer["id"] = "layer:result"
+        result_layer["source"] = {
+            "kind": "result",
+            "id": result["id"],
+            "proxy_ref": "proxy:thumbnail:512",
+            "original_pixel_width": 4096,
+            "original_pixel_height": 4096,
+        }
+        result_layer["z_index"] = 1
+        changed["layers"].append(result_layer)
+        result_canvas = self.ledger.save_canvas_document(
+            "single",
+            expected_revision=1,
+            client_request_id="local-edit-result-canvas",
+            document=changed,
+        )
+        roi = self.ledger.create_canvas_roi(
+            canvas_document_id="canvas:local-edit",
+            expected_canvas_revision=2,
+            source_layer_id="layer:result",
+            coordinate_space="source-pixel",
+            rect={"x": 64, "y": 80, "width": 1024, "height": 1200},
+            purpose="inpaint",
+            client_request_id="local-edit-result-roi",
+        )
+        mask = self.create_mask(roi["id"], request_id="local-edit-result-mask")
+        contract = self.local_contract(roi, mask)
+        contract.update({
+            "operation_id": "operation:local-edit-result",
+            "source_canvas_version_id": result_canvas["version"]["id"],
+            "source_layer_id": "layer:result",
+            "source_sha256": result["sha256"],
+        })
+        spec = self.ledger.create_local_edit_spec(
+            contract=contract,
+            source_pixel_sha256="C" * 64,
+            client_request_id="local-edit-result-spec",
+        )
+        job, created = self.ledger.create_job(
+            "single",
+            [result["id"]],
+            engine_key="cloud-local-edit",
+            parameters={
+                "batch": 1,
+                "provider_call_confirmed": True,
+                "automatic_paid_retry": False,
+            },
+            idempotency_key="local-edit-result-job",
+            requested_concurrency=1,
+            max_attempts=1,
+            command_id="command:local-edit-generate",
+            canvas_document_id="canvas:local-edit",
+            expected_canvas_revision=2,
+            canvas_operation_id=contract["operation_id"],
+            local_edit_spec_id=spec["id"],
+        )
+        self.assertTrue(created)
+        self.assertEqual(job["items"][0]["source_asset_id"], result["id"])
+        self.assertEqual(job["snapshot"]["local_edit_spec_id"], spec["id"])
+
+        with self.assertRaisesRegex(KeyError, "unknown workspace assets"):
+            self.ledger.create_job(
+                "single",
+                [result["id"]],
+                engine_key="cloud-workflow",
+                parameters={"batch": 1},
+                idempotency_key="quick-command-result-source",
+                command_id="command:existing-generate-single",
+            )
+
     def test_source_fingerprint_and_mask_definition_bounds_are_rejected(self) -> None:
         roi = self.create_roi()
         mask = self.create_mask(roi["id"])

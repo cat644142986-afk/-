@@ -31,6 +31,13 @@ class CommandRegistryTests(unittest.TestCase):
             self.assertGreaterEqual(command["max_sources"], command["min_sources"])
             self.assertEqual(command["execution_kind"], "durable-job")
 
+        local_edit = get_command("command:local-edit-generate")
+        self.assertEqual(local_edit["mode"], "single")
+        self.assertEqual(local_edit["engine_key"], "cloud-local-edit")
+        self.assertEqual(local_edit["cost_policy"], "provider-confirmed")
+        self.assertFalse(local_edit["existing_quick_mode"])
+        self.assertEqual(command_for_mode("single")["id"], "command:existing-generate-single")
+
         self.assertEqual(
             {
                 command["id"]

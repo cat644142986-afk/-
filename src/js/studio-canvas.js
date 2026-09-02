@@ -17,7 +17,9 @@ import {
   RefreshCw,
   RotateCcw,
   Scan,
+  Square,
   Undo2,
+  WandSparkles,
   ZoomIn,
   ZoomOut,
   createIcons,
@@ -62,6 +64,8 @@ const REQUIRED_MUTATION_COMMANDS = new Set([
   'command:toggle-layer-lock',
   'command:local-edit-compose',
 ]);
+const LOCAL_EDIT_GENERATE_COMMAND = 'command:local-edit-generate';
+const ACTIVE_LOCAL_EDIT_JOB_STATUSES = new Set(['queued', 'running', 'canceling']);
 const EMPTY_ARTBOARD = Object.freeze({
   id: 'artboard:main',
   name: '主画板',
@@ -87,7 +91,9 @@ const ICONS = {
   RefreshCw,
   RotateCcw,
   Scan,
+  Square,
   Undo2,
+  WandSparkles,
   ZoomIn,
   ZoomOut,
 };
@@ -153,6 +159,15 @@ function blankLocalEditState(mode = 'inpaint') {
     candidateLoading: false,
     candidateId: '',
     composeRequest: null,
+    generationPrompt: '',
+    generationConfirmed: false,
+    generationJobId: '',
+    generationJobStatus: '',
+    generationProgress: 0,
+    generationMessage: '',
+    generationRequest: null,
+    generationPolling: false,
+    generationPollToken: 0,
     error: '',
   };
 }
@@ -402,6 +417,7 @@ export function createCanvasController({
     const maskSaved = Boolean(local?.mask?.version?.id && !local.dirtyMask);
     const writableMask = Boolean(local?.definition && maskHasWritablePixels(local.definition));
     const busy = Boolean(local?.loading || local?.saving || local?.candidateLoading);
+    const generationActive = ACTIVE_LOCAL_EDIT_JOB_STATUSES.has(local?.generationJobStatus);
     let outpaint = null;
     let outpaintValid = false;
     if (isOutpaint && layer && local) {
@@ -437,6 +453,30 @@ export function createCanvasController({
       || busy
       || Boolean(local?.spec);
     query('#local-edit-compose-fields').disabled = !local?.spec || busy;
+    const promptInput = query('#local-edit-prompt');
+    if (promptInput && promptInput.ownerDocument?.activeElement !== promptInput) {
+      promptInput.value = local?.generationPrompt || '';
+    }
+    if (promptInput) promptInput.disabled = !local?.spec || busy || generationActive;
+    const generationConfirm = query('#local-edit-generation-confirm');
+    if (generationConfirm) {
+      generationConfirm.checked = Boolean(local?.generationConfirmed);
+      generationConfirm.disabled = !local?.spec || busy || generationActive;
+    }
+    const generationPromptReady = String(local?.generationPrompt || '').trim().length >= 2;
+    query('#local-edit-generate').disabled = !local?.spec
+      || busy
+      || generationActive
+      || !generationPromptReady
+      || !local?.generationConfirmed;
+    const cancelGeneration = query('#local-edit-cancel-generation');
+    cancelGeneration.hidden = !generationActive;
+    cancelGeneration.disabled = local?.generationJobStatus === 'canceling';
+    const generationProgress = query('#local-edit-generation-progress');
+    generationProgress.hidden = !local?.generationJobId;
+    query('#local-edit-generation-bar').style.width = `${Math.round(Math.max(0, Math.min(1, Number(local?.generationProgress || 0))) * 100)}%`;
+    query('#local-edit-generation-status').textContent = local?.generationMessage
+      || (local?.generationJobId ? '正在读取候选任务状态' : '等待生成');
 
     if (local?.draftRect) writeRoiInputs(local.draftRect);
     else if (!layer) writeRoiInputs(null);
@@ -473,6 +513,11 @@ export function createCanvasController({
     else if (!isOutpaint && Math.abs(Number(layer.transform.rotation_degrees || 0)) >= 0.0001) {
       setLocalEditStatus('error', '暂不支持旋转图层', '将旋转恢复为 0° 后再框选');
     } else if (local?.loading) setLocalEditStatus('saving', '正在恢复处理规格', isOutpaint ? '读取当前版本的扩图范围' : '读取当前版本的最新选区与蒙版');
+    else if (generationActive) setLocalEditStatus(
+      'saving',
+      local.generationJobStatus === 'canceling' ? '正在安全取消候选任务' : 'AI 候选正在生成',
+      local.generationMessage || '任务在后台队列中推进，切换面板不会中断',
+    );
     else if (local?.candidateLoading) setLocalEditStatus('saving', '正在读取候选结果', '合并当前结果与本模式的近期任务结果');
     else if (local?.saving) setLocalEditStatus('saving', '正在写入本地账本', '操作完成前不会覆盖已有版本');
     else if (local?.error) setLocalEditStatus('error', isOutpaint ? '扩图规格未完成' : '局部编辑未完成', local.error);
@@ -493,6 +538,168 @@ export function createCanvasController({
     else setLocalEditStatus('saved', '蒙版版本已保存', `revision ${local.mask.current_revision} · 可冻结零费用规格`);
   }
 
+  function localEditGenerationJob(jobs, specId) {
+    return Array.from(jobs || []).find((job) => (
+      job?.snapshot?.command_id === LOCAL_EDIT_GENERATE_COMMAND
+      && String(job?.snapshot?.local_edit_spec_id || '') === String(specId || '')
+    )) || null;
+  }
+
+  function updateLocalEditGenerationFromJob(local, job) {
+    if (!local || !job?.id) return;
+    const status = String(job.status || 'queued');
+    const progress = Math.max(0, Math.min(1, Number(job.progress || 0)));
+    const item = Array.from(job.items || []).find((entry) => (
+      ['failed', 'interrupted', 'canceling', 'running'].includes(entry?.status)
+    )) || job.items?.[0] || null;
+    const copies = {
+      queued: '候选任务正在排队',
+      running: `AI 候选生成中 · ${Math.round(progress * 100)}%`,
+      canceling: '正在等待安全取消点',
+      canceled: '候选任务已取消；已有结果和规格保持不变',
+      completed: 'AI 候选已生成并写入版本账本',
+      interrupted: '应用曾在处理中断；请重新确认后建立新候选任务',
+      failed: item?.error_message || '候选生成失败；请检查任务详情后重新确认调用',
+      partial: '候选任务只完成了部分项目',
+    };
+    local.generationJobId = String(job.id);
+    local.generationJobStatus = status;
+    local.generationProgress = status === 'completed' ? 1 : progress;
+    local.generationMessage = copies[status] || `候选任务状态：${status}`;
+    if (['failed', 'interrupted', 'partial'].includes(status)) {
+      local.error = local.generationMessage;
+      local.generationConfirmed = false;
+    } else if (status === 'canceled') {
+      local.generationConfirmed = false;
+    }
+  }
+
+  async function finishLocalEditGeneration(local, job) {
+    const generatedId = Array.from(job?.items || [])
+      .flatMap((item) => Array.from(item?.result_asset_ids || []))[0] || '';
+    local.generationConfirmed = false;
+    local.candidatesHydrated = false;
+    await ensureLocalEditCandidates(true);
+    if (generatedId && localEditCandidateOptions(local).some((item) => item.id === generatedId)) {
+      local.candidateId = generatedId;
+      local.composeRequest = null;
+    }
+    toast('AI 候选已返回当前局部编辑规格', 'success');
+    updateLocalEditPanel();
+  }
+
+  async function monitorLocalEditGeneration(local, jobId) {
+    if (!local || !jobId || local.generationPolling) return;
+    const token = ++local.generationPollToken;
+    local.generationPolling = true;
+    try {
+      while (
+        token === local.generationPollToken
+        && String(local.generationJobId) === String(jobId)
+        && ACTIVE_LOCAL_EDIT_JOB_STATUSES.has(local.generationJobStatus)
+      ) {
+        try {
+          const response = await api.getJob(jobId, { timeoutMs: 12000 });
+          const job = response?.job || response;
+          updateLocalEditGenerationFromJob(local, job);
+          updateLocalEditPanel();
+          if (!ACTIVE_LOCAL_EDIT_JOB_STATUSES.has(local.generationJobStatus)) {
+            if (local.generationJobStatus === 'completed') {
+              await finishLocalEditGeneration(local, job);
+            }
+            break;
+          }
+        } catch (error) {
+          local.generationMessage = `候选任务仍在后台运行；状态读取暂时失败：${formatApiError(error)}`;
+          updateLocalEditPanel();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      }
+    } finally {
+      if (token === local.generationPollToken) local.generationPolling = false;
+    }
+  }
+
+  async function startLocalEditGeneration() {
+    const entry = entryFor();
+    const layer = activeLayer();
+    const local = localEditState({ create: false });
+    const description = String(local?.generationPrompt || '').replace(/\s+/g, ' ').trim();
+    if (
+      !entry.document
+      || !entry.currentVersionId
+      || !layer
+      || !local?.spec
+      || !local.generationConfirmed
+      || description.length < 2
+      || ACTIVE_LOCAL_EDIT_JOB_STATUSES.has(local.generationJobStatus)
+    ) return;
+    if (entry.dirty && !await saveMode(currentMode)) return;
+    local.saving = true;
+    local.error = '';
+    local.generationMessage = '正在把冻结规格提交到任务队列';
+    updateLocalEditPanel();
+    try {
+      const model = query('#param-model')?.value || 'gpt-image-2';
+      const outputResolution = query('#param-output-resolution')?.value || '2k';
+      local.generationRequest = local.generationRequest || {
+        client_request_id: createRequestId('local-edit-generate'),
+        source_asset_ids: [String(layer.source.id)],
+        parameters: {
+          model,
+          output_ratio: 'original',
+          output_resolution: outputResolution,
+          local_edit_prompt: description,
+          provider_call_confirmed: true,
+          automatic_paid_retry: false,
+          batch: 1,
+        },
+        requested_concurrency: 1,
+        max_attempts: 1,
+        canvas_document_id: entry.document.id,
+        expected_canvas_revision: entry.currentRevision,
+        canvas_operation_id: local.spec.contract.operation_id,
+        local_edit_spec_id: local.spec.id,
+      };
+      const response = await api.executeCommand(
+        LOCAL_EDIT_GENERATE_COMMAND,
+        local.generationRequest,
+        { timeoutMs: 20000 },
+      );
+      const job = response?.job || response;
+      local.generationRequest = null;
+      updateLocalEditGenerationFromJob(local, job);
+      if (local.generationJobStatus === 'completed') {
+        await finishLocalEditGeneration(local, job);
+      } else {
+        toast('候选任务已进入后台队列；失败不会自动重试', 'success');
+      }
+    } catch (error) {
+      local.error = formatApiError(error, 'AI 候选任务未能建立');
+      local.generationMessage = local.error;
+      local.generationConfirmed = false;
+    } finally {
+      local.saving = false;
+      updateLocalEditPanel();
+    }
+    if (ACTIVE_LOCAL_EDIT_JOB_STATUSES.has(local.generationJobStatus)) {
+      monitorLocalEditGeneration(local, local.generationJobId);
+    }
+  }
+
+  async function cancelLocalEditGeneration() {
+    const local = localEditState({ create: false });
+    if (!local?.generationJobId || !ACTIVE_LOCAL_EDIT_JOB_STATUSES.has(local.generationJobStatus)) return;
+    try {
+      const response = await api.cancelJob(local.generationJobId);
+      updateLocalEditGenerationFromJob(local, response?.job || response);
+      updateLocalEditPanel();
+    } catch (error) {
+      local.error = formatApiError(error, '候选任务取消请求未送达');
+      updateLocalEditPanel();
+    }
+  }
+
   async function ensureLocalEditCandidates(force = false) {
     const local = localEditState({ create: false });
     if (!local?.spec || local.candidateLoading || (!force && local.candidatesHydrated)) {
@@ -504,6 +711,10 @@ export function createCanvasController({
     updateLocalEditPanel();
     try {
       const response = await api.getWorkspace(currentMode, { timeoutMs: 12000 });
+      const relatedJob = localEditGenerationJob(response?.jobs, local.spec.id);
+      if (relatedJob && (!local.generationJobId || local.generationJobId === relatedJob.id)) {
+        updateLocalEditGenerationFromJob(local, relatedJob);
+      }
       const candidates = Array.from(response?.recent_results || []);
       await Promise.all(candidates.map(async (candidate) => {
         try {
@@ -524,6 +735,9 @@ export function createCanvasController({
     } finally {
       local.candidateLoading = false;
       updateLocalEditPanel();
+      if (ACTIVE_LOCAL_EDIT_JOB_STATUSES.has(local.generationJobStatus)) {
+        monitorLocalEditGeneration(local, local.generationJobId);
+      }
     }
   }
 
@@ -2150,6 +2364,24 @@ export function createCanvasController({
       confirmOutpaintSpec(event.currentTarget.checked);
     });
     query('#local-edit-prepare-outpaint').addEventListener('click', prepareOutpaintSpec);
+    query('#local-edit-prompt').addEventListener('input', (event) => {
+      const local = localEditState({ create: false });
+      if (!local) return;
+      local.generationPrompt = String(event.currentTarget.value || '');
+      local.generationRequest = null;
+      local.error = '';
+      updateLocalEditPanel();
+    });
+    query('#local-edit-generation-confirm').addEventListener('change', (event) => {
+      const local = localEditState({ create: false });
+      if (!local) return;
+      local.generationConfirmed = Boolean(event.currentTarget.checked);
+      local.generationRequest = null;
+      local.error = '';
+      updateLocalEditPanel();
+    });
+    query('#local-edit-generate').addEventListener('click', startLocalEditGeneration);
+    query('#local-edit-cancel-generation').addEventListener('click', cancelLocalEditGeneration);
     query('#local-edit-candidate').addEventListener('change', (event) => {
       selectLocalEditCandidate(event.target.value);
     });
