@@ -513,6 +513,99 @@ class LocalEditLedgerTests(unittest.TestCase):
                 command_id="command:existing-generate-single",
             )
 
+    def test_local_edit_spec_rejects_a_frozen_result_that_became_video(self) -> None:
+        result = self.create_candidate(suffix="7")
+        changed = copy.deepcopy(self.canvas["document"])
+        changed["source_asset_ids"] = []
+        changed["layers"][0]["source"] = {
+            "kind": "result",
+            "id": result["id"],
+            "proxy_ref": "proxy:thumbnail:512",
+            "original_pixel_width": 4096,
+            "original_pixel_height": 4096,
+        }
+        result_canvas = self.ledger.save_canvas_document(
+            "single",
+            expected_revision=1,
+            client_request_id="local-edit-video-source-canvas",
+            document=changed,
+        )
+        roi = self.ledger.create_canvas_roi(
+            canvas_document_id="canvas:local-edit",
+            expected_canvas_revision=2,
+            source_layer_id="layer:source",
+            coordinate_space="source-pixel",
+            rect={"x": 64, "y": 80, "width": 1024, "height": 1200},
+            purpose="inpaint",
+            client_request_id="local-edit-video-source-roi",
+        )
+        mask = self.create_mask(roi["id"], request_id="local-edit-video-source-mask")
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute(
+                "UPDATE assets SET role = 'result_video', kind = 'video', mime = 'video/webm' "
+                "WHERE id = ?",
+                (result["id"],),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        contract = self.local_contract(roi, mask)
+        contract.update({
+            "operation_id": "operation:local-edit-video-source",
+            "source_canvas_version_id": result_canvas["version"]["id"],
+            "source_sha256": result["sha256"],
+        })
+        with self.assertRaisesRegex(ValueError, "pixel-editable image"):
+            self.ledger.create_local_edit_spec(
+                contract=contract,
+                source_pixel_sha256="C" * 64,
+                client_request_id="local-edit-video-source-spec",
+            )
+
+    def test_local_edit_composition_rejects_video_and_auxiliary_cover_candidates(self) -> None:
+        spec = self.create_spec(request_id="local-edit-non-pixel-candidate")
+        invalid_candidates = (
+            self.ledger.add_asset(
+                self.asset["session_id"],
+                "result_video",
+                parent_asset_id=self.asset["id"],
+                path=str(self.root / "candidate-video.webm"),
+                name="candidate-video.webm",
+                mime="video/webm",
+                kind="video",
+                width=4096,
+                height=4096,
+                sha256="e" * 64,
+            ),
+            self.ledger.add_asset(
+                self.asset["session_id"],
+                "result_video_cover",
+                parent_asset_id=self.asset["id"],
+                path=str(self.root / "candidate-cover.jpg"),
+                name="candidate-cover.jpg",
+                mime="image/jpeg",
+                kind="image",
+                width=4096,
+                height=4096,
+                sha256="f" * 64,
+                metadata={"auxiliary_result": True},
+            ),
+        )
+        for index, candidate in enumerate(invalid_candidates):
+            with self.subTest(role=candidate["role"]):
+                with self.assertRaisesRegex(ValueError, "pixel-editable image"):
+                    self.ledger.commit_local_edit_composition(
+                        "single",
+                        local_edit_spec_id=spec["id"],
+                        candidate_asset_id=candidate["id"],
+                        expected_canvas_revision=1,
+                        client_request_id=f"compose-reject-non-pixel-{index}",
+                        result=self.compose_result(f"reject-{index}"),
+                        receipt=self.compose_receipt(spec["contract"]),
+                    )
+
     def test_source_fingerprint_and_mask_definition_bounds_are_rejected(self) -> None:
         roi = self.create_roi()
         mask = self.create_mask(roi["id"])

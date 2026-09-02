@@ -14,7 +14,10 @@ import {
   spatialCustomData,
   spatialItemFromAsset,
   spatialItemFromJob,
+  spatialTaskLabel,
+  updateSpatialTaskElements,
   spatialLineageFocusElements,
+  uniqueSpatialBusinessItems,
 } from '../../src/js/spatial-canvas-items.js';
 
 test('spatial items keep only ledger references in customData', () => {
@@ -57,10 +60,79 @@ test('task nodes expose only task-compatible context actions', () => {
   const item = spatialItemFromJob({
     id: 'job:9', title: '商业主图', status: 'partial', total_items: 4, completed_items: 3,
     snapshot: { product_profile_version_id: 'product-profile-version:8' },
-  });
+  }, { lineage_parent_id: 'ast:first-frame' });
   assert.equal(spatialBusinessKey(item), 'task:job:9');
   assert.deepEqual(spatialContextActions(item), ['open-task']);
   assert.equal(item.references.product_profile_version_id, 'product-profile-version:8');
+  assert.equal(item.references.lineage_parent_id, 'ast:first-frame');
+  assert.equal(parseSpatialDragItem(serializeSpatialDragItem(item)).references.lineage_parent_id, 'ast:first-frame');
+  assert.equal(spatialTaskLabel(item), '商业主图\n部分完成 · 3/4 项');
+});
+
+test('durable job progress updates an existing task label without replacing its business identity', () => {
+  const task = {
+    id: 'task-node', type: 'rectangle', customData: { task_id: 'job:video' },
+    boundElements: [{ id: 'task-label', type: 'text' }],
+  };
+  const label = {
+    id: 'task-label', type: 'text', containerId: 'task-node',
+    text: '生成视频预览\n排队中 · 0/1 项', originalText: '生成视频预览\n排队中 · 0/1 项',
+  };
+  const item = spatialItemFromJob({
+    id: 'job:video', title: '生成视频预览', status: 'failed', total_items: 1, completed_items: 0,
+  });
+  const update = updateSpatialTaskElements([task, label], item);
+  assert.equal(update.changed, true);
+  assert.equal(update.elements[0], task);
+  assert.equal(update.elements[1].text, '生成视频预览\n失败 · 0/1 项');
+  assert.equal(update.elements[1].originalText, '生成视频预览\n失败 · 0/1 项');
+  assert.equal(update.taskElement.customData.task_id, 'job:video');
+  assert.equal(updateSpatialTaskElements(update.elements, item).changed, false);
+});
+
+test('video task nodes sit below their source while sibling results use separate lanes', () => {
+  let id = 0;
+  const parent = {
+    id: 'source', type: 'image', x: 100, y: 100, width: 300, height: 200, isDeleted: false,
+    customData: { asset_id: 'ast:source' },
+  };
+  const task = spatialItemFromJob({
+    id: 'job:video', title: '生成视频预览', status: 'queued', total_items: 1,
+  }, { lineage_parent_id: 'ast:source' });
+  const taskBatch = buildSpatialNodeBatch([task], {
+    elements: [parent], idFactory: (prefix) => `${prefix}_${++id}`,
+  });
+  const taskNode = taskBatch.skeletons.find((element) => element.type === 'rectangle');
+  const taskArrow = taskBatch.skeletons.find((element) => element.type === 'arrow');
+  assert.equal(taskNode.x, parent.x);
+  assert.equal(taskNode.y, parent.y + parent.height + 120);
+  assert.equal(taskArrow.points[1][0], 0);
+
+  const first = spatialItemFromAsset({ id: 'ast:video-1', role: 'result_video', kind: 'video' }, {
+    lineage_parent_id: 'ast:source',
+  });
+  const firstBatch = buildSpatialNodeBatch([first], {
+    elements: [parent], idFactory: (prefix) => `${prefix}_${++id}`,
+  });
+  const firstNode = firstBatch.skeletons.find((element) => element.type === 'embeddable');
+  const second = spatialItemFromAsset({ id: 'ast:video-2', role: 'result_video', kind: 'video' }, {
+    lineage_parent_id: 'ast:source',
+  });
+  const secondBatch = buildSpatialNodeBatch([second], {
+    elements: [parent, { ...firstNode, isDeleted: false }], idFactory: (prefix) => `${prefix}_${++id}`,
+  });
+  const secondNode = secondBatch.skeletons.find((element) => element.type === 'embeddable');
+  assert.notEqual(secondNode.y, firstNode.y);
+});
+
+test('idempotent imports reject existing and repeated business references', () => {
+  const existing = [{
+    id: 'existing', type: 'embeddable', isDeleted: false,
+    customData: { asset_id: 'ast:video', result_id: 'ast:video' },
+  }];
+  const duplicate = spatialItemFromAsset({ id: 'ast:video', role: 'result_video', kind: 'video' });
+  const fresh = spatialItemFromAsset({ id: 'ast:fresh', role: 'result_video', kind: 'video' });
+  assert.deepEqual(uniqueSpatialBusinessItems([duplicate, fresh, fresh], existing), [fresh]);
 });
 
 test('result nodes are placed beside their parent and receive a lineage arrow', () => {
@@ -111,6 +183,63 @@ test('result nodes are placed beside their parent and receive a lineage arrow', 
     spatialLineageFocusElements([item], [parent], batch.skeletons).map((element) => element.id),
     ['parent', 'spatial_lineage_2', 'spatial_node_1'],
   );
+});
+
+test('video results become embeddables without image proxy bytes and keep lineage bindings', () => {
+  let id = 0;
+  const parent = {
+    id: 'parent-video-frame', type: 'image', x: 80, y: 120, width: 320, height: 240,
+    isDeleted: false,
+    customData: { asset_id: 'ast:first-frame', result_id: null },
+  };
+  const item = spatialItemFromAsset({
+    id: 'ast:video-result',
+    name: '商品运镜预览',
+    role: 'result_video',
+    kind: 'video',
+    mime: 'video/webm',
+    width: 1280,
+    height: 720,
+    metadata: { lineage_parent_id: 'ast:first-frame', duration_seconds: 5 },
+  }, {
+    task_id: 'job:video-1',
+    product_profile_version_id: 'product-profile-version:video-1',
+  });
+  assert.equal(item.kind, 'video');
+  assert.equal(item.business_kind, 'result');
+  assert.equal(parseSpatialDragItem(serializeSpatialDragItem(item)).kind, 'video');
+
+  const batch = buildSpatialNodeBatch([item], {
+    elements: [parent],
+    appState: { width: 1200, height: 800, zoom: { value: 1 }, scrollX: 0, scrollY: 0 },
+    idFactory: (prefix) => `${prefix}_${++id}`,
+  });
+  assert.deepEqual(batch.proxyRequests, []);
+  assert.equal(batch.skeletons.length, 2);
+  assert.equal(batch.skeletons[0].type, 'arrow');
+  assert.equal(batch.skeletons[1].type, 'embeddable');
+  assert.equal(batch.skeletons[1].link, 'product-atelier-video://ast:video-result');
+  assert.deepEqual(Object.keys(batch.skeletons[1].customData), [...SPATIAL_REFERENCE_FIELDS]);
+  assert.deepEqual(batch.skeletons[1].customData, {
+    asset_id: 'ast:video-result',
+    result_id: 'ast:video-result',
+    task_id: 'job:video-1',
+    product_profile_version_id: 'product-profile-version:video-1',
+    lineage_parent_id: 'ast:first-frame',
+  });
+  const serialized = JSON.stringify(batch.skeletons[1]);
+  assert.doesNotMatch(serialized, /base64|data:video|[A-Za-z]:\\\\/i);
+
+  const converted = batch.skeletons.map((element) => ({
+    ...element,
+    isDeleted: false,
+    boundElements: null,
+    ...(element.type === 'arrow' ? { startBinding: null, endBinding: null } : {}),
+  }));
+  const merged = mergeSpatialNodeBatch([parent], converted, batch.lineageBindings);
+  assert.equal(merged[1].startBinding.elementId, parent.id);
+  assert.equal(merged[1].endBinding.elementId, batch.skeletons[1].id);
+  assert.deepEqual(merged[2].boundElements, [{ id: batch.skeletons[0].id, type: 'arrow' }]);
 });
 
 test('independent imports focus only their new additions', () => {

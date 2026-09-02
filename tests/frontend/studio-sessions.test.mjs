@@ -13,6 +13,7 @@ test('session presentation keeps durable fallbacks Chinese-first', () => {
   assert.equal(sessionProjectName({}), '未归类项目');
   assert.equal(sessionStatusCopy('completed'), '已完成');
   assert.equal(sessionStatusCopy('failed'), '需要处理');
+  assert.equal(sessionStatusCopy('error'), '需要处理');
   assert.equal(sessionStatusCopy('future-state'), '已保存');
   assert.equal(sessionActionCopy({ status: 'partial' }), '处理');
   assert.equal(sessionActionCopy({ status: 'completed' }), '查看');

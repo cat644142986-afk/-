@@ -22,6 +22,7 @@ export function sessionStatusCopy(status) {
     processing: '处理中',
     draft: '草稿',
     failed: '需要处理',
+    error: '需要处理',
     canceled: '已取消',
   })[status] || '已保存';
 }

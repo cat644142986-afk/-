@@ -36,6 +36,17 @@ export function boundedJobsForDisplay(jobs, limit = 12) {
   return visible;
 }
 
+export function jobAnnouncementCopy(job, fallbackLabel = '任务') {
+  const label = String(job?.title || fallbackLabel || '任务').trim() || '任务';
+  const messages = {
+    completed: { message: `${label}已完成`, tone: 'success' },
+    partial: { message: `${label}部分完成，失败项可重试`, tone: 'error', duration: 5200 },
+    failed: { message: `${label}失败，详情已保留`, tone: 'error', duration: 5200 },
+    canceled: { message: `${label}已取消`, tone: undefined },
+  };
+  return messages[String(job?.status || '')] || { message: '', tone: undefined };
+}
+
 export function jobItemsForDisplay(job, expanded = false, limit = 5) {
   const items = Array.from(job?.items || []);
   if (expanded) return items;

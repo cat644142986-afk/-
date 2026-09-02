@@ -8,16 +8,21 @@
 #[cfg(all(not(debug_assertions), not(feature = "custom-protocol")))]
 compile_error!("Product Atelier release builds require --features custom-protocol; use `npx tauri build --no-bundle`");
 
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::path::PathBuf;
-use std::net::TcpStream;
-use std::io::{Read, Write};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::{Manager, PhysicalPosition, PhysicalSize, Position, Size, State};
 
 use serde::{Deserialize, Serialize};
+
+const MAX_HTTP_HEADER_BYTES: usize = 64 * 1024;
+const ASSET_DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 // ---- State ----
 struct AppState {
@@ -400,6 +405,361 @@ fn save_base64_image(app: tauri::AppHandle, suggested_name: String, data_b64: St
     Ok(path_str)
 }
 
+fn validate_asset_id(asset_id: &str) -> Result<(), String> {
+    let bytes = asset_id.as_bytes();
+    if bytes.len() != 36
+        || !asset_id.starts_with("ast_")
+        || !bytes[4..]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+    {
+        return Err(
+            "ASSET_EXPORT_INVALID_ID: asset_id must be ast_ followed by 32 lowercase hexadecimal characters"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_suggested_name(suggested_name: &str) -> Result<(), String> {
+    let invalid_character = |character: char| {
+        character.is_control()
+            || matches!(
+                character,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+            )
+    };
+    if suggested_name.is_empty()
+        || suggested_name == "."
+        || suggested_name == ".."
+        || suggested_name.trim() != suggested_name
+        || suggested_name.encode_utf16().count() > 240
+        || suggested_name.chars().any(invalid_character)
+        || suggested_name.ends_with('.')
+    {
+        return Err(
+            "ASSET_EXPORT_INVALID_NAME: suggested_name must be a safe file name with at most 240 UTF-16 code units"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn read_http_header_line<R: BufRead>(
+    reader: &mut R,
+    header_bytes: &mut usize,
+) -> Result<Vec<u8>, String> {
+    let mut line = Vec::new();
+    let allowance = MAX_HTTP_HEADER_BYTES
+        .saturating_sub(*header_bytes)
+        .saturating_add(1);
+    let count = (&mut *reader)
+        .take(allowance as u64)
+        .read_until(b'\n', &mut line)
+        .map_err(|error| format!("ASSET_EXPORT_NETWORK: could not read local response: {error}"))?;
+    if count == 0 {
+        return Err(
+            "ASSET_EXPORT_TRUNCATED: local service closed before response headers completed"
+                .to_string(),
+        );
+    }
+    *header_bytes = header_bytes.saturating_add(count);
+    if *header_bytes > MAX_HTTP_HEADER_BYTES {
+        return Err("ASSET_EXPORT_PROTOCOL: response headers are too large".to_string());
+    }
+    if !line.ends_with(b"\n") {
+        return Err("ASSET_EXPORT_TRUNCATED: response header line was truncated".to_string());
+    }
+    Ok(line)
+}
+
+fn trim_http_line(line: &[u8]) -> &[u8] {
+    line.strip_suffix(b"\r\n")
+        .or_else(|| line.strip_suffix(b"\n"))
+        .unwrap_or(line)
+}
+
+fn download_asset_from_sidecar<W: Write>(
+    port: u16,
+    asset_id: &str,
+    writer: &mut W,
+) -> Result<u64, String> {
+    validate_asset_id(asset_id)?;
+    if port == 0 {
+        return Err("ASSET_EXPORT_SIDECAR: local service port is unavailable".to_string());
+    }
+
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream =
+        TcpStream::connect_timeout(&address, Duration::from_secs(5)).map_err(|error| {
+            format!("ASSET_EXPORT_NETWORK: could not connect to local service: {error}")
+        })?;
+    stream
+        .set_read_timeout(Some(ASSET_DOWNLOAD_IDLE_TIMEOUT))
+        .map_err(|error| format!("ASSET_EXPORT_NETWORK: could not set read timeout: {error}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .map_err(|error| format!("ASSET_EXPORT_NETWORK: could not set write timeout: {error}"))?;
+
+    let request = format!(
+        "GET /api/assets/{asset_id}/content?download=true HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: application/octet-stream\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .and_then(|_| stream.flush())
+        .map_err(|error| format!("ASSET_EXPORT_NETWORK: could not request local asset: {error}"))?;
+
+    let mut reader = BufReader::new(stream);
+    let mut header_bytes = 0usize;
+    let status_line = read_http_header_line(&mut reader, &mut header_bytes)?;
+    let status_text = std::str::from_utf8(trim_http_line(&status_line))
+        .map_err(|_| "ASSET_EXPORT_PROTOCOL: response status is not ASCII".to_string())?;
+    let mut status_parts = status_text.split_whitespace();
+    let http_version = status_parts.next().unwrap_or_default();
+    let status_code = status_parts
+        .next()
+        .ok_or_else(|| "ASSET_EXPORT_PROTOCOL: response status code is missing".to_string())?
+        .parse::<u16>()
+        .map_err(|_| "ASSET_EXPORT_PROTOCOL: response status code is invalid".to_string())?;
+    if !matches!(http_version, "HTTP/1.0" | "HTTP/1.1") {
+        return Err("ASSET_EXPORT_PROTOCOL: unsupported HTTP response version".to_string());
+    }
+    if status_code != 200 {
+        return Err(format!(
+            "ASSET_EXPORT_HTTP_STATUS: local service returned HTTP {status_code}; redirects and partial responses are refused"
+        ));
+    }
+
+    let mut content_length = None;
+    let mut transfer_encoding = false;
+    let mut content_encoding = None;
+    loop {
+        let line = read_http_header_line(&mut reader, &mut header_bytes)?;
+        let line = trim_http_line(&line);
+        if line.is_empty() {
+            break;
+        }
+        if matches!(line.first(), Some(b' ' | b'\t')) {
+            return Err("ASSET_EXPORT_PROTOCOL: folded response headers are refused".to_string());
+        }
+        let separator = line
+            .iter()
+            .position(|byte| *byte == b':')
+            .ok_or_else(|| "ASSET_EXPORT_PROTOCOL: malformed response header".to_string())?;
+        let name = std::str::from_utf8(&line[..separator])
+            .map_err(|_| "ASSET_EXPORT_PROTOCOL: response header name is not ASCII".to_string())?;
+        let value = std::str::from_utf8(&line[separator + 1..])
+            .map_err(|_| "ASSET_EXPORT_PROTOCOL: response header value is not ASCII".to_string())?
+            .trim();
+        if name.eq_ignore_ascii_case("content-length") {
+            if content_length.is_some() || value.starts_with('+') {
+                return Err(
+                    "ASSET_EXPORT_PROTOCOL: ambiguous Content-Length is refused".to_string()
+                );
+            }
+            content_length = Some(value.parse::<u64>().map_err(|_| {
+                "ASSET_EXPORT_PROTOCOL: invalid Content-Length from local service".to_string()
+            })?);
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            transfer_encoding = true;
+        } else if name.eq_ignore_ascii_case("content-encoding") {
+            content_encoding = Some(value.to_ascii_lowercase());
+        }
+    }
+
+    if transfer_encoding {
+        return Err(
+            "ASSET_EXPORT_PROTOCOL: Transfer-Encoding is refused for exact binary export"
+                .to_string(),
+        );
+    }
+    if content_encoding
+        .as_deref()
+        .is_some_and(|encoding| !encoding.is_empty() && encoding != "identity")
+    {
+        return Err(
+            "ASSET_EXPORT_PROTOCOL: encoded response bodies are refused for exact binary export"
+                .to_string(),
+        );
+    }
+    let expected = content_length.ok_or_else(|| {
+        "ASSET_EXPORT_PROTOCOL: Content-Length is required to detect truncated exports".to_string()
+    })?;
+
+    let mut remaining = expected;
+    let mut buffer = [0u8; 64 * 1024];
+    while remaining > 0 {
+        let chunk_size =
+            usize::try_from(remaining.min(buffer.len() as u64)).unwrap_or(buffer.len());
+        let count = reader.read(&mut buffer[..chunk_size]).map_err(|error| {
+            format!("ASSET_EXPORT_NETWORK: could not read local asset: {error}")
+        })?;
+        if count == 0 {
+            return Err(format!(
+                "ASSET_EXPORT_TRUNCATED: expected {expected} bytes but received {}",
+                expected - remaining
+            ));
+        }
+        writer.write_all(&buffer[..count]).map_err(|error| {
+            format!("ASSET_EXPORT_WRITE: could not write temporary file: {error}")
+        })?;
+        remaining -= count as u64;
+    }
+    Ok(expected)
+}
+
+fn create_export_temp_file(target: &Path) -> Result<(PathBuf, File), String> {
+    let parent = target
+        .parent()
+        .filter(|path| path.is_dir())
+        .ok_or_else(|| {
+            "ASSET_EXPORT_PATH: selected destination directory does not exist".to_string()
+        })?;
+    for _ in 0..100 {
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temp_path = parent.join(format!(
+            ".product-atelier-export-{}-{sequence}.tmp",
+            std::process::id()
+        ));
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+        {
+            Ok(file) => return Ok((temp_path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "ASSET_EXPORT_WRITE: could not create temporary file: {error}"
+                ));
+            }
+        }
+    }
+    Err("ASSET_EXPORT_WRITE: could not allocate a unique temporary file".to_string())
+}
+
+#[cfg(windows)]
+fn replace_export_file(temp_path: &Path, target: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let temp_wide: Vec<u16> = temp_path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let target_wide: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe {
+        MoveFileExW(
+            PCWSTR(temp_wide.as_ptr()),
+            PCWSTR(target_wide.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(|error| format!("ASSET_EXPORT_REPLACE: could not replace destination: {error}"))
+}
+
+#[cfg(not(windows))]
+fn replace_export_file(temp_path: &Path, target: &Path) -> Result<(), String> {
+    std::fs::rename(temp_path, target)
+        .map_err(|error| format!("ASSET_EXPORT_REPLACE: could not replace destination: {error}"))
+}
+
+fn download_asset_to_path(port: u16, asset_id: &str, target: &Path) -> Result<u64, String> {
+    validate_asset_id(asset_id)?;
+    if target.is_dir() {
+        return Err("ASSET_EXPORT_PATH: selected destination is a directory".to_string());
+    }
+    if target
+        .symlink_metadata()
+        .is_ok_and(|metadata| !metadata.file_type().is_file())
+    {
+        return Err("ASSET_EXPORT_PATH: existing destination must be a regular file".to_string());
+    }
+
+    let (temp_path, mut temp_file) = create_export_temp_file(target)?;
+    let download_result =
+        download_asset_from_sidecar(port, asset_id, &mut temp_file).and_then(|size| {
+            temp_file.flush().map_err(|error| {
+                format!("ASSET_EXPORT_WRITE: could not flush temporary file: {error}")
+            })?;
+            temp_file.sync_all().map_err(|error| {
+                format!("ASSET_EXPORT_WRITE: could not sync temporary file: {error}")
+            })?;
+            Ok(size)
+        });
+    drop(temp_file);
+
+    let size = match download_result {
+        Ok(size) => size,
+        Err(error) => {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(error);
+        }
+    };
+    if let Err(error) = replace_export_file(&temp_path, target) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    Ok(size)
+}
+
+#[tauri::command]
+async fn save_binary_asset(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    asset_id: String,
+    suggested_name: String,
+) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    validate_asset_id(&asset_id)?;
+    validate_suggested_name(&suggested_name)?;
+    if state.shutting_down.load(Ordering::SeqCst) {
+        return Err("ASSET_EXPORT_SIDECAR: application is shutting down".to_string());
+    }
+    {
+        let mut child_slot = state.python_child.lock().unwrap();
+        let child = child_slot
+            .as_mut()
+            .ok_or_else(|| "ASSET_EXPORT_SIDECAR: local service is not running".to_string())?;
+        match child.try_wait() {
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                return Err("ASSET_EXPORT_SIDECAR: local service has stopped".to_string());
+            }
+            Err(error) => {
+                return Err(format!(
+                    "ASSET_EXPORT_SIDECAR: could not verify local service: {error}"
+                ));
+            }
+        }
+    }
+    let port = *state.api_port.lock().unwrap();
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .set_file_name(&suggested_name)
+        .save_file(move |path| {
+            let _ = sender.send(path);
+        });
+    let selected = tauri::async_runtime::spawn_blocking(move || receiver.recv())
+        .await
+        .map_err(|error| format!("ASSET_EXPORT_DIALOG: save dialog task failed: {error}"))?
+        .map_err(|error| format!("ASSET_EXPORT_DIALOG: save dialog failed: {error}"))?
+        .ok_or_else(|| "ASSET_EXPORT_CANCELLED: save was cancelled".to_string())?;
+    let target = selected
+        .into_path()
+        .map_err(|error| format!("ASSET_EXPORT_PATH: selected path is invalid: {error}"))?;
+    let result_path = target.clone();
+
+    tauri::async_runtime::spawn_blocking(move || download_asset_to_path(port, &asset_id, &target))
+        .await
+        .map_err(|error| format!("ASSET_EXPORT_TASK: export task failed: {error}"))??;
+
+    Ok(result_path.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 fn open_in_folder(path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
@@ -443,12 +803,37 @@ fn verify_folder_exists(path: String) -> bool {
 }
 
 #[tauri::command]
-fn close_app(app: tauri::AppHandle, state: State<AppState>) {
-    state.shutting_down.store(true, Ordering::SeqCst);
+fn close_app(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Window not found".to_string())?;
+    window.close().map_err(|error| error.to_string())
+}
+
+fn stop_sidecar_in_slot(state: &AppState) {
     if let Some(mut child) = state.python_child.lock().unwrap().take() {
         let _ = child.kill();
         let _ = child.wait();
     }
+}
+
+fn shutdown_sidecar(state: &AppState) {
+    state.shutting_down.store(true, Ordering::SeqCst);
+    stop_sidecar_in_slot(state);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while state.sidecar_starting.load(Ordering::SeqCst) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    stop_sidecar_in_slot(state);
+    if state.sidecar_starting.load(Ordering::SeqCst) {
+        log_msg("[ProductAtelier] WARNING: Sidecar startup did not settle before shutdown");
+    }
+}
+
+#[tauri::command]
+fn complete_close_app(app: tauri::AppHandle, state: State<AppState>) {
+    shutdown_sidecar(&state);
     app.exit(0);
 }
 
@@ -664,22 +1049,17 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_api_port, ensure_python_sidecar, report_startup_milestone, get_app_config, set_app_config,
-            save_base64_image, open_in_folder,
+            save_base64_image, save_binary_asset, open_in_folder,
             select_folder_dialog, verify_folder_exists,
-            close_app,
+            close_app, complete_close_app,
             get_window_position, get_window_size, get_monitor_info,
             get_window_metrics, set_window_always_on_top, set_window_pos_size
         ])
         .on_window_event(|window, event| {
             match event {
-                tauri::WindowEvent::CloseRequested { .. } => {
-                    let state_mutex = window.state::<AppState>();
-                    state_mutex.shutting_down.store(true, Ordering::SeqCst);
-                    let mut child_opt = state_mutex.python_child.lock().unwrap();
-                    if let Some(mut child) = child_opt.take() {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                    }
+                tauri::WindowEvent::Destroyed if window.label() == "main" => {
+                    let state = window.state::<AppState>();
+                    shutdown_sidecar(&state);
                 }
                 tauri::WindowEvent::Focused(_) => {}
                 _ => {}
@@ -688,3 +1068,6 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running Product Atelier");
 }
+
+#[cfg(test)]
+mod binary_asset_export_tests;

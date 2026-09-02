@@ -28,15 +28,30 @@ if str(ROOT) not in sys.path:
 from python.atelier_ledger import AtelierLedger, SCHEMA_VERSION  # noqa: E402
 
 
-SOURCE_SCHEMA_VERSION = 5
+FORMAL_SOURCE_SCHEMA_VERSION = 7
+LEGACY_SOURCE_SCHEMA_VERSIONS = (5,)
+SUPPORTED_SOURCE_SCHEMA_VERSIONS = frozenset(
+    (*LEGACY_SOURCE_SCHEMA_VERSIONS, FORMAL_SOURCE_SCHEMA_VERSION)
+)
+SOURCE_CONTENT_SENTINEL_KEY = "packaged_upgrade_source_sentinel"
 SOURCE_SIZE = (24, 18)
 OUTPAINT_SIZE = (32, 24)
 OUTPAINT_OFFSET = (4, 3)
 SOURCE_COLOR = (220, 100, 40)
 CANDIDATE_COLOR = (30, 120, 230)
+VIDEO_SIZE = (320, 180)
+VIDEO_DURATION_SECONDS = 3
 
 
-def _create_v5_database(path: Path) -> None:
+def _create_source_database(path: Path, source_version: int) -> None:
+    if source_version not in SUPPORTED_SOURCE_SCHEMA_VERSIONS:
+        supported = ", ".join(
+            f"v{version}" for version in sorted(SUPPORTED_SOURCE_SCHEMA_VERSIONS)
+        )
+        raise ValueError(
+            f"unsupported packaged-upgrade fixture v{source_version}; expected {supported}"
+        )
+
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
     try:
@@ -44,14 +59,23 @@ def _create_v5_database(path: Path) -> None:
         connection.execute("BEGIN IMMEDIATE")
         AtelierLedger._create_v1_schema(connection)
         AtelierLedger._write_schema_version(connection, 1)
-        AtelierLedger._migrate_v1_to_v2(connection)
-        AtelierLedger._write_schema_version(connection, 2)
-        AtelierLedger._migrate_v2_to_v3(connection)
-        AtelierLedger._write_schema_version(connection, 3)
-        AtelierLedger._migrate_v3_to_v4(connection)
-        AtelierLedger._write_schema_version(connection, 4)
-        AtelierLedger._migrate_v4_to_v5(connection)
-        AtelierLedger._write_schema_version(connection, SOURCE_SCHEMA_VERSION)
+        migration_steps = (
+            (2, AtelierLedger._migrate_v1_to_v2),
+            (3, AtelierLedger._migrate_v2_to_v3),
+            (4, AtelierLedger._migrate_v3_to_v4),
+            (5, AtelierLedger._migrate_v4_to_v5),
+            (6, AtelierLedger._migrate_v5_to_v6),
+            (7, AtelierLedger._migrate_v6_to_v7),
+        )
+        for target_version, migrate in migration_steps:
+            if target_version > source_version:
+                break
+            migrate(connection)
+            AtelierLedger._write_schema_version(connection, target_version)
+        connection.execute(
+            "INSERT INTO ledger_meta(key, value) VALUES(?, ?)",
+            (SOURCE_CONTENT_SENTINEL_KEY, f"schema-v{source_version}-content"),
+        )
         connection.commit()
     finally:
         connection.close()
@@ -96,6 +120,293 @@ def _get_bytes(port: int, path: str, *, timeout: float = 3.0) -> bytes:
         f"http://127.0.0.1:{port}{path}", timeout=timeout
     ) as response:
         return response.read()
+
+
+def _get_binary_response(
+    port: int,
+    path: str,
+    *,
+    timeout: float = 3.0,
+) -> tuple[int, dict[str, str], bytes]:
+    with urllib.request.urlopen(
+        f"http://127.0.0.1:{port}{path}", timeout=timeout
+    ) as response:
+        return (
+            int(response.status),
+            {key.lower(): value for key, value in response.headers.items()},
+            response.read(),
+        )
+
+
+def _wait_for_job(port: int, job_id: str, *, timeout: float = 30.0) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        response = _get_json(port, f"/api/jobs/{job_id}", timeout=5)
+        last = response.get("job") if isinstance(response, dict) else None
+        if isinstance(last, dict) and last.get("status") in {
+            "completed",
+            "partial",
+            "failed",
+            "canceled",
+        }:
+            return last
+        time.sleep(0.1)
+    raise RuntimeError(f"candidate video job did not settle: {last}")
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest().lower()
+
+
+def _collect_packaged_video_evidence(port: int, job_id: str) -> dict[str, Any]:
+    job_response = _get_json(port, f"/api/jobs/{job_id}", timeout=15)
+    job = job_response.get("job") if isinstance(job_response, dict) else None
+    if not isinstance(job, dict):
+        raise RuntimeError("packaged video job response is invalid")
+    items = list(job.get("items") or [])
+    if len(items) != 1:
+        raise RuntimeError("packaged video job must contain exactly one item")
+    result_ids = list(items[0].get("result_asset_ids") or [])
+    assets = [
+        _get_json(port, f"/api/assets/{asset_id}", timeout=15)
+        for asset_id in result_ids
+    ]
+    by_role = {str(asset.get("role") or ""): asset for asset in assets}
+    video = by_role.get("result_video")
+    cover = by_role.get("result_video_cover")
+    if not isinstance(video, dict) or not isinstance(cover, dict):
+        raise RuntimeError("packaged video job did not publish video and cover atomically")
+    video_id = str(video.get("id") or "")
+    return {
+        "job": job,
+        "progress": _get_json(port, f"/api/progress/{job_id}", timeout=15),
+        "traces": _get_json(port, f"/api/jobs/{job_id}/traces", timeout=15),
+        "video_asset": video,
+        "cover_asset": cover,
+        "inline": _get_binary_response(
+            port, f"/api/assets/{video_id}/content", timeout=15
+        ),
+        "download": _get_binary_response(
+            port, f"/api/assets/{video_id}/content?download=true", timeout=15
+        ),
+        "thumbnail": _get_binary_response(
+            port, f"/api/assets/{video_id}/thumbnail?size=512", timeout=15
+        ),
+    }
+
+
+def _validate_packaged_video_evidence(
+    evidence: dict[str, Any],
+    *,
+    phase: str,
+    expected_job_id: str,
+    expected_source_id: str,
+    expected_spatial_canvas_id: str,
+) -> dict[str, Any]:
+    job = evidence.get("job") or {}
+    if str(job.get("id") or "") != expected_job_id:
+        raise RuntimeError(f"{phase} video job identity changed")
+    if job.get("status") != "completed" or float(job.get("progress") or 0) != 1.0:
+        raise RuntimeError(f"{phase} video job did not complete")
+    if int(job.get("requested_concurrency") or 0) != 1:
+        raise RuntimeError(f"{phase} video job concurrency is not frozen to one")
+    snapshot = job.get("snapshot") or {}
+    if snapshot.get("command_id") != "command:image-to-video":
+        raise RuntimeError(f"{phase} video job lost its command identity")
+    if list(snapshot.get("source_asset_ids") or []) != [expected_source_id]:
+        raise RuntimeError(f"{phase} video job source snapshot changed")
+    parameters = job.get("parameters") or {}
+    snapshot_parameters = snapshot.get("parameters") or {}
+    expected_parameters = {
+        "contract_version": "image-to-video-v1",
+        "output_ratio": "16:9",
+        "duration_seconds": VIDEO_DURATION_SECONDS,
+        "motion_intensity": 3,
+        "first_frame_asset_id": expected_source_id,
+        "last_frame_asset_id": None,
+        "provider": "offline-preview-v1",
+        "provider_call_confirmed": False,
+        "automatic_paid_retry": False,
+    }
+    if any(parameters.get(key) != value for key, value in expected_parameters.items()):
+        raise RuntimeError(f"{phase} video parameters do not match the frozen contract")
+    if (
+        parameters.get("spatial_canvas_id") != expected_spatial_canvas_id
+        or snapshot_parameters.get("spatial_canvas_id") != expected_spatial_canvas_id
+    ):
+        raise RuntimeError(f"{phase} video task lost its durable spatial canvas binding")
+
+    items = list(job.get("items") or [])
+    if len(items) != 1:
+        raise RuntimeError(f"{phase} video job item count changed")
+    item = items[0]
+    attempts = list(item.get("attempts") or [])
+    if (
+        item.get("status") != "completed"
+        or str(item.get("source_asset_id") or "") != expected_source_id
+        or int(item.get("attempt_count") or 0) != 1
+        or int(item.get("max_attempts") or 0) != 1
+        or len(attempts) != 1
+        or attempts[0].get("status") != "completed"
+    ):
+        raise RuntimeError(f"{phase} video job violated its single-attempt contract")
+
+    video = evidence.get("video_asset") or {}
+    cover = evidence.get("cover_asset") or {}
+    video_id = str(video.get("id") or "")
+    cover_id = str(cover.get("id") or "")
+    result_ids = list(item.get("result_asset_ids") or [])
+    if len(result_ids) != 2 or set(map(str, result_ids)) != {video_id, cover_id}:
+        raise RuntimeError(f"{phase} video job result identities are incomplete")
+    if (
+        video.get("role") != "result_video"
+        or video.get("kind") != "video"
+        or video.get("mime") != "video/webm"
+        or (video.get("width"), video.get("height")) != VIDEO_SIZE
+        or int(video.get("duration_seconds") or 0) != VIDEO_DURATION_SECONDS
+        or str(video.get("cover_asset_id") or "") != cover_id
+        or str(video.get("lineage_parent_id") or "") != expected_source_id
+    ):
+        raise RuntimeError(f"{phase} packaged video asset contract is invalid")
+    video_metadata = video.get("metadata") or {}
+    if (
+        video_metadata.get("contract_version") != "image-to-video-v1"
+        or video_metadata.get("provider") != "offline-preview-v1"
+        or video_metadata.get("offline_preview") is not True
+        or video_metadata.get("automatic_paid_retry") is not False
+    ):
+        raise RuntimeError(f"{phase} packaged video metadata is invalid")
+    if (
+        video.get("content_url") != f"/api/assets/{video_id}/content"
+        or video.get("stream_url") != f"/api/assets/{video_id}/content"
+        or video.get("download_url")
+        != f"/api/assets/{video_id}/content?download=true"
+        or video.get("thumbnail_url") != f"/api/assets/{video_id}/thumbnail"
+        or video.get("cover_url") != f"/api/assets/{cover_id}/thumbnail"
+    ):
+        raise RuntimeError(f"{phase} packaged video URLs are invalid")
+    if (
+        cover.get("role") != "result_video_cover"
+        or cover.get("kind") != "image"
+        or cover.get("mime") != "image/jpeg"
+        or (cover.get("width"), cover.get("height")) != VIDEO_SIZE
+        or str(cover.get("lineage_parent_id") or "") != expected_source_id
+        or (cover.get("metadata") or {}).get("auxiliary_result") is not True
+    ):
+        raise RuntimeError(f"{phase} packaged video cover contract is invalid")
+
+    progress = evidence.get("progress") or {}
+    progress_results = progress.get("results") or {}
+    public_video_results = list(progress_results.get("video") or [])
+    exposed_result_ids = {
+        str(asset.get("id") or "")
+        for group in progress_results.values()
+        for asset in list(group or [])
+    }
+    if (
+        str(progress.get("task_id") or "") != expected_job_id
+        or progress.get("status") != "completed"
+        or float(progress.get("progress") or 0) != 1.0
+        or list(progress_results.get("main") or [])
+        or list(progress_results.get("cutout") or [])
+        or [str(asset.get("id") or "") for asset in public_video_results] != [video_id]
+        or exposed_result_ids != {video_id}
+    ):
+        raise RuntimeError(f"{phase} packaged video progress projection is invalid")
+
+    traces = list((evidence.get("traces") or {}).get("traces") or [])
+    provider_traces = [
+        trace for trace in traces
+        if trace.get("stage") == "provider.video.offline-preview"
+    ]
+    if len(provider_traces) != 1 or provider_traces[0].get("status") != "completed":
+        raise RuntimeError(f"{phase} packaged video provider trace is missing")
+    trace_output = provider_traces[0].get("output") or {}
+
+    inline_status, inline_headers, inline_body = evidence.get("inline") or (0, {}, b"")
+    download_status, download_headers, download_body = evidence.get("download") or (
+        0, {}, b""
+    )
+    if (
+        inline_status != 200
+        or not str(inline_headers.get("content-type") or "").startswith("video/webm")
+        or not str(inline_headers.get("content-disposition") or "").startswith("inline;")
+        or download_status != 200
+        or not str(download_headers.get("content-type") or "").startswith("video/webm")
+        or not str(download_headers.get("content-disposition") or "").startswith("attachment;")
+        or not inline_body
+        or inline_body != download_body
+    ):
+        raise RuntimeError(f"{phase} packaged video inline/download contract is invalid")
+    binary_sha256 = _sha256_bytes(inline_body)
+    if (
+        binary_sha256 != str(video.get("sha256") or "").lower()
+        or binary_sha256 != str(trace_output.get("video_sha256") or "").lower()
+        or len(inline_body) != int(video.get("size_bytes") or 0)
+        or int(trace_output.get("network_call_count", -1)) != 0
+    ):
+        raise RuntimeError(f"{phase} packaged video SHA-256 evidence is invalid")
+
+    thumbnail_status, thumbnail_headers, thumbnail_body = evidence.get("thumbnail") or (
+        0, {}, b""
+    )
+    if (
+        thumbnail_status != 200
+        or not str(thumbnail_headers.get("content-type") or "").startswith("image/jpeg")
+        or not thumbnail_body
+    ):
+        raise RuntimeError(f"{phase} packaged video thumbnail response is invalid")
+    with Image.open(io.BytesIO(thumbnail_body)) as thumbnail_image:
+        thumbnail_format = thumbnail_image.format
+        thumbnail_size = thumbnail_image.size
+        thumbnail_image.verify()
+    if thumbnail_format != "JPEG" or thumbnail_size != VIDEO_SIZE:
+        raise RuntimeError(f"{phase} packaged video thumbnail pixels are invalid")
+
+    return {
+        "job_id": expected_job_id,
+        "video_asset_id": video_id,
+        "cover_asset_id": cover_id,
+        "result_asset_count": len(result_ids),
+        "attempt_count": int(item.get("attempt_count") or 0),
+        "trace_count": len(traces),
+        "provider_trace_count": len(provider_traces),
+        "network_call_count": int(trace_output.get("network_call_count") or 0),
+        "video_bytes": len(inline_body),
+        "video_sha256": binary_sha256.upper(),
+        "thumbnail_bytes": len(thumbnail_body),
+        "thumbnail_size": list(thumbnail_size),
+    }
+
+
+def _validate_packaged_video_restart(
+    first: dict[str, Any], second: dict[str, Any]
+) -> dict[str, Any]:
+    stable_json_keys = ("job", "progress", "traces", "video_asset", "cover_asset")
+    changed = [key for key in stable_json_keys if first.get(key) != second.get(key)]
+    if changed:
+        raise RuntimeError(
+            "packaged video evidence changed after restart: " + ", ".join(changed)
+        )
+    stable_binary_keys = ("inline", "download", "thumbnail")
+    for key in stable_binary_keys:
+        first_response = first.get(key) or (0, {}, b"")
+        second_response = second.get(key) or (0, {}, b"")
+        if first_response[0] != second_response[0] or first_response[2] != second_response[2]:
+            raise RuntimeError(f"packaged video {key} bytes changed after restart")
+        for header in ("content-type", "content-disposition", "content-length"):
+            if first_response[1].get(header) != second_response[1].get(header):
+                raise RuntimeError(
+                    f"packaged video {key} {header} changed after restart"
+                )
+    return {
+        "stable_json_projections": len(stable_json_keys),
+        "stable_binary_projections": len(stable_binary_keys),
+        "job_identity_preserved": True,
+        "asset_identity_preserved": True,
+        "sha256_preserved": True,
+    }
 
 
 def _request_error(
@@ -381,6 +692,81 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest().upper()
 
 
+def _sqlite_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _snapshot_sqlite_value(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return {"blob_hex": value.hex()}
+    return value
+
+
+def _sqlite_content_snapshot(path: Path) -> dict[str, Any]:
+    connection = sqlite3.connect(path)
+    try:
+        objects = [
+            {
+                "type": str(row[0]),
+                "name": str(row[1]),
+                "table": str(row[2]),
+                "sql": None if row[3] is None else str(row[3]),
+            }
+            for row in connection.execute(
+                "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+            )
+        ]
+        tables: list[dict[str, Any]] = []
+        table_names = [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+        ]
+        for table_name in table_names:
+            quoted_table = _sqlite_identifier(table_name)
+            columns = [
+                str(row[1])
+                for row in connection.execute(f"PRAGMA table_info({quoted_table})")
+            ]
+            quoted_columns = ", ".join(_sqlite_identifier(column) for column in columns)
+            rows = [
+                [_snapshot_sqlite_value(value) for value in row]
+                for row in connection.execute(
+                    f"SELECT {quoted_columns} FROM {quoted_table} ORDER BY {quoted_columns}"
+                )
+            ]
+            tables.append({"name": table_name, "columns": columns, "rows": rows})
+        integrity = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
+        foreign_keys = [
+            [_snapshot_sqlite_value(value) for value in row]
+            for row in connection.execute("PRAGMA foreign_key_check")
+        ]
+        return {
+            "schema_version": AtelierLedger._read_schema_version(connection),
+            "objects": objects,
+            "tables": tables,
+            "integrity_check": integrity,
+            "foreign_key_check": foreign_keys,
+        }
+    finally:
+        connection.close()
+
+
+def _source_content_sentinel(path: Path) -> str:
+    connection = sqlite3.connect(path)
+    try:
+        row = connection.execute(
+            "SELECT value FROM ledger_meta WHERE key = ?",
+            (SOURCE_CONTENT_SENTINEL_KEY,),
+        ).fetchone()
+        return "" if row is None else str(row[0])
+    finally:
+        connection.close()
+
+
 @contextmanager
 def _temporary_data_dir():
     prefix = "ProductAtelier-packaged-schema-upgrade-"
@@ -416,7 +802,20 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
         "python/canvas_export.py": "canvas export renderer",
         "python/local_edit_contract.py": "strict local edit compositor",
         "python/spatial_canvas_contract.py": "spatial canvas scene contract",
+        "python/video_contract.py": "image-to-video contract",
     }
+    fixture_root = ROOT / "python" / "video_fixtures" / "offline-preview-v1"
+    fixture_source_keys = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in fixture_root.rglob("*")
+        if path.is_file()
+    )
+    if not fixture_source_keys:
+        raise RuntimeError("offline video fixture source tree is empty")
+    required_sources.update({
+        source_key: "offline video fixture"
+        for source_key in fixture_source_keys
+    })
     for source_key, label in required_sources.items():
         if source_key not in source_hashes:
             raise RuntimeError(f"sidecar manifest does not fingerprint {label}")
@@ -427,7 +826,7 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
         raise RuntimeError(
             "candidate manifest schema does not match the current ledger source"
         )
-    if packaged_schema <= SOURCE_SCHEMA_VERSION:
+    if packaged_schema <= FORMAL_SOURCE_SCHEMA_VERSION:
         raise RuntimeError("candidate manifest does not contain a schema upgrade")
 
     expected_commands = {
@@ -435,6 +834,8 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
         "command:existing-generate-multi-file",
         "command:existing-group-split",
         "command:existing-remove-background",
+        "command:local-edit-generate",
+        "command:image-to-video",
         "command:transform-layer",
         "command:toggle-layer",
         "command:toggle-layer-lock",
@@ -445,9 +846,19 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
         ledger_path = data_dir / "atelier.sqlite3"
         log_path = data_dir / "candidate.log"
         source_path, candidate_path = _write_test_images(data_dir)
-        _create_v5_database(ledger_path)
-        if _schema_version(ledger_path) != SOURCE_SCHEMA_VERSION:
-            raise RuntimeError("isolated source ledger is not schema v5")
+        _create_source_database(ledger_path, FORMAL_SOURCE_SCHEMA_VERSION)
+        if _schema_version(ledger_path) != FORMAL_SOURCE_SCHEMA_VERSION:
+            raise RuntimeError(
+                "isolated source ledger is not the current formal schema "
+                f"v{FORMAL_SOURCE_SCHEMA_VERSION}"
+            )
+        source_fixture_sha256 = _sha256(ledger_path)
+        source_fixture_content = _sqlite_content_snapshot(ledger_path)
+        expected_source_sentinel = (
+            f"schema-v{FORMAL_SOURCE_SCHEMA_VERSION}-content"
+        )
+        if _source_content_sentinel(ledger_path) != expected_source_sentinel:
+            raise RuntimeError("formal source fixture content sentinel is missing")
 
         first_process: subprocess.Popen[bytes] | None = None
         second_process: subprocess.Popen[bytes] | None = None
@@ -548,20 +959,90 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
                 "source_layer_id=layer%3Apackaged-schema-upgrade-source&"
                 f"roi_id={roi['id']}&mode=outpaint",
             )
+            spatial_canvas = _request_json(
+                first_port,
+                "/api/spatial-canvases",
+                method="POST",
+                payload={
+                    "name": "安装包视频恢复画布",
+                    "client_request_id": "packaged-upgrade-video-canvas-v1",
+                },
+            )
+            spatial_canvas_id = str(spatial_canvas.get("id") or "")
+            if not spatial_canvas_id:
+                raise RuntimeError("packaged spatial canvas creation returned no id")
+            video_payload = {
+                "client_request_id": "packaged-upgrade-video-v1",
+                "source_asset_ids": [reference["id"]],
+                "spatial_canvas_id": spatial_canvas_id,
+                "parameters": {
+                    "contract_version": "image-to-video-v1",
+                    "prompt": "镜头缓慢推进，保持商品包装、文字与颜色稳定",
+                    "output_ratio": "16:9",
+                    "duration_seconds": VIDEO_DURATION_SECONDS,
+                    "motion_intensity": 3,
+                    "first_frame_asset_id": reference["id"],
+                    "last_frame_asset_id": None,
+                    "provider": "offline-preview-v1",
+                    "provider_call_confirmed": False,
+                    "automatic_paid_retry": False,
+                },
+                "requested_concurrency": 1,
+                "max_attempts": 4,
+            }
+            video_created = _request_json(
+                first_port,
+                "/api/commands/command:image-to-video/execute",
+                method="POST",
+                payload=video_payload,
+                timeout=15,
+            )
+            video_job_id = str((video_created.get("job") or {}).get("id") or "")
+            if not video_job_id:
+                raise RuntimeError("packaged image-to-video command returned no job id")
+            if video_created.get("created") is not True:
+                raise RuntimeError("first packaged video command was incorrectly replayed")
+            if (video_created.get("command") or {}).get("id") != "command:image-to-video":
+                raise RuntimeError("first packaged video command identity is invalid")
+            _wait_for_job(first_port, video_job_id)
+            first_video_evidence = _collect_packaged_video_evidence(
+                first_port, video_job_id
+            )
         finally:
             _stop_owned_process(first_process)
 
-        backups = sorted(data_dir.glob("atelier.sqlite3.backup-v5-*.sqlite3"))
-        if len(backups) != 1:
-            raise RuntimeError(f"expected one v5 migration backup, found {len(backups)}")
+        backups = sorted(
+            data_dir.glob(
+                "atelier.sqlite3."
+                f"backup-v{FORMAL_SOURCE_SCHEMA_VERSION}-*.sqlite3"
+            )
+        )
+        all_backups = sorted(data_dir.glob("atelier.sqlite3.backup-v*-*.sqlite3"))
+        if len(backups) != 1 or all_backups != backups:
+            raise RuntimeError(
+                "expected exactly one migration backup from formal schema "
+                f"v{FORMAL_SOURCE_SCHEMA_VERSION}, found {len(all_backups)} total"
+            )
         backup = backups[0]
         if (
-            _schema_version(backup) != SOURCE_SCHEMA_VERSION
+            _schema_version(backup) != FORMAL_SOURCE_SCHEMA_VERSION
             or _schema_version(ledger_path) != packaged_schema
         ):
             raise RuntimeError(
-                f"candidate did not preserve v5 backup and migrate to v{packaged_schema}"
+                "candidate did not preserve formal schema "
+                f"v{FORMAL_SOURCE_SCHEMA_VERSION} and migrate to v{packaged_schema}"
             )
+        backup_sha256_before_restart = _sha256(backup)
+        backup_content_before_restart = _sqlite_content_snapshot(backup)
+        if backup_content_before_restart != source_fixture_content:
+            raise RuntimeError(
+                "formal migration backup content differs from the pre-migration fixture"
+            )
+        if (
+            _source_content_sentinel(backup) != expected_source_sentinel
+            or _source_content_sentinel(ledger_path) != expected_source_sentinel
+        ):
+            raise RuntimeError("v7 source content was not preserved by the v8 migration")
 
         candidate = _register_outpaint_candidate(
             ledger_path,
@@ -642,16 +1123,52 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
                 f"/api/assets/{composed['result_asset_id']}/content",
                 timeout=15,
             )
+            restored_video_job_response = _get_json(
+                second_port, f"/api/jobs/{video_job_id}", timeout=15
+            )
+            if str((restored_video_job_response.get("job") or {}).get("id") or "") != video_job_id:
+                raise RuntimeError("packaged restart did not restore the video job")
+            replayed_video = _request_json(
+                second_port,
+                "/api/commands/command:image-to-video/execute",
+                method="POST",
+                payload=video_payload,
+                timeout=15,
+            )
+            if replayed_video.get("created") is not False:
+                raise RuntimeError("packaged video request did not replay after restart")
+            if str((replayed_video.get("job") or {}).get("id") or "") != video_job_id:
+                raise RuntimeError("packaged video replay changed the job identity")
+            second_video_evidence = _collect_packaged_video_evidence(
+                second_port, video_job_id
+            )
         finally:
             _stop_owned_process(second_process)
 
         backups_after_restart = sorted(
-            data_dir.glob("atelier.sqlite3.backup-v5-*.sqlite3")
+            data_dir.glob(
+                "atelier.sqlite3."
+                f"backup-v{FORMAL_SOURCE_SCHEMA_VERSION}-*.sqlite3"
+            )
         )
-        if backups_after_restart != backups:
+        all_backups_after_restart = sorted(
+            data_dir.glob("atelier.sqlite3.backup-v*-*.sqlite3")
+        )
+        if backups_after_restart != backups or all_backups_after_restart != backups:
             raise RuntimeError(
                 f"idempotent v{packaged_schema} restart created another migration backup"
             )
+        backup_sha256_after_restart = _sha256(backup)
+        backup_content_after_restart = _sqlite_content_snapshot(backup)
+        if backup_sha256_after_restart != backup_sha256_before_restart:
+            raise RuntimeError("formal migration backup bytes changed after restart")
+        if backup_content_after_restart != backup_content_before_restart:
+            raise RuntimeError("formal migration backup content changed after restart")
+        if (
+            _source_content_sentinel(backup) != expected_source_sentinel
+            or _source_content_sentinel(ledger_path) != expected_source_sentinel
+        ):
+            raise RuntimeError("formal source content changed after candidate restart")
         for health in (first_health, second_health):
             if health.get("status") != "ok":
                 raise RuntimeError("candidate health is not ok")
@@ -669,6 +1186,23 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             command_ids = {item.get("id") for item in commands.get("commands", [])}
             if command_ids != expected_commands:
                 raise RuntimeError("command API registry is incomplete")
+        first_video_metrics = _validate_packaged_video_evidence(
+            first_video_evidence,
+            phase="first process",
+            expected_job_id=video_job_id,
+            expected_source_id=str(reference["id"]),
+            expected_spatial_canvas_id=spatial_canvas_id,
+        )
+        second_video_metrics = _validate_packaged_video_evidence(
+            second_video_evidence,
+            phase="second process",
+            expected_job_id=video_job_id,
+            expected_source_id=str(reference["id"]),
+            expected_spatial_canvas_id=spatial_canvas_id,
+        )
+        video_restart_metrics = _validate_packaged_video_restart(
+            first_video_evidence, second_video_evidence
+        )
         empty_canvas = {
             "id": None,
             "document": None,
@@ -679,9 +1213,13 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             "replayed": False,
         }
         if first_canvas != empty_canvas:
-            raise RuntimeError("schema-v5 workspace unexpectedly restored a canvas")
+            raise RuntimeError(
+                "formal-schema workspace unexpectedly restored a Fabric canvas"
+            )
         if initial_profiles != {"profiles": [], "count": 0}:
-            raise RuntimeError("isolated schema-v5 ledger unexpectedly contains profiles")
+            raise RuntimeError(
+                "isolated formal-schema ledger unexpectedly contains profiles"
+            )
         if int(first_profile.get("profile", {}).get("revision", 0)) != 1:
             raise RuntimeError("candidate product profile API did not create revision 1")
         if not replayed_profile.get("replayed"):
@@ -768,10 +1306,17 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
         return {
             "status": "passed",
             "contract_version": manifest["contract_version"],
-            "schema_before": SOURCE_SCHEMA_VERSION,
+            "schema_before": FORMAL_SOURCE_SCHEMA_VERSION,
             "schema_after": packaged_schema,
+            "backup_source_schema": FORMAL_SOURCE_SCHEMA_VERSION,
             "backup_count_after_restart": len(backups_after_restart),
-            "backup_sha256": _sha256(backup),
+            "source_fixture_sha256": source_fixture_sha256,
+            "backup_sha256": backup_sha256_after_restart,
+            "backup_sha256_before_restart": backup_sha256_before_restart,
+            "backup_sha256_after_restart": backup_sha256_after_restart,
+            "backup_content_preserved": True,
+            "formal_source_content_preserved": True,
+            "restart_created_additional_backup": False,
             "command_contract": second_commands["contract_version"],
             "command_count": len(second_commands["commands"]),
             "empty_canvas_response": "stable-empty-envelope",
@@ -780,20 +1325,30 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             "manifest_tracks_command_registry": True,
             "manifest_tracks_local_edit_contract": True,
             "manifest_tracks_spatial_canvas_contract": True,
+            "manifest_tracks_video_contract": True,
+            "manifest_video_fixture_files": len(fixture_source_keys),
             "outpaint_api": "freeze-restart-compose-replay-stale-revision",
             "outpaint_result_size": list(OUTPAINT_SIZE),
             "outpaint_artboard_size": list(SOURCE_SIZE),
             "protected_changed_pixels": receipt["protected_changed_pixels"],
             "new_area_changed_pixels": receipt["new_area_changed_pixels"],
             "result_files_added": len(result_files_after_compose) - len(result_files_before_compose),
+            "video_api": "create-complete-restart-replay-original-binary",
+            "video_metrics": {
+                "first_process": first_video_metrics,
+                "second_process": second_video_metrics,
+                "restart": video_restart_metrics,
+                "idempotent_replay": replayed_video.get("created") is False,
+            },
         }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify a packaged sidecar upgrade from the current formal schema, "
-            "including immutable outpaint composition."
+            "Verify one packaged sidecar upgrade from formal schema "
+            f"v{FORMAL_SOURCE_SCHEMA_VERSION} to v{SCHEMA_VERSION}, "
+            "including immutable outpaint composition and offline video recovery."
         )
     )
     parser.add_argument(

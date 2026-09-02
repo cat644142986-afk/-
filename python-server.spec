@@ -74,6 +74,8 @@ datas += collect_data_files('urllib3')
 # top-level module in the sidecar, so keep the JSON at the PyInstaller internal
 # root where `Path(__file__).with_name(...)` resolves it.
 datas.append((os.path.join('python', 'semantic_query_lexicon.json'), '.'))
+# Deterministic sub-megabyte WebM fixtures for the free offline video provider.
+datas.append((os.path.join('python', 'video_fixtures', 'offline-preview-v1'), 'video_fixtures/offline-preview-v1'))
 # Pinned optional model-pack contract. The 689 MB weights remain external;
 # only this small manifest is embedded so the slim sidecar can verify them.
 datas.append((os.path.join('docs', 'model-artifacts', 'grounding-dino-tiny.json'), 'model-artifacts'))

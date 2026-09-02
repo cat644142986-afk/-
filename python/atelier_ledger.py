@@ -84,6 +84,20 @@ WORKFLOW_DRAFT_IDS = {
     "cutout-batch": "draft_cutout_batch",
 }
 
+GENERATION_RESULT_KINDS = {
+    "result_main": "image",
+    "result_cutout": "image",
+    "result_video": "video",
+    "result_video_cover": "image",
+}
+GENERATION_RESULT_DEFAULT_MIMES = {
+    "result_main": "image/jpeg",
+    "result_cutout": "image/png",
+    "result_video": "video/webm",
+    "result_video_cover": "image/jpeg",
+}
+RESULT_REVIEW_ROLES = frozenset({"result_main", "result_cutout", "result_video"})
+
 JOB_STATUSES = frozenset({
     "queued", "running", "paused", "completed", "partial", "failed",
     "canceling", "canceled", "interrupted",
@@ -607,6 +621,20 @@ def decode_json(value: str | None, fallback: Any) -> Any:
         return json.loads(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def _require_pixel_editable_image_asset(asset: Any, label: str) -> None:
+    role = str(asset["role"] or "")
+    kind = str(asset["kind"] or "")
+    mime = str(asset["mime"] or "")
+    metadata = decode_json(asset["metadata_json"], {})
+    if (
+        kind != "image"
+        or not mime.startswith("image/")
+        or role == "result_video_cover"
+        or (isinstance(metadata, dict) and metadata.get("auxiliary_result") is True)
+    ):
+        raise ValueError(f"{label} is not a pixel-editable image asset")
 
 
 def canonical_json(value: Any) -> str:
@@ -3497,8 +3525,15 @@ class AtelierLedger:
             "knowledge_evidence": [],
             "execution_traces": [],
         }
-        for row in connection.execute("SELECT job_id, source_asset_ids_json FROM job_snapshots"):
-            if json_contains_value(decode_json(row["source_asset_ids_json"], []), asset_id):
+        for row in connection.execute(
+            "SELECT job_id, source_asset_ids_json, parameters_json FROM job_snapshots"
+        ):
+            source_ids = decode_json(row["source_asset_ids_json"], [])
+            parameters = decode_json(row["parameters_json"], {})
+            if (
+                json_contains_value(source_ids, asset_id)
+                or json_contains_value(parameters, asset_id)
+            ):
                 references["job_snapshots"].append(str(row["job_id"]))
         for row in connection.execute("SELECT id, result_asset_ids_json FROM generations"):
             if json_contains_value(decode_json(row["result_asset_ids_json"], []), asset_id):
@@ -3730,7 +3765,10 @@ class AtelierLedger:
         if source_ids:
             placeholders = ",".join("?" for _ in source_ids)
             rows = connection.execute(
-                f"SELECT id, role, width, height FROM assets WHERE id IN ({placeholders})",
+                f"""
+                SELECT id, role, kind, mime, metadata_json, width, height
+                FROM assets WHERE id IN ({placeholders})
+                """,
                 source_ids,
             ).fetchall()
             assets = {str(row["id"]): row for row in rows}
@@ -3747,6 +3785,10 @@ class AtelierLedger:
                 raise ValueError(f"canvas asset source {source['id']} is not a workspace source")
             if source["kind"] == "result" and not role.startswith("result_"):
                 raise ValueError(f"canvas result source {source['id']} is not a result asset")
+            _require_pixel_editable_image_asset(
+                asset,
+                f"canvas source {source['id']}",
+            )
             width = int(asset["width"] or 0)
             height = int(asset["height"] or 0)
             if width > 0 and width != int(source["original_pixel_width"]):
@@ -4098,20 +4140,28 @@ class AtelierLedger:
         return self._spatial_canvas_result(document, version, include_scene=True)
 
     def create_spatial_canvas(
-        self, *, name: str, client_request_id: str
+        self,
+        *,
+        name: str,
+        client_request_id: str,
+        scene: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_name = self._spatial_canvas_name(name)
         request_id = str(client_request_id or "").strip()
         document_id = idempotent_id("spatial", request_id)
         version_id = idempotent_id("spatialver", f"{request_id}:initial")
+        normalized_scene = normalize_spatial_scene(
+            scene if scene is not None else empty_spatial_scene()
+        )
+        scene_json = canonical_json(normalized_scene)
+        scene_sha256 = hashlib.sha256(scene_json.encode("utf-8")).hexdigest()
+        thumbnail_json = canonical_json(spatial_scene_thumbnail(normalized_scene))
+        thumbnail_sha256 = hashlib.sha256(thumbnail_json.encode("utf-8")).hexdigest()
+        references = spatial_scene_references(normalized_scene)
         fingerprint = hashlib.sha256(canonical_json({
             "name": normalized_name,
+            "scene_sha256": scene_sha256,
         }).encode("utf-8")).hexdigest()
-        scene = normalize_spatial_scene(empty_spatial_scene())
-        scene_json = canonical_json(scene)
-        scene_sha256 = hashlib.sha256(scene_json.encode("utf-8")).hexdigest()
-        thumbnail_json = canonical_json(spatial_scene_thumbnail(scene))
-        thumbnail_sha256 = hashlib.sha256(thumbnail_json.encode("utf-8")).hexdigest()
         replayed = False
 
         with self._immediate_connection() as connection:
@@ -4136,6 +4186,7 @@ class AtelierLedger:
                 replayed = True
             else:
                 now = utc_now()
+                self._validate_spatial_references(connection, references)
                 connection.execute(
                     """
                     INSERT INTO spatial_canvas_documents(
@@ -4162,6 +4213,20 @@ class AtelierLedger:
                         scene_json, scene_sha256, thumbnail_json, thumbnail_sha256, now,
                     ),
                 )
+                for reference in references:
+                    connection.execute(
+                        """
+                        INSERT INTO spatial_scene_references(
+                            version_id, element_id, ref_kind, ref_id
+                        ) VALUES(?, ?, ?, ?)
+                        """,
+                        (
+                            version_id,
+                            reference["element_id"],
+                            reference["ref_kind"],
+                            reference["ref_id"],
+                        ),
+                    )
                 connection.execute(
                     """
                     UPDATE spatial_canvas_documents
@@ -4971,7 +5036,8 @@ class AtelierLedger:
                     raise ValueError("local edit source size does not match the canvas layer")
                 source_asset = connection.execute(
                     """
-                    SELECT a.role, a.sha256, b.sha256 AS blob_sha256
+                    SELECT a.role, a.kind, a.mime, a.metadata_json, a.sha256,
+                           b.sha256 AS blob_sha256
                     FROM assets a
                     LEFT JOIN asset_blobs b ON b.id = a.blob_id
                     WHERE a.id = ?
@@ -4985,6 +5051,10 @@ class AtelierLedger:
                     raise ValueError("local edit asset source is not a workspace source")
                 if source["kind"] == "result" and not source_role.startswith("result_"):
                     raise ValueError("local edit result source is not a result asset")
+                _require_pixel_editable_image_asset(
+                    source_asset,
+                    "local edit source",
+                )
                 stored_file_sha256 = str(
                     source_asset["blob_sha256"]
                     if source_role == "workspace_source"
@@ -5277,6 +5347,10 @@ class AtelierLedger:
                     raise KeyError(f"unknown local edit candidate asset: {candidate_id}")
                 if not str(candidate["role"] or "").startswith("result_"):
                     raise ValueError("local edit candidate is not a result asset")
+                _require_pixel_editable_image_asset(
+                    candidate,
+                    "local edit candidate",
+                )
                 expected_size = contract["source_size"]
                 if contract["mode"] == "outpaint":
                     expected_size = {
@@ -6125,7 +6199,10 @@ class AtelierLedger:
         if command["execution_kind"] != "durable-job" or command["mode"] != mode:
             raise ValueError(f"command {command['id']} does not execute workflow mode {mode}")
         command_id = str(command["id"])
-        allow_result_sources = command_id == "command:local-edit-generate"
+        allow_result_sources = command_id in {
+            "command:local-edit-generate",
+            "command:image-to-video",
+        }
         canvas_document_id = str(canvas_document_id or "").strip() or None
         canvas_operation_id = str(canvas_operation_id or "").strip() or None
         if canvas_document_id is None:
@@ -6349,7 +6426,8 @@ class AtelierLedger:
                 if allow_result_sources:
                     rows = connection.execute(
                         f"""
-                        SELECT a.id FROM assets a
+                        SELECT a.id, a.role, a.kind, a.mime, a.metadata_json
+                        FROM assets a
                         WHERE (a.role = 'workspace_source' OR a.role LIKE 'result_%')
                           AND a.id IN ({placeholders})
                         """,
@@ -6368,6 +6446,12 @@ class AtelierLedger:
                 missing = [asset_id for asset_id in source_asset_ids if asset_id not in found]
                 if missing:
                     raise KeyError(f"unknown workspace assets: {', '.join(missing)}")
+                if allow_result_sources:
+                    for row in rows:
+                        _require_pixel_editable_image_asset(
+                            row,
+                            f"job source {row['id']}",
+                        )
 
                 brief = parameters.get("brief") if isinstance(parameters.get("brief"), dict) else {}
                 intent_locks = (
@@ -6571,20 +6655,38 @@ class AtelierLedger:
             raise KeyError(f"unknown job item: {item_id}")
         return self._job_item_row(row)
 
-    def list_jobs(self, limit: int = 100, *, mode: str | None = None) -> list[dict[str, Any]]:
+    def list_jobs(
+        self,
+        limit: int = 100,
+        *,
+        mode: str | None = None,
+        exclude_command_ids: Iterable[str] | None = None,
+    ) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 500))
         if mode is not None and mode not in WORKFLOW_DRAFT_IDS:
             raise ValueError(f"unsupported workflow mode: {mode}")
+        excluded = tuple(dict.fromkeys(
+            str(command_id).strip()
+            for command_id in (exclude_command_ids or ())
+            if str(command_id).strip()
+        ))
         with self._connection() as connection:
-            if mode is None:
-                rows = connection.execute(
-                    "SELECT id FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
-                ).fetchall()
-            else:
-                rows = connection.execute(
-                    "SELECT id FROM jobs WHERE mode = ? ORDER BY created_at DESC LIMIT ?",
-                    (mode, limit),
-                ).fetchall()
+            query = "SELECT j.id FROM jobs j"
+            clauses: list[str] = []
+            parameters: list[Any] = []
+            if excluded:
+                query += " LEFT JOIN job_snapshots s ON s.job_id = j.id"
+                placeholders = ",".join("?" for _ in excluded)
+                clauses.append(f"COALESCE(s.command_id, '') NOT IN ({placeholders})")
+                parameters.extend(excluded)
+            if mode is not None:
+                clauses.append("j.mode = ?")
+                parameters.append(mode)
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
+            query += " ORDER BY j.created_at DESC LIMIT ?"
+            parameters.append(limit)
+            rows = connection.execute(query, parameters).fetchall()
         return [self.get_job(str(row["id"]), include_attempts=False) for row in rows]
 
     def list_runnable_job_heads(self) -> list[dict[str, Any]]:
@@ -6747,6 +6849,19 @@ class AtelierLedger:
         normalized = [dict(output) for output in outputs]
         if not normalized:
             raise ValueError("at least one generation output is required")
+        result_roles = [str(output.get("role") or "result_main") for output in normalized]
+        business_output_count = sum(role != "result_video_cover" for role in result_roles)
+        video_count = result_roles.count("result_video")
+        cover_count = result_roles.count("result_video_cover")
+        if video_count or cover_count:
+            if (
+                len(normalized) != 2
+                or video_count != 1
+                or cover_count != 1
+            ):
+                raise ValueError(
+                    "video generation must contain exactly one video and one cover output"
+                )
         now = utc_now()
         asset_ids = [new_id("ast") for _ in normalized]
         with self._immediate_connection() as connection:
@@ -6799,35 +6914,86 @@ class AtelierLedger:
                 raise LedgerSchemaError(
                     f"generation already has committed results: {generation_id}"
                 )
+            cover_ids = {
+                index: asset_ids[index]
+                for index, output in enumerate(normalized)
+                if str(output.get("role") or "") == "result_video_cover"
+            }
             for asset_id, output, lineage_parent_id in zip(
                 asset_ids, normalized, lineage_parent_ids
             ):
                 role = str(output.get("role", "result_main"))
-                if role not in {"result_main", "result_cutout"}:
+                if role not in GENERATION_RESULT_KINDS:
                     raise ValueError(f"unsupported generation result role: {role}")
                 path = str(output.get("path", ""))
                 if not path:
                     raise ValueError("generation output path is required")
+                mime = str(output.get("mime") or GENERATION_RESULT_DEFAULT_MIMES[role])
+                metadata = (
+                    dict(output.get("metadata"))
+                    if isinstance(output.get("metadata"), dict)
+                    else {}
+                )
+                if role in {"result_video", "result_video_cover"}:
+                    output_path = Path(path)
+                    try:
+                        actual_size = output_path.stat().st_size
+                        digest = hashlib.sha256()
+                        with output_path.open("rb") as handle:
+                            while chunk := handle.read(1024 * 1024):
+                                digest.update(chunk)
+                    except OSError as exc:
+                        raise ValueError("video generation output file is unavailable") from exc
+                    if digest.hexdigest() != str(output.get("sha256") or "").lower():
+                        raise ValueError("video generation output hash does not match its file")
+                    declared_size = metadata.get("size_bytes")
+                    if declared_size is not None and (
+                        not isinstance(declared_size, int) or declared_size != actual_size
+                    ):
+                        raise ValueError("video generation output size does not match its file")
+                if role == "result_video":
+                    if mime != "video/webm":
+                        raise ValueError("video result must use video/webm")
+                    if not isinstance(output.get("width"), int) or int(output["width"]) < 1:
+                        raise ValueError("video result width is required")
+                    if not isinstance(output.get("height"), int) or int(output["height"]) < 1:
+                        raise ValueError("video result height is required")
+                    if not isinstance(metadata.get("duration_seconds"), (int, float)) or float(
+                        metadata["duration_seconds"]
+                    ) <= 0:
+                        raise ValueError("video result duration is required")
+                    if not isinstance(metadata.get("size_bytes"), int) or int(
+                        metadata["size_bytes"]
+                    ) < 1:
+                        raise ValueError("video result size is required")
+                    cover_index = metadata.pop("cover_output_index", None)
+                    if not isinstance(cover_index, int) or cover_index not in cover_ids:
+                        raise ValueError("video result must reference a cover output")
+                    metadata["cover_asset_id"] = cover_ids[cover_index]
+                elif role == "result_video_cover":
+                    if not mime.startswith("image/") or metadata.get("auxiliary_result") is not True:
+                        raise ValueError("video cover must be an auxiliary image result")
                 connection.execute(
                     """
                     INSERT INTO assets(
                         id, session_id, parent_asset_id, role, kind, path, name,
                         mime, width, height, sha256, metadata_json, created_at
-                    ) VALUES(?, ?, ?, ?, 'image', ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         asset_id,
                         generation["session_id"],
                         lineage_parent_id,
                         role,
+                        GENERATION_RESULT_KINDS[role],
                         path,
                         str(output.get("name", Path(path).name)),
-                        str(output.get("mime", "image/png" if role == "result_cutout" else "image/jpeg")),
+                        mime,
                         output.get("width"),
                         output.get("height"),
                         str(output.get("sha256", "")),
                         encode_json({
-                            **(output.get("metadata") if isinstance(output.get("metadata"), dict) else {}),
+                            **metadata,
                             "generation_id": generation_id,
                             "job_item_id": job_item_id,
                         }),
@@ -6862,7 +7028,8 @@ class AtelierLedger:
                 final_metadata = {
                     **dict(attempt_metadata or {}),
                     "result_asset_ids": list(asset_ids),
-                    "output_count": len(asset_ids),
+                    "output_count": business_output_count,
+                    "auxiliary_output_count": len(asset_ids) - business_output_count,
                 }
                 connection.execute(
                     """
@@ -7345,6 +7512,17 @@ class AtelierLedger:
             job = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if job is None:
                 raise KeyError(f"unknown job: {job_id}")
+            snapshot = connection.execute(
+                "SELECT command_id FROM job_snapshots WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if (
+                snapshot is not None
+                and str(snapshot["command_id"] or "") == "command:image-to-video"
+            ):
+                raise ValueError(
+                    "video jobs cannot retry the original request; create a new confirmed job"
+                )
             rows = connection.execute(
                 "SELECT * FROM job_items WHERE job_id = ? ORDER BY position", (job_id,)
             ).fetchall()
@@ -8004,7 +8182,7 @@ class AtelierLedger:
             asset = connection.execute(
                 "SELECT role FROM assets WHERE id = ?", (result_asset_id,)
             ).fetchone()
-            if asset is None or str(asset["role"]) not in {"result_main", "result_cutout"}:
+            if asset is None or str(asset["role"]) not in RESULT_REVIEW_ROLES:
                 raise KeyError(f"unknown result asset: {result_asset_id}")
             if job_id:
                 generations = connection.execute(

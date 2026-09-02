@@ -101,6 +101,11 @@ try:
         normalize_local_edit_contract,
         render_canvas_mask_definition,
     )
+    from video_contract import (
+        OFFLINE_VIDEO_PROVIDER,
+        VideoContractError,
+        normalize_image_to_video_parameters,
+    )
     from storage_paths import (
         OutputRootError,
         canonicalize_output_root,
@@ -188,6 +193,11 @@ except ImportError:  # Allows importing as python.server during local tests.
         image_fingerprint,
         normalize_local_edit_contract,
         render_canvas_mask_definition,
+    )
+    from python.video_contract import (
+        OFFLINE_VIDEO_PROVIDER,
+        VideoContractError,
+        normalize_image_to_video_parameters,
     )
     from python.storage_paths import (
         OutputRootError,
@@ -1553,6 +1563,7 @@ def build_job_engine():
             "group-workflow": execute_job_workflow,
             "local-cutout": execute_job_workflow,
             "cloud-local-edit": execute_job_workflow,
+            "local-video-preview": execute_job_workflow,
         },
         max_workers=worker_limit,
         resource_limits={
@@ -1707,21 +1718,51 @@ def workspace_asset_response(asset: dict) -> dict:
 
 
 def result_asset_response(asset: dict) -> dict:
-    return {
+    metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+    mime = str(asset.get("mime") or "")
+    kind = str(asset.get("kind") or ("video" if mime.startswith("video/") else "image"))
+    response = {
         "id": asset["id"],
         "name": asset.get("name", ""),
-        "mime": asset.get("mime", ""),
-        "size_bytes": 0,
+        "kind": kind,
+        "mime": mime,
+        "size_bytes": int(asset.get("size_bytes") or metadata.get("size_bytes") or 0),
         "width": asset.get("width"),
         "height": asset.get("height"),
         "sha256": asset.get("sha256", ""),
         "created_at": asset.get("created_at"),
-        "metadata": asset.get("metadata", {}),
+        "metadata": metadata,
         "role": asset.get("role", ""),
         "lineage_parent_id": asset.get("parent_asset_id"),
         "thumbnail_url": f"/api/assets/{asset['id']}/thumbnail",
         "content_url": f"/api/assets/{asset['id']}/content",
+        "download_url": f"/api/assets/{asset['id']}/content?download=true",
     }
+    if kind == "video":
+        cover_asset_id = str(metadata.get("cover_asset_id") or "")
+        response.update({
+            "duration_seconds": metadata.get("duration_seconds"),
+            "cover_asset_id": cover_asset_id or None,
+            "cover_url": (
+                f"/api/assets/{cover_asset_id}/thumbnail" if cover_asset_id else ""
+            ),
+            "stream_url": f"/api/assets/{asset['id']}/content",
+        })
+    return response
+
+
+def _video_cover_asset(asset: dict) -> dict:
+    metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+    cover_asset_id = str(metadata.get("cover_asset_id") or "")
+    if not cover_asset_id:
+        raise AssetAccessError("Video result has no cover image", code="ASSET_FILE_MISSING")
+    try:
+        cover = LEDGER.get_asset(cover_asset_id)
+    except KeyError as exc:
+        raise AssetAccessError("Video cover image is unavailable", code="ASSET_FILE_MISSING") from exc
+    if str(cover.get("kind") or "") != "image" or not str(cover.get("mime") or "").startswith("image/"):
+        raise AssetAccessError("Video cover reference is invalid", code="ASSET_HASH_MISMATCH")
+    return cover
 
 
 def _resolve_result_asset_path(asset: dict) -> Path:
@@ -2056,14 +2097,21 @@ async def get_workspace_asset(asset_id: str):
 
 
 @app.get("/api/assets/{asset_id}/content")
-async def get_workspace_asset_content(asset_id: str):
+async def get_workspace_asset_content(asset_id: str, download: bool = False):
     try:
         asset = LEDGER.get_asset(asset_id)
         if asset.get("role") == "workspace_source":
             asset, path = await run_in_threadpool(ASSET_STORE.resolve_asset_path, asset_id)
         else:
             path = await run_in_threadpool(_resolve_result_asset_path, asset)
-        return FileResponse(str(path), media_type=asset["mime"], filename=asset["name"])
+        kind = str(asset.get("kind") or "image")
+        disposition = "inline" if kind == "video" and not download else "attachment"
+        return FileResponse(
+            str(path),
+            media_type=asset["mime"],
+            filename=asset["name"],
+            content_disposition_type=disposition,
+        )
     except KeyError as exc:
         raise HTTPException(
             status_code=404,
@@ -2080,7 +2128,12 @@ async def get_workspace_asset_thumbnail(asset_id: str, size: int = 512):
         if asset.get("role") == "workspace_source":
             content = await run_in_threadpool(ASSET_STORE.thumbnail_bytes, asset_id, size)
         else:
-            path = await run_in_threadpool(_resolve_result_asset_path, asset)
+            thumbnail_asset = (
+                await run_in_threadpool(_video_cover_asset, asset)
+                if str(asset.get("kind") or "") == "video"
+                else asset
+            )
+            path = await run_in_threadpool(_resolve_result_asset_path, thumbnail_asset)
             content = await run_in_threadpool(_thumbnail_for_path, path, size)
         return StreamingResponse(
             io.BytesIO(content),
@@ -2135,6 +2188,7 @@ class CanvasDocumentSaveRequest(BaseModel):
 class SpatialCanvasCreateRequest(BaseModel):
     name: str = "未命名画布"
     client_request_id: str
+    scene: Optional[dict[str, Any]] = None
 
     class Config:
         extra = "forbid"
@@ -2416,11 +2470,14 @@ def _workspace_recent_results(jobs: list[dict], limit: int = 20) -> list[dict]:
             for asset_id in item.get("result_asset_ids", []):
                 if asset_id in seen:
                     continue
-                seen.add(asset_id)
                 try:
                     asset = LEDGER.get_asset(asset_id)
                 except KeyError:
                     continue
+                metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+                if asset.get("role") == "result_video_cover" or metadata.get("auxiliary_result") is True:
+                    continue
+                seen.add(asset_id)
                 results.append(result_asset_response(asset))
                 if len(results) >= limit:
                     return results
@@ -2583,7 +2640,11 @@ async def get_workflow_workspace(mode: str, asset_limit: int = 200, job_limit: i
         assets = LEDGER.list_collection_assets(
             draft["collection_key"], limit=asset_limit
         )
-        jobs = LEDGER.list_jobs(job_limit, mode=mode)
+        jobs = LEDGER.list_jobs(
+            job_limit,
+            mode=mode,
+            exclude_command_ids={"command:image-to-video"},
+        )
         recent_reviews = []
         for job in jobs:
             recent_reviews.extend(LEDGER.list_result_reviews(job["id"], limit=20))
@@ -2753,6 +2814,7 @@ async def create_spatial_canvas(request: SpatialCanvasCreateRequest):
         return LEDGER.create_spatial_canvas(
             name=request.name,
             client_request_id=request.client_request_id,
+            scene=request.scene,
         )
     except Exception as exc:
         raise_spatial_canvas_http_error(exc)
@@ -3637,6 +3699,7 @@ class CommandExecutionRequest(BaseModel):
     product_profile_id: Optional[str] = None
     expected_product_profile_revision: Optional[int] = None
     local_edit_spec_id: Optional[str] = None
+    spatial_canvas_id: Optional[str] = None
 
     class Config:
         extra = "forbid"
@@ -3831,6 +3894,97 @@ def _validate_job_request(mode: str, source_asset_ids: list[str], parameters: di
 
 
 LOCAL_EDIT_GENERATE_COMMAND_ID = "command:local-edit-generate"
+IMAGE_TO_VIDEO_COMMAND_ID = "command:image-to-video"
+VIDEO_OUTPUT_DIMENSIONS = {
+    "1:1": (320, 320),
+    "16:9": (320, 180),
+    "9:16": (180, 320),
+    "4:3": (320, 240),
+    "3:4": (240, 320),
+}
+VIDEO_OUTPUT_SLUGS = {
+    "1:1": "1x1",
+    "16:9": "16x9",
+    "9:16": "9x16",
+    "4:3": "4x3",
+    "3:4": "3x4",
+}
+VIDEO_FIXTURE_ROOT = Path(__file__).with_name("video_fixtures") / OFFLINE_VIDEO_PROVIDER
+
+
+def _normalize_image_to_video_job_parameters(
+    parameters: dict[str, Any],
+    source_asset_id: str,
+) -> dict[str, Any]:
+    raw = dict(parameters or {})
+    requested_output = str(raw.get("output_root") or _RUNTIME_OUTPUT_ROOT).strip()
+    output_root = _validate_output_root(requested_output, test_write=True)
+    configured_roots = _configured_output_roots()
+    if output_root != _RUNTIME_OUTPUT_ROOT and output_root not in configured_roots:
+        raise OutputRootError(
+            "OUTPUT_ROOT_NOT_CONFIGURED",
+            "该交付目录不在已保存位置中，请先到设置页重新选择",
+        )
+    raw["output_root"] = str(output_root)
+    return normalize_image_to_video_parameters(
+        raw,
+        source_asset_id=source_asset_id,
+    )
+
+
+def _video_frame_asset(asset_id: str, label: str) -> dict[str, Any]:
+    try:
+        asset = LEDGER.get_asset(str(asset_id))
+    except KeyError as exc:
+        raise VideoContractError("VIDEO_FRAME_NOT_FOUND", f"{label} is unavailable") from exc
+    role = str(asset.get("role") or "")
+    kind = str(asset.get("kind") or "image")
+    mime = str(asset.get("mime") or "")
+    metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+    if role != "workspace_source" and not role.startswith("result_"):
+        raise VideoContractError("VIDEO_FRAME_NOT_FOUND", f"{label} is unavailable")
+    if (
+        kind != "image"
+        or not mime.startswith("image/")
+        or role == "result_video_cover"
+        or metadata.get("auxiliary_result") is True
+    ):
+        raise VideoContractError("VIDEO_FRAME_INVALID", f"{label} must be an image")
+    try:
+        if role == "workspace_source":
+            _, path = ASSET_STORE.resolve_asset_path(str(asset_id))
+        else:
+            path = _resolve_result_asset_path(asset)
+        with Image.open(path) as opened:
+            opened.verify()
+    except (AssetStoreError, KeyError, OSError, ValueError) as exc:
+        raise VideoContractError("VIDEO_FRAME_INVALID", f"{label} is not a readable image") from exc
+    return asset
+
+
+def _validate_image_to_video_job_parameters(parameters: dict[str, Any]) -> None:
+    first_frame_id = str(parameters.get("first_frame_asset_id") or "")
+    _video_frame_asset(first_frame_id, "first frame")
+    last_frame_id = str(parameters.get("last_frame_asset_id") or "")
+    if last_frame_id:
+        _video_frame_asset(last_frame_id, "last frame")
+
+
+def _image_to_video_spatial_canvas_id(value: Any) -> str:
+    canvas_id = str(value or "").strip()
+    if not canvas_id:
+        raise VideoContractError(
+            "VIDEO_CANVAS_BINDING_INVALID",
+            "image-to-video requires a durable spatial canvas",
+        )
+    try:
+        canvas = LEDGER.get_spatial_canvas(canvas_id)
+    except (KeyError, ValueError) as exc:
+        raise VideoContractError(
+            "VIDEO_CANVAS_BINDING_INVALID",
+            "the spatial canvas for this video task is unavailable",
+        ) from exc
+    return str(canvas["id"])
 
 
 def _validate_local_edit_generate_request(
@@ -3881,7 +4035,17 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
         source_asset_ids = [str(asset_id).strip() for asset_id in request.source_asset_ids]
         validate_command_sources(command, source_asset_ids)
         refresh_runtime_config()
-        parameters = _normalize_job_parameters(mode, request.parameters or {})
+        if str(command["id"]) == IMAGE_TO_VIDEO_COMMAND_ID:
+            parameters = _normalize_image_to_video_job_parameters(
+                request.parameters or {},
+                source_asset_ids[0],
+            )
+            _validate_image_to_video_job_parameters(parameters)
+            parameters["spatial_canvas_id"] = _image_to_video_spatial_canvas_id(
+                request.spatial_canvas_id
+            )
+        else:
+            parameters = _normalize_job_parameters(mode, request.parameters or {})
         _validate_job_request(mode, source_asset_ids, parameters)
         if str(command["id"]) == LOCAL_EDIT_GENERATE_COMMAND_ID:
             _validate_local_edit_generate_request(request, parameters)
@@ -3897,7 +4061,11 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
             parameters=parameters,
             idempotency_key=str(request.client_request_id or "").strip(),
             requested_concurrency=requested_concurrency,
-            max_attempts=request.max_attempts,
+            max_attempts=(
+                1
+                if str(command["id"]) == IMAGE_TO_VIDEO_COMMAND_ID
+                else request.max_attempts
+            ),
             title=str(command["label"]),
             command_id=str(command["id"]),
             canvas_document_id=request.canvas_document_id,
@@ -3946,6 +4114,11 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
         raise HTTPException(
             status_code=400,
             detail={"code": exc.code, "stage": exc.stage, "message": exc.message},
+        )
+    except VideoContractError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "message": exc.message},
         )
     except (sqlite3.IntegrityError, TypeError, ValueError) as exc:
         raise HTTPException(
@@ -4390,6 +4563,18 @@ async def resume_durable_job(job_id: str):
 @app.post("/api/jobs/{job_id}/retry")
 async def retry_durable_job(job_id: str, request: Optional[JobRetryRequest] = None):
     try:
+        existing = LEDGER.get_job(job_id, include_attempts=False)
+        if (
+            str((existing.get("snapshot") or {}).get("command_id") or "")
+            == IMAGE_TO_VIDEO_COMMAND_ID
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "VIDEO_RETRY_REQUIRES_NEW_REQUEST",
+                    "message": "视频任务失败后必须返回画布重新确认，并创建新的任务",
+                },
+            )
         item_ids = request.item_ids if request is not None else None
         engine = JOB_ENGINE
         job = (
@@ -4776,6 +4961,7 @@ async def get_progress(task_id: str):
     results = {
         "main": [result_asset_response(asset) for asset in result_assets if asset.get("role") == "result_main"],
         "cutout": [result_asset_response(asset) for asset in result_assets if asset.get("role") == "result_cutout"],
+        "video": [result_asset_response(asset) for asset in result_assets if asset.get("role") == "result_video"],
     }
     error_items = [item for item in job.get("items", []) if item.get("error_message")]
     return {
@@ -5408,6 +5594,165 @@ def _stage_output(image, directory, name, role):
     }
 
 
+def _offline_video_fixture(parameters: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+    output_ratio = str(parameters.get("output_ratio") or "")
+    duration_seconds = int(parameters.get("duration_seconds") or 0)
+    slug = VIDEO_OUTPUT_SLUGS.get(output_ratio)
+    dimensions = VIDEO_OUTPUT_DIMENSIONS.get(output_ratio)
+    if slug is None or dimensions is None:
+        raise JobExecutionError("VIDEO_RATIO_UNSUPPORTED", "Video output ratio is unsupported")
+    relative_path = f"{slug}/{duration_seconds}s.webm"
+    manifest_path = VIDEO_FIXTURE_ROOT / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        records = manifest.get("fixtures") if isinstance(manifest, dict) else None
+        record = next(
+            (
+                dict(item) for item in records or []
+                if isinstance(item, dict) and str(item.get("path") or "") == relative_path
+            ),
+            None,
+        )
+        fixture_path = (VIDEO_FIXTURE_ROOT / relative_path).resolve(strict=True)
+    except (OSError, ValueError, TypeError) as exc:
+        raise JobExecutionError(
+            "VIDEO_FIXTURE_UNAVAILABLE",
+            "The offline video preview fixture is unavailable",
+        ) from exc
+    root = VIDEO_FIXTURE_ROOT.resolve(strict=True)
+    if record is None or not fixture_path.is_file() or not fixture_path.is_relative_to(root):
+        raise JobExecutionError(
+            "VIDEO_FIXTURE_UNAVAILABLE",
+            "The offline video preview fixture is unavailable",
+        )
+    expected = {
+        "width": dimensions[0],
+        "height": dimensions[1],
+        "duration_seconds": duration_seconds,
+        "size_bytes": fixture_path.stat().st_size,
+        "sha256": _file_sha256(fixture_path),
+    }
+    if any(record.get(key) != value for key, value in expected.items()):
+        raise JobExecutionError(
+            "VIDEO_FIXTURE_INTEGRITY_FAILED",
+            "The offline video preview fixture failed its integrity check",
+        )
+    return fixture_path, {**record, "output_ratio": output_ratio}
+
+
+def _execute_image_to_video_preview(ctx, source_asset, image, stage_dir, trace):
+    raw_parameters = dict(ctx.job.get("parameters") or {})
+    frozen_contract_version = str(raw_parameters.pop("contract_version", ""))
+    spatial_canvas_id = str(raw_parameters.pop("spatial_canvas_id", ""))
+    try:
+        parameters = normalize_image_to_video_parameters(
+            raw_parameters,
+            source_asset_id=str(ctx.item["source_asset_id"]),
+        )
+        if frozen_contract_version != str(parameters["contract_version"]):
+            raise VideoContractError(
+                "VIDEO_CONTRACT_VERSION_MISMATCH",
+                "The frozen video task contract version is unavailable",
+            )
+        _validate_image_to_video_job_parameters(parameters)
+        _image_to_video_spatial_canvas_id(spatial_canvas_id)
+    except VideoContractError as exc:
+        raise JobExecutionError(exc.code, exc.message) from exc
+
+    ctx.progress(0.08, {"phase": "video-contract-validated"})
+    fixture_path, fixture = _offline_video_fixture(parameters)
+    ctx.checkpoint()
+
+    video_name = (
+        f"video-preview-{VIDEO_OUTPUT_SLUGS[parameters['output_ratio']]}-"
+        f"{parameters['duration_seconds']}s.webm"
+    )
+    video_path = stage_dir / video_name
+    shutil.copy2(fixture_path, video_path)
+    if _file_sha256(video_path) != str(fixture["sha256"]):
+        raise JobExecutionError(
+            "VIDEO_FIXTURE_INTEGRITY_FAILED",
+            "The staged offline video preview failed its integrity check",
+        )
+    ctx.progress(0.44, {"phase": "video-preview-staged"})
+    ctx.checkpoint()
+
+    dimensions = VIDEO_OUTPUT_DIMENSIONS[str(parameters["output_ratio"])]
+    source_rgb = image.convert("RGB")
+    cover = ImageOps.pad(
+        source_rgb,
+        dimensions,
+        method=Image.Resampling.LANCZOS,
+        color=(244, 240, 233),
+        centering=(0.5, 0.5),
+    )
+    cover_output = _stage_output(
+        cover,
+        stage_dir,
+        f"video-cover-{VIDEO_OUTPUT_SLUGS[parameters['output_ratio']]}.jpg",
+        "result_video_cover",
+    )
+    cover_output["parent_asset_id"] = str(parameters["first_frame_asset_id"])
+    cover_output["metadata"] = {
+        "auxiliary_result": True,
+        "contract_version": parameters["contract_version"],
+        "provider": parameters["provider"],
+        "source_video_output_index": 0,
+        "size_bytes": int(Path(cover_output["temp_path"]).stat().st_size),
+    }
+    ctx.progress(0.76, {"phase": "video-cover-ready"})
+    ctx.checkpoint()
+
+    video_output = {
+        "temp_path": video_path,
+        "name": video_name,
+        "role": "result_video",
+        "mime": "video/webm",
+        "width": int(fixture["width"]),
+        "height": int(fixture["height"]),
+        "sha256": str(fixture["sha256"]),
+        "parent_asset_id": str(parameters["first_frame_asset_id"]),
+        "metadata": {
+            "contract_version": parameters["contract_version"],
+            "duration_seconds": int(parameters["duration_seconds"]),
+            "size_bytes": int(fixture["size_bytes"]),
+            "output_ratio": parameters["output_ratio"],
+            "provider": parameters["provider"],
+            "first_frame_asset_id": parameters["first_frame_asset_id"],
+            "last_frame_asset_id": parameters.get("last_frame_asset_id"),
+            "motion_intensity": int(parameters["motion_intensity"]),
+            "provider_call_confirmed": False,
+            "automatic_paid_retry": False,
+            "offline_preview": True,
+            "cover_output_index": 1,
+        },
+    }
+    _record_execution_trace_safe(
+        trace,
+        "provider.video.offline-preview",
+        "completed",
+        compiled_prompt=str(parameters["prompt"]),
+        parameters=parameters,
+        output={
+            "provider": parameters["provider"],
+            "network_call_count": 0,
+            "video_sha256": fixture["sha256"],
+            "width": fixture["width"],
+            "height": fixture["height"],
+            "duration_seconds": fixture["duration_seconds"],
+        },
+    )
+    ctx.progress(0.9, {"phase": "video-preview-ready"})
+    return [video_output, cover_output], {
+        "operation": "offline-image-to-video-preview",
+        "contract_version": parameters["contract_version"],
+        "provider": parameters["provider"],
+        "provider_call_count": 0,
+        "automatic_paid_retry": False,
+        "auxiliary_result_count": 1,
+    }
+
+
 def _resolve_job_source_asset(asset_id: str) -> tuple[dict[str, Any], Path]:
     asset = LEDGER.get_asset(str(asset_id))
     role = str(asset.get("role") or "")
@@ -5686,6 +6031,11 @@ def _update_folder_delivery_manifest(ctx, source_asset, delivered, delivery):
 
 
 def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, output_root):
+    business_output_count = sum(
+        str(output.get("role") or "result_main") != "result_video_cover"
+        for output in outputs
+    )
+    auxiliary_output_count = len(outputs) - business_output_count
     target_dir = job_delivery_directory(
         output_root,
         created_at=str(ctx.job.get("created_at") or ""),
@@ -5787,7 +6137,8 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, o
                 output={
                     "elapsed_ms": round((time.perf_counter() - publish_started) * 1000, 3),
                     "result_asset_ids": list(committed_asset_ids),
-                    "output_count": len(committed_asset_ids),
+                    "output_count": business_output_count,
+                    "auxiliary_output_count": auxiliary_output_count,
                     "output_root": str(output_root),
                     "delivery_files": [entry["relative_path"] for entry in delivered],
                     "actual_files": [
@@ -5813,13 +6164,15 @@ def _staged_job_result(ctx, trace, stage_dir, outputs, metadata, source_asset, o
                 "completed",
                 output={
                     "elapsed_ms": workflow_elapsed_ms,
-                    "output_count": len(committed_asset_ids),
+                    "output_count": business_output_count,
+                    "auxiliary_output_count": auxiliary_output_count,
                     "mode": str(ctx.job.get("mode") or ""),
                 },
             )
             return {
                 "result_asset_ids": list(committed_asset_ids),
-                "output_count": len(committed_asset_ids),
+                "output_count": business_output_count,
+                "auxiliary_output_count": auxiliary_output_count,
                 "output_root": str(output_root),
                 "delivery_root": str(delivery.get("delivery_root") or "") if delivery else "",
                 "delivery_files": [entry["relative_path"] for entry in delivered],
@@ -6987,7 +7340,11 @@ def execute_job_workflow(ctx):
             else {}
         )
         command_id = str((ctx.job.get("snapshot") or {}).get("command_id") or "")
-        if command_id == LOCAL_EDIT_GENERATE_COMMAND_ID:
+        if command_id == IMAGE_TO_VIDEO_COMMAND_ID:
+            outputs, metadata = _execute_image_to_video_preview(
+                ctx, source_asset, image, stage_dir, trace
+            )
+        elif command_id == LOCAL_EDIT_GENERATE_COMMAND_ID:
             outputs, metadata = _execute_local_edit_candidate_job(
                 ctx, source_asset, image, stage_dir, trace
             )

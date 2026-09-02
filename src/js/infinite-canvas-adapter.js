@@ -108,7 +108,7 @@ export function createMemorySpatialCanvasAdapter({
     return normalizeRecord(record);
   }
 
-  function create({ name } = {}) {
+  function create({ name, scene } = {}) {
     const timestamp = now().toISOString();
     const record = {
       id: `spatial:${String(idFactory()).toLowerCase()}`,
@@ -118,7 +118,7 @@ export function createMemorySpatialCanvasAdapter({
       created_at: timestamp,
       updated_at: timestamp,
       last_opened_at: timestamp,
-      scene: runtimeScene({ elements: [], appState: DEFAULT_APP_STATE }),
+      scene: runtimeScene(scene || { elements: [], appState: DEFAULT_APP_STATE }),
     };
     records.set(record.id, record);
     return snapshot(record);
@@ -175,6 +175,7 @@ export function createApiSpatialCanvasAdapter({ api } = {}) {
   if (!api) throw new TypeError('createApiSpatialCanvasAdapter requires an API client');
   const records = new Map();
   const saveChains = new Map();
+  const conflictEpochs = new Map();
   let loaded = false;
 
   function remember(value) {
@@ -202,11 +203,13 @@ export function createApiSpatialCanvasAdapter({ api } = {}) {
     return list();
   }
 
-  async function create({ name } = {}) {
-    const record = await api.createSpatialCanvas({
+  async function create({ name, scene, clientRequestId } = {}) {
+    const payload = {
       name: cleanName(name),
-      client_request_id: requestId('spatial-create'),
-    }, { timeoutMs: 12000 });
+      client_request_id: String(clientRequestId || requestId('spatial-create')),
+    };
+    if (scene) payload.scene = apiScene(scene);
+    const record = await api.createSpatialCanvas(payload, { timeoutMs: 12000 });
     loaded = true;
     return remember(record);
   }
@@ -225,10 +228,18 @@ export function createApiSpatialCanvasAdapter({ api } = {}) {
   function updateScene(id, scene) {
     const canvasId = String(id);
     const serializedScene = apiScene(scene);
+    const operationEpoch = conflictEpochs.get(canvasId) || 0;
     const previous = saveChains.get(canvasId) || Promise.resolve();
     const operation = previous.catch(() => {}).then(async () => {
       const current = get(canvasId);
       if (!current) throw new Error(`Unknown spatial canvas: ${canvasId}`);
+      if (operationEpoch !== (conflictEpochs.get(canvasId) || 0)) {
+        const conflict = new Error('spatial canvas changed while this save was queued');
+        conflict.status = 409;
+        conflict.code = 'SPATIAL_CANVAS_STALE_QUEUED_SAVE';
+        conflict.current = current;
+        throw conflict;
+      }
       try {
         const record = await api.saveSpatialCanvasScene(canvasId, {
           expected_revision: current.current_revision,
@@ -238,6 +249,10 @@ export function createApiSpatialCanvasAdapter({ api } = {}) {
         return remember(record);
       } catch (error) {
         if (error?.status === 409) {
+          conflictEpochs.set(
+            canvasId,
+            Math.max(operationEpoch, conflictEpochs.get(canvasId) || 0) + 1,
+          );
           try {
             error.current = remember(
               await api.openSpatialCanvas(canvasId, { timeoutMs: 12000 }),

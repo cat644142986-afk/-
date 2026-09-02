@@ -9,6 +9,7 @@ import {
   CaptureUpdateAction,
   Excalidraw,
   convertToExcalidrawElements,
+  newElementWith,
 } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 
@@ -18,7 +19,136 @@ import {
   selectedSpatialBusinessElement,
   spatialBusinessKey,
   spatialLineageFocusElements,
+  updateSpatialTaskElements,
+  uniqueSpatialBusinessItems,
 } from './spatial-canvas-items.js';
+import {
+  createSpatialVideoPlaybackState,
+  pauseSpatialVideo,
+  playSpatialVideo,
+  selectSpatialVideo,
+  spatialVideoNodeRuntime,
+  stopSpatialVideoPlayback,
+  switchSpatialVideoCanvas,
+} from './spatial-video.js';
+
+const SPATIAL_VIDEO_LINK = /^product-atelier-video:\/\/[A-Za-z0-9:_-]{3,160}$/;
+
+function videoPresentation(element, value = {}) {
+  const metadata = value?.metadata && typeof value.metadata === 'object' ? value.metadata : {};
+  const assetId = String(element?.customData?.asset_id || '');
+  const duration = Number(
+    value?.duration_seconds
+      ?? value?.durationSeconds
+      ?? metadata.duration_seconds
+      ?? metadata.durationSeconds
+      ?? 0,
+  );
+  return {
+    name: String(value?.name || `视频 ${assetId.slice(-8) || '结果'}`),
+    coverUrl: String(value?.cover_url || value?.coverUrl || value?.thumbnail_url || value?.thumbnailUrl || ''),
+    streamUrl: String(value?.stream_url || value?.streamUrl || value?.content_url || value?.contentUrl || ''),
+    durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : null,
+    width: Number(value?.width || metadata.pixel_width || 0) || null,
+    height: Number(value?.height || metadata.pixel_height || 0) || null,
+    status: String(value?.status || metadata.status || 'ready'),
+  };
+}
+
+function videoDuration(value) {
+  if (!Number.isFinite(value) || value <= 0) return '时长待读取';
+  return `${Number(value).toFixed(Number(value) % 1 ? 1 : 0)} 秒`;
+}
+
+function SpatialVideoNode({
+  element,
+  loaded,
+  playing,
+  resolveVideoAsset,
+  onPlaybackStart,
+  onPlaybackPause,
+  onPlaybackEnd,
+  onPlaybackError,
+}) {
+  const videoRef = useRef(null);
+  const playbackErrorRef = useRef(onPlaybackError);
+  const [presentation, setPresentation] = useState(() => videoPresentation(element));
+  playbackErrorRef.current = onPlaybackError;
+  const failPlayback = useCallback(() => {
+    setPresentation((current) => ({ ...current, streamUrl: '' }));
+    playbackErrorRef.current?.();
+  }, []);
+
+  useEffect(() => {
+    let canceled = false;
+    const assetId = String(element?.customData?.asset_id || '');
+    setPresentation((current) => videoPresentation(element, current));
+    if (!assetId || typeof resolveVideoAsset !== 'function') return () => { canceled = true; };
+    Promise.resolve(resolveVideoAsset(assetId, { loadStream: loaded }))
+      .then((value) => {
+        if (canceled) return;
+        const nextPresentation = videoPresentation(element, value);
+        setPresentation(nextPresentation);
+        if (loaded && !nextPresentation.streamUrl) failPlayback();
+      })
+      .catch(() => {
+        if (!canceled && loaded) failPlayback();
+      });
+    return () => { canceled = true; };
+  }, [element, failPlayback, loaded, resolveVideoAsset]);
+
+  const videoSrc = loaded ? presentation.streamUrl : '';
+  const playbackActive = playing && Boolean(videoSrc);
+  useEffect(() => {
+    let canceled = false;
+    const video = videoRef.current;
+    if (!video || !videoSrc) return undefined;
+    if (playing) video.play().catch(() => { if (!canceled) failPlayback(); });
+    else video.pause();
+    return () => {
+      canceled = true;
+      video.pause();
+    };
+  }, [failPlayback, playing, videoSrc]);
+
+  const dimensions = presentation.width && presentation.height
+    ? `${presentation.width} × ${presentation.height}`
+    : '尺寸待读取';
+  const statusCopy = playbackActive ? '播放中' : presentation.status === 'ready' ? '可预览' : presentation.status;
+  return (
+    <div
+      className={`spatial-video-node${loaded ? ' is-loaded' : ''}${playbackActive ? ' is-playing' : ''}`}
+      data-video-id={element.id}
+      data-video-loaded={loaded ? 'true' : 'false'}
+      data-video-playing={playbackActive ? 'true' : 'false'}
+    >
+      <div className="spatial-video-node__cover" aria-hidden="true">
+        {presentation.coverUrl ? <img src={presentation.coverUrl} alt="" draggable={false} /> : <span>VIDEO</span>}
+        {videoSrc ? (
+          <video
+            ref={videoRef}
+            src={videoSrc}
+            preload="metadata"
+            controls
+            controlsList="nodownload noremoteplayback"
+            disablePictureInPicture
+            playsInline
+            onPlay={onPlaybackStart}
+            onPause={onPlaybackPause}
+            onEnded={onPlaybackEnd}
+            onError={failPlayback}
+          />
+        ) : null}
+        <i>{playbackActive ? '播放中' : '视频'}</i>
+      </div>
+      <div className="spatial-video-node__meta">
+        <strong>{presentation.name}</strong>
+        <span>{videoDuration(presentation.durationSeconds)} · {dimensions}</span>
+        <small>{statusCopy}</small>
+      </div>
+    </div>
+  );
+}
 
 async function waitForVisibleCanvasViewport(api, host, maxFrames = 60) {
   let readyFrames = 0;
@@ -44,15 +174,34 @@ function SpatialCanvas({
   onReady,
   onSelectionChange,
   resolveProxyUrl,
+  resolveVideoAsset,
 }) {
   const [theme, setTheme] = useState(() => (
     document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
+  ));
+  const [videoPlayback, setVideoPlayback] = useState(() => (
+    createSpatialVideoPlaybackState(canvasDocument?.id)
   ));
   const apiRef = useRef(null);
   const proxyFiles = useRef(new Map());
   const pointerUnsubscribe = useRef(null);
   const readyFrame = useRef(null);
   const selectionKey = useRef('');
+
+  useEffect(() => {
+    setVideoPlayback((current) => switchSpatialVideoCanvas(current, canvasDocument?.id));
+  }, [canvasDocument?.id]);
+
+  const videoControls = React.useMemo(() => ({
+    play: (elementId) => setVideoPlayback((current) => playSpatialVideo(current, elementId)),
+    pause: (elementId) => setVideoPlayback((current) => pauseSpatialVideo(current, elementId)),
+    stop: () => setVideoPlayback((current) => stopSpatialVideoPlayback(current)),
+    toggle: (elementId) => setVideoPlayback((current) => (
+      current.playingId === String(elementId || '')
+        ? pauseSpatialVideo(current, elementId)
+        : playSpatialVideo(current, elementId)
+    )),
+  }), []);
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
@@ -107,6 +256,15 @@ function SpatialCanvas({
     const nextKey = selected?.id || '';
     if (selectionKey.current !== nextKey) {
       selectionKey.current = nextKey;
+      const selectedVideoId = selected?.type === 'embeddable'
+        && SPATIAL_VIDEO_LINK.test(String(selected?.link || ''))
+        ? selected.id
+        : '';
+      setVideoPlayback((current) => (
+        selectedVideoId
+          ? selectSpatialVideo(current, selectedVideoId)
+          : stopSpatialVideoPlayback(current)
+      ));
       onSelectionChange?.(selected || null);
     }
     await hydration;
@@ -118,7 +276,7 @@ function SpatialCanvas({
     pointerUnsubscribe.current?.();
     pointerUnsubscribe.current = api.onPointerDown?.((_activeTool, pointerDownState, event) => {
       const element = pointerDownState?.hit?.element;
-      if (Number(event?.detail || 0) >= 2 && spatialBusinessKey(element)) {
+      if (Number(event?.detail || 0) >= 2 && element?.type === 'image' && spatialBusinessKey(element)) {
         onOpenFineEdit?.(element);
       }
     });
@@ -130,21 +288,43 @@ function SpatialCanvas({
         return;
       }
       readyFrame.current = null;
-      onReady?.(api, synchronizeScene);
+      onReady?.(api, synchronizeScene, videoControls);
     };
     if (readyFrame.current !== null) cancelAnimationFrame(readyFrame.current);
     notifyReady();
-  }, [hydrateProxyFiles, onOpenFineEdit, onReady, synchronizeScene]);
+  }, [hydrateProxyFiles, onOpenFineEdit, onReady, synchronizeScene, videoControls]);
 
   const handleChange = useCallback((elements, appState) => {
     synchronizeScene(elements, appState);
   }, [synchronizeScene]);
+
+  const validateVideoEmbeddable = useCallback((link) => (
+    SPATIAL_VIDEO_LINK.test(String(link || ''))
+  ), []);
+
+  const renderVideoEmbeddable = useCallback((element) => {
+    const runtime = spatialVideoNodeRuntime(videoPlayback, element.id);
+    return (
+      <SpatialVideoNode
+        element={element}
+        loaded={runtime.loaded}
+        playing={runtime.playing}
+        resolveVideoAsset={resolveVideoAsset}
+        onPlaybackStart={() => videoControls.play(element.id)}
+        onPlaybackPause={() => videoControls.pause(element.id)}
+        onPlaybackEnd={() => videoControls.pause(element.id)}
+        onPlaybackError={() => videoControls.stop()}
+      />
+    );
+  }, [resolveVideoAsset, videoControls, videoPlayback]);
 
   return (
     <Excalidraw
       initialData={canvasDocument.scene}
       excalidrawAPI={bindApi}
       onChange={handleChange}
+      renderEmbeddable={renderVideoEmbeddable}
+      validateEmbeddable={validateVideoEmbeddable}
       langCode="zh-CN"
       name={canvasDocument.name}
       theme={theme}
@@ -172,56 +352,128 @@ export function mountInfiniteCanvas(host, options) {
   let canvasApi = null;
   let componentReady = false;
   let synchronizeScene = null;
+  let videoControls = null;
   const root = createRoot(host);
   root.render(
     <SpatialCanvas
       {...options}
-      onReady={(api, synchronize) => {
+      onReady={(api, synchronize, controls) => {
         canvasApi = api;
         synchronizeScene = synchronize;
+        videoControls = controls;
         componentReady = true;
         options.onReady?.(api);
       }}
     />,
   );
-  return {
-    unmount: () => root.unmount(),
-    addBusinessItems: async (items) => {
-      if (!canvasApi || !componentReady) throw new Error('Infinite canvas runtime is not ready');
-      const existing = canvasApi.getSceneElementsIncludingDeleted();
-      const appState = canvasApi.getAppState();
-      const batch = buildSpatialNodeBatch(items, { elements: existing, appState });
-      const additions = convertToExcalidrawElements(batch.skeletons, { regenerateIds: false });
-      const selectedElementIds = Object.fromEntries(batch.nodeIds.map((id) => [id, true]));
-      const nextElements = mergeSpatialNodeBatch(existing, additions, batch.lineageBindings);
-      const boundExisting = nextElements.slice(0, existing.length);
-      const boundAdditions = nextElements.slice(existing.length);
-      const nextAppState = { ...appState, selectedElementIds };
-      canvasApi.updateScene({
-        elements: nextElements,
-        appState: { selectedElementIds },
-        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+
+  async function insertBusinessItems(items, { once = false } = {}) {
+    if (!canvasApi || !componentReady) throw new Error('Infinite canvas runtime is not ready');
+    const existing = canvasApi.getSceneElementsIncludingDeleted();
+    const normalized = once ? uniqueSpatialBusinessItems(items, existing) : Array.from(items || []);
+    if (!normalized.length) {
+      return {
+        skipped: true,
+        skeletons: [],
+        proxyRequests: [],
+        nodeIds: [],
+        lineageBindings: [],
+        elements: [],
+      };
+    }
+    const appState = canvasApi.getAppState();
+    const batch = buildSpatialNodeBatch(normalized, { elements: existing, appState });
+    const additions = convertToExcalidrawElements(batch.skeletons, { regenerateIds: false });
+    const selectedElementIds = Object.fromEntries(batch.nodeIds.map((id) => [id, true]));
+    const nextElements = mergeSpatialNodeBatch(existing, additions, batch.lineageBindings);
+    const boundExisting = nextElements.slice(0, existing.length);
+    const boundAdditions = nextElements.slice(existing.length);
+    const nextAppState = { ...appState, selectedElementIds };
+    canvasApi.updateScene({
+      elements: nextElements,
+      appState: { selectedElementIds },
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+    await synchronizeScene?.(nextElements, nextAppState);
+    const inserted = boundAdditions.filter((element) => batch.nodeIds.includes(element.id));
+    const focusElements = spatialLineageFocusElements(normalized, boundExisting, boundAdditions);
+    const viewportReady = focusElements.length
+      ? await waitForVisibleCanvasViewport(canvasApi, host)
+      : false;
+    if (viewportReady) {
+      canvasApi.scrollToContent(focusElements, {
+        animate: false,
+        fitToContent: focusElements.length > inserted.length,
       });
-      await synchronizeScene?.(nextElements, nextAppState);
-      const inserted = boundAdditions.filter((element) => batch.nodeIds.includes(element.id));
-      const focusElements = spatialLineageFocusElements(items, boundExisting, boundAdditions);
-      const viewportReady = focusElements.length
-        ? await waitForVisibleCanvasViewport(canvasApi, host)
-        : false;
-      if (viewportReady) {
-        canvasApi.scrollToContent(focusElements, {
-          animate: false,
-          fitToContent: focusElements.length > inserted.length,
-        });
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-        await synchronizeScene?.(
-          canvasApi.getSceneElementsIncludingDeleted(),
-          canvasApi.getAppState(),
-        );
-      }
-      return { ...batch, elements: boundAdditions };
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await synchronizeScene?.(
+        canvasApi.getSceneElementsIncludingDeleted(),
+        canvasApi.getAppState(),
+      );
+    }
+    return { ...batch, elements: boundAdditions, skipped: false };
+  }
+
+  async function updateTask(item) {
+    if (!canvasApi || !componentReady) return { changed: false, taskElement: null };
+    const current = canvasApi.getSceneElementsIncludingDeleted();
+    const update = updateSpatialTaskElements(current, item, (element, changes) => (
+      newElementWith(element, changes)
+    ));
+    if (!update.changed) return update;
+    const appState = canvasApi.getAppState();
+    canvasApi.updateScene({
+      elements: update.elements,
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+    await synchronizeScene?.(update.elements, appState);
+    return update;
+  }
+
+  return {
+    unmount: () => {
+      videoControls?.stop?.();
+      root.unmount();
+    },
+    playVideo: (elementId) => videoControls?.play?.(elementId),
+    stopVideo: () => videoControls?.stop?.(),
+    toggleVideo: (elementId) => videoControls?.toggle?.(elementId),
+    addBusinessItems: (items) => insertBusinessItems(items),
+    addBusinessItemsOnce: (items) => insertBusinessItems(items, { once: true }),
+    updateTask,
+    getBusinessKeys: () => new Set(
+      Array.from(canvasApi?.getSceneElementsIncludingDeleted?.() || [])
+        .filter((element) => !element?.isDeleted)
+        .map(spatialBusinessKey)
+        .filter(Boolean),
+    ),
+    getScene: () => ({
+      elements: canvasApi?.getSceneElementsIncludingDeleted?.() || [],
+      appState: canvasApi?.getAppState?.() || {},
+      files: {},
+    }),
+    selectBusinessReference: async (references = {}) => {
+      if (!canvasApi || !componentReady) return null;
+      const elements = canvasApi.getSceneElementsIncludingDeleted();
+      const target = elements.find((element) => {
+        if (element?.isDeleted) return false;
+        const refs = element?.customData || {};
+        return (references.task_id && refs.task_id === references.task_id)
+          || (references.result_id && refs.result_id === references.result_id)
+          || (references.asset_id && refs.asset_id === references.asset_id);
+      });
+      if (!target) return null;
+      const selectedElementIds = { [target.id]: true };
+      canvasApi.updateScene({
+        appState: { selectedElementIds },
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+      canvasApi.scrollToContent([target], { animate: false, fitToContent: false });
+      await synchronizeScene?.(elements, { ...canvasApi.getAppState(), selectedElementIds }, { persist: false });
+      return target;
     },
     updateScene: async (scene) => {
+      videoControls?.stop?.();
       const elements = scene?.elements || [];
       const appState = scene?.appState || {};
       canvasApi?.updateScene({

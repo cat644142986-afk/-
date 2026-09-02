@@ -341,6 +341,56 @@ class CanvasLedgerTests(unittest.TestCase):
             saved["document"]["layers"][0]["source"]["id"], result["id"]
         )
 
+    def test_pixel_canvas_rejects_video_results_and_auxiliary_video_covers(self) -> None:
+        invalid_results = (
+            self.ledger.add_asset(
+                self.asset["session_id"],
+                "result_video",
+                parent_asset_id=self.asset["id"],
+                path=str(self.root / "preview.webm"),
+                name="preview.webm",
+                mime="video/webm",
+                kind="video",
+                width=4096,
+                height=4096,
+                sha256="c" * 64,
+            ),
+            self.ledger.add_asset(
+                self.asset["session_id"],
+                "result_video_cover",
+                parent_asset_id=self.asset["id"],
+                path=str(self.root / "preview-cover.jpg"),
+                name="preview-cover.jpg",
+                mime="image/jpeg",
+                kind="image",
+                width=4096,
+                height=4096,
+                sha256="d" * 64,
+                metadata={"auxiliary_result": True},
+            ),
+        )
+        for index, result in enumerate(invalid_results):
+            with self.subTest(role=result["role"]):
+                document = canvas_document(
+                    self.asset["id"],
+                    document_id=f"canvas:reject-non-pixel-result-{index}",
+                )
+                document["source_asset_ids"] = []
+                document["layers"][0]["source"] = {
+                    "kind": "result",
+                    "id": result["id"],
+                    "proxy_ref": "proxy:thumbnail:512",
+                    "original_pixel_width": 4096,
+                    "original_pixel_height": 4096,
+                }
+                with self.assertRaisesRegex(ValueError, "pixel-editable image"):
+                    self.ledger.save_canvas_document(
+                        "single",
+                        expected_revision=0,
+                        client_request_id=f"canvas-reject-non-pixel-result-{index}",
+                        document=document,
+                    )
+
     def test_job_snapshot_binds_the_exact_canvas_version_and_command(self) -> None:
         saved = self.ledger.save_canvas_document(
             "single",

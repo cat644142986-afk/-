@@ -16,6 +16,7 @@ const island = readFileSync(new URL('../../src/js/infinite-canvas-island.jsx', i
 const adapterSource = readFileSync(new URL('../../src/js/infinite-canvas-adapter.js', import.meta.url), 'utf8');
 const apiSource = readFileSync(new URL('../../src/js/api.js', import.meta.url), 'utf8');
 const stableUiCss = readFileSync(new URL('../../src/css/stable-ui.css', import.meta.url), 'utf8');
+const tauriConfig = JSON.parse(readFileSync(new URL('../../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
 const viteConfig = readFileSync(new URL('../../vite.config.js', import.meta.url), 'utf8');
 const bundleVerifier = readFileSync(new URL('../../tools/verify-infinite-canvas-bundle.mjs', import.meta.url), 'utf8');
 
@@ -144,10 +145,10 @@ test('IC3 production adapter uses schema v8 APIs and strips scene file bytes', a
   assert.equal(savePayload.scene.app_state.zoom.value, 0.7);
   assert.match(apiSource, /export async function listSpatialCanvases/);
   assert.match(apiSource, /export async function saveSpatialCanvasScene/);
-  assert.match(workspace, /createApiSpatialCanvasAdapter\(\{ api: API \}\)/);
+  assert.match(workspace, /api = API,[\s\S]*createApiSpatialCanvasAdapter\(\{ api \}\)/);
 });
 
-test('IC3 production adapter serializes saves and refreshes revision after a conflict', async () => {
+test('IC3 production adapter invalidates queued old-base saves after a conflict', async () => {
   const canvas = {
     id: 'spatial:serial',
     name: '串行保存',
@@ -197,13 +198,23 @@ test('IC3 production adapter serializes saves and refreshes revision after a con
     files: {},
   });
   await assert.rejects(first, /revision conflict/);
-  const saved = await second;
+  await assert.rejects(second, (error) => {
+    assert.equal(error.status, 409);
+    assert.equal(error.code, 'SPATIAL_CANVAS_STALE_QUEUED_SAVE');
+    assert.equal(error.current.current_revision, 4);
+    return true;
+  });
+  const saved = await adapter.updateScene(canvas.id, {
+    elements: [{ id: 'frame-2', type: 'frame', x: 0, y: 0, width: 100, height: 100 }],
+    appState: {},
+    files: {},
+  });
   assert.deepEqual(expectedRevisions, [1, 4]);
   assert.equal(saved.current_revision, 5);
   assert.equal(adapter.get(canvas.id).current_revision, 5);
   assert.equal((await first.catch((error) => error)).current.current_revision, 4);
   assert.match(workspace, /savePromise = savePromise/);
-  assert.match(workspace, /mountedIsland\?\.updateScene\?\.\(error\.current\.scene\)/);
+  assert.match(workspace, /preserveSceneConflict\(saveId, sceneConflictState/);
   assert.match(island, /canvasApi\?\.updateScene/);
 });
 
@@ -224,11 +235,12 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(app, /onSpatialResult: handleSpatialFineEditResult/);
   assert.match(app, /onAction: handleSpatialAction/);
   assert.match(app, /onFineEdit: handleSpatialFineEdit/);
-  assert.match(app, /writeSpatialDragData\(event, spatialItemFromJob\(job\)\)/);
+  assert.match(app, /writeSpatialDragData\(event, spatialItemFromJob\(job,/);
   assert.match(app, /lineage_parent_id: asset\.lineage_parent_id \|\| ''/);
   assert.match(app, /已打开并预填快捷处理；尚未发起生成调用/);
   assert.doesNotMatch(app, /prepareSpatialQuickAction[\s\S]{0,2500}handleGenerate\(/);
   assert.match(workspace, /documentRef\.addEventListener\('drop', onDrop\)/);
+  assert.equal(tauriConfig.app.windows[0].dragDropEnabled, false);
   assert.match(workspace, /addBusinessItems/);
   assert.match(workspace, /onOpenFineEdit/);
   assert.match(island, /convertToExcalidrawElements/);
@@ -241,9 +253,82 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(island, /mergeSpatialNodeBatch\(existing, additions, batch\.lineageBindings\)/);
   assert.match(island, /captureUpdate: CaptureUpdateAction\.IMMEDIATELY/);
   assert.match(island, /captureUpdate: CaptureUpdateAction\.NEVER/);
-  assert.match(island, /spatialLineageFocusElements\(items, boundExisting, boundAdditions\)/);
+  assert.match(island, /spatialLineageFocusElements\(normalized, boundExisting, boundAdditions\)/);
   assert.match(island, /fitToContent: focusElements\.length > inserted\.length/);
   assert.match(island, /canvasApi\.getAppState\(\),\s*\);/);
   assert.match(island, /synchronizeScene\?\.\(elements, appState, \{ persist: false \}\)/);
-  assert.match(workspace, /正在保存`;\s*return await mountedIsland\.addBusinessItems/);
+  assert.match(workspace, /const session = await ensureCanvasForImport\(\)[\s\S]{0,220}session\.island\.addBusinessItems/);
+});
+
+test('IC5 production island renders only Product Atelier video embeddables on demand', () => {
+  assert.match(island, /renderEmbeddable=\{renderVideoEmbeddable\}/);
+  assert.match(island, /validateEmbeddable=\{validateVideoEmbeddable\}/);
+  assert.equal(island.includes('product-atelier-video:\\/\\/'), true);
+  assert.match(island, /createSpatialVideoPlaybackState/);
+  assert.match(island, /stopSpatialVideoPlayback/);
+  assert.match(island, /loaded \? presentation\.streamUrl : ''/);
+  assert.match(island, /controlsList="nodownload noremoteplayback"/);
+  assert.match(island, /onPlay=\{onPlaybackStart\}/);
+  assert.match(island, /onPause=\{onPlaybackPause\}/);
+  assert.match(island, /const playbackErrorRef = useRef\(onPlaybackError\)/);
+  assert.match(island, /playbackErrorRef\.current = onPlaybackError/);
+  assert.match(island, /const failPlayback = useCallback\(\(\) => \{/);
+  assert.match(island, /setPresentation\(\(current\) => \(\{ \.\.\.current, streamUrl: '' \}\)\)/);
+  assert.match(island, /if \(loaded && !nextPresentation\.streamUrl\) failPlayback\(\)/);
+  assert.match(island, /if \(!canceled && loaded\) failPlayback\(\)/);
+  assert.match(island, /const playbackActive = playing && Boolean\(videoSrc\)/);
+  assert.match(island, /video\.play\(\)\.catch\(\(\) => \{ if \(!canceled\) failPlayback\(\); \}\)/);
+  assert.match(island, /onError=\{failPlayback\}/);
+  assert.match(island, /value\?\.streamUrl/);
+  assert.match(island, /value\?\.durationSeconds/);
+  assert.match(island, /data-video-playing=\{playbackActive \? 'true' : 'false'\}/);
+  assert.match(island, /<i>\{playbackActive \? '播放中' : '视频'\}<\/i>/);
+  assert.match(island, /onPlaybackStart=\{\(\) => videoControls\.play\(element\.id\)\}/);
+  assert.match(island, /onPlaybackPause=\{\(\) => videoControls\.pause\(element\.id\)\}/);
+  assert.match(island, /onPlaybackError=\{\(\) => videoControls\.stop\(\)\}/);
+  assert.doesNotMatch(island, /video\.play\(\)\.catch\(\(\) => \{\}\)/);
+  assert.doesNotMatch(island, /const statusCopy = playing \?/);
+  assert.match(stableUiCss, /\.spatial-video-node\.is-loaded \.spatial-video-node__cover > i \{ top: 8px; bottom: auto; \}/);
+  assert.doesNotMatch(island, /removeAttribute\('src'\)/);
+  assert.doesNotMatch(island, /autoPlay(?:=|\s)/);
+});
+
+test('IC5 video jobs use the durable queue, idempotent result backfill and canvas-only recovery', () => {
+  assert.match(workspace, /api\.executeCommand\(SPATIAL_VIDEO_COMMAND_ID, payload/);
+  assert.match(workspace, /persistVideoJobAssociation\(job, session\)/);
+  assert.match(workspace, /spatialVideoCanvasId\(job\)/);
+  assert.match(workspace, /api\.getJobs\(200/);
+  assert.match(workspace, /for \(let attempt = 0; attempt < 3; attempt \+= 1\)/);
+  assert.match(workspace, /session\.island\.updateTask\?\.\(videoTaskItem\(job, session\)\)/);
+  assert.match(island, /updateSpatialTaskElements\(current, item/);
+  assert.match(workspace, /session\.island\.addBusinessItemsOnce\(\[videoTaskItem\(job, session\)\]\)[\s\S]{0,700}await flushScene\(ownerId\)/);
+  assert.match(workspace, /assets\.filter\(\(asset\) => asset\?\.role === 'result_video'\)/);
+  assert.match(app, /!videoJob && retryable\.length/);
+  assert.match(workspace, /VIDEO_POLL_INTERVAL_MS/);
+  assert.match(workspace, /VIDEO_RECOVERY_MAX_ATTEMPTS = 8/);
+  assert.match(workspace, /恢复已暂停，重新进入画布或任务中心重试/);
+  assert.match(workspace, /permanentVideoRecoveryError/);
+  assert.match(workspace, /if \(epoch !== inspectorEpoch\) return/);
+  assert.match(workspace, /videoDraft !== submittedDraft/);
+  assert.match(workspace, /runtimePromise = null/);
+  assert.doesNotMatch(workspace, /startPolling\(/);
+  assert.match(island, /addBusinessItemsOnce: \(items\) => insertBusinessItems\(items, \{ once: true \}\)/);
+  assert.match(island, /element\?\.type === 'image' && spatialBusinessKey\(element\)/);
+  assert.match(app, /if \(isSpatialVideoJob\(job\)\) return \[\];/);
+  assert.match(app, /isSpatialVideoJob\(job\) && \['retry-item', 'retry-failed'\]\.includes\(action\)/);
+  assert.match(app, /if \(isSpatialVideoJob\(job\)\) return openVideoJobCanvas\(job\);/);
+  assert.match(app, /onVideoJobSubmitted: \(\) => loadJobs\(true\)/);
+  assert.match(app, /onVideoJobSettled: \(\) => loadJobs\(true\)/);
+});
+
+test('IC5 video export keeps original binary bytes out of the base64 image path', () => {
+  const exportFunction = app.match(/async function exportSpatialResult\(context\) \{[\s\S]*?\n\}/)?.[0] || '';
+  const downloadStart = apiSource.indexOf('export async function downloadAsset');
+  const downloadEnd = apiSource.indexOf('export async function saveImage', downloadStart);
+  const downloadFunction = apiSource.slice(downloadStart, downloadEnd);
+  assert.match(exportFunction, /asset\?\.kind === 'video'/);
+  assert.match(exportFunction, /API\.downloadAsset\(assetId, suggestedName\)/);
+  assert.match(downloadFunction, /content\?download=true/);
+  assert.match(downloadFunction, /invoke\('save_binary_asset'/);
+  assert.doesNotMatch(downloadFunction, /saveImage|save_base64_image|btoa|base64/i);
 });

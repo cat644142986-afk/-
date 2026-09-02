@@ -71,6 +71,18 @@ _COMMANDS: tuple[dict[str, Any], ...] = (
         "supports_canvas": True,
     },
     {
+        "id": "command:image-to-video",
+        "label": "生成视频预览",
+        "mode": "single",
+        "engine_key": "local-video-preview",
+        "min_sources": 1,
+        "max_sources": 1,
+        "cost_policy": "free-local",
+        "execution_kind": "durable-job",
+        "existing_quick_mode": False,
+        "supports_canvas": True,
+    },
+    {
         "id": "command:transform-layer",
         "label": "变换图层",
         "mode": None,

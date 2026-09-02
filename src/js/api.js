@@ -285,6 +285,9 @@ export async function getAsset(assetId, options = {}) {
 export async function getAssetContentUrl(assetId) {
   return absoluteApiUrl('/api/assets/' + encodeURIComponent(assetId) + '/content');
 }
+export async function getAssetDownloadUrl(assetId) {
+  return absoluteApiUrl('/api/assets/' + encodeURIComponent(assetId) + '/content?download=true');
+}
 export async function getAssetThumbnailUrl(assetId, size) {
   return absoluteApiUrl('/api/assets/' + encodeURIComponent(assetId) + '/thumbnail?size=' + encodeURIComponent(size || 320));
 }
@@ -715,6 +718,35 @@ export async function getThumbnailUrl(path) {
 export async function getHistory() { return fetchJSON('/api/history'); }
 
 // File dialogs
+export async function saveBinary(suggestedName, blob) {
+  if (!(blob instanceof Blob)) throw new TypeError('saveBinary requires a Blob');
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = String(suggestedName || 'ProductAtelier-result.bin');
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  return true;
+}
+
+export async function downloadAsset(assetId, suggestedName = '') {
+  const filename = String(suggestedName || 'ProductAtelier-result.bin');
+  if (isTauriRuntime) {
+    return invoke('save_binary_asset', {
+      assetId: String(assetId || ''),
+      suggestedName: filename,
+    });
+  }
+  const response = await fetchBinary(
+    '/api/assets/' + encodeURIComponent(assetId) + '/content?download=true',
+    { timeoutMs: 120000 },
+  );
+  await saveBinary(suggestedName || response.filename, response.blob);
+  return { filename: suggestedName || response.filename, size: response.blob.size };
+}
+
 export async function saveImage(suggestedName, dataB64) {
   if (isTauriRuntime) return invoke('save_base64_image', { suggestedName: suggestedName, dataB64: dataB64 });
   const link = document.createElement('a');
@@ -737,6 +769,12 @@ export async function toggleMaximize() {
   else { await appWindow.maximize(); return true; }
 }
 export async function isWindowMaximized() { const appWindow = currentWindow(); return appWindow ? appWindow.isMaximized() : false; }
+export async function onAppCloseRequested(handler) {
+  const appWindow = currentWindow();
+  if (!appWindow || typeof appWindow.onCloseRequested !== 'function') return () => {};
+  return appWindow.onCloseRequested(handler);
+}
+export async function completeAppClose() { return isTauriRuntime ? invoke('complete_close_app') : false; }
 
 // Folder selection dialog
 export async function selectFolder() { return invoke('select_folder_dialog'); }

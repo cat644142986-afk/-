@@ -193,6 +193,7 @@ try {
             "python/canvas_export.py",
             "python/local_edit_contract.py",
             "python/spatial_canvas_contract.py",
+            "python/video_contract.py",
             "python/asset_store.py",
             "python/job_engine.py",
             "python/knowledge_engine.py",
@@ -206,6 +207,17 @@ try {
             "docs/model-artifacts/grounding-dino-tiny.json",
             "python/storage_paths.py",
             "python-server.spec"
+        )
+        $videoFixtureRoot = Join-Path $ProjectRoot "python\video_fixtures\offline-preview-v1"
+        if (-not (Test-Path -LiteralPath $videoFixtureRoot -PathType Container)) {
+            throw "Offline video fixture directory is missing: $videoFixtureRoot"
+        }
+        $sourceFiles += @(
+            Get-ChildItem -LiteralPath $videoFixtureRoot -File -Recurse |
+                Sort-Object FullName |
+                ForEach-Object {
+                    $_.FullName.Substring($ProjectRoot.Length + 1).Replace('\', '/')
+                }
         )
         $sourceHashes = [ordered]@{}
         foreach ($relativePath in $sourceFiles) {

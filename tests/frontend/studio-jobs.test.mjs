@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   boundedJobsForDisplay,
+  jobAnnouncementCopy,
   jobFilterCounts,
   jobItemsForDisplay,
   jobsForFilter,
@@ -38,6 +39,15 @@ test('large task lists stay segmented without hiding an older active task', () =
   assert.equal(visible.length, 13);
   assert.equal(visible[0].id, 'job-1');
   assert.equal(visible.at(-1).id, 'job-31');
+});
+
+test('job announcements prefer the durable task title over a workflow fallback', () => {
+  assert.deepEqual(jobAnnouncementCopy({
+    title: '生成视频预览', mode: 'single', status: 'completed',
+  }, '商业主图'), {
+    message: '生成视频预览已完成', tone: 'success',
+  });
+  assert.equal(jobAnnouncementCopy({ status: 'running' }, '商业主图').message, '');
 });
 
 test('twenty-item jobs show actionable work first and expand without reordering', () => {

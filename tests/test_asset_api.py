@@ -1032,6 +1032,38 @@ class AssetApiTests(unittest.TestCase):
         self.assertEqual(rejected.status_code, 400, rejected.text)
         self.assertEqual(rejected.json()["detail"]["code"], "INVALID_SPATIAL_CANVAS")
 
+        conflict_copy_request = {
+            "name": "商品主图方案 · 冲突副本",
+            "client_request_id": "api-spatial-conflict-copy-1",
+            "scene": scene,
+        }
+        conflict_copy = self.client.post(
+            "/api/spatial-canvases", json=conflict_copy_request
+        )
+        self.assertEqual(conflict_copy.status_code, 200, conflict_copy.text)
+        self.assertEqual(conflict_copy.json()["current_revision"], 1)
+        self.assertEqual(conflict_copy.json()["summary"]["image_count"], 1)
+        conflict_replay = self.client.post(
+            "/api/spatial-canvases", json=copy.deepcopy(conflict_copy_request)
+        )
+        self.assertEqual(conflict_replay.status_code, 200, conflict_replay.text)
+        self.assertTrue(conflict_replay.json()["replayed"])
+        self.assertEqual(conflict_replay.json()["id"], conflict_copy.json()["id"])
+
+        changed_copy = copy.deepcopy(conflict_copy_request)
+        changed_copy["scene"]["elements"][0]["x"] = 999
+        changed_response = self.client.post("/api/spatial-canvases", json=changed_copy)
+        self.assertEqual(changed_response.status_code, 409, changed_response.text)
+        dangling_copy = copy.deepcopy(conflict_copy_request)
+        dangling_copy["client_request_id"] = "api-spatial-conflict-copy-dangling"
+        dangling_copy["scene"]["elements"][0]["customData"]["asset_id"] = "ast_missing"
+        dangling_response = self.client.post("/api/spatial-canvases", json=dangling_copy)
+        self.assertEqual(dangling_response.status_code, 404, dangling_response.text)
+        self.assertEqual(
+            len(self.client.get("/api/spatial-canvases").json()["canvases"]),
+            2,
+        )
+
     def test_canvas_api_and_command_api_share_the_durable_job_contract(self) -> None:
         source = self.client.post(
             "/api/assets/import?collection=cutout",

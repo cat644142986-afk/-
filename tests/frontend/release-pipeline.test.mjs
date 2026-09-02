@@ -57,6 +57,10 @@ test('sidecar build cannot overwrite the formal portable release', () => {
   assert.match(script, /"python\/canvas_export\.py"/);
   assert.match(script, /"python\/local_edit_contract\.py"/);
   assert.match(script, /"python\/spatial_canvas_contract\.py"/);
+  assert.match(script, /"python\/video_contract\.py"/);
+  assert.match(script, /videoFixtureRoot/);
+  assert.match(script, /Get-ChildItem -LiteralPath \$videoFixtureRoot -File -Recurse/);
+  assert.match(script, /Sort-Object FullName/);
   assert.match(script, /\.replacement-\$token/);
   assert.match(script, /\.previous-\$token/);
   assert.match(script, /sidecar-build\.lock/);
@@ -70,10 +74,24 @@ test('sidecar build cannot overwrite the formal portable release', () => {
   assert.match(spec, /'tokenizers'/);
   assert.doesNotMatch(spec, /collect_data_files\('transformers'\)/);
   assert.match(spec, /semantic_query_lexicon\.json'\), '\.'/);
+  assert.match(spec, /video_fixtures', 'offline-preview-v1'/);
   assert.match(script, /"python\/semantic_cutout\.py"/);
   assert.match(script, /"python\/semantic_grounding\.py"/);
   assert.match(script, /"python\/semantic_query\.py"/);
   assert.match(script, /"python\/semantic_query_lexicon\.json"/);
+});
+
+test('packaged schema upgrade gate preserves offline video evidence across restart', () => {
+  const gate = read('tools/verify_packaged_schema_upgrade.py');
+
+  assert.match(gate, /"python\/video_contract\.py": "image-to-video contract"/);
+  assert.match(gate, /manifest_tracks_video_contract/);
+  assert.match(gate, /\/api\/progress\/\{job_id\}/);
+  assert.match(gate, /\/api\/jobs\/\{job_id\}\/traces/);
+  assert.match(gate, /\/content\?download=true/);
+  assert.match(gate, /def _validate_packaged_video_restart\(/);
+  assert.match(gate, /"video_metrics": \{/);
+  assert.match(gate, /"idempotent_replay": replayed_video\.get\("created"\) is False/);
 });
 
 test('production frontend carries pinned third-party license notices', () => {

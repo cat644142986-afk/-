@@ -20,6 +20,7 @@
         "transparent": false,
         "center": true,
         "shadow": false,
+        "dragDropEnabled": false,
         "backgroundColor": "#F4F1EB"
       }
     ],

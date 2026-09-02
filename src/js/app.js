@@ -39,6 +39,7 @@ import { boundedAssetRenderList, createAssetManagerController } from './studio-a
 import { JOB_STATUS, MODE_CONFIG, MODE_IDS, PAGE_CONFIG, STAGE_IDS } from './studio-config.js';
 import {
   boundedJobsForDisplay,
+  jobAnnouncementCopy,
   jobFilterCounts,
   jobItemsForDisplay,
   jobsForFilter,
@@ -56,6 +57,8 @@ import { createSessionsController, formatStudioTime } from './studio-sessions.js
 import { createProductProfileController } from './studio-product-profiles.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
 import { createInfiniteCanvasWorkspaceController } from './infinite-canvas-workspace.js';
+import { APP_CLOSE_SAVE_TIMEOUT, createAppCloseCoordinator } from './app-close-lifecycle.js';
+import { isSpatialVideoJob } from './spatial-video.js';
 import {
   SPATIAL_DRAG_MIME,
   serializeSpatialDragItem,
@@ -169,6 +172,34 @@ const canvasController = createCanvasController({
 const infiniteCanvasWorkspace = createInfiniteCanvasWorkspaceController({
   onAction: handleSpatialAction,
   onFineEdit: handleSpatialFineEdit,
+  onVideoJobSubmitted: () => loadJobs(true),
+  onVideoJobSettled: () => loadJobs(true),
+});
+let removeAppCloseListener = null;
+function setAppCloseInteractionLocked(locked) {
+  const body = document.body;
+  document.documentElement.dataset.appClosing = locked ? 'true' : 'false';
+  if (!body) return;
+  body.inert = Boolean(locked);
+  if (locked) body.setAttribute('aria-busy', 'true');
+  else body.removeAttribute('aria-busy');
+}
+
+const appCloseCoordinator = createAppCloseCoordinator({
+  onStart: () => setAppCloseInteractionLocked(true),
+  prepareForClose: async () => {
+    await infiniteCanvasWorkspace.prepareForClose();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    return infiniteCanvasWorkspace.prepareForClose();
+  },
+  completeClose: () => API.completeAppClose(),
+  onFailure: (error) => {
+    setAppCloseInteractionLocked(false);
+    const detail = error?.code === APP_CLOSE_SAVE_TIMEOUT
+      ? '保存等待超时；窗口仍保持打开，请检查本地服务后再次关闭。'
+      : '窗口仍保持打开，未保存内容也已保留；恢复连接后再次关闭即可重试。';
+    toast(`窗口未关闭，最后修改尚未保存。${detail}`, 'error', 9000);
+  },
 });
 const sessionsController = createSessionsController({
   api: API,
@@ -868,6 +899,33 @@ function toast(message, type = 'info', duration = 1800, action = null) {
   }, duration);
 }
 
+async function bindAppCloseLifecycle() {
+  if (removeAppCloseListener) return true;
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      removeAppCloseListener = await API.onAppCloseRequested(appCloseCoordinator.handleCloseRequested);
+      return true;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 120));
+    }
+  }
+  console.error('Could not bind the application close lifecycle', lastError);
+  document.documentElement.dataset.closeLifecycle = 'failed';
+  toast('安全退出保护未能启动，请先不要关闭窗口并重启应用', 'error', 12000);
+  return false;
+}
+
+async function requestAppClose() {
+  try {
+    const requested = await API.closeApp();
+    if (requested === false) window.close();
+  } catch (error) {
+    toast(`无法请求关闭窗口：${formatApiError(error, '窗口控制暂不可用')}`, 'error', 6000);
+  }
+}
+
 function spatialItemForResult(item, overrides = {}) {
   const assetId = String(item?.asset_id || item?.id || '');
   return spatialItemFromAsset({
@@ -944,7 +1002,10 @@ async function sendJobToCanvas(jobOrId) {
     const response = await API.getJob(String(jobOrId || ''));
     job = response?.job || response;
   }
-  return addItemsToSpatialCanvas([spatialItemFromJob(job)], `${job.title || '任务'} 已发送到无限画布`);
+  return addItemsToSpatialCanvas([spatialItemFromJob(job, isSpatialVideoJob(job) ? {
+    lineage_parent_id: job?.parameters?.first_frame_asset_id || job?.snapshot?.source_asset_ids?.[0],
+    product_profile_version_id: job?.snapshot?.product_profile_version_id,
+  } : {})], `${job.title || '任务'} 已发送到无限画布`);
 }
 
 async function resolveWorkspaceSource(assetId) {
@@ -1061,6 +1122,7 @@ async function openSpatialCompare(context) {
 async function openSpatialTask(context) {
   const job = await spatialJob(context);
   if (!job?.id) throw new Error('当前任务引用已不可用');
+  if (isSpatialVideoJob(job)) return openVideoJobCanvas(job);
   if (resultIdsForJob(job).length) await openJobResults(job.id);
   else await openJobWorkspace(job);
 }
@@ -1075,7 +1137,7 @@ async function handleSpatialAction(action, context) {
     else if (action === 'export') await exportSpatialResult(context);
     else if (action === 'open-task') await openSpatialTask(context);
     else if (action === 'generate-video') {
-      toast('图生视频将在 IC5 接入；本次没有调用接口或消耗额度', 'info', 5200);
+      await infiniteCanvasWorkspace.openVideoComposer(context);
     }
   } catch (error) {
     toast(`画布操作未完成：${formatApiError(error)}`, 'error', 6000);
@@ -2307,6 +2369,7 @@ const PERMANENT_JOB_ERRORS = new Set([
   'INVALID_SOURCE_IMAGE', 'UNSUPPORTED_JOB_MODE', 'INVALID_VARIATION_COUNT',
   'INVALID_PRODUCT_DETECTION', 'NO_PRODUCTS_DETECTED', 'TOO_MANY_PRODUCTS_DETECTED',
   'INVALID_DELIVERY_PATH', 'INVALID_ADJUSTMENT_REFERENCE',
+  'VIDEO_FIXTURE_UNAVAILABLE', 'VIDEO_FIXTURE_INTEGRITY_FAILED',
 ]);
 
 function jobFailureCopy(item) {
@@ -2327,6 +2390,8 @@ function jobFailureCopy(item) {
     TOO_MANY_PRODUCTS_DETECTED: '图片中的产品数量超过当前安全拆分上限，请分组后重新导入。',
     INVALID_DELIVERY_PATH: '整夹交付路径未通过安全检查，需要重新载入源文件夹。',
     INVALID_ADJUSTMENT_REFERENCE: '上一版本结果已不可读取；原图和任务记录仍保留，需要从可用版本重新发起调整。',
+    VIDEO_FIXTURE_UNAVAILABLE: '离线视频预览资源缺失，请重新安装当前候选包；重复创建任务不会修复。',
+    VIDEO_FIXTURE_INTEGRITY_FAILED: '离线视频预览资源校验失败，请重新安装当前候选包；不要继续重试。',
     USER_CANCELED: '该项目已由你取消。',
     PROCESSOR_ERROR: '处理器未能完成该项目；可以单独重试，若再次失败请查看原始详情。',
   };
@@ -2340,6 +2405,7 @@ function jobFailureCopy(item) {
 }
 
 function retryableJobItems(job) {
+  if (isSpatialVideoJob(job)) return [];
   return (job?.items || []).filter((item) => (
     ['failed', 'interrupted'].includes(item.status) && !jobFailureCopy(item).permanent
   ));
@@ -2434,7 +2500,7 @@ function renderJobs(force = false) {
   } else if (!filteredJobs.length) {
     list.innerHTML = statusPanelHtml('empty', { title: '这个工作流还没有任务', detail: '切换上方筛选，或回到工作台发起新任务。', fill: true });
   } else {
-    const partialJobs = visibleJobs.filter((job) => job.status === 'partial');
+    const partialJobs = visibleJobs.filter((job) => job.status === 'partial' && !isSpatialVideoJob(job));
     const renderedJobIds = new Set(visibleJobs.map((job) => String(job.id)));
     const hiddenJobCount = filteredJobs.filter((job) => !renderedJobIds.has(String(job.id))).length;
     const partialSummary = partialJobs.length ? statusPanelHtml('partial', {
@@ -2443,6 +2509,7 @@ function renderJobs(force = false) {
       compact: true,
     }) : '';
     list.innerHTML = partialSummary + visibleJobs.map((job) => {
+      const videoJob = isSpatialVideoJob(job);
       const status = JOB_STATUS[job.status] || { label: job.status || '未知', tone: 'unknown' };
       const progress = Math.round(jobProgress(job) * 100);
       const counts = jobCounts(job);
@@ -2460,7 +2527,7 @@ function renderJobs(force = false) {
         const itemStatus = JOB_STATUS[item.status] || { label: item.status || '未知', tone: 'unknown' };
         const itemProgress = Math.round(itemCompletionProgress(item) * 100);
         const failure = jobFailureCopy(item);
-        const canRetryItem = ['failed', 'interrupted'].includes(item.status) && !failure.permanent;
+        const canRetryItem = !videoJob && ['failed', 'interrupted'].includes(item.status) && !failure.permanent;
         const itemProgressCopy = ['failed', 'interrupted', 'canceled'].includes(item.status)
           ? '已结束'
           : `完成度 ${itemProgress}%`;
@@ -2475,8 +2542,14 @@ function renderJobs(force = false) {
       const progressCopy = ['failed', 'partial', 'interrupted', 'canceled'].includes(job.status)
         ? '已结束'
         : `${progress}%`;
-      const outcome = status.tone === 'completed'
-        ? '成功项目已经锁定，不会因其他项目失败而重复执行。'
+      const outcome = videoJob
+        ? (['failed', 'interrupted', 'canceled'].includes(job.status)
+          ? '返回无限画布重新确认参数后再创建任务；系统不会自动重试。'
+          : (['running', 'queued', 'canceling', 'paused'].includes(job.status)
+            ? '视频任务在后台推进；可以安全取消，切换页面不会中断。'
+            : '视频原件和封面已写入素材账本，结果会回填创建它的画布。'))
+        : status.tone === 'completed'
+          ? '成功项目已经锁定，不会因其他项目失败而重复执行。'
         : (issueCount
           ? `${counts.completed} 个成功项目保持不变；${retryable.length} 个可重试，${issueCount - retryable.length} 个需要更换素材或设置。`
           : (['running', 'queued', 'canceling'].includes(status.tone)
@@ -2484,17 +2557,17 @@ function renderJobs(force = false) {
             : '任务现场、素材选择与参数快照均已保存在本地账本。'));
       const icon = status.tone === 'completed' ? '✓' : (['partial', 'failed', 'interrupted'].includes(status.tone) ? '!' : '↻');
       return `<article class="job-card job-card--${escapeHtml(status.tone)}" data-job-id="${escapeHtml(job.id)}" data-spatial-job-id="${escapeHtml(job.id)}" draggable="true" tabindex="-1">
-        <header><span><i class="job-card__icon">${icon}</i><small>${escapeHtml(MODE_CONFIG[job.mode]?.badge || '创作任务')} · ${escapeHtml(status.label)}</small><strong>${escapeHtml(job.title || MODE_CONFIG[job.mode]?.label || '创作任务')}</strong></span><span class="job-status job-status--${escapeHtml(status.tone)}">${counts.completed}/${counts.total}</span></header>
+        <header><span><i class="job-card__icon">${icon}</i><small>${escapeHtml(videoJob ? '视频' : MODE_CONFIG[job.mode]?.badge || '创作任务')} · ${escapeHtml(status.label)}</small><strong>${escapeHtml(job.title || MODE_CONFIG[job.mode]?.label || '创作任务')}</strong></span><span class="job-status job-status--${escapeHtml(status.tone)}">${counts.completed}/${counts.total}</span></header>
         <div class="job-progress"><span><i style="width:${progress}%"></i></span><strong>${progressCopy}</strong></div>
         <div class="job-counts"><span>${counts.total} 项</span><span>${counts.completed} 成功</span><span>${counts.failed} 失败</span><span>${counts.canceled} 取消</span><span>成功率 ${counts.successRate === null ? '—' : `${counts.successRate}%`}</span><time>${escapeHtml(formatStudioTime(job.updated_at || job.created_at))}</time></div>
         <p class="job-outcome"><i></i><span>${escapeHtml(outcome)}</span></p>
         ${items ? `<ul class="job-items ${itemsExpanded ? 'is-expanded' : ''}">${items}</ul>` : ''}
         ${(job.items || []).length > Math.max(5, visibleItems.length) || itemsExpanded ? `<button class="job-items-toggle" type="button" data-job-action="toggle-items" data-job-id="${escapeHtml(job.id)}" aria-expanded="${itemsExpanded}">${itemsExpanded ? '收起项目' : `查看全部 ${(job.items || []).length} 项`}</button>` : ''}
         <footer>
-          <button type="button" data-job-action="send-canvas" data-job-id="${escapeHtml(job.id)}">发送到画布</button>
-          ${hasResults ? `<button type="button" data-job-action="open-results" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-results', job.id) ? 'disabled aria-busy="true"' : ''}>打开结果</button>` : ''}
-          ${!hasResults ? `<button type="button" data-job-action="open-workspace" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-workspace', job.id) ? 'disabled aria-busy="true"' : ''}>回到现场</button>` : ''}
-          ${retryable.length ? `<button class="primary-job-action" type="button" data-job-action="retry-failed" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('retry-failed', job.id) ? 'disabled aria-busy="true"' : ''}>只重试失败项</button>` : ''}
+          ${videoJob ? `<button type="button" data-job-action="open-video-canvas" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-video-canvas', job.id) ? 'disabled aria-busy="true"' : ''}>${['failed', 'interrupted', 'canceled'].includes(job.status) ? '返回画布重新确认' : '打开画布'}</button>` : `<button type="button" data-job-action="send-canvas" data-job-id="${escapeHtml(job.id)}">发送到画布</button>`}
+          ${!videoJob && hasResults ? `<button type="button" data-job-action="open-results" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-results', job.id) ? 'disabled aria-busy="true"' : ''}>打开结果</button>` : ''}
+          ${!videoJob && !hasResults ? `<button type="button" data-job-action="open-workspace" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-workspace', job.id) ? 'disabled aria-busy="true"' : ''}>回到现场</button>` : ''}
+          ${!videoJob && retryable.length ? `<button class="primary-job-action" type="button" data-job-action="retry-failed" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('retry-failed', job.id) ? 'disabled aria-busy="true"' : ''}>只重试失败项</button>` : ''}
           ${canPause ? `<button type="button" data-job-action="pause" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('pause', job.id) ? 'disabled aria-busy="true"' : ''}>暂停任务</button>` : ''}
           ${canResume ? `<button type="button" data-job-action="resume" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('resume', job.id) ? 'disabled aria-busy="true"' : ''}>继续任务</button>` : ''}
           ${canCancel ? `<button class="danger" type="button" data-job-action="cancel" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('cancel', job.id) ? 'disabled aria-busy="true"' : ''}>取消任务</button>` : ''}
@@ -2507,7 +2580,10 @@ function renderJobs(force = false) {
   $$('[data-job-action]', list).forEach((button) => button.addEventListener('click', () => handleJobAction(button)));
   $$('[data-spatial-job-id]', list).forEach((card) => card.addEventListener('dragstart', (event) => {
     const job = state.jobs.find((entry) => String(entry.id) === String(card.dataset.spatialJobId));
-    if (job) writeSpatialDragData(event, spatialItemFromJob(job));
+    if (job) writeSpatialDragData(event, spatialItemFromJob(job, isSpatialVideoJob(job) ? {
+      lineage_parent_id: job?.parameters?.first_frame_asset_id || job?.snapshot?.source_asset_ids?.[0],
+      product_profile_version_id: job?.snapshot?.product_profile_version_id,
+    } : {}));
   }));
   state.jobsRenderSignature = signature;
   restoreJobListView(list, view);
@@ -2518,11 +2594,11 @@ function announceJobChanges(jobs) {
     const before = state.knownJobStatuses.get(job.id);
     state.knownJobStatuses.set(job.id, job.status);
     if (!before || before === job.status) return;
-    let message = '';
-    if (job.status === 'completed') { message = `${MODE_CONFIG[job.mode]?.label || '任务'}已完成`; toast(message, 'success'); }
-    else if (job.status === 'partial') { message = `${MODE_CONFIG[job.mode]?.label || '任务'}部分完成，失败项可重试`; toast(message, 'error', 5200); }
-    else if (job.status === 'failed') { message = `${MODE_CONFIG[job.mode]?.label || '任务'}失败，详情已保留`; toast(message, 'error', 5200); }
-    else if (job.status === 'canceled') { message = `${MODE_CONFIG[job.mode]?.label || '任务'}已取消`; toast(message); }
+    const { message, tone, duration } = jobAnnouncementCopy(
+      job,
+      MODE_CONFIG[job.mode]?.label || '任务',
+    );
+    if (message) toast(message, tone, duration);
     if (message) $('#job-status-announcer').textContent = message;
   });
 }
@@ -2600,7 +2676,12 @@ async function handleJobAction(button) {
   }
   const actionKey = jobActionKey(action, jobId, itemId);
   const isMutation = MUTATING_JOB_ACTIONS.has(action);
+  const job = state.jobs.find((entry) => String(entry.id) === String(jobId));
   if (jobActionDisabled(action, jobId, itemId)) return;
+  if (isSpatialVideoJob(job) && ['retry-item', 'retry-failed'].includes(action)) {
+    toast('视频任务不会自动重试，请返回画布重新确认参数', 'error', 5200);
+    return;
+  }
   state.jobActionsInFlight.add(actionKey);
   if (isMutation) state.jobMutationsInFlight.add(jobId);
   button.disabled = true;
@@ -2617,12 +2698,12 @@ async function handleJobAction(button) {
     else if (action === 'retry-item') { invalidateJobsRead(); await API.retryJob(jobId, [itemId]); toast('失败项已重新入队', 'success'); }
     else if (action === 'retry-failed') {
       invalidateJobsRead();
-      const job = state.jobs.find((entry) => entry.id === jobId);
       const ids = retryableJobItems(job).map((item) => item.id);
       if (!ids.length) throw new Error('没有可重试项目；永久失败项需要更换素材或设置');
       await API.retryJob(jobId, ids);
       toast(`${ids.length} 个失败项已重新入队`, 'success');
     } else if (action === 'send-canvas') await sendJobToCanvas(jobId);
+    else if (action === 'open-video-canvas') await openVideoJobCanvas(job || jobId);
     else if (action === 'open-results') await openJobResults(jobId);
     else if (action === 'open-workspace') {
       const response = await API.getJob(jobId);
@@ -2639,7 +2720,23 @@ async function handleJobAction(button) {
   }
 }
 
+async function openVideoJobCanvas(jobOrId) {
+  let job = typeof jobOrId === 'object' ? jobOrId : null;
+  if (!job?.id) {
+    const response = await API.getJob(String(jobOrId || ''));
+    job = response?.job || response;
+  }
+  if (!isSpatialVideoJob(job)) throw new Error('当前任务不是视频任务');
+  if (!$('#job-drawer').hidden) closeDrawer('jobs');
+  if (!$('#asset-drawer').hidden) closeDrawer('assets');
+  switchPage('canvas');
+  const target = await infiniteCanvasWorkspace.openVideoJob(job);
+  if (!target) throw new Error('视频任务未能在原画布中定位');
+  return target;
+}
+
 async function openJobWorkspace(job, announce = true) {
+  if (isSpatialVideoJob(job)) return openVideoJobCanvas(job);
   if (!job?.id || !MODE_CONFIG[job.mode]) throw new Error('任务工作流信息不完整');
   if (state.currentMode !== job.mode) switchMode(job.mode, true, false);
   await loadWorkspace(job.mode, true);
@@ -2686,6 +2783,7 @@ async function openJobWorkspace(job, announce = true) {
 async function openJobResults(jobId) {
   const response = await API.getJob(jobId);
   const job = response?.job || response;
+  if (isSpatialVideoJob(job)) return openVideoJobCanvas(job);
   const resultIds = resultIdsForJob(job);
   if (!resultIds.length) throw new Error('该任务还没有可打开的结果');
   const adjustment = adjustmentLineage(job);
@@ -2863,6 +2961,16 @@ async function exportSpatialResult(context) {
   if (!assetId) throw new Error('当前对象不是可导出的结果版本');
   const response = await API.getAsset(assetId, { timeoutMs: 10000 });
   const asset = response?.asset || response;
+  const video = asset?.kind === 'video' || String(asset?.mime || '').startsWith('video/');
+  if (video) {
+    const extension = String(asset.mime || '').includes('mp4') ? 'mp4' : 'webm';
+    const suggestedName = /\.[A-Za-z0-9]{2,5}$/.test(String(asset.name || ''))
+      ? asset.name
+      : `${asset.name || 'ProductAtelier-video'}.${extension}`;
+    await API.downloadAsset(assetId, suggestedName);
+    toast(`${asset.name || '视频结果'} 已导出`, 'success');
+    return;
+  }
   await saveResultItem({ ...asset, asset_id: assetId });
   toast(`${asset.name || '结果'} 已导出`, 'success');
 }
@@ -4034,10 +4142,10 @@ function bindEvents() {
   $('#modal-close').addEventListener('click', closeModal);
   $('#btn-min-dot').addEventListener('click', () => API.minimizeWindow().catch(() => {}));
   $('#btn-max-dot').addEventListener('click', () => API.toggleMaximize().catch(() => {}));
-  $('#btn-close-dot').addEventListener('click', () => API.closeApp().catch(() => window.close()));
+  $('#btn-close-dot').addEventListener('click', requestAppClose);
   $('#btn-spatial-min').addEventListener('click', () => API.minimizeWindow().catch(() => {}));
   $('#btn-spatial-max').addEventListener('click', () => API.toggleMaximize().catch(() => {}));
-  $('#btn-spatial-close').addEventListener('click', () => API.closeApp().catch(() => window.close()));
+  $('#btn-spatial-close').addEventListener('click', requestAppClose);
   const canvas = $('#preview-canvas');
   canvas.addEventListener('dragover', (event) => { event.preventDefault(); canvas.style.outline = '2px solid var(--coral)'; });
   canvas.addEventListener('dragleave', () => { canvas.style.outline = ''; });
@@ -4139,6 +4247,7 @@ async function connectBackend() {
 }
 
 async function init() {
+  await bindAppCloseLifecycle();
   API.reportStartupMilestone('dom-ready');
   window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
     API.reportStartupMilestone('first-paint');

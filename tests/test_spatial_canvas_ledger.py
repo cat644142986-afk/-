@@ -153,6 +153,56 @@ class SpatialCanvasLedgerTests(unittest.TestCase):
         self.assertEqual(restored["name"], "白底图对比")
         self.assertEqual(restored["current_version_id"], created["current_version_id"])
 
+    def test_create_with_initial_scene_is_atomic_idempotent_and_reference_safe(self) -> None:
+        scene = spatial_scene(self.asset["id"])
+        created = self.ledger.create_spatial_canvas(
+            name="并发冲突副本",
+            client_request_id="spatial-conflict-copy-1",
+            scene=scene,
+        )
+        replay = self.ledger.create_spatial_canvas(
+            name="并发冲突副本",
+            client_request_id="spatial-conflict-copy-1",
+            scene=copy.deepcopy(scene),
+        )
+        self.assertEqual(created["current_revision"], 1)
+        self.assertEqual(created["scene"]["elements"][0]["customData"]["asset_id"], self.asset["id"])
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["id"], created["id"])
+        self.assertEqual(len(self.ledger.list_spatial_canvases()), 1)
+        references = self.ledger.asset_reference_summary(self.asset["id"])
+        self.assertEqual(
+            references["references"]["spatial_scene_versions"],
+            [created["current_version_id"]],
+        )
+
+        changed = copy.deepcopy(scene)
+        changed["elements"][0]["x"] = 777
+        with self.assertRaises(IdempotencyConflictError):
+            self.ledger.create_spatial_canvas(
+                name="并发冲突副本",
+                client_request_id="spatial-conflict-copy-1",
+                scene=changed,
+            )
+
+        dangling = spatial_scene("ast_missing")
+        with self.assertRaises(KeyError):
+            self.ledger.create_spatial_canvas(
+                name="无效冲突副本",
+                client_request_id="spatial-conflict-copy-dangling",
+                scene=dangling,
+            )
+        self.assertEqual(len(self.ledger.list_spatial_canvases()), 1)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            empty_count = connection.execute(
+                "SELECT COUNT(*) FROM spatial_canvas_documents WHERE create_request_id = ?",
+                ("spatial-conflict-copy-dangling",),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(empty_count, 0)
+
     def test_scene_versions_are_replayable_deduplicated_and_optimistically_locked(self) -> None:
         canvas = self.ledger.create_spatial_canvas(
             name="版本测试", client_request_id="spatial-version-create"

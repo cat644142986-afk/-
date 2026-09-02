@@ -112,6 +112,36 @@ def candidate_processes(executable: Path) -> list[int]:
     return matches
 
 
+def build_window_checks(
+    result: dict[str, object],
+    *,
+    expected_primary_dpi: int,
+    expected_secondary_dpi: int | None,
+) -> dict[str, bool]:
+    checks = {
+        "primary_dpi_matches": result["primary_restored"]["dpi"] == expected_primary_dpi,
+        "primary_return_dpi_matches": result["primary_return"]["dpi"] == expected_primary_dpi,
+        "dwm_rounded": (
+            result["dwm"]["corner_query_hresult"] == 0
+            and result["dwm"]["corner_preference"] == 2
+        ),
+        "no_hard_window_region": result["dwm"]["window_region_type"] == 0,
+        "minimize_restore": (
+            result["minimize_restore"]["minimized"]
+            and result["minimize_restore"]["restored"]
+        ),
+        "maximize_restore": (
+            result["maximized"]["is_zoomed"]
+            and result["restore_after_maximize"]["dpi"] == expected_primary_dpi
+        ),
+    }
+    if expected_secondary_dpi is not None:
+        checks["secondary_dpi_matches"] = (
+            result["secondary_restored"]["dpi"] == expected_secondary_dpi
+        )
+    return checks
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", required=True)
@@ -128,6 +158,11 @@ def main() -> int:
     parser.add_argument("--secondary-width", type=int, default=2560)
     parser.add_argument("--secondary-height", type=int, default=1392)
     parser.add_argument("--secondary-dpi", type=int, default=96)
+    parser.add_argument(
+        "--skip-secondary",
+        action="store_true",
+        help="Verify only the active primary display and record that cross-monitor coverage was skipped",
+    )
     args = parser.parse_args()
 
     executable = Path(args.exe).resolve()
@@ -147,7 +182,19 @@ def main() -> int:
     env["PRODUCT_ATELIER_DATA_DIR"] = str(data_dir)
     process = subprocess.Popen([str(executable)], cwd=str(executable.parent), env=env)
     hwnd: int | None = None
-    result: dict[str, object] = {"label": args.label, "screenshots": {}}
+    result: dict[str, object] = {
+        "label": args.label,
+        "screenshots": {},
+        "coverage": {
+            "primary_monitor_verified": True,
+            "secondary_monitor_verified": not args.skip_secondary,
+            "cross_monitor_transition_verified": not args.skip_secondary,
+            "secondary_skip_reason": (
+                "No active secondary display was available for this requested run"
+                if args.skip_secondary else None
+            ),
+        },
+    }
     try:
         if not wait_until(lambda: find_process_window(process.pid) is not None, 15):
             raise RuntimeError("Candidate window did not become visible")
@@ -234,22 +281,23 @@ def main() -> int:
             "rect": list(actual_primary_after_restore),
         }
 
-        secondary_width = round(logical_width * args.secondary_dpi / 96)
-        secondary_height = round(logical_height * args.secondary_dpi / 96)
-        secondary_rect = (
-            args.secondary_x + max(0, (args.secondary_width - secondary_width) // 2),
-            args.secondary_y + max(0, (args.secondary_height - secondary_height) // 2),
-            secondary_width,
-            secondary_height,
-        )
-        actual_secondary = move_window(hwnd, process.pid, secondary_rect)
-        result["secondary_restored"] = {
-            "dpi": int(user32.GetDpiForWindow(hwnd)),
-            "rect": list(actual_secondary),
-        }
-        result["screenshots"]["secondary_restored"] = capture(
-            actual_secondary, output_dir / f"{args.label}-secondary-restored.png"
-        )
+        if not args.skip_secondary:
+            secondary_width = round(logical_width * args.secondary_dpi / 96)
+            secondary_height = round(logical_height * args.secondary_dpi / 96)
+            secondary_rect = (
+                args.secondary_x + max(0, (args.secondary_width - secondary_width) // 2),
+                args.secondary_y + max(0, (args.secondary_height - secondary_height) // 2),
+                secondary_width,
+                secondary_height,
+            )
+            actual_secondary = move_window(hwnd, process.pid, secondary_rect)
+            result["secondary_restored"] = {
+                "dpi": int(user32.GetDpiForWindow(hwnd)),
+                "rect": list(actual_secondary),
+            }
+            result["screenshots"]["secondary_restored"] = capture(
+                actual_secondary, output_dir / f"{args.label}-secondary-restored.png"
+            )
 
         actual_primary_return = move_window(hwnd, process.pid, primary_rect)
         result["primary_return"] = {
@@ -260,15 +308,11 @@ def main() -> int:
             actual_primary_return, output_dir / f"{args.label}-primary-return.png"
         )
 
-        result["checks"] = {
-            "primary_dpi_matches": primary_dpi == args.expected_primary_dpi,
-            "secondary_dpi_matches": result["secondary_restored"]["dpi"] == args.secondary_dpi,
-            "primary_return_dpi_matches": result["primary_return"]["dpi"] == args.expected_primary_dpi,
-            "dwm_rounded": int(corner_hresult) == 0 and corner_preference.value == 2,
-            "no_hard_window_region": region_type == 0,
-            "minimize_restore": minimized and restored_from_minimize,
-            "maximize_restore": maximized and result["restore_after_maximize"]["dpi"] == args.expected_primary_dpi,
-        }
+        result["checks"] = build_window_checks(
+            result,
+            expected_primary_dpi=args.expected_primary_dpi,
+            expected_secondary_dpi=None if args.skip_secondary else args.secondary_dpi,
+        )
         result["passed"] = all(result["checks"].values())
         (output_dir / "summary.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"

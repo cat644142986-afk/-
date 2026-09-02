@@ -1,0 +1,167 @@
+{
+  "provider": "offline-preview-v1",
+  "fixture_count": 20,
+  "total_bytes": 350606,
+  "fixtures": [
+    {
+      "path": "16x9/10s.webm",
+      "sha256": "98a7b6883901f2066128c1499a07521e9d3d9a38505fac27168ea4d22dd57d47",
+      "size_bytes": 27359,
+      "width": 320,
+      "height": 180,
+      "duration_seconds": 10
+    },
+    {
+      "path": "16x9/3s.webm",
+      "sha256": "2e801fec75cd868501e70e1e1bc8c37c4e79f031cb50d7fb1eb2d14ac1fa5fe1",
+      "size_bytes": 6696,
+      "width": 320,
+      "height": 180,
+      "duration_seconds": 3
+    },
+    {
+      "path": "16x9/5s.webm",
+      "sha256": "7ba6ab42f282e50ef9d3e23021d0550661223c6fe81d65d48e92ec9782a90dd2",
+      "size_bytes": 12273,
+      "width": 320,
+      "height": 180,
+      "duration_seconds": 5
+    },
+    {
+      "path": "16x9/8s.webm",
+      "sha256": "764e2659f1fb87d6511f233241f65f4ad7738350589c3da4c13185c15cf11136",
+      "size_bytes": 20960,
+      "width": 320,
+      "height": 180,
+      "duration_seconds": 8
+    },
+    {
+      "path": "1x1/10s.webm",
+      "sha256": "475b55267a8b894699af959dad94e7e221ea33cb61a00b99ba47db6fdafee979",
+      "size_bytes": 28857,
+      "width": 320,
+      "height": 320,
+      "duration_seconds": 10
+    },
+    {
+      "path": "1x1/3s.webm",
+      "sha256": "a424f84e7a61560225edc90eeff1c2def43c0399c6638d3ded4e3d81aecaa054",
+      "size_bytes": 7895,
+      "width": 320,
+      "height": 320,
+      "duration_seconds": 3
+    },
+    {
+      "path": "1x1/5s.webm",
+      "sha256": "ce81681ecba8c5aba09eef4a975ea7f5ed4ae7fd35a7ad8027808a2276885c5e",
+      "size_bytes": 13828,
+      "width": 320,
+      "height": 320,
+      "duration_seconds": 5
+    },
+    {
+      "path": "1x1/8s.webm",
+      "sha256": "75dd78d4edbd50b19fae78c4decbf287645908f4953ffd68155294831d5d9cc3",
+      "size_bytes": 23088,
+      "width": 320,
+      "height": 320,
+      "duration_seconds": 8
+    },
+    {
+      "path": "3x4/10s.webm",
+      "sha256": "5d357ae0c841a796b3f2490c44b1a3aa41e9ef3f4c7b17549791ad578508af94",
+      "size_bytes": 27624,
+      "width": 240,
+      "height": 320,
+      "duration_seconds": 10
+    },
+    {
+      "path": "3x4/3s.webm",
+      "sha256": "f80d6599705ed3c372f70d63b291d74ca6156dac01fd75681ac70d0e552baf6f",
+      "size_bytes": 7180,
+      "width": 240,
+      "height": 320,
+      "duration_seconds": 3
+    },
+    {
+      "path": "3x4/5s.webm",
+      "sha256": "19f45d91ceb43d1dee2410d2ebb7d5339d3c3bf45624e35e8d5e752c67161a05",
+      "size_bytes": 12235,
+      "width": 240,
+      "height": 320,
+      "duration_seconds": 5
+    },
+    {
+      "path": "3x4/8s.webm",
+      "sha256": "b8447ed17b70dfcaa948dcf0d402e0a7f2a02690520dfa880b9aef1e0dbd61a3",
+      "size_bytes": 21916,
+      "width": 240,
+      "height": 320,
+      "duration_seconds": 8
+    },
+    {
+      "path": "4x3/10s.webm",
+      "sha256": "24df38552d9ea61e64ce222862f3bec28caef510f662f187bdeecc2d80cf4e2c",
+      "size_bytes": 28725,
+      "width": 320,
+      "height": 240,
+      "duration_seconds": 10
+    },
+    {
+      "path": "4x3/3s.webm",
+      "sha256": "28e40481961f5e9973e6516c9569f1f67be7cd6ac60eda40b1d1c4bcbe31f87a",
+      "size_bytes": 7293,
+      "width": 320,
+      "height": 240,
+      "duration_seconds": 3
+    },
+    {
+      "path": "4x3/5s.webm",
+      "sha256": "77a3b5203103e69a073fc11876dad9e2ab7174428a51b79636817ca34d377cfd",
+      "size_bytes": 13299,
+      "width": 320,
+      "height": 240,
+      "duration_seconds": 5
+    },
+    {
+      "path": "4x3/8s.webm",
+      "sha256": "c4d8d2c6a54c05f76905bc519b7940e26c3ca8c11a4c8f0b568a045b3371f36e",
+      "size_bytes": 22812,
+      "width": 320,
+      "height": 240,
+      "duration_seconds": 8
+    },
+    {
+      "path": "9x16/10s.webm",
+      "sha256": "4e5e1985705f2dbb0668218668a67e3bbeefa5c73a49ed22da82212c0a9d6e91",
+      "size_bytes": 28364,
+      "width": 180,
+      "height": 320,
+      "duration_seconds": 10
+    },
+    {
+      "path": "9x16/3s.webm",
+      "sha256": "90e3afd2edc39cc401f0a60c76932b9a8305c950cc6010379e62add6bc90da66",
+      "size_bytes": 6691,
+      "width": 180,
+      "height": 320,
+      "duration_seconds": 3
+    },
+    {
+      "path": "9x16/5s.webm",
+      "sha256": "5e1ffc0e25679e0ef98b5342eeb3a0bfae3584a1e81cd56791d59227720b3b93",
+      "size_bytes": 11921,
+      "width": 180,
+      "height": 320,
+      "duration_seconds": 5
+    },
+    {
+      "path": "9x16/8s.webm",
+      "sha256": "48c054d094b687644cd4f0bed53ca6727e6eac6704ff81cabd9fc890364277d2",
+      "size_bytes": 21590,
+      "width": 180,
+      "height": 320,
+      "duration_seconds": 8
+    }
+  ]
+}
