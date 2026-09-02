@@ -1,5 +1,6 @@
 export const PAGE_CONFIG = {
   process: { eyebrow: 'PRODUCT ATELIER', title: '创作', subtitle: '素材与任务现场' },
+  canvas: { eyebrow: 'SPATIAL WORKSPACE', title: '无限画布', subtitle: '方案、素材与结果空间' },
   compare: { eyebrow: 'QUALITY REVIEW', title: '评审', subtitle: '版本对比与设计判断' },
   history: { eyebrow: 'CREATION LEDGER', title: '会话', subtitle: '恢复项目现场与历史结果' },
   memory: { eyebrow: 'DESIGN DNA', title: '成长', subtitle: '设计偏好与知识审核' },

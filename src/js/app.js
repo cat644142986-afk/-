@@ -55,6 +55,7 @@ import { createCanvasController } from './studio-canvas.js';
 import { createSessionsController, formatStudioTime } from './studio-sessions.js';
 import { createProductProfileController } from './studio-product-profiles.js';
 import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from './studio-state.js';
+import { createInfiniteCanvasWorkspaceController } from './infinite-canvas-workspace.js';
 import { statusPanelHtml } from './status-view.js';
 import {
   SEMANTIC_CANVAS_PALETTE,
@@ -155,6 +156,7 @@ const canvasController = createCanvasController({
     if (view === 'canvas') workflowDock.close(false);
   },
 });
+const infiniteCanvasWorkspace = createInfiniteCanvasWorkspaceController();
 const sessionsController = createSessionsController({
   api: API,
   state,
@@ -907,8 +909,10 @@ function switchPage(page) {
   $('#page-eyebrow').textContent = config.eyebrow;
   $('#page-title').textContent = config.title;
   $('#page-subtitle').textContent = config.subtitle;
+  $('.app-shell')?.classList.toggle('is-spatial-workspace', page === 'canvas');
   if (page !== 'process') workflowDock.close(false);
   canvasController.setPage(page === 'process');
+  infiniteCanvasWorkspace.setPage(page === 'canvas');
   if (page === 'history') sessionsController.load();
   if (page === 'memory') knowledgeController.load();
   if (page === 'settings') settingsController.load();
@@ -3762,6 +3766,9 @@ function bindEvents() {
   $('#btn-min-dot').addEventListener('click', () => API.minimizeWindow().catch(() => {}));
   $('#btn-max-dot').addEventListener('click', () => API.toggleMaximize().catch(() => {}));
   $('#btn-close-dot').addEventListener('click', () => API.closeApp().catch(() => window.close()));
+  $('#btn-spatial-min').addEventListener('click', () => API.minimizeWindow().catch(() => {}));
+  $('#btn-spatial-max').addEventListener('click', () => API.toggleMaximize().catch(() => {}));
+  $('#btn-spatial-close').addEventListener('click', () => API.closeApp().catch(() => window.close()));
   const canvas = $('#preview-canvas');
   canvas.addEventListener('dragover', (event) => { event.preventDefault(); canvas.style.outline = '2px solid var(--coral)'; });
   canvas.addEventListener('dragleave', () => { canvas.style.outline = ''; });
@@ -3800,6 +3807,7 @@ function bindEvents() {
   window.addEventListener('beforeunload', () => {
     workflowDock.destroy();
     canvasController.flush();
+    infiniteCanvasWorkspace.destroy();
     if (state.jobPollTimer) window.clearTimeout(state.jobPollTimer);
     state.draftSaveTimers.forEach((timer) => window.clearTimeout(timer));
     state.draftSaveTimers.clear();
@@ -3869,6 +3877,7 @@ async function init() {
   setupAppearance();
   bindEvents();
   canvasController.bind();
+  infiniteCanvasWorkspace.bind();
   workflowDock.sync();
   compareController.bind();
   restoreWorkspaceState();

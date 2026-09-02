@@ -70,6 +70,7 @@
       </div>
       <nav class="rail-cluster" aria-label="主要工作区">
         <button class="rail-button active" type="button" data-page="process" aria-label="创作" aria-current="page" title="创作"><svg viewBox="0 0 24 24"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/><path d="m18.5 15 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z"/></svg><span>创作</span></button>
+        <button class="rail-button" type="button" data-page="canvas" aria-label="无限画布" title="无限画布"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="5" y="14" width="6" height="7" rx="1"/><rect x="15" y="13" width="6" height="7" rx="1"/><path d="M10 6h4M8 10v4M17 9v4M11 17h4"/></svg><span>无限画布</span></button>
         <button class="rail-button" type="button" data-page="history" aria-label="会话" title="会话"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg><span>会话</span></button>
         <button class="rail-button" type="button" data-page="memory" aria-label="成长" title="成长"><svg viewBox="0 0 24 24"><path d="M9 3h6a2 2 0 0 1 2 2v2a4 4 0 0 1 3 4v2a4 4 0 0 1-3 4v2a2 2 0 0 1-2 2h-2v-6h-2v6H9a2 2 0 0 1-2-2v-2a4 4 0 0 1-3-4v-2a4 4 0 0 1 3-4V5a2 2 0 0 1 2-2Z"/><path d="M7 8h3M14 8h3M7 16h3M14 16h3"/></svg><span>成长</span></button>
       </nav>
@@ -87,7 +88,6 @@
       <header class="app-header" data-tauri-drag-region>
         <div class="page-heading" data-tauri-drag-region><p class="sr-only" id="page-eyebrow">PRODUCT ATELIER</p><div class="page-heading__line" data-tauri-drag-region><h1 id="page-title">创作</h1><p id="page-subtitle">素材与任务现场</p></div></div>
         <div class="header-actions" data-tauri-no-drag>
-          <div class="studio-view-switch" id="studio-view-switch" role="group" aria-label="创作方式"><button class="is-active" type="button" data-studio-view="quick" aria-pressed="true">快捷处理</button><button type="button" data-studio-view="canvas" aria-pressed="false">自由画布</button></div>
           <button class="knowledge-pill" id="btn-open-intelligence" type="button"><span class="knowledge-pulse"></span><span><strong>设计依据</strong><small id="knowledge-pill-text">正在连接知识库</small></span><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button>
           <button class="job-dock-pill" id="btn-job-dock" type="button" aria-haspopup="dialog" aria-expanded="false"><span class="job-dock-dot" id="job-dock-dot"></span><span><strong>任务中心</strong><small id="job-dock-summary">正在恢复任务</small></span><output id="job-dock-progress">0%</output></button>
           <div class="traffic-lights" aria-label="窗口控制"><button class="traffic-light traffic-light--close" id="btn-close-dot" type="button" aria-label="关闭"></button><button class="traffic-light traffic-light--min" id="btn-min-dot" type="button" aria-label="最小化"></button><button class="traffic-light traffic-light--max" id="btn-max-dot" type="button" aria-label="最大化"></button></div>
@@ -223,6 +223,38 @@
 
             <footer class="canvas-workspace__footer"><div class="canvas-save-state" id="canvas-save-state" data-kind="saved" role="status" aria-live="polite"><span></span><p><strong id="canvas-save-title">画布尚未创建</strong><small id="canvas-save-detail">添加素材后写入本地版本账本</small></p><button id="canvas-save-retry" type="button" hidden><i data-lucide="refresh-cw" aria-hidden="true"></i>重试保存</button><button id="canvas-save-reload" type="button" hidden><i data-lucide="rotate-ccw" aria-hidden="true"></i>重新同步</button></div><div class="canvas-document-meta"><span id="canvas-layer-count">0 图层</span><strong id="canvas-artboard-spec">1600 × 1200 px</strong></div></footer>
           </section>
+        </section>
+
+        <section class="app-page spatial-page" id="page-canvas" data-page-name="canvas" hidden>
+          <div class="spatial-workspace" data-adapter="memory">
+            <header class="spatial-toolbar">
+              <div class="spatial-toolbar__identity">
+                <button class="spatial-icon-button" id="btn-spatial-home" type="button" aria-label="返回画布列表" title="返回画布列表" hidden><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+                <span class="spatial-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+                <div><p>SPATIAL WORKSPACE</p><h2 id="spatial-current-name">画布空间</h2></div>
+              </div>
+              <div class="spatial-toolbar__actions">
+                <form class="spatial-rename-form" id="spatial-rename-form" hidden><label class="sr-only" for="spatial-rename-input">画布名称</label><input id="spatial-rename-input" maxlength="60" autocomplete="off" /><button type="submit">保存</button><button id="spatial-rename-cancel" type="button" aria-label="取消重命名">取消</button></form>
+                <button class="spatial-secondary-button" id="btn-spatial-rename" type="button" aria-label="重命名当前画布" title="重命名当前画布" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10Z"/><path d="m13.5 7.5 3 3"/></svg><span>重命名</span></button>
+                <button class="spatial-primary-button" id="btn-spatial-new" type="button" aria-label="新建画布" title="新建画布"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>新建画布</span></button>
+                <div class="traffic-lights spatial-traffic-lights" aria-label="窗口控制"><button class="traffic-light traffic-light--close" id="btn-spatial-close" type="button" aria-label="关闭"></button><button class="traffic-light traffic-light--min" id="btn-spatial-min" type="button" aria-label="最小化"></button><button class="traffic-light traffic-light--max" id="btn-spatial-max" type="button" aria-label="最大化"></button></div>
+              </div>
+            </header>
+
+            <section class="spatial-library" id="spatial-library" aria-labelledby="spatial-library-title">
+              <div class="spatial-library__heading"><div><span>RECENT CANVASES</span><h2 id="spatial-library-title">最近画布</h2><p>本次会话</p></div><output id="spatial-canvas-count">0 个画布</output></div>
+              <div class="spatial-library__empty" id="spatial-library-empty"><span class="spatial-empty-mark" aria-hidden="true"><i></i><i></i><i></i></span><h3>创建第一张画布</h3><button id="btn-spatial-empty-new" type="button">新建画布</button></div>
+              <div class="spatial-canvas-list" id="spatial-canvas-list" aria-label="最近画布" hidden></div>
+            </section>
+
+            <section class="spatial-editor" id="spatial-editor" aria-label="无限画布编辑区" hidden>
+              <div class="spatial-editor-loading" id="spatial-editor-loading" role="status" aria-live="polite"><span></span><strong>正在载入画布</strong></div>
+              <div class="spatial-canvas-host" id="spatial-canvas-host" tabindex="-1" hidden></div>
+              <aside class="spatial-inspector" id="spatial-inspector" aria-label="对象操作" hidden></aside>
+            </section>
+
+            <footer class="spatial-status"><span id="spatial-save-state" role="status" aria-live="polite">本次会话 · 画布列表</span><strong>Product Atelier</strong></footer>
+          </div>
         </section>
 
         <section class="app-page" id="page-compare" data-page-name="compare" hidden>
