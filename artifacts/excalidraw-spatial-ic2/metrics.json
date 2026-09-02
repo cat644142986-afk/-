@@ -1,0 +1,115 @@
+{
+  "captured_at": "2026-09-02",
+  "branch": "codex/excalidraw-infinite-canvas",
+  "implementation_parent": "4bfd50d28db439842e22f4b18145294e1d6683b1",
+  "implementation_commit": "ff9bb0c1a89dd54f110785d0e9b3d52055c50d34",
+  "formal_release": {
+    "git_commit": "93539f0c9ec857d22d3751bb836ff722579cd8db",
+    "contract": "2026-09-02.3",
+    "schema": 7,
+    "size_bytes": 375974706,
+    "size_mib": 358.56,
+    "app_sha256": "F0D1A07313A47258CD17FA4143DF4F0069D6E075CAA9D22B00EB7220A15685A7",
+    "sidecar_sha256": "2AF3FC31A90961D77A41BE6CECAFD3559E0D0FFFB505FD9BBEA9EC7C61293894",
+    "manifest_sha256": "287042C051B97CC9F60C42F670C470EBEC965042378B790E0F4F13FCC9718A38",
+    "modified": false
+  },
+  "workspace": {
+    "primary_navigation_entry": true,
+    "studio_canvas_switch_removed": true,
+    "inspector_default_hidden": true,
+    "adapter": "memory",
+    "schema_changed": false,
+    "formal_ledger_accessed": false,
+    "browser_storage_used": false,
+    "scene_files_forced_empty": true
+  },
+  "lazy_loading": {
+    "contract": "infinite-canvas-lazy-boundary-v1",
+    "quick_start_excalidraw_requests": 0,
+    "library_excalidraw_requests": 0,
+    "editor_load_trigger": "new-or-open-canvas",
+    "initial_modulepreload_count": 0,
+    "entry_file": "assets/index-BbcyKh32.js",
+    "island_file": "assets/percentages-BXMCSKIN-CE0VqO4V.js",
+    "island_css": "assets/percentages-BXMCSKIN-C3XYcSFc.css"
+  },
+  "interaction": {
+    "new_canvas": "passed",
+    "rename": "passed",
+    "recent_sort": "passed",
+    "scene_thumbnail": "passed",
+    "draw_rectangle": "passed",
+    "undo": "passed",
+    "return_to_library": "passed",
+    "cross_page_return": "passed",
+    "keyboard_focus": "passed",
+    "reduced_motion_rule": "passed",
+    "console_errors": 0,
+    "console_warnings": 0
+  },
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 900,
+      "view": "editor",
+      "overflow_x": 0,
+      "overflow_y": 0,
+      "screenshot": "artifacts/excalidraw-spatial-ic2/viewport-1440x900-editor.png",
+      "bytes": 50804,
+      "sha256": "EAE9905EE3364FFECC11CAB07CFF2269781E8EE63D8F62F8671BEC8F64F2B3BF"
+    },
+    {
+      "width": 1280,
+      "height": 720,
+      "view": "editor",
+      "overflow_x": 0,
+      "overflow_y": 0,
+      "screenshot": "artifacts/excalidraw-spatial-ic2/viewport-1280x720-editor.png",
+      "bytes": 34557,
+      "sha256": "7AD0F20EE4FFA5EE46157C80BAC00E796EF37148930CAF0B217F04A02273B1AD"
+    },
+    {
+      "width": 960,
+      "height": 600,
+      "view": "library",
+      "overflow_x": 0,
+      "overflow_y": 0,
+      "screenshot": "artifacts/excalidraw-spatial-ic2/viewport-960x600-library.png",
+      "bytes": 26973,
+      "sha256": "9C525C5206805981C425A9BFA02D2DD79ADA4B66EB41D0BF765B06A39E843076"
+    }
+  ],
+  "build": {
+    "dist_bytes": 10570424,
+    "dist_mib": 10.08,
+    "projected_formal_portable_mib": 368.64,
+    "portable_limit_mib": 450
+  },
+  "dependencies": {
+    "excalidraw": "0.18.1",
+    "react": "18.3.1",
+    "react_dom": "18.3.1",
+    "package_lock_sha256": "A0758630BC38B94F76D71D0CB74D72AE5BC20829073C2A613F0F1651719F86BD",
+    "dependency_instances_added": 239,
+    "existing_dependency_versions_changed": 0,
+    "dependency_instances_removed": 0,
+    "audit": {
+      "critical": 0,
+      "high": 0,
+      "moderate": 0,
+      "low": 0,
+      "total": 0
+    }
+  },
+  "tests": {
+    "frontend": { "passed": 159, "total": 159 },
+    "python": { "passed": 338, "skipped": 1, "total": 339 },
+    "vite_production_build": "passed",
+    "canvas_bundle_contract": "passed",
+    "rust_custom_protocol_check": "passed",
+    "python_compileall": "passed",
+    "controlled_javascript_syntax_files": 52,
+    "git_whitespace": "passed"
+  }
+}

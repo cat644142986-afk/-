@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-02<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `93539f0c9ec857d22d3751bb836ff722579cd8db`，contract `2026-09-02.3`、SQLite schema v7、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo 和 outpaint 只写新增区域均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。同一 artifact 的 NSIS 已完成重建、隔离安装、安装态应用/sidecar/schema-outpaint 门禁、静默卸载和快捷方式恢复，形成未签名内部候选；代码签名的一键构建、先签后记 manifest、验签、隔离安装与失败保护也已固化，但由于没有外部代码签名证书，仍不能生成公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0–G3 已完成并正式发布，`app.js` 低耦合拆分与生产视觉 token 已在 G0 关闭。G4 情境式创作副驾继续等待用户重新确认预算；用户于 2026-09-02 把独立无限画布提升为当前优先级，G1C 的 ADR 和隔离 PoC 已完成，下一游标为生产一级入口与懒加载边界，G5 确定性质检基础顺延。<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `93539f0c9ec857d22d3751bb836ff722579cd8db`，contract `2026-09-02.3`、SQLite schema v7、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo 和 outpaint 只写新增区域均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。同一 artifact 的 NSIS 已完成重建、隔离安装、安装态应用/sidecar/schema-outpaint 门禁、静默卸载和快捷方式恢复，形成未签名内部候选；代码签名的一键构建、先签后记 manifest、验签、隔离安装与失败保护也已固化，但由于没有外部代码签名证书，仍不能生成公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0–G3 已完成并正式发布，`app.js` 低耦合拆分与生产视觉 token 已在 G0 关闭。G4 情境式创作副驾继续等待用户重新确认预算；用户于 2026-09-02 把独立无限画布提升为当前优先级，G1C 的 ADR、隔离 PoC 和 IC2 生产一级入口/懒加载/画布列表源码检查点已完成，下一游标为 IC3 schema v8 与不可变 scene 版本，G5 确定性质检基础顺延。<br>
 > 当前开发分支：`codex/excalidraw-infinite-canvas`（基于 `codex/master-roadmap-phase-0-1` 的 `9faf87e`）<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -1904,19 +1904,23 @@ G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁
 - 固定 Excalidraw 0.18.1、React/React DOM 18.3.1，补全 MIT NOTICE 与源码链接；tldraw 因生产许可排除，InvokeAI 仅作交互参考。
 - 正式保护基线：artifact `93539f0`、contract `2026-09-02.3`、schema v7、358.56 MiB。
 
-#### IC1：隔离 PoC（已通过，待检查点提交）
+#### IC1：隔离 PoC（已提交）
 
 - 200 张代理图、20 个视频封面、5 个 Frame、40 条血缘和 270 元素已通过；`renderEmbeddable`、完整 `customData`、保存恢复、内容指纹防抖和无 Base64/机器路径 scene 已验证。
 - 真实浏览器通过视频 0→1 按需加载、播放/停止、绘制、拖动、撤销/重做和重启恢复；1440×900、1280×720、960×600 均无页面溢出、控制台 0 error/warning。
 - PoC dist 为 20.14 MiB；最坏静态相加后正式目录约 378.70 MiB，低于 450 MiB。Mermaid 类按需 chunk 约 4.03 MiB，字体 12.58 MiB，下一阶段必须证明懒加载边界。
 - 详细证据：`docs/excalidraw-spatial-poc-checkpoint-2026-09-02.md` 与 `artifacts/excalidraw-spatial-poc/metrics.json`。
+- 提交 `4bfd50d28db439842e22f4b18145294e1d6683b1` 与标签 `checkpoint-2026-09-02-excalidraw-spatial-poc` 已推送，作为 IC2 回滚点。
 
-#### IC2：生产入口、懒加载与画布列表
+#### IC2：生产入口、懒加载与画布列表（已完成源码检查点）
 
 - 根依赖锁定后以动态 `import()` 加载 React/Excalidraw island；快捷处理冷启动的 network/execute 记录中不得出现画布 chunk。
 - 新增左侧一级入口，移除 Studio 顶部自由画布切换；画布页只保留全局左栏，检查器默认收起。
 - 提供画布列表、新建、重命名、最近打开和缩略图；先接隔离内存 adapter，schema 迁移前不得写正式账本。
 - 门禁：生产 Vite chunk 边界、快捷处理启动基线、三档浏览器、键盘焦点、reduced motion、返回现场、G1-G3 前端回归。回滚点为 IC1 标签。
+- 实现提交 `ff9bb0c1a89dd54f110785d0e9b3d52055c50d34` 已完成上述范围。快捷处理首屏和画布列表均为 0 个 Excalidraw/React island 请求，新建或打开画布后才加载；三档浏览器零溢出、控制台 0 error/warning，前端 159/159、Python 339 项、Vite、bundle、Rust/Tauri、compileall、受控 JS 语法和 Git whitespace 全绿。
+- production dist 为 `10,570,424 bytes`，预计正式目录 368.64 MiB，低于 450 MiB；`npm audit --omit=dev` 为 0 漏洞。IC2 仍只使用内存 adapter，未改 schema v7、正式账本、正式目录或快捷方式。
+- 详细证据：`docs/infinite-canvas-ic2-checkpoint-2026-09-02.md` 与 `artifacts/excalidraw-spatial-ic2/metrics.json`；检查点标签 `checkpoint-2026-09-02-infinite-canvas-ic2`。
 
 #### IC3：schema v8 与不可变 scene 版本
 
@@ -1947,4 +1951,4 @@ G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁
 
 #### 当前游标
 
-提交并推送 IC1 检查点后进入 IC2。G4 Agent、G5 质检、公开签名证书、多轨时间线和本地大模型均不在当前游标内，不能阻塞无限画布确定性工作。
+IC2 检查点提交并推送后进入 IC3 schema v8 与不可变 scene 版本。G4 Agent、G5 质检、公开签名证书、多轨时间线和本地大模型均不在当前游标内，不能阻塞无限画布确定性工作。
