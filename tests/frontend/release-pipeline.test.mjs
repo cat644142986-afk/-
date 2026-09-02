@@ -10,21 +10,29 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'u
 test('formal portable promotion is candidate-first and rollback-capable', () => {
   const script = read('tools/dev.ps1');
   const stage = script.indexOf('$PromotionTool stage');
+  const reviewedIdentity = script.indexOf('$reviewedCandidateIdentitySha256 =');
   const candidateSmoke = script.indexOf('-PortableDir $CandidateDir');
   const begin = script.indexOf('$PromotionTool begin');
+  const boundIdentity = script.indexOf(
+    '--candidate-identity-sha256 $reviewedCandidateIdentitySha256',
+  );
   const formalSmoke = script.indexOf('-PortableDir $PortableDir', candidateSmoke + 1);
   const rollback = script.indexOf('$PromotionTool rollback');
   const finalize = script.indexOf('$PromotionTool finalize');
   const shortcut = script.indexOf('CreateShortcut($temporaryShortcut)');
 
   assert.ok(stage >= 0, 'candidate staging must be present');
+  assert.ok(reviewedIdentity > stage, 'candidate stage output must publish the reviewed identity');
+  assert.ok(candidateSmoke > reviewedIdentity, 'candidate smoke must use the captured identity');
   assert.ok(candidateSmoke > stage, 'candidate smoke must follow candidate staging');
   assert.ok(begin > candidateSmoke, 'formal promotion must follow candidate smoke');
+  assert.ok(boundIdentity > begin, 'promotion must require the exact reviewed candidate identity');
   assert.ok(formalSmoke > begin, 'formal smoke must follow promotion');
   assert.ok(rollback > begin, 'promotion failures must have a rollback path');
   assert.ok(finalize > formalSmoke, 'finalization must follow formal smoke');
   assert.ok(shortcut > finalize, 'desktop entry must be published after finalization');
   assert.match(script, /transaction-id \$promotionTransactionId/);
+  assert.match(script, /identity_receipt\.sha256/);
   assert.match(script, /File\]::Replace\(\$temporaryShortcut, \$desktopShortcut, \$shortcutBackup, \$true\)/);
   assert.doesNotMatch(script, /File\]::Replace\(\$temporaryShortcut, \$desktopShortcut, \$null\)/);
   assert.match(script, /previous desktop shortcut was restored/i);
@@ -127,6 +135,7 @@ test('all Windows entry points use the manifest-producing release chain', () => 
   const signedInstaller = read('build-signed-installer.bat');
   const python = read('build-python.bat');
   const buildRequirements = read('python/requirements-build.txt');
+  const testRequirements = read('python/requirements-test.txt');
 
   assert.match(portable, /tools\\dev\.ps1/);
   assert.match(installer, /tools\\dev\.ps1/);
@@ -138,6 +147,7 @@ test('all Windows entry points use the manifest-producing release chain', () => 
   assert.doesNotMatch(python, /(^|\s)pyinstaller\s/im);
   assert.match(buildRequirements, /^pyinstaller==6\.22\.2$/m);
   assert.match(buildRequirements, /^pyinstaller-hooks-contrib==2026\.7$/m);
+  assert.match(testRequirements, /^psutil==7\.2\.2$/m);
 });
 
 test('signed Windows release is fail-closed and candidate-first', () => {

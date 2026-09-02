@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import time
@@ -14,7 +13,11 @@ from pathlib import Path
 
 import psutil
 
-from capture_startup_video import find_process_window, stop_process_tree
+from capture_startup_video import (
+    build_candidate_isolation_environment,
+    find_process_window,
+    stop_process_tree,
+)
 
 
 MILESTONE_RE = re.compile(r"Startup milestone: ([a-z-]+) at (\d+)ms")
@@ -88,8 +91,7 @@ def main() -> int:
         if candidate_processes(executable):
             raise RuntimeError(f"Run {run_number}: a candidate process was left behind")
         offset = log_path.stat().st_size if log_path.exists() else 0
-        env = os.environ.copy()
-        env["PRODUCT_ATELIER_DATA_DIR"] = str(data_dir)
+        env = build_candidate_isolation_environment(data_dir)
         started = time.perf_counter()
         process = subprocess.Popen([str(executable)], cwd=str(executable.parent), env=env)
         hwnd: int | None = None

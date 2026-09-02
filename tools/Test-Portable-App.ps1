@@ -1,4 +1,4 @@
-# Product Atelier full portable application smoke test.
+﻿# Product Atelier full portable application smoke test.
 param(
     [string]$PortableDir = "",
     [string]$ExpectedGitCommit = "",
@@ -49,6 +49,14 @@ if (-not $testData.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnor
     throw "Invalid temporary runtime test path"
 }
 New-Item -ItemType Directory -Path $testData | Out-Null
+$testWebViewData = Join-Path $testData "webview2-user-data"
+$legacyConfigSentinel = Join-Path $testData "no-legacy-config.json"
+$testKnowledgeBase = Join-Path $testData "no-knowledge-vault"
+New-Item -ItemType Directory -Path $testWebViewData | Out-Null
+New-Item -ItemType Directory -Path $testKnowledgeBase | Out-Null
+if (Test-Path -LiteralPath $legacyConfigSentinel) {
+    throw "Legacy-config isolation sentinel unexpectedly exists"
+}
 
 function Test-ExpectedSidecarProcess($Process, [int]$ExpectedParentId) {
     if (-not $Process) { return $false }
@@ -67,12 +75,24 @@ function Test-ExpectedSidecarProcess($Process, [int]$ExpectedParentId) {
 }
 
 $previousDataDir = $env:PRODUCT_ATELIER_DATA_DIR
+$previousWebViewDataDir = $env:PRODUCT_ATELIER_WEBVIEW_DATA_DIR
+$previousLegacyConfig = $env:PRODUCT_ATELIER_LEGACY_CONFIG
+$previousKnowledgeBase = $env:PRODUCT_ATELIER_KNOWLEDGE_BASE
+$previousCandidateIsolation = $env:PRODUCT_ATELIER_CANDIDATE_ISOLATION
+$previousWebViewUserData = $env:WEBVIEW2_USER_DATA_FOLDER
+$previousWebViewArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $app = $null
 $newSidecars = @()
 $trackedSidecarPids = @()
 
 try {
+    $env:PRODUCT_ATELIER_CANDIDATE_ISOLATION = "1"
     $env:PRODUCT_ATELIER_DATA_DIR = $testData
+    $env:PRODUCT_ATELIER_WEBVIEW_DATA_DIR = $testWebViewData
+    $env:PRODUCT_ATELIER_LEGACY_CONFIG = $legacyConfigSentinel
+    $env:PRODUCT_ATELIER_KNOWLEDGE_BASE = $testKnowledgeBase
+    $env:WEBVIEW2_USER_DATA_FOLDER = $testWebViewData
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $null
     $app = Start-Process -FilePath $AppExe -WorkingDirectory $PortableDir -WindowStyle Hidden -PassThru
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -152,6 +172,12 @@ try {
     Write-Host "Isolated shell log: verified"
 } finally {
     $env:PRODUCT_ATELIER_DATA_DIR = $previousDataDir
+    $env:PRODUCT_ATELIER_WEBVIEW_DATA_DIR = $previousWebViewDataDir
+    $env:PRODUCT_ATELIER_LEGACY_CONFIG = $previousLegacyConfig
+    $env:PRODUCT_ATELIER_KNOWLEDGE_BASE = $previousKnowledgeBase
+    $env:PRODUCT_ATELIER_CANDIDATE_ISOLATION = $previousCandidateIsolation
+    $env:WEBVIEW2_USER_DATA_FOLDER = $previousWebViewUserData
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $previousWebViewArguments
     if ($app -and -not $app.HasExited) {
         [void]$app.CloseMainWindow()
         try {

@@ -271,9 +271,13 @@ test('desktop startup paints an embedded shell before waiting for the sidecar', 
   assert.match(html, /id="boot-retry"/);
   assert.match(app, /reportStartupMilestone\('first-paint'\)/);
   assert.match(app, /const deadline = performance\.now\(\) \+ 45000/);
+  assert.match(
+    mainRust,
+    /wait_for_server\(port,\s*45,\s*\|\| \{\s*release_startup_replaceable_files\(\);\s*\}\)/,
+  );
   const setupIndex = mainRust.indexOf('.setup(move |app|');
   const spawnIndex = mainRust.indexOf('std::thread::spawn', setupIndex);
-  const waitIndex = mainRust.indexOf('wait_for_server(port, 45)', spawnIndex);
+  const waitIndex = mainRust.indexOf('wait_for_server(port, 45,', spawnIndex);
   assert.ok(setupIndex >= 0 && spawnIndex > setupIndex && waitIndex > spawnIndex);
 });
 
@@ -282,7 +286,7 @@ test('desktop detects an exited sidecar and reconnects through a single native r
   assert.match(mainRust, /fn ensure_python_sidecar\(/);
   assert.match(mainRust, /child\.try_wait\(\)/);
   assert.match(mainRust, /compare_exchange\(false, true/);
-  assert.match(mainRust, /get_api_port, ensure_python_sidecar, report_startup_milestone/);
+  assert.match(mainRust, /get_api_port,\s*ensure_python_sidecar,\s*report_startup_milestone/);
   assert.match(api, /invoke\('ensure_python_sidecar'\)/);
   assert.match(api, /API_BASE = 'http:\/\/127\.0\.0\.1:' \+ port/);
   assert.match(app, /setBackendStatus\('connecting', '重连中'\)/);

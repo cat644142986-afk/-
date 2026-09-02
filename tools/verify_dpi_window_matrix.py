@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
-import os
 import subprocess
 import time
 from ctypes import wintypes
@@ -15,7 +14,12 @@ from pathlib import Path
 import cv2
 import psutil
 
-from capture_startup_video import WindowCapture, find_process_window, stop_process_tree
+from capture_startup_video import (
+    WindowCapture,
+    build_candidate_isolation_environment,
+    find_process_window,
+    stop_process_tree,
+)
 
 
 user32 = ctypes.windll.user32
@@ -178,8 +182,7 @@ def main() -> int:
 
     log_path = data_dir / "app.log"
     offset = log_path.stat().st_size if log_path.exists() else 0
-    env = os.environ.copy()
-    env["PRODUCT_ATELIER_DATA_DIR"] = str(data_dir)
+    env = build_candidate_isolation_environment(data_dir)
     process = subprocess.Popen([str(executable)], cwd=str(executable.parent), env=env)
     hwnd: int | None = None
     result: dict[str, object] = {

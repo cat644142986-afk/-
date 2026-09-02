@@ -110,11 +110,18 @@ if (-not $StaticOnly) {
         throw "Invalid temporary runtime test path"
     }
     New-Item -ItemType Directory -Path $testData | Out-Null
+    $legacyConfigSentinel = Join-Path $testData "no-legacy-config.json"
+    $testKnowledgeBase = Join-Path $testData "no-knowledge-vault"
+    New-Item -ItemType Directory -Path $testKnowledgeBase | Out-Null
 
     $previousDataDir = $env:PRODUCT_ATELIER_DATA_DIR
+    $previousLegacyConfig = $env:PRODUCT_ATELIER_LEGACY_CONFIG
+    $previousKnowledgeBase = $env:PRODUCT_ATELIER_KNOWLEDGE_BASE
     $process = $null
     try {
         $env:PRODUCT_ATELIER_DATA_DIR = $testData
+        $env:PRODUCT_ATELIER_LEGACY_CONFIG = $legacyConfigSentinel
+        $env:PRODUCT_ATELIER_KNOWLEDGE_BASE = $testKnowledgeBase
         $process = Start-Process -FilePath $SidecarExe -ArgumentList $port -WorkingDirectory $SidecarDir -WindowStyle Hidden -PassThru
         $deadline = (Get-Date).AddSeconds(45)
         $health = $null
@@ -150,6 +157,8 @@ if (-not $StaticOnly) {
             $process.WaitForExit(5000) | Out-Null
         }
         $env:PRODUCT_ATELIER_DATA_DIR = $previousDataDir
+        $env:PRODUCT_ATELIER_LEGACY_CONFIG = $previousLegacyConfig
+        $env:PRODUCT_ATELIER_KNOWLEDGE_BASE = $previousKnowledgeBase
         if (Test-Path -LiteralPath $testData) {
             Remove-Item -LiteralPath $testData -Recurse -Force
         }

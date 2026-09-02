@@ -1972,6 +1972,14 @@ G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁
 - 记录 artifact、contract、schema、测试数量、包体积和回滚标签；正式便携目录必须小于 450 MiB，禁止图像或视频大模型。
 - 只有候选双 smoke、正式 WebView 截图、真实交互、外部备份和身份绑定事务全部通过，才允许按 candidate-first 流程申请提升正式便携版。
 
+#### IC6 预构建门禁（2026-09-03 已完成）
+
+- 候选 Tauri 启动新增显式隔离 marker，并同时强制绑定随机系统临时根下的 data、WebView2、旧配置禁用哨兵和空知识库；正式默认数据、旧配置、知识库、源码和正式发布目录均为受保护根。候选业务树拒绝 reparse point 和多硬链接，并在启动期间用句柄固定已存在文件与目录身份；测试助手只按候选绝对路径、PID、创建时间和父子进程关系清理本轮 App/sidecar，不再按进程名影响正式实例。
+- portable staging 会发布绑定 Git、App、sidecar、manifest 和完整目录 inventory 的 candidate identity receipt；正式 `begin` 必须提交此前已 smoke 的精确 receipt SHA-256，同 commit 重新换包也会在读取正式目录前失败。未签名 NSIS 入口在同一 promotion lock 内复核同一 receipt，并把 receipt 身份写入 installer manifest；旧候选清理中断、raw junction、硬链接 lock、事务恢复和失败回滚均有负向覆盖。
+- 稳定顺序复验：前端 `222/222`；Python 共 `495` 项（`491` 通过、`4` 项平台条件跳过）；Rust/Tauri `42/42`；Vite production build、画布 bundle、Rust release `custom-protocol` check、95 个 Python 文件 compileall、Ruff `--select F`、73 个首方 JavaScript 语法、PowerShell AST/UTF-8 BOM/CRLF 和 Git whitespace 全绿。production dist 为 `10,659,989 bytes`，预计正式目录 `368.73 MiB`；源码候选仍为 contract `2026-09-02.4`、schema v8。
+- 正式冻结基线已重新只读核对：Git `93539f0c9ec857d22d3751bb836ff722579cd8db`、contract `2026-09-02.3`、schema v7；App / sidecar SHA-256 分别为 `F0D1A07313A47258CD17FA4143DF4F0069D6E075CAA9D22B00EB7220A15685A7`、`2AF3FC31A90961D77A41BE6CECAFD3559E0D0FFFB505FD9BBEA9EC7C61293894`，正式目录 `375,974,706 bytes`（358.56 MiB），桌面快捷方式仍指向正式目录。本检查点没有启动 GUI、读取 API Key/正式账本、调用付费 API、修改正式便携版或正式快捷方式。
+- 本检查点标签为 `checkpoint-2026-09-03-infinite-canvas-ic6-preflight`；上一个可回滚源码点为 IC5 提交 `b2e06ec77b753e3a303b7546f842ad83a64b3ee2`。候选 artifact 和 installer receipt 必须在该干净且已推送的 Git 身份上重新构建，不能把当前源码测试结果冒充打包或真实 GUI 证据。
+
 #### 当前游标
 
-IC5 源码检查点完成后进入 IC6：从干净 Git 身份构建隔离 sidecar、Tauri EXE、portable 和未签名 NSIS，依次执行 packaged v7→v8、候选双 smoke、真实 Tauri WebView、DWM、100%/125%/150% DPI、Explorer 系统拖拽、视频播放/暂停/seek/导出、重启恢复和安装卸载。用户已授权 2026-09-02 20:00 后使用真实 GUI；所有门禁通过前不提升正式便携版。G4 Agent、公开签名证书、多轨时间线和本地大模型继续顺延，IC6 关闭后自动进入 G5。
+IC6 预构建门禁完成。下一步从干净且已推送的检查点依次构建隔离 sidecar、Tauri EXE、`build/portable-candidate-current` 和 `build/installer-candidate/<commit>`，完成 packaged v5→v8 与 v7→v8、候选 sidecar/App 双 smoke，但不提升正式版。用户已授权 2026-09-03 20:00 后使用真实 GUI，并允许在记录与恢复当前显示状态的前提下临时切换缩放；届时继续完成三档真实 Tauri WebView、DWM、100%/125%/150% DPI、启动黑屏和圆角锯齿、Explorer 系统拖拽、视频播放/暂停/seek/导出、Fabric 回填、重启恢复和 NSIS 隔离安装卸载。显示器关闭或交互桌面不可用时继续其他不依赖 GUI 的工作，不得伪造证据或停止总目标。所有门禁通过后仍保持 candidate 状态，只有用户再次明确授权才允许提升正式便携版。G4 Agent、公开签名证书、多轨时间线和本地大模型继续顺延，IC6 关闭后自动进入 G5。

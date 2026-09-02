@@ -288,13 +288,29 @@ try {
     }
 
     Write-Host "[8/11] Assembling an isolated portable candidate..." -ForegroundColor Yellow
-    & python.exe $PromotionTool stage `
+    $stageOutput = @(& python.exe $PromotionTool stage `
         --project-root $ProjectRoot `
         --app-exe $SourceExe `
         --sidecar-dir $SourceSidecar `
         --candidate-dir $CandidateDir `
-        --git-commit $BuildHead
-    if ($LASTEXITCODE -ne 0) { throw "Portable candidate assembly failed" }
+        --git-commit $BuildHead 2>&1)
+    $stageExitCode = $LASTEXITCODE
+    foreach ($line in $stageOutput) { Write-Host $line }
+    if ($stageExitCode -ne 0) { throw "Portable candidate assembly failed" }
+    try {
+        $stageResult = (($stageOutput | ForEach-Object { [string]$_ }) -join "`n") | ConvertFrom-Json
+        $reviewedCandidateIdentitySha256 = ([string]$stageResult.identity_receipt.sha256).Trim().ToUpperInvariant()
+    } catch {
+        throw "Portable candidate assembly returned invalid identity evidence"
+    }
+    if ($reviewedCandidateIdentitySha256 -notmatch '^[0-9A-F]{64}$') {
+        throw "Portable candidate assembly returned an invalid identity SHA-256"
+    }
+    foreach ($cleanupWarning in @($stageResult.cleanup_warnings)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$cleanupWarning)) {
+            Write-Warning ([string]$cleanupWarning)
+        }
+    }
 
     Write-Host "[9/11] Smoking the isolated candidate..." -ForegroundColor Yellow
     & "$PSScriptRoot\Test-Portable.ps1" -PortableDir $CandidateDir -ExpectedGitCommit $BuildHead
@@ -320,7 +336,8 @@ try {
             --portable-dir $PortableDir `
             --backup-dir $BackupDir `
             --transaction $TransactionPath `
-            --git-commit $BuildHead 2>&1)
+            --git-commit $BuildHead `
+            --candidate-identity-sha256 $reviewedCandidateIdentitySha256 2>&1)
         $beginExitCode = $LASTEXITCODE
         foreach ($line in $beginOutput) { Write-Host $line }
         if ($beginExitCode -ne 0) { throw "Portable promotion begin failed" }

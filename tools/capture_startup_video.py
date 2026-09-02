@@ -20,6 +20,10 @@ import psutil
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
+CANDIDATE_WEBVIEW_DATA_DIR_NAME = "webview2-user-data"
+CANDIDATE_LEGACY_CONFIG_SENTINEL_NAME = "no-legacy-config.json"
+CANDIDATE_KNOWLEDGE_DIR_NAME = "no-knowledge-vault"
+CANDIDATE_ISOLATION_ENV_NAME = "PRODUCT_ATELIER_CANDIDATE_ISOLATION"
 user32.SetWindowPos.argtypes = [
     wintypes.HWND,
     wintypes.HWND,
@@ -46,6 +50,47 @@ try:
     user32.SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
 except Exception:
     user32.SetProcessDPIAware()
+
+
+def build_candidate_isolation_environment(data_dir: Path) -> dict[str, str]:
+    resolved_data_dir = data_dir.resolve(strict=True)
+    if not resolved_data_dir.is_dir():
+        raise RuntimeError(f"Candidate data directory is not a directory: {resolved_data_dir}")
+
+    webview_data_dir = resolved_data_dir / CANDIDATE_WEBVIEW_DATA_DIR_NAME
+    if os.path.lexists(webview_data_dir):
+        is_junction = getattr(webview_data_dir, "is_junction", lambda: False)
+        if webview_data_dir.is_symlink() or is_junction() or not webview_data_dir.is_dir():
+            raise RuntimeError(
+                f"Candidate WebView data path is not a regular directory: {webview_data_dir}"
+            )
+    else:
+        webview_data_dir.mkdir()
+
+    legacy_config = resolved_data_dir / CANDIDATE_LEGACY_CONFIG_SENTINEL_NAME
+    if os.path.lexists(legacy_config):
+        raise RuntimeError(
+            f"Candidate legacy-config sentinel must not exist: {legacy_config}"
+        )
+
+    knowledge_base = resolved_data_dir / CANDIDATE_KNOWLEDGE_DIR_NAME
+    knowledge_base.mkdir(exist_ok=True)
+
+    environment = os.environ.copy()
+    for name in tuple(environment):
+        normalized = name.casefold()
+        if normalized.startswith("product_atelier_") or normalized in {
+            "webview2_user_data_folder",
+            "webview2_additional_browser_arguments",
+        }:
+            del environment[name]
+    environment[CANDIDATE_ISOLATION_ENV_NAME] = "1"
+    environment["PRODUCT_ATELIER_DATA_DIR"] = str(resolved_data_dir)
+    environment["PRODUCT_ATELIER_WEBVIEW_DATA_DIR"] = str(webview_data_dir)
+    environment["PRODUCT_ATELIER_LEGACY_CONFIG"] = str(legacy_config)
+    environment["PRODUCT_ATELIER_KNOWLEDGE_BASE"] = str(knowledge_base)
+    environment["WEBVIEW2_USER_DATA_FOLDER"] = str(webview_data_dir)
+    return environment
 
 
 class BitmapInfoHeader(ctypes.Structure):
@@ -263,8 +308,7 @@ def main() -> int:
         raise SystemExit(f"ffmpeg executable not found: {ffmpeg}")
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    env = os.environ.copy()
-    env["PRODUCT_ATELIER_DATA_DIR"] = str(data_dir)
+    env = build_candidate_isolation_environment(data_dir)
     process = subprocess.Popen([str(exe)], cwd=str(exe.parent), env=env)
     hwnd: int | None = None
     capture: WindowCapture | None = None

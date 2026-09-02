@@ -39,7 +39,6 @@ try:
     )
     from command_registry import (
         COMMAND_REGISTRY_VERSION,
-        command_for_mode,
         get_command,
         list_commands,
         validate_command_sources,
@@ -51,10 +50,10 @@ try:
         MATERIAL_PROMPT_ROUTE_VERSION,
         PROMPT_COMPILER_VERSION,
         PROMPT_V3_RENDER_PLAN_VERSION,
-        PROMPT_V2_FEATURE_ENV,
-        PROMPT_V3_FEATURE_ENV,
+        PROMPT_V2_FEATURE_ENV as PROMPT_V2_FEATURE_ENV,
+        PROMPT_V3_FEATURE_ENV as PROMPT_V3_FEATURE_ENV,
         SINGLE_PASS,
-        SINGLE_PASS_FEATURE_ENV,
+        SINGLE_PASS_FEATURE_ENV as SINGLE_PASS_FEATURE_ENV,
         capability_contract,
         compile_prompt_version,
         normalize_generation_strategy,
@@ -133,7 +132,6 @@ except ImportError:  # Allows importing as python.server during local tests.
     )
     from python.command_registry import (
         COMMAND_REGISTRY_VERSION,
-        command_for_mode,
         get_command,
         list_commands,
         validate_command_sources,
@@ -145,10 +143,10 @@ except ImportError:  # Allows importing as python.server during local tests.
         MATERIAL_PROMPT_ROUTE_VERSION,
         PROMPT_COMPILER_VERSION,
         PROMPT_V3_RENDER_PLAN_VERSION,
-        PROMPT_V2_FEATURE_ENV,
-        PROMPT_V3_FEATURE_ENV,
+        PROMPT_V2_FEATURE_ENV as PROMPT_V2_FEATURE_ENV,
+        PROMPT_V3_FEATURE_ENV as PROMPT_V3_FEATURE_ENV,
         SINGLE_PASS,
-        SINGLE_PASS_FEATURE_ENV,
+        SINGLE_PASS_FEATURE_ENV as SINGLE_PASS_FEATURE_ENV,
         capability_contract,
         compile_prompt_version,
         normalize_generation_strategy,
@@ -7802,7 +7800,7 @@ def run_batch_folder(task_id, folder_path, mode, model_key, platter, fidelity, a
                     det = vlm_detect_products(tmp_in, task_id)
                     products = det.get("products", [])
                     if not products:
-                        log_msg(task_id, f"  未检测到多产品，作为单产品处理")
+                        log_msg(task_id, "  未检测到多产品，作为单产品处理")
                         products = [{"name":"产品","ptype":"food","has_container":False,"cutoff":False,"bbox":[0,0,1000,1000]}]
 
                     count = len(products)

@@ -243,7 +243,7 @@ def verify_model_pack(
     root = Path(model_root).expanduser().resolve()
     try:
         manifest = load_artifact_manifest(model_manifest_path)
-    except (OSError, ValueError, TypeError) as exc:
+    except (OSError, ValueError, TypeError):
         return {
             "status": "invalid",
             "code": "MODEL_CONTRACT_INVALID",

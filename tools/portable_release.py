@@ -29,6 +29,9 @@ SIDECAR_MANIFEST = Path("python-server") / "sidecar-manifest.json"
 TRANSACTION_FORMAT_VERSION = 1
 TRANSACTION_FILE_NAME = "portable-promotion-transaction.json"
 LOCK_FILE_NAME = "portable-promotion.lock"
+CANDIDATE_IDENTITY_FORMAT_VERSION = 1
+CANDIDATE_IDENTITY_FILE_NAME = "portable-candidate-current.identity.json"
+CANDIDATE_IDENTITY_KIND = "product-atelier-portable-candidate-identity"
 TRANSACTION_PHASES = {
     "prepared",
     "backed_up",
@@ -174,58 +177,268 @@ def _canonical_portable_path(project: Path, path: str | Path) -> Path:
 
 
 def _is_link_like(path: Path) -> bool:
-    if path.is_symlink():
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    file_attributes = int(getattr(metadata, "st_file_attributes", 0) or 0)
+    if stat.S_ISLNK(metadata.st_mode) or bool(file_attributes & reparse_flag):
         return True
     is_junction = getattr(path, "is_junction", None)
-    return bool(is_junction and is_junction())
+    try:
+        return bool(is_junction and is_junction())
+    except OSError:
+        return True
+
+
+def _validate_regular_file_metadata(
+    metadata: os.stat_result,
+    path: Path,
+    label: str,
+) -> None:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    file_attributes = int(getattr(metadata, "st_file_attributes", 0) or 0)
+    if stat.S_ISLNK(metadata.st_mode) or bool(file_attributes & reparse_flag):
+        raise ReleaseError(f"{label} may not be a reparse point: {path}")
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ReleaseError(f"{label} must be a regular file: {path}")
+    if os.name == "nt" and metadata.st_nlink != 1:
+        raise ReleaseError(f"{label} may not be a hard link: {path}")
 
 
 def _require_regular_file(path: Path, label: str) -> None:
-    if _is_link_like(path):
-        raise ReleaseError(f"{label} may not be a symlink or junction: {path}")
     try:
-        mode = path.lstat().st_mode
+        metadata = path.lstat()
     except OSError as error:
         raise ReleaseError(f"{label} is missing: {path}") from error
-    if not stat.S_ISREG(mode):
-        raise ReleaseError(f"{label} must be a regular file: {path}")
+    _validate_regular_file_metadata(metadata, path, label)
+
+
+def _require_single_link_regular_file(path: Path, label: str) -> None:
+    _require_regular_file(path, label)
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise ReleaseError(f"{label} is missing: {path}") from error
+    if metadata.st_nlink != 1:
+        raise ReleaseError(f"{label} may not be a hard link: {path}")
+
+
+def _file_state(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        int(metadata.st_dev),
+        int(metadata.st_ino),
+        int(metadata.st_mode),
+        int(metadata.st_nlink),
+        int(metadata.st_size),
+        int(getattr(metadata, "st_mtime_ns", int(metadata.st_mtime * 1_000_000_000))),
+        int(getattr(metadata, "st_ctime_ns", int(metadata.st_ctime * 1_000_000_000))),
+        int(getattr(metadata, "st_file_attributes", 0) or 0),
+        int(getattr(metadata, "st_reparse_tag", 0) or 0),
+    )
+
+
+def _file_identity(metadata: os.stat_result) -> tuple[int, ...]:
+    """Return fields whose meaning agrees between Windows lstat and fstat."""
+    return (
+        int(metadata.st_dev),
+        int(metadata.st_ino),
+        int(stat.S_IFMT(metadata.st_mode)),
+        int(metadata.st_nlink),
+        int(metadata.st_size),
+        int(getattr(metadata, "st_mtime_ns", int(metadata.st_mtime * 1_000_000_000))),
+        int(getattr(metadata, "st_file_attributes", 0) or 0),
+        int(getattr(metadata, "st_reparse_tag", 0) or 0),
+    )
+
+
+@contextlib.contextmanager
+def _open_stable_binary(path: Path):
+    if os.name != "nt":
+        with path.open("rb") as stream:
+            yield stream
+        return
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    create_file = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+    close_handle = ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    generic_read = 0x80000000
+    file_share_read = 0x00000001
+    open_existing = 3
+    file_attribute_normal = 0x00000080
+    file_flag_open_reparse_point = 0x00200000
+    invalid_handle = ctypes.c_void_p(-1).value
+    handle = create_file(
+        str(path),
+        generic_read,
+        file_share_read,
+        None,
+        open_existing,
+        file_attribute_normal | file_flag_open_reparse_point,
+        None,
+    )
+    if handle == invalid_handle:
+        raise ReleaseError(
+            f"Could not safely open release artifact {path}: "
+            f"{ctypes.WinError(ctypes.get_last_error())}"
+        )
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        descriptor = msvcrt.open_osfhandle(int(handle), flags)
+    except BaseException:
+        close_handle(handle)
+        raise
+    with os.fdopen(descriptor, "rb", closefd=True) as stream:
+        yield stream
+
+
+def _stable_file_record(path: Path, label: str) -> tuple[int, str]:
+    _require_regular_file(path, label)
+    try:
+        path_before = path.lstat()
+        with _open_stable_binary(path) as stream:
+            handle_before = os.fstat(stream.fileno())
+            _validate_regular_file_metadata(handle_before, path, label)
+            if _file_identity(path_before) != _file_identity(handle_before):
+                raise ReleaseError(f"{label} changed identity before hashing: {path}")
+
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+
+            handle_after = os.fstat(stream.fileno())
+            path_after = path.lstat()
+    except ReleaseError:
+        raise
+    except OSError as error:
+        raise ReleaseError(f"Could not hash release artifact {path}: {error}") from error
+
+    _validate_regular_file_metadata(path_after, path, label)
+    if (
+        _file_state(handle_before) != _file_state(handle_after)
+        or _file_state(path_before) != _file_state(path_after)
+        or _file_identity(handle_after) != _file_identity(path_after)
+    ):
+        raise ReleaseError(f"{label} changed while it was being hashed: {path}")
+    return int(handle_after.st_size), digest.hexdigest().upper()
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest().upper()
+    return _stable_file_record(path, "Release artifact")[1]
+
+
+def _read_stable_json_object(
+    path: Path,
+    label: str,
+    *,
+    require_single_link: bool = False,
+) -> tuple[dict[str, Any], str]:
+    _require_regular_file(path, label)
+    try:
+        path_before = path.lstat()
+        if require_single_link and path_before.st_nlink != 1:
+            raise ReleaseError(f"{label} may not be a hard link: {path}")
+        with _open_stable_binary(path) as stream:
+            handle_before = os.fstat(stream.fileno())
+            _validate_regular_file_metadata(handle_before, path, label)
+            if require_single_link and handle_before.st_nlink != 1:
+                raise ReleaseError(f"{label} may not be a hard link: {path}")
+            if _file_identity(path_before) != _file_identity(handle_before):
+                raise ReleaseError(f"{label} changed identity before reading: {path}")
+            raw = stream.read()
+            handle_after = os.fstat(stream.fileno())
+            path_after = path.lstat()
+    except ReleaseError:
+        raise
+    except OSError as error:
+        raise ReleaseError(f"Could not read {label.lower()} {path}: {error}") from error
+
+    _validate_regular_file_metadata(path_after, path, label)
+    if require_single_link and path_after.st_nlink != 1:
+        raise ReleaseError(f"{label} may not be a hard link: {path}")
+    if (
+        _file_state(handle_before) != _file_state(handle_after)
+        or _file_state(path_before) != _file_state(path_after)
+        or _file_identity(handle_after) != _file_identity(path_after)
+    ):
+        raise ReleaseError(f"{label} changed while it was being read: {path}")
+    try:
+        payload = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeError, ValueError, TypeError) as error:
+        raise ReleaseError(f"Invalid {label.lower()}: {path}: {error}") from error
+    if not isinstance(payload, dict):
+        raise ReleaseError(f"{label} must be a JSON object: {path}")
+    return payload, hashlib.sha256(raw).hexdigest().upper()
 
 
 def _tree_entries(root: str | Path) -> list[dict[str, Any]]:
-    root_path = _resolved(root)
-    if not root_path.is_dir():
-        raise ReleaseError(f"Release directory is missing: {root_path}")
-    if _is_link_like(root_path):
-        raise ReleaseError(f"Release directory may not be a symlink or junction: {root_path}")
+    requested_root = Path(root).expanduser()
+    try:
+        root_metadata = requested_root.lstat()
+    except OSError as error:
+        raise ReleaseError(f"Release directory is missing: {requested_root}") from error
+    if _is_link_like(requested_root) or not stat.S_ISDIR(root_metadata.st_mode):
+        raise ReleaseError(
+            f"Release directory must be a regular non-reparse directory: {requested_root}"
+        )
+    root_path = requested_root.resolve(strict=True)
+
+    def fail_on_walk_error(error: OSError) -> None:
+        failed_path = error.filename or root_path
+        raise ReleaseError(
+            f"Could not enumerate release tree at {failed_path}: {error}"
+        ) from error
 
     entries: list[dict[str, Any]] = []
-    for current_root, directory_names, file_names in os.walk(root_path, topdown=True, followlinks=False):
+    for current_root, directory_names, file_names in os.walk(
+        root_path,
+        topdown=True,
+        onerror=fail_on_walk_error,
+        followlinks=False,
+    ):
         current = Path(current_root)
         for name in directory_names:
             directory = current / name
-            if _is_link_like(directory) or not stat.S_ISDIR(directory.lstat().st_mode):
+            try:
+                directory_metadata = directory.lstat()
+            except OSError as error:
+                raise ReleaseError(
+                    f"Could not inspect release directory entry: {directory}"
+                ) from error
+            if _is_link_like(directory) or not stat.S_ISDIR(directory_metadata.st_mode):
                 raise ReleaseError(f"Release tree contains an unsafe directory entry: {directory}")
             entries.append(
                 {"kind": "D", "path": directory.relative_to(root_path).as_posix()}
             )
         for name in file_names:
             path = current / name
-            _require_regular_file(path, "Release artifact")
             relative = path.relative_to(root_path).as_posix()
+            size, sha256 = _stable_file_record(path, "Release artifact")
             entries.append(
                 {
                     "kind": "F",
                     "path": relative,
-                    "size": path.stat().st_size,
-                    "sha256": _sha256_file(path),
+                    "size": size,
+                    "sha256": sha256,
                 }
             )
 
@@ -304,21 +517,29 @@ def _inventory_matches(root: Path, expected: dict[str, Any]) -> bool:
     )
 
 
-def _load_manifest(release_dir: Path) -> tuple[dict[str, Any], Path]:
+def _load_manifest(release_dir: Path) -> tuple[dict[str, Any], Path, str]:
     manifest_path = release_dir / SIDECAR_MANIFEST
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError, TypeError) as error:
-        raise ReleaseError(f"Invalid sidecar manifest: {manifest_path}: {error}") from error
-    if not isinstance(manifest, dict):
-        raise ReleaseError(f"Sidecar manifest must be a JSON object: {manifest_path}")
-    return manifest, manifest_path
+    manifest, manifest_sha256 = _read_stable_json_object(
+        manifest_path,
+        "Sidecar manifest",
+    )
+    return manifest, manifest_path, manifest_sha256
 
 
 def validate_candidate(release_dir: str | Path, expected_git_commit: str) -> dict[str, Any]:
-    release_path = _resolved(release_dir)
     if not re.fullmatch(r"[0-9a-fA-F]{40}", expected_git_commit):
         raise ReleaseError(f"Expected Git commit must be a full 40-character hash: {expected_git_commit!r}")
+    requested_release = Path(release_dir).expanduser()
+    try:
+        release_metadata = requested_release.lstat()
+    except OSError as error:
+        raise ReleaseError(f"Candidate release directory is missing: {requested_release}") from error
+    if _is_link_like(requested_release) or not stat.S_ISDIR(release_metadata.st_mode):
+        raise ReleaseError(
+            "Candidate release directory must be a regular non-reparse directory: "
+            f"{requested_release}"
+        )
+    release_path = requested_release.resolve(strict=True)
     app_path = release_path / APP_NAME
     sidecar_path = release_path / SIDECAR_EXE
     if not app_path.is_file():
@@ -328,7 +549,7 @@ def validate_candidate(release_dir: str | Path, expected_git_commit: str) -> dic
     _require_regular_file(app_path, "Candidate app")
     _require_regular_file(sidecar_path, "Candidate sidecar")
 
-    manifest, manifest_path = _load_manifest(release_path)
+    manifest, manifest_path, manifest_sha256 = _load_manifest(release_path)
     manifest_commit = str(manifest.get("git_commit") or "").strip()
     if manifest_commit != expected_git_commit:
         raise ReleaseError(
@@ -359,11 +580,11 @@ def validate_candidate(release_dir: str | Path, expected_git_commit: str) -> dic
         raise ReleaseError("Candidate sidecar hash does not match sidecar-manifest.json")
 
     return {
-        "inventory": directory_inventory(release_path),
+        "inventory": directory_inventory(requested_release),
         "artifacts": {
             "app_sha256": _sha256_file(app_path),
             "sidecar_sha256": sidecar_hash,
-            "manifest_sha256": _sha256_file(manifest_path),
+            "manifest_sha256": manifest_sha256,
             "contract_version": manifest["contract_version"],
             "ledger_schema_version": manifest["ledger_schema_version"],
             "source_fingerprint": manifest["source_fingerprint"],
@@ -372,12 +593,130 @@ def validate_candidate(release_dir: str | Path, expected_git_commit: str) -> dic
     }
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+def _candidate_identity_path(project: Path) -> Path:
+    return project / "build" / CANDIDATE_IDENTITY_FILE_NAME
+
+
+def _candidate_identity_payload(
+    *,
+    project: Path,
+    candidate: Path,
+    expected_git_commit: str,
+    candidate_info: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "format_version": CANDIDATE_IDENTITY_FORMAT_VERSION,
+        "kind": CANDIDATE_IDENTITY_KIND,
+        "created_at_utc": _utc_now(),
+        "project_root": str(project),
+        "candidate_dir": str(candidate),
+        "git_commit": expected_git_commit,
+        "candidate": candidate_info,
+    }
+
+
+def _load_candidate_identity(
+    *,
+    project: Path,
+    candidate: Path,
+    expected_git_commit: str,
+    expected_receipt_sha256: str | None,
+    candidate_info: dict[str, Any],
+) -> dict[str, Any]:
+    receipt_path = _candidate_identity_path(project)
+    receipt, receipt_sha256 = _read_stable_json_object(
+        receipt_path,
+        "Candidate identity receipt",
+        require_single_link=True,
+    )
+    if expected_receipt_sha256 is not None:
+        if not isinstance(expected_receipt_sha256, str):
+            raise ReleaseError("Expected candidate identity SHA-256 must be a string")
+        normalized_expected_sha256 = expected_receipt_sha256.strip().upper()
+        if re.fullmatch(r"[0-9A-F]{64}", normalized_expected_sha256) is None:
+            raise ReleaseError(
+                "Expected candidate identity SHA-256 must be a full 64-character hash"
+            )
+        if receipt_sha256 != normalized_expected_sha256:
+            raise ReleaseError(
+                "Candidate identity receipt changed after candidate review; restage and re-smoke it"
+            )
+    required_fields = {
+        "format_version",
+        "kind",
+        "created_at_utc",
+        "project_root",
+        "candidate_dir",
+        "git_commit",
+        "candidate",
+    }
+    if set(receipt) != required_fields:
+        raise ReleaseError(f"Candidate identity receipt has unexpected fields: {receipt_path}")
+    if receipt.get("format_version") != CANDIDATE_IDENTITY_FORMAT_VERSION:
+        raise ReleaseError(f"Candidate identity receipt has an unsupported format: {receipt_path}")
+    if receipt.get("kind") != CANDIDATE_IDENTITY_KIND:
+        raise ReleaseError(f"Candidate identity receipt has an invalid kind: {receipt_path}")
+    if not isinstance(receipt.get("created_at_utc"), str) or not receipt["created_at_utc"]:
+        raise ReleaseError(f"Candidate identity receipt has no creation time: {receipt_path}")
+    if receipt.get("project_root") != str(project):
+        raise ReleaseError(f"Candidate identity receipt belongs to another project: {receipt_path}")
+    if receipt.get("candidate_dir") != str(candidate):
+        raise ReleaseError(f"Candidate identity receipt names another candidate: {receipt_path}")
+    if receipt.get("git_commit") != expected_git_commit:
+        raise ReleaseError(f"Candidate identity receipt names another Git commit: {receipt_path}")
+    if receipt.get("candidate") != candidate_info:
+        raise ReleaseError(
+            "Candidate changed after its identity receipt was published; restage it before promotion"
+        )
+    return {
+        "path": str(receipt_path),
+        "sha256": receipt_sha256,
+        "receipt": receipt,
+    }
+
+
+def verify_candidate_identity(
+    *,
+    project_root: str | Path,
+    candidate_dir: str | Path,
+    expected_git_commit: str,
+    expected_candidate_identity_sha256: str | None = None,
+    _lock_held: bool = False,
+) -> dict[str, Any]:
+    """Verify the canonical candidate and its published identity receipt."""
+
+    project = _project_root(project_root)
+    if not _lock_held:
+        with _promotion_lock(project):
+            return verify_candidate_identity(
+                project_root=project,
+                candidate_dir=candidate_dir,
+                expected_git_commit=expected_git_commit,
+                expected_candidate_identity_sha256=expected_candidate_identity_sha256,
+                _lock_held=True,
+            )
+    candidate = _canonical_candidate_path(project, candidate_dir)
+    candidate_info = validate_candidate(candidate, expected_git_commit)
+    identity_info = _load_candidate_identity(
+        project=project,
+        candidate=candidate,
+        expected_git_commit=expected_git_commit,
+        expected_receipt_sha256=expected_candidate_identity_sha256,
+        candidate_info=candidate_info,
+    )
+    return {
+        "candidate": candidate_info,
+        "identity_receipt": identity_info,
+    }
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex}")
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    serialized_sha256 = hashlib.sha256(serialized.encode("utf-8")).hexdigest().upper()
     try:
-        serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        with temporary.open("x", encoding="utf-8") as stream:
+        with temporary.open("x", encoding="utf-8", newline="") as stream:
             stream.write(serialized)
             stream.flush()
             os.fsync(stream.fileno())
@@ -385,6 +724,7 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     finally:
         if temporary.exists():
             temporary.unlink()
+    return serialized_sha256
 
 
 def _create_json_exclusive(path: Path, payload: dict[str, Any]) -> None:
@@ -460,8 +800,13 @@ def stage_candidate(
     token = uuid.uuid4().hex
     replacement = candidate.with_name(f".{candidate.name}.replacement-{token}")
     previous = candidate.with_name(f".{candidate.name}.previous-{token}")
+    failed_stage = candidate.with_name(f".{candidate.name}.failed-stage-{token}")
+    identity_path = _candidate_identity_path(project)
+    previous_identity = identity_path.with_name(f".{identity_path.name}.previous-{token}")
     replacement.mkdir()
     moved_previous = False
+    moved_previous_identity = False
+    installed_replacement = False
     try:
         shutil.copy2(app_source, replacement / APP_NAME)
         shutil.copytree(sidecar_source, replacement / "python-server")
@@ -473,20 +818,98 @@ def stage_candidate(
         candidate_info = validate_candidate(replacement, expected_git_commit)
 
         if candidate.exists():
-            if not candidate.is_dir() or candidate.is_symlink():
+            if not candidate.is_dir() or _is_link_like(candidate):
                 raise ReleaseError(f"Existing candidate is not a safe directory: {candidate}")
+            directory_inventory(candidate)
+        # A crash between the directory swap and receipt publication must leave begin fail-closed.
+        if identity_path.exists() or _is_link_like(identity_path):
+            _require_single_link_regular_file(identity_path, "Existing candidate identity receipt")
+            os.replace(identity_path, previous_identity)
+            moved_previous_identity = True
+        if candidate.exists():
             os.replace(candidate, previous)
             moved_previous = True
         os.replace(replacement, candidate)
-        if moved_previous:
-            _remove_generated_tree(previous, build_root, f".{candidate.name}.previous-")
-        return candidate_info
-    except Exception:
+        installed_replacement = True
+        installed_info = validate_candidate(candidate, expected_git_commit)
+        if installed_info != candidate_info:
+            raise ReleaseError("Installed candidate identity changed during the atomic swap")
+        identity_payload = _candidate_identity_payload(
+            project=project,
+            candidate=candidate,
+            expected_git_commit=expected_git_commit,
+            candidate_info=installed_info,
+        )
+        published_identity_sha256 = _write_json_atomic(identity_path, identity_payload)
+        identity_info = _load_candidate_identity(
+            project=project,
+            candidate=candidate,
+            expected_git_commit=expected_git_commit,
+            expected_receipt_sha256=published_identity_sha256,
+            candidate_info=installed_info,
+        )
+    except Exception as error:
+        rollback_errors: list[str] = []
         if replacement.exists():
-            _remove_generated_tree(replacement, build_root, f".{candidate.name}.replacement-")
+            try:
+                _remove_generated_tree(
+                    replacement,
+                    build_root,
+                    f".{candidate.name}.replacement-",
+                )
+            except Exception as cleanup_error:
+                rollback_errors.append(f"replacement cleanup failed: {cleanup_error}")
+        if moved_previous_identity and previous_identity.exists():
+            try:
+                os.replace(previous_identity, identity_path)
+            except Exception as restore_error:
+                rollback_errors.append(f"previous candidate identity restore failed: {restore_error}")
+        elif installed_replacement and (identity_path.exists() or _is_link_like(identity_path)):
+            try:
+                identity_path.unlink()
+            except Exception as cleanup_error:
+                rollback_errors.append(f"candidate identity cleanup failed: {cleanup_error}")
+        if installed_replacement and candidate.exists():
+            try:
+                os.replace(candidate, failed_stage)
+            except Exception as quarantine_error:
+                rollback_errors.append(
+                    f"installed candidate quarantine failed: {quarantine_error}"
+                )
         if moved_previous and previous.exists() and not candidate.exists():
-            os.replace(previous, candidate)
+            try:
+                os.replace(previous, candidate)
+            except Exception as restore_error:
+                rollback_errors.append(f"previous candidate restore failed: {restore_error}")
+        if rollback_errors:
+            raise ReleaseError(
+                "Candidate staging failed and rollback was incomplete: "
+                + "; ".join(rollback_errors)
+            ) from error
         raise
+
+    cleanup_warnings: list[str] = []
+    if moved_previous:
+        try:
+            _remove_generated_tree(previous, build_root, f".{candidate.name}.previous-")
+        except Exception as cleanup_error:
+            cleanup_warnings.append(
+                f"previous candidate cleanup incomplete at {previous}: {cleanup_error}"
+            )
+    if moved_previous_identity:
+        try:
+            previous_identity.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as cleanup_error:
+            cleanup_warnings.append(
+                f"previous candidate identity cleanup incomplete at "
+                f"{previous_identity}: {cleanup_error}"
+            )
+    result = {**installed_info, "identity_receipt": identity_info}
+    if cleanup_warnings:
+        result["cleanup_warnings"] = cleanup_warnings
+    return result
 
 
 def _canonical_transaction_path(project: Path, transaction_path: str | Path) -> Path:
@@ -541,6 +964,7 @@ def _promotion_evidence(
         "portable_dir": data["portable_dir"],
         "backup_dir": data.get("backup_dir"),
         "candidate": data["candidate"],
+        "candidate_identity": data.get("candidate_identity"),
         "previous": {"inventory": previous["inventory"]} if previous else None,
     }
     if reason:
@@ -572,7 +996,6 @@ def _read_transaction(project: Path, transaction_path: str | Path) -> tuple[Path
     if not isinstance(data.get("transaction_id"), str) or not data["transaction_id"]:
         raise ReleaseError(f"Promotion transaction has no transaction id: {transaction}")
 
-    build_root = project / "build"
     release_root = project / "release"
     candidate = _canonical_candidate_path(project, data.get("candidate_dir", ""))
     portable = _canonical_portable_path(project, data.get("portable_dir", ""))
@@ -589,6 +1012,16 @@ def _read_transaction(project: Path, transaction_path: str | Path) -> tuple[Path
         data["candidate"].get("inventory"), dict
     ):
         raise ReleaseError(f"Promotion transaction has no candidate inventory: {transaction}")
+    candidate_identity = data.get("candidate_identity")
+    if candidate_identity is not None and (
+        not isinstance(candidate_identity, dict)
+        or candidate_identity.get("path") != str(_candidate_identity_path(project))
+        or not isinstance(candidate_identity.get("sha256"), str)
+        or re.fullmatch(r"[0-9A-F]{64}", candidate_identity["sha256"]) is None
+        or not isinstance(candidate_identity.get("receipt"), dict)
+        or candidate_identity["receipt"].get("candidate") != data["candidate"]
+    ):
+        raise ReleaseError(f"Promotion transaction has invalid candidate identity: {transaction}")
     previous_info = data.get("previous")
     if previous_info is not None and (
         not isinstance(previous_info, dict) or not isinstance(previous_info.get("inventory"), dict)
@@ -687,6 +1120,7 @@ def begin_promotion(
     backup_dir: str | Path,
     transaction_path: str | Path,
     expected_git_commit: str,
+    expected_candidate_identity_sha256: str,
     _lock_held: bool = False,
 ) -> dict[str, Any]:
     project = _project_root(project_root)
@@ -699,16 +1133,28 @@ def begin_promotion(
                 backup_dir=backup_dir,
                 transaction_path=transaction_path,
                 expected_git_commit=expected_git_commit,
+                expected_candidate_identity_sha256=expected_candidate_identity_sha256,
                 _lock_held=True,
             )
     build_root = project / "build"
-    release_root = project / "release"
     candidate = _canonical_candidate_path(project, candidate_dir)
-    portable = _canonical_portable_path(project, portable_dir)
     transaction = _canonical_transaction_path(project, transaction_path)
-    backup = _validate_backup_path(Path(backup_dir), project)
 
-    candidate_info = validate_candidate(candidate, expected_git_commit)
+    verified_candidate = verify_candidate_identity(
+        project_root=project,
+        candidate_dir=candidate,
+        expected_git_commit=expected_git_commit,
+        expected_candidate_identity_sha256=expected_candidate_identity_sha256,
+        _lock_held=True,
+    )
+    candidate_info = verified_candidate["candidate"]
+    candidate_identity = verified_candidate["identity_receipt"]
+
+    # Only resolve or inspect the formal-release side after the exact reviewed
+    # candidate receipt has been verified under the promotion lock.
+    release_root = project / "release"
+    portable = _canonical_portable_path(project, portable_dir)
+    backup = _validate_backup_path(Path(backup_dir), project)
     previous_info = None
     if portable.exists():
         if not portable.is_dir() or portable.is_symlink():
@@ -739,6 +1185,7 @@ def begin_promotion(
         "replacement_dir": str(replacement),
         "previous_dir": str(previous),
         "candidate": candidate_info,
+        "candidate_identity": candidate_identity,
         "previous": previous_info,
     }
     _create_json_exclusive(transaction, data)
@@ -1098,6 +1545,15 @@ def _build_parser() -> argparse.ArgumentParser:
     stage.add_argument("--candidate-dir", required=True)
     stage.add_argument("--git-commit", required=True)
 
+    verify_identity = subparsers.add_parser(
+        "verify-identity",
+        help="verify the canonical candidate and its published identity receipt",
+    )
+    verify_identity.add_argument("--project-root", required=True)
+    verify_identity.add_argument("--candidate-dir", required=True)
+    verify_identity.add_argument("--git-commit", required=True)
+    verify_identity.add_argument("--candidate-identity-sha256")
+
     begin = subparsers.add_parser("begin", help="back up and promote a verified candidate")
     begin.add_argument("--project-root", required=True)
     begin.add_argument("--candidate-dir", required=True)
@@ -1105,6 +1561,7 @@ def _build_parser() -> argparse.ArgumentParser:
     begin.add_argument("--backup-dir", required=True)
     begin.add_argument("--transaction", required=True)
     begin.add_argument("--git-commit", required=True)
+    begin.add_argument("--candidate-identity-sha256", required=True)
 
     finalize = subparsers.add_parser("finalize", help="commit a promotion after formal smoke")
     finalize.add_argument("--project-root", required=True)
@@ -1132,6 +1589,13 @@ def main(argv: list[str] | None = None) -> int:
                 candidate_dir=args.candidate_dir,
                 expected_git_commit=args.git_commit,
             )
+        elif args.command == "verify-identity":
+            result = verify_candidate_identity(
+                project_root=args.project_root,
+                candidate_dir=args.candidate_dir,
+                expected_git_commit=args.git_commit,
+                expected_candidate_identity_sha256=args.candidate_identity_sha256,
+            )
         elif args.command == "begin":
             result = begin_promotion(
                 project_root=args.project_root,
@@ -1140,6 +1604,7 @@ def main(argv: list[str] | None = None) -> int:
                 backup_dir=args.backup_dir,
                 transaction_path=args.transaction,
                 expected_git_commit=args.git_commit,
+                expected_candidate_identity_sha256=args.candidate_identity_sha256,
             )
         elif args.command == "finalize":
             result = finalize_promotion(

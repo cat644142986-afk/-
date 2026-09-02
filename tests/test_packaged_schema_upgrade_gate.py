@@ -19,6 +19,39 @@ import verify_packaged_schema_upgrade as packaged_gate  # noqa: E402
 
 
 class PackagedSchemaUpgradeFixtureTests(unittest.TestCase):
+    def test_packaged_start_environment_supplies_complete_candidate_isolation(self) -> None:
+        inherited = {
+            "PRODUCT_ATELIER_DATA_DIR": "unsafe-data",
+            "PRODUCT_ATELIER_WEBVIEW_DATA_DIR": "unsafe-webview",
+            "PRODUCT_ATELIER_LEGACY_CONFIG": "unsafe-legacy-config",
+        }
+        with (
+            tempfile.TemporaryDirectory(
+                prefix="ProductAtelier-packaged-environment-"
+            ) as temporary_dir,
+            mock.patch.dict(packaged_gate.os.environ, inherited),
+        ):
+            data_dir = Path(temporary_dir).resolve()
+            environment = packaged_gate._build_candidate_isolation_environment(data_dir)
+
+            webview_data_dir = data_dir / "webview2-user-data"
+            legacy_config = data_dir / "no-legacy-config.json"
+            self.assertEqual(environment["PRODUCT_ATELIER_DATA_DIR"], str(data_dir))
+            self.assertEqual(
+                environment["PRODUCT_ATELIER_WEBVIEW_DATA_DIR"],
+                str(webview_data_dir),
+            )
+            self.assertEqual(
+                environment["PRODUCT_ATELIER_LEGACY_CONFIG"],
+                str(legacy_config),
+            )
+            self.assertTrue(webview_data_dir.is_dir())
+            self.assertFalse(legacy_config.exists())
+
+            legacy_config.write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "must not exist"):
+                packaged_gate._build_candidate_isolation_environment(data_dir)
+
     def test_supported_release_fixtures_upgrade_once_and_preserve_backup(self) -> None:
         source_versions = (
             *packaged_gate.LEGACY_SOURCE_SCHEMA_VERSIONS,
