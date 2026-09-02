@@ -7,8 +7,8 @@ This file lists the direct browser runtime dependencies. The distributable plain
 | Component | Version | License | Source |
 | --- | --- | --- | --- |
 | Excalidraw | 0.18.1 | MIT | https://github.com/excalidraw/excalidraw/tree/v0.18.1 |
-| React | 19.2.8 | MIT | https://github.com/facebook/react/tree/v19.2.8 |
-| React DOM | 19.2.8 | MIT | https://github.com/facebook/react/tree/v19.2.8 |
+| React | 18.3.1 | MIT | https://github.com/facebook/react/tree/v18.3.1 |
+| React DOM | 18.3.1 | MIT | https://github.com/facebook/react/tree/v18.3.1 |
 | Fabric.js | 7.4.0 | MIT | https://github.com/fabricjs/fabric.js/tree/v7.4.0 |
 | Lucide | 1.31.0 | ISC/MIT | https://github.com/lucide-icons/lucide |
 

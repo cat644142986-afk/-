@@ -1,0 +1,88 @@
+{
+  "captured_at": "2026-09-02",
+  "branch": "codex/excalidraw-infinite-canvas",
+  "source_baseline": "9faf87e0328fe89ee70ea5eeeff8944893cdb54d",
+  "formal_release": {
+    "git_commit": "93539f0c9ec857d22d3751bb836ff722579cd8db",
+    "contract": "2026-09-02.3",
+    "schema": 7,
+    "size_bytes": 375974706,
+    "size_mib": 358.56,
+    "modified": false
+  },
+  "scene": {
+    "elements": 270,
+    "proxy_images": 200,
+    "video_covers": 20,
+    "frames": 5,
+    "lineage_edges": 40,
+    "persisted_scene_kib": 207.4,
+    "contains_file_bytes_or_machine_paths": false
+  },
+  "interaction": {
+    "loaded_videos_before_selection": 0,
+    "loaded_videos_after_selection": 1,
+    "playing_videos_after_play": 1,
+    "playing_videos_after_stop": 0,
+    "rectangle_drawn_at": [3420, 2090],
+    "rectangle_dragged_to": [3920, 2340],
+    "undo_restored": [3420, 2090],
+    "redo_restored": [3920, 2340],
+    "restart_restore_passed": true
+  },
+  "viewports": [
+    { "width": 1440, "height": 900, "overflow_x": 0, "overflow_y": 0 },
+    { "width": 1280, "height": 720, "overflow_x": 0, "overflow_y": 0 },
+    { "width": 960, "height": 600, "overflow_x": 0, "overflow_y": 0 }
+  ],
+  "performance": {
+    "observed_ready_ms_min": 417,
+    "observed_ready_ms_max": 2004,
+    "console_errors": 0,
+    "console_warnings": 0
+  },
+  "build": {
+    "files": 365,
+    "total_bytes": 21117338,
+    "total_mib": 20.14,
+    "javascript_bytes": 7779545,
+    "javascript_mib": 7.42,
+    "font_bytes": 13188212,
+    "font_mib": 12.58,
+    "mermaid_like_lazy_chunks_bytes": 4223388,
+    "mermaid_like_lazy_chunks_mib": 4.03,
+    "projected_formal_portable_mib": 378.70,
+    "portable_limit_mib": 450
+  },
+  "dependencies": {
+    "excalidraw": "0.18.1",
+    "react": "18.3.1",
+    "react_dom": "18.3.1",
+    "vite": "6.4.3",
+    "package_lock_sha256": "07215340BAFCF69055551CA67E13DD0011AE196DEA731AE0A5FCC7C277E109C7",
+    "production_dependency_instances": 253,
+    "audit": { "critical": 0, "high": 1, "moderate": 2, "total": 3 }
+  },
+  "tests": {
+    "poc": { "passed": 7, "total": 7 },
+    "frontend": { "passed": 154, "total": 154 },
+    "python": { "passed": 338, "skipped": 1, "total": 339 },
+    "vite_production_build": "passed",
+    "rust_custom_protocol_check": "passed",
+    "python_compileall": "passed"
+  },
+  "screenshots": [
+    {
+      "path": "artifacts/excalidraw-spatial-poc/viewport-1440x900.png",
+      "sha256": "B4C40E75937940E267679F340EDD19C8A7E707100603FEC50A8D23B1C03DD80E"
+    },
+    {
+      "path": "artifacts/excalidraw-spatial-poc/viewport-1280x720.png",
+      "sha256": "0EE5D963559732BDD9F37C3DC1CF94D5B6641E0E1B1D947825A7ADD3983CAA97"
+    },
+    {
+      "path": "artifacts/excalidraw-spatial-poc/viewport-960x600.png",
+      "sha256": "F8C2421CDD8CF394A1DBE358E8BE1899A97A38E8132D8918C06C21AF96AF6F28"
+    }
+  ]
+}

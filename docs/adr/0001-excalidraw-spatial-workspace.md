@@ -13,7 +13,7 @@
 ## 决策
 
 1. 空间画布采用 `@excalidraw/excalidraw@0.18.1`，上游标签 `v0.18.1` 对应提交 `a2ec2889babf7d2295469c6d90ebe77fae57df84`。
-2. 固定 React peer runtime 为 `react@19.2.8` 和 `react-dom@19.2.8`。版本必须写入根 `package.json` 和 `package-lock.json`，禁止范围升级。
+2. 固定 React peer runtime 为 `react@18.3.1` 和 `react-dom@18.3.1`。Excalidraw 虽声明支持 React 19，但其锁定的 Radix Tabs peer 只接受 React 16–18；PoC 不允许用强制安装掩盖该冲突。PoC 先锁入原型自己的 `package.json` 和 `package-lock.json`，生产接入阶段再锁入仓库根 package/lock，禁止范围升级。
 3. Excalidraw 只负责平移缩放、选择、Frame、分组、锁定、层级、对齐、连线、文字、图片、可嵌入视频节点和空间布局。
 4. Fabric.js `7.4.0` 继续作为单张图片精确编辑器，独占 ROI、Mask、局部精修、扩图边界、严格选区外零差异、原始像素导出和逐像素合成。
 5. Excalidraw 通过公开 API 集成，只使用 `customData`、`onChange`、`renderEmbeddable`、公开 scene/file API 和应用侧组件；不修改 `node_modules`，不复制上游内部实现。
@@ -54,11 +54,11 @@
 | 组件 | 固定版本 | 许可证 | 源码 |
 | --- | --- | --- | --- |
 | Excalidraw | 0.18.1 | MIT | https://github.com/excalidraw/excalidraw/tree/v0.18.1 |
-| React | 19.2.8 | MIT | https://github.com/facebook/react/tree/v19.2.8 |
-| React DOM | 19.2.8 | MIT | https://github.com/facebook/react/tree/v19.2.8 |
+| React | 18.3.1 | MIT | https://github.com/facebook/react/tree/v18.3.1 |
+| React DOM | 18.3.1 | MIT | https://github.com/facebook/react/tree/v18.3.1 |
 | Fabric.js | 7.4.0 | MIT | https://github.com/fabricjs/fabric.js/tree/v7.4.0 |
 
-许可证全文进入根 `THIRD_PARTY_NOTICES.md` 和随应用分发的 `src/public/THIRD_PARTY_NOTICES.txt`。PoC 安装依赖后还必须对锁定依赖树执行许可证与漏洞审计。
+许可证全文进入根 `THIRD_PARTY_NOTICES.md` 和随应用分发的 `src/public/THIRD_PARTY_NOTICES.txt`。PoC 安装依赖后还必须对锁定依赖树执行许可证与漏洞审计。当前残余审计告警来自隐藏的 Mermaid 转换链及其 `nanoid@4.0.2`；在上游提供兼容修复前隐藏入口、拒绝不可信 Mermaid 输入并保留风险记录，不用跨大版本 override 破坏锁定实现。
 
 ## 回滚
 

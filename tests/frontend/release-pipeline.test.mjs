@@ -80,7 +80,7 @@ test('production frontend carries pinned third-party license notices', () => {
   assert.match(notices, /Excalidraw 0\.18\.1/);
   assert.match(notices, /github\.com\/excalidraw\/excalidraw\/tree\/v0\.18\.1/);
   assert.match(notices, /Copyright \(c\) 2020 Excalidraw/);
-  assert.match(notices, /React 19\.2\.8 and React DOM 19\.2\.8/);
+  assert.match(notices, /React 18\.3\.1 and React DOM 18\.3\.1/);
   assert.match(notices, /Copyright \(c\) Meta Platforms, Inc\. and affiliates\./);
   assert.match(notices, /Fabric\.js 7\.4\.0/);
   assert.match(notices, /Copyright \(c\) 2016-present Andrea Bogazzi/);

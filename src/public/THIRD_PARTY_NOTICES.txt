@@ -27,8 +27,8 @@ SOFTWARE.
 
 -------------------------------------------------------------------------------
 
-React 19.2.8 and React DOM 19.2.8
-https://github.com/facebook/react/tree/v19.2.8
+React 18.3.1 and React DOM 18.3.1
+https://github.com/facebook/react/tree/v18.3.1
 
 MIT License
 

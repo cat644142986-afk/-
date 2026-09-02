@@ -1,8 +1,8 @@
 # Product Atelier 完整产品与开发执行总计划
 
 > 首次制定：2026-08-22；最近校准：2026-09-02<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `93539f0c9ec857d22d3751bb836ff722579cd8db`，contract `2026-09-02.3`、SQLite schema v7、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo 和 outpaint 只写新增区域均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。同一 artifact 的 NSIS 已完成重建、隔离安装、安装态应用/sidecar/schema-outpaint 门禁、静默卸载和快捷方式恢复，形成未签名内部候选；代码签名的一键构建、先签后记 manifest、验签、隔离安装与失败保护也已固化，但由于没有外部代码签名证书，仍不能生成公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0–G3 已完成并正式发布，`app.js` 低耦合拆分与生产视觉 token 已在 G0 关闭。G4 情境式创作副驾继续等待用户重新确认预算；当前执行游标转为不依赖 Agent、付费 API 或大型模型的 G5 确定性质量门禁基础。<br>
-> 适用分支：`codex/master-roadmap-phase-0-1`<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `93539f0c9ec857d22d3751bb836ff722579cd8db`，contract `2026-09-02.3`、SQLite schema v7、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo 和 outpaint 只写新增区域均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。同一 artifact 的 NSIS 已完成重建、隔离安装、安装态应用/sidecar/schema-outpaint 门禁、静默卸载和快捷方式恢复，形成未签名内部候选；代码签名的一键构建、先签后记 manifest、验签、隔离安装与失败保护也已固化，但由于没有外部代码签名证书，仍不能生成公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0–G3 已完成并正式发布，`app.js` 低耦合拆分与生产视觉 token 已在 G0 关闭。G4 情境式创作副驾继续等待用户重新确认预算；用户于 2026-09-02 把独立无限画布提升为当前优先级，G1C 的 ADR 和隔离 PoC 已完成，下一游标为生产一级入口与懒加载边界，G5 确定性质检基础顺延。<br>
+> 当前开发分支：`codex/excalidraw-infinite-canvas`（基于 `codex/master-roadmap-phase-0-1` 的 `9faf87e`）<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
 > 本文定位：Product Atelier 后续开发的唯一主路线图；专项文档补充细节，但不得与本文冲突。
@@ -1750,9 +1750,10 @@ Product Atelier 的长期定位收敛为：**以无限画布为核心，以商�
 
 | 项目 | 当前决定 | 已核对边界 |
 |---|---|---|
-| Fabric.js | G1A 已通过，G1B 唯一画布实现 | MIT；只负责对象、图层、选择、变换和序列化；独立性能原型已通过，生产接入仍受 SQLite、命令与导出门禁约束 |
+| Fabric.js | G1B 已发布，继续作为唯一像素精修引擎 | MIT；独占 ROI、Mask、局部精修、扩图边界、逐像素合成和原始像素导出；不再承担多媒体空间组织 |
+| Excalidraw | G1C 空间工作区选型，隔离 PoC 已通过 | 固定 0.18.1 / MIT；只负责平移缩放、选择、Frame、分组、锁定、层级、对齐、连线、文字、代理图、视频封面和空间布局；通过公开 API 集成 |
 | Konva | Fabric 失败后的替代 PoC | 仓库 LICENSE 为 MIT；不与 Fabric 并行维护 |
-| Excalidraw / miniPaint / TOAST UI | 只借交互和工具逻辑 | 不整体嵌入，不为此迁移 React 或锁死旧 Fabric |
+| miniPaint / TOAST UI | 只借交互和工具逻辑 | 不整体嵌入，不替换 Excalidraw 空间层或 Fabric 像素层 |
 | tldraw | 排除正式接入 | 当前为自定义生产许可并要求许可条件，不符合当前低成本与 Vanilla JS 路线 |
 | Pydantic AI | G4 副驾框架候选 | MIT；只有薄适配层验证优于自有结构化调用时才引入 |
 | SAM 2 | G3 可选能力包候选 | Apache-2.0；只辅助点选/框选生成蒙版，不宣传为自动理解商品 |
@@ -1886,4 +1887,64 @@ G1–G8 预计 `330–560` 小时有效开发与验证，G0 另需 `12–24` 小
 - 完整门禁：前端 `154/154`；Python 共运行 `339` 项（`338` 通过、`1` 项平台预期跳过）；Vite production build、Rust/Tauri locked custom-protocol check、Python compileall、全量 JavaScript syntax、PowerShell parser 和 Git whitespace 全绿。当前正式 `93539f0 / contract .3 / schema v7` 另行通过 sidecar、应用启动与 schema/outpaint 三重 smoke，正式目录未被本检查点修改。
 - 公开发行唯一剩余条件是用户取得可用代码签名证书及其时间戳服务配置；证书到位后运行 `build-signed-installer.bat`，以脚本最终输出的新 SHA-256、签名主体、时间戳和安装态证据关闭门禁。当前 `NotSigned` 内部候选不能改名冒充公开包。
 
-G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁移、candidate-first Windows 提升、正式目录、快捷方式和同一身份 NSIS 隔离安装复验；默认生图决策、`app.js` 低耦合拆分、生产视觉 token 和无需证书的签名准备均已关闭。G4 因 Agent 预算未重新授权继续暂停。下一执行入口转为 G5 的零付费确定性基础：先冻结 `QualityIssue` 证据、严重度、问题区域、未验证轴和建议动作合同，并把现有可验证的尺寸、安全区、透明通道、SKU/数量声明等事实接入结构化质量报告；不启动 OCR/VLM/IQA 模型，不自动付费重做。代码签名证书、模型下载和付费 API 继续作为外部或未授权事项单独保留，不能阻断这一游标。
+G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁移、candidate-first Windows 提升、正式目录、快捷方式和同一身份 NSIS 隔离安装复验；默认生图决策、`app.js` 低耦合拆分、生产视觉 token 和无需证书的签名准备均已关闭。G4 因 Agent 预算未重新授权继续暂停。用户在 2026-09-02 明确把独立无限画布提升为当前优先级，因此 G5 的零付费确定性质检基础暂存为后续游标；当前先执行 G1C，且不调用付费 API、不下载大型模型、不修改正式便携版。
+
+### 13.8 G1C 独立无限画布工作区（当前优先级）
+
+#### 目标与引擎边界
+
+- 左侧主任务栏新增“无限画布”一级入口，进入后占据主窗口并默认收起右侧检查器；Studio 顶部移除“自由画布”，快捷处理继续服务一次性任务。
+- Excalidraw 是空间组织引擎；Fabric 是单张图片精确像素编辑器。两个引擎不复制功能，不修改 `node_modules`，不复制 Excalidraw 内部实现。
+- 复用 CanvasDocument、SQLite 不可变版本、素材、任务、trace、ProductProfile、结果血缘和正式导出管线，不建立第二套业务账本。
+- scene 只保存布局、视口、元素和业务引用；`customData` 至少保存 `asset_id / result_id / task_id / product_profile_version_id / lineage_parent_id`。原图、视频和 Base64 不进入 scene。
+
+#### IC0：选型 ADR 与许可证（已完成）
+
+- 独立分支：`codex/excalidraw-infinite-canvas`；基线 `9faf87e`；ADR 提交 `4ef5392`。
+- 固定 Excalidraw 0.18.1、React/React DOM 18.3.1，补全 MIT NOTICE 与源码链接；tldraw 因生产许可排除，InvokeAI 仅作交互参考。
+- 正式保护基线：artifact `93539f0`、contract `2026-09-02.3`、schema v7、358.56 MiB。
+
+#### IC1：隔离 PoC（已通过，待检查点提交）
+
+- 200 张代理图、20 个视频封面、5 个 Frame、40 条血缘和 270 元素已通过；`renderEmbeddable`、完整 `customData`、保存恢复、内容指纹防抖和无 Base64/机器路径 scene 已验证。
+- 真实浏览器通过视频 0→1 按需加载、播放/停止、绘制、拖动、撤销/重做和重启恢复；1440×900、1280×720、960×600 均无页面溢出、控制台 0 error/warning。
+- PoC dist 为 20.14 MiB；最坏静态相加后正式目录约 378.70 MiB，低于 450 MiB。Mermaid 类按需 chunk 约 4.03 MiB，字体 12.58 MiB，下一阶段必须证明懒加载边界。
+- 详细证据：`docs/excalidraw-spatial-poc-checkpoint-2026-09-02.md` 与 `artifacts/excalidraw-spatial-poc/metrics.json`。
+
+#### IC2：生产入口、懒加载与画布列表
+
+- 根依赖锁定后以动态 `import()` 加载 React/Excalidraw island；快捷处理冷启动的 network/execute 记录中不得出现画布 chunk。
+- 新增左侧一级入口，移除 Studio 顶部自由画布切换；画布页只保留全局左栏，检查器默认收起。
+- 提供画布列表、新建、重命名、最近打开和缩略图；先接隔离内存 adapter，schema 迁移前不得写正式账本。
+- 门禁：生产 Vite chunk 边界、快捷处理启动基线、三档浏览器、键盘焦点、reduced motion、返回现场、G1-G3 前端回归。回滚点为 IC1 标签。
+
+#### IC3：schema v8 与不可变 scene 版本
+
+- 冻结 scene envelope、业务引用、乐观并发、内容指纹、缩略图和视口合同；只允许从 schema v7 可恢复迁移。
+- `onChange` 防抖追加 CanvasDocument 不可变版本；重启恢复位置、缩放、Frame、分组、锁定、连线和业务关系。
+- 代理图和视频封面可重建；4K 原图、视频字节、Base64、绝对路径和凭据由合同拒绝。
+- 门禁：迁移/重启/冲突/撤销重做/损坏 scene/旧版本回读；只使用临时 SQLite 和合成数据，不读取正式用户账本。
+
+#### IC4：业务内容与 Fabric 精修桥
+
+- 快捷处理结果增加“发送到画布”；素材库、历史结果、任务中心支持拖入/发送，图片、视频、文字、参考图、任务和结果可自由放置。
+- 图片选中后显示情境工具：抠图、白底图、扩图、局部修改、生图、生视频、对比、导出；不兼容对象不显示禁用表单列。
+- 双击图片或“精细修改”进入现有 Fabric，完成后返回原画布，在父节点右侧创建新版本和血缘连线，绝不覆盖父节点。
+- 门禁：统一命令幂等、原始像素导出、严格选区外零差异、父子版本、失败不污染、返回位置和 G1-G3 全量回归。
+
+#### IC5：视频第一阶段
+
+- 视频节点通过 `renderEmbeddable` 显示封面、时长、尺寸和状态，只在选中或主动播放时加载，不自动播放全部视频。
+- 图片可发起图生视频，参数包括提示词、比例、时长、首尾帧和运动强度；任务接现有队列、进度、取消、失败解释、重试和结果回填。
+- 首个 provider 只接已授权云端接口或离线假处理器；ComfyUI 仅作可选外部能力包，不打包模型。第一阶段不做多轨时间线。
+- 门禁：零付费离线任务闭环、取消/重试/重启恢复、版本/血缘、封面和原视频导出、20 视频节点无自动播放。
+
+#### IC6：候选构建与正式验收
+
+- 完成单元测试、schema 迁移、重启恢复、撤销重做、原图导出、严格选区外零差异、200 代理图/20 视频封面和三档正式 WebView/DPI。
+- 记录 artifact、contract、schema、测试数量、包体积和回滚标签；正式便携目录必须小于 450 MiB，禁止图像或视频大模型。
+- 只有候选双 smoke、正式 WebView 截图、真实交互、外部备份和身份绑定事务全部通过，才允许按 candidate-first 流程申请提升正式便携版。
+
+#### 当前游标
+
+提交并推送 IC1 检查点后进入 IC2。G4 Agent、G5 质检、公开签名证书、多轨时间线和本地大模型均不在当前游标内，不能阻塞无限画布确定性工作。
