@@ -24,6 +24,15 @@ class OutputRootError(ValueError):
         self.message = message
 
 
+def _native_io_path(path: str | Path) -> str:
+    value = os.path.abspath(os.fspath(path))
+    if os.name != "nt" or value.startswith("\\\\?\\"):
+        return value
+    if value.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + value[2:]
+    return "\\\\?\\" + value
+
+
 def canonicalize_output_root(value: str | Path) -> Path:
     candidate = Path(value).expanduser()
     try:
@@ -156,15 +165,20 @@ def publish_staged_file(source: str | Path, target: str | Path) -> Path:
     """Copy across volumes and expose the final name with one atomic replace."""
     source_path = Path(source)
     target_path = Path(target)
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(_native_io_path(target_path.parent), exist_ok=True)
     temporary = target_path.parent / f".{target_path.name}.{uuid.uuid4().hex}.tmp"
     try:
-        with open(source_path, "rb") as source_handle, open(temporary, "xb") as target_handle:
+        with open(_native_io_path(source_path), "rb") as source_handle, open(
+            _native_io_path(temporary), "xb"
+        ) as target_handle:
             shutil.copyfileobj(source_handle, target_handle, length=1024 * 1024)
             target_handle.flush()
             os.fsync(target_handle.fileno())
-        os.replace(temporary, target_path)
-        source_path.unlink()
+        os.replace(_native_io_path(temporary), _native_io_path(target_path))
+        os.unlink(_native_io_path(source_path))
         return target_path
     finally:
-        temporary.unlink(missing_ok=True)
+        try:
+            os.unlink(_native_io_path(temporary))
+        except FileNotFoundError:
+            pass

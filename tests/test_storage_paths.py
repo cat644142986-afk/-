@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
 from python.storage_paths import (
     OutputRootError,
+    _native_io_path,
     job_delivery_directory,
     output_root_status,
     publish_staged_file,
@@ -14,6 +16,14 @@ from python.storage_paths import (
 
 
 class StoragePathTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows extended paths only")
+    def test_native_io_path_uses_extended_length_windows_syntax(self) -> None:
+        local = _native_io_path(Path("C:/") / ("a" * 270))
+        unc = _native_io_path(Path("//server/share") / ("b" * 270))
+
+        self.assertTrue(local.startswith("\\\\?\\C:\\"))
+        self.assertTrue(unc.startswith("\\\\?\\UNC\\server\\share\\"))
+
     def test_validation_accepts_a_writable_folder_and_rejects_unsafe_roots(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

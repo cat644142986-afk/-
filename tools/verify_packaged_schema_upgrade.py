@@ -144,13 +144,17 @@ def _wait_for_job(port: int, job_id: str, *, timeout: float = 30.0) -> dict[str,
     while time.monotonic() < deadline:
         response = _get_json(port, f"/api/jobs/{job_id}", timeout=5)
         last = response.get("job") if isinstance(response, dict) else None
-        if isinstance(last, dict) and last.get("status") in {
-            "completed",
-            "partial",
-            "failed",
-            "canceled",
-        }:
+        if isinstance(last, dict) and last.get("status") in {"completed", "partial"}:
             return last
+        if isinstance(last, dict) and last.get("status") in {"failed", "canceled"}:
+            items = list(last.get("items") or [])
+            first = items[0] if items else {}
+            raise RuntimeError(
+                "candidate video job failed: "
+                f"status={last.get('status')} "
+                f"code={first.get('error_code') or 'UNKNOWN'} "
+                f"message={first.get('error_message') or ''}"
+            )
         time.sleep(0.1)
     raise RuntimeError(f"candidate video job did not settle: {last}")
 
