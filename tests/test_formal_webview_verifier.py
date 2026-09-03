@@ -370,6 +370,38 @@ class FormalWebViewVerifierTests(unittest.TestCase):
                     process_factory=lambda _pid: incomplete_process,
                 )
 
+    @unittest.skipUnless(os.name == "nt", "Windows extended-length paths are Windows-only")
+    def test_app_identity_accepts_extended_length_isolation_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project, executable, data_root, _evidence_parent = self.make_layout(root)
+            candidate = self.bind_candidate(project, executable)
+            isolation = verifier.validate_isolation_binding(data_root, candidate)
+            environment = self.isolated_environment(isolation)
+            for name in (
+                "PRODUCT_ATELIER_DATA_DIR",
+                "PRODUCT_ATELIER_LEGACY_CONFIG",
+                "PRODUCT_ATELIER_KNOWLEDGE_BASE",
+                "PRODUCT_ATELIER_WEBVIEW_DATA_DIR",
+            ):
+                environment[name] = rf"\\?\{environment[name]}"
+            process = FakeProcess(
+                101,
+                executable,
+                create_time=1234.5,
+                environment=environment,
+            )
+
+            identity = verifier.validate_app_process_identity(
+                101,
+                1234.5,
+                candidate,
+                isolation,
+                process_factory=lambda _pid: process,
+            )
+
+            self.assertEqual(identity.pid, 101)
+
     def test_cdp_listener_has_webview_command_line_and_app_ancestry_proof(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

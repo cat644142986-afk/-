@@ -233,7 +233,14 @@ class EvidenceStagingBinding:
 
 
 def _normalized_path(path: str | os.PathLike[str]) -> str:
-    resolved = Path(path).resolve(strict=False)
+    value = os.fspath(path)
+    if os.name == "nt":
+        folded = value.casefold()
+        if folded.startswith("\\\\?\\unc\\"):
+            value = "\\\\" + value[8:]
+        elif folded.startswith("\\\\?\\"):
+            value = value[4:]
+    resolved = Path(value).resolve(strict=False)
     return os.path.normcase(str(resolved)).casefold()
 
 

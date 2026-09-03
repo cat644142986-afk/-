@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import math
@@ -32,8 +33,19 @@ CANONICAL_CANDIDATE_RELATIVE = Path("build") / "portable-candidate-current"
 SIDECAR_RELATIVE_PATH = Path("python-server") / "python-server.exe"
 ISOLATED_DATA_PREFIX = "ProductAtelier-launch-and-shoot-"
 WEBVIEW_ARGUMENTS_VARIABLE = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
+WEBVIEW_PROCESS_NAME = "msedgewebview2.exe"
+WEBVIEW_USER_DATA_ARGUMENT = "--user-data-dir"
+WEBVIEW_RUNTIME_DATA_DIRECTORY_NAME = "EBWebView"
 VERIFICATION_RECEIPT_NAME = "verification-receipt.json"
 LAUNCHER_FINALIZATION_NAME = "launcher-finalization.json"
+CLEANUP_RENAME_RETRY_ATTEMPTS = 51
+CLEANUP_RENAME_RETRY_INTERVAL_SECONDS = 0.1
+CLEANUP_RETRYABLE_ERRNOS = frozenset({errno.EACCES, errno.EBUSY, errno.EPERM})
+CLEANUP_RETRYABLE_WINERRORS = frozenset({5, 32, 33})
+WEBVIEW_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+WEBVIEW_SHUTDOWN_POLL_INTERVAL_SECONDS = 0.1
+NATURAL_APP_EXIT_TIMEOUT_SECONDS = 45.0
+NATURAL_APP_EXIT_POLL_INTERVAL_SECONDS = 0.1
 
 
 class LaunchSafetyError(RuntimeError):
@@ -50,6 +62,14 @@ class ProcessIdentity:
 class TrackedSidecar:
     process: psutil.Process
     identity: ProcessIdentity
+
+
+@dataclass(frozen=True)
+class GracefulCloseBinding:
+    app_identity: ProcessIdentity
+    sidecars: tuple[TrackedSidecar, ...]
+    webviews: tuple[ProcessIdentity, ...]
+    armed_at: float
 
 
 @dataclass(frozen=True)
@@ -341,8 +361,20 @@ def acquire_candidate_tree_locks(
     return locks
 
 
+def _without_windows_extended_prefix(path: str | os.PathLike[str]) -> str:
+    value = os.fspath(path)
+    if os.name != "nt":
+        return value
+    folded = value.casefold()
+    if folded.startswith("\\\\?\\unc\\"):
+        return "\\\\" + value[8:]
+    if folded.startswith("\\\\?\\"):
+        return value[4:]
+    return value
+
+
 def _normalized_path(path: str | os.PathLike[str]) -> str:
-    requested = Path(path)
+    requested = Path(_without_windows_extended_prefix(path))
     if not requested.is_absolute():
         raise LaunchSafetyError(f"Path must be absolute: {path}")
     resolved = requested.resolve(strict=False)
@@ -350,7 +382,7 @@ def _normalized_path(path: str | os.PathLike[str]) -> str:
 
 
 def _normalized_lexical_path(path: str | os.PathLike[str]) -> str:
-    requested = Path(path)
+    requested = Path(_without_windows_extended_prefix(path))
     if not requested.is_absolute():
         raise LaunchSafetyError(f"Path must be absolute: {path}")
     return os.path.normcase(os.path.abspath(os.fspath(requested))).casefold()
@@ -534,6 +566,22 @@ def build_child_environment(
     knowledge_base.mkdir(exist_ok=False)
     webview_data = resolved_data_dir / "webview2-user-data"
     webview_data.mkdir(exist_ok=False)
+    return _build_child_environment_for_bound_directories(
+        resolved_data_dir,
+        legacy_config,
+        knowledge_base,
+        webview_data,
+        cdp_port,
+    )
+
+
+def _build_child_environment_for_bound_directories(
+    resolved_data_dir: Path,
+    legacy_config: Path,
+    knowledge_base: Path,
+    webview_data: Path,
+    cdp_port: int | None,
+) -> dict[str, str]:
     environment = os.environ.copy()
     for name in tuple(environment):
         normalized_name = name.casefold()
@@ -555,6 +603,28 @@ def build_child_environment(
     environment["PRODUCT_ATELIER_WEBVIEW_DATA_DIR"] = str(webview_data)
     environment["WEBVIEW2_USER_DATA_FOLDER"] = str(webview_data)
     return environment
+
+
+def rebuild_child_environment(
+    data_dir: Path,
+    cdp_port: int | None = None,
+) -> dict[str, str]:
+    resolved_data_dir = data_dir.resolve(strict=True)
+    _require_regular_directory(resolved_data_dir, "Isolated data directory")
+    legacy_config = resolved_data_dir / "no-legacy-config.json"
+    if legacy_config.exists() or _is_link_like(legacy_config):
+        raise LaunchSafetyError("Isolated legacy-config sentinel must not exist")
+    knowledge_base = resolved_data_dir / "no-knowledge-vault"
+    webview_data = resolved_data_dir / "webview2-user-data"
+    _require_regular_directory(knowledge_base, "Isolated knowledge directory")
+    _require_regular_directory(webview_data, "WebView2 data directory")
+    return _build_child_environment_for_bound_directories(
+        resolved_data_dir,
+        legacy_config,
+        knowledge_base,
+        webview_data,
+        cdp_port,
+    )
 
 
 def create_isolated_data_directory() -> IsolatedDataDirectory:
@@ -606,12 +676,39 @@ def cleanup_isolated_data_directory(location: IsolatedDataDirectory) -> None:
     quarantine = location.temp_root / f"{ISOLATED_DATA_PREFIX}cleanup-{uuid.uuid4().hex}"
     if quarantine.exists() or _is_link_like(quarantine):
         raise LaunchSafetyError(f"Cleanup quarantine already exists: {quarantine}")
-    os.replace(location.path, quarantine)
+    source_identity = _path_identity(location.path, "isolated data directory")
+    for attempt in range(CLEANUP_RENAME_RETRY_ATTEMPTS):
+        try:
+            os.replace(location.path, quarantine)
+            break
+        except OSError as error:
+            retryable = (
+                error.errno in CLEANUP_RETRYABLE_ERRNOS
+                or getattr(error, "winerror", None) in CLEANUP_RETRYABLE_WINERRORS
+            )
+            if not retryable or attempt + 1 >= CLEANUP_RENAME_RETRY_ATTEMPTS:
+                raise LaunchSafetyError(
+                    f"Could not quarantine isolated data directory {location.path}: {error}"
+                ) from error
+            _validate_isolated_data_directory(location)
+            if _path_identity(location.path, "isolated data directory") != source_identity:
+                raise LaunchSafetyError(
+                    "Isolated data directory identity changed during cleanup retry"
+                )
+            if quarantine.exists() or _is_link_like(quarantine):
+                raise LaunchSafetyError(
+                    f"Cleanup quarantine appeared during retry: {quarantine}"
+                )
+            time.sleep(CLEANUP_RENAME_RETRY_INTERVAL_SECONDS)
     quarantined = IsolatedDataDirectory(quarantine, location.temp_root)
     try:
         # Validate again after the atomic rename. If the source was exchanged
         # between validation and rename, never recurse into the moved object.
         _validate_isolated_data_directory(quarantined)
+        if _path_identity(quarantine, "cleanup quarantine") != source_identity:
+            raise LaunchSafetyError(
+                "Isolated data directory identity changed before recursive delete"
+            )
         shutil.rmtree(quarantine)
     except Exception as error:
         raise LaunchSafetyError(
@@ -663,9 +760,12 @@ class CandidateLaunchSession:
         self.candidate_tree_sha256: str | None = None
         self.data_dir: Path | None = None
         self.webview_data_dir: Path | None = None
+        self.knowledge_base_dir: Path | None = None
+        self.legacy_config_path: Path | None = None
         self.sidecar_identity: VerifiedSidecarIdentity | None = None
         self.data_dir_identity: tuple[int, int] | None = None
         self.webview_data_dir_identity: tuple[int, int] | None = None
+        self.knowledge_base_dir_identity: tuple[int, int] | None = None
         self.environment: dict[str, str] | None = None
         self.closed_cleanly = False
 
@@ -678,6 +778,8 @@ class CandidateLaunchSession:
         self._runtime_cleanup_attempted = False
         self._runtime_cleanup_errors: tuple[str, ...] = ()
         self._publication_ready = False
+        self._restart_count = 0
+        self._graceful_close_binding: GracefulCloseBinding | None = None
 
     @property
     def pid(self) -> int:
@@ -707,6 +809,297 @@ class CandidateLaunchSession:
             and self._tree_locks is not None
             and self._promotion_context is not None
         )
+
+    @property
+    def restart_count(self) -> int:
+        return self._restart_count
+
+    def _launch_runtime(self, snapshot: CandidateSnapshot) -> None:
+        if self.process is not None or self.process_identity is not None:
+            raise LaunchSafetyError("Candidate runtime is already active")
+        if self.environment is None:
+            raise LaunchSafetyError("Candidate runtime environment is unavailable")
+        self.process = subprocess.Popen(
+            [str(snapshot.executable)],
+            cwd=str(snapshot.candidate_dir),
+            env=self.environment,
+        )
+        self.process_identity = capture_launched_app_identity(
+            self.process,
+            snapshot.executable,
+        )
+        running_snapshot = validated_candidate_snapshot(
+            snapshot.executable,
+            snapshot.git_commit,
+            snapshot.app_sha256,
+            snapshot.tree_sha256,
+        )
+        if running_snapshot != snapshot:
+            raise LaunchSafetyError("Candidate identity changed during process launch")
+
+    def _stop_current_runtime(self) -> list[str]:
+        if self.process is None:
+            if self.process_identity is not None:
+                return ["candidate process handle is missing while identity remains"]
+            return []
+        if self.sidecar_identity is None:
+            return ["candidate sidecar identity is unavailable"]
+        if (
+            self._graceful_close_binding is not None
+            and self.process.poll() is not None
+        ):
+            try:
+                self._complete_armed_app_exit(require_success=False)
+            except Exception as error:
+                return [f"armed graceful cleanup: {error}"]
+            return []
+        errors = cleanup_launched_processes(
+            self.process,
+            self.process_identity,
+            self.sidecar_identity.path,
+        )
+        if not errors:
+            self.process = None
+            self.process_identity = None
+            self._graceful_close_binding = None
+        return errors
+
+    def _assert_isolated_data_binding(self) -> None:
+        required = (
+            self._isolated_location,
+            self.data_dir,
+            self.webview_data_dir,
+            self.knowledge_base_dir,
+            self.legacy_config_path,
+            self.data_dir_identity,
+            self.webview_data_dir_identity,
+            self.knowledge_base_dir_identity,
+        )
+        if any(value is None for value in required):
+            raise LaunchSafetyError("Persistent candidate isolation binding is incomplete")
+        _validate_isolated_data_directory(self._isolated_location)  # type: ignore[arg-type]
+        identities = (
+            (
+                self.data_dir,
+                self.data_dir_identity,
+                "isolated data directory",
+            ),
+            (
+                self.webview_data_dir,
+                self.webview_data_dir_identity,
+                "WebView2 data directory",
+            ),
+            (
+                self.knowledge_base_dir,
+                self.knowledge_base_dir_identity,
+                "isolated knowledge directory",
+            ),
+        )
+        for path, expected, label in identities:
+            if _path_identity(path, label) != expected:  # type: ignore[arg-type]
+                raise LaunchSafetyError(f"{label} identity changed before candidate restart")
+        if self.legacy_config_path.exists() or _is_link_like(self.legacy_config_path):
+            raise LaunchSafetyError("Isolated legacy-config sentinel appeared before restart")
+
+    def arm_graceful_close(
+        self,
+        *,
+        timeout: float = 45.0,
+        poll_interval: float = 0.1,
+    ) -> GracefulCloseBinding:
+        """Bind live child identities before a human closes the candidate window."""
+        if not self._entered or self._closed:
+            raise LaunchSafetyError("Candidate session is not active")
+        if self._runtime_cleanup_attempted or self._publication_ready:
+            raise LaunchSafetyError("Candidate session has already entered final cleanup")
+        if self._graceful_close_binding is not None:
+            raise LaunchSafetyError("Candidate graceful close is already armed")
+        if timeout <= 0 or poll_interval <= 0:
+            raise LaunchSafetyError("Graceful close wait values must be positive")
+        if (
+            self.process is None
+            or self.process_identity is None
+            or self.sidecar_identity is None
+            or self.webview_data_dir is None
+        ):
+            raise LaunchSafetyError("Candidate graceful close binding is unavailable")
+
+        assert_launched_app_identity(self.process, self.process_identity)
+        deadline = time.monotonic() + timeout
+        while True:
+            observed_at = time.time()
+            sidecars = matching_sidecars(
+                expected_executable=self.sidecar_identity.path,
+                expected_parent_pid=self.process_identity.pid,
+                earliest_create_time=self.process_identity.create_time,
+                latest_create_time=observed_at,
+            )
+            if len(sidecars) > 1:
+                raise LaunchSafetyError(
+                    "Candidate exposed more than one exact child sidecar before graceful close"
+                )
+            webviews = matching_webview_processes(self.webview_data_dir)
+            if len(sidecars) == 1 and webviews:
+                assert_launched_app_identity(self.process, self.process_identity)
+                binding = GracefulCloseBinding(
+                    app_identity=self.process_identity,
+                    sidecars=tuple(sidecars),
+                    webviews=tuple(webviews),
+                    armed_at=observed_at,
+                )
+                self._graceful_close_binding = binding
+                return binding
+            if time.monotonic() >= deadline:
+                raise LaunchSafetyError(
+                    "Candidate App, exact sidecar, and isolated WebView profile were not "
+                    "all observable before graceful close"
+                )
+            time.sleep(poll_interval)
+
+    def _wait_for_natural_app_exit(
+        self,
+        *,
+        timeout: float,
+        poll_interval: float,
+    ) -> int:
+        if timeout <= 0 or poll_interval <= 0:
+            raise LaunchSafetyError("Natural App exit wait values must be positive")
+        if self.process is None:
+            raise LaunchSafetyError("Candidate process handle is unavailable")
+        deadline = time.monotonic() + timeout
+        while True:
+            returncode = self.process.poll()
+            if returncode is not None:
+                return int(returncode)
+            if time.monotonic() >= deadline:
+                raise LaunchSafetyError(
+                    "Candidate App is still running; close it through the real "
+                    "application UI first"
+                )
+            time.sleep(poll_interval)
+
+    def _complete_armed_app_exit(self, *, require_success: bool) -> int:
+        binding = self._graceful_close_binding
+        if binding is None:
+            raise LaunchSafetyError("Candidate graceful close was not armed")
+        if self.process is None or self.process_identity is None:
+            raise LaunchSafetyError("Candidate process binding disappeared before graceful close")
+        if (
+            self.process_identity != binding.app_identity
+            or self.process.pid != binding.app_identity.pid
+        ):
+            raise LaunchSafetyError("Candidate App identity changed after graceful close was armed")
+        returncode = self.process.poll()
+        if returncode is None:
+            raise LaunchSafetyError("Candidate App has not exited after graceful close was armed")
+        if require_success and int(returncode) != 0:
+            raise LaunchSafetyError(
+                "Candidate App did not exit cleanly after the real UI close; "
+                f"returncode={returncode}"
+            )
+        if self.sidecar_identity is None or self.webview_data_dir is None:
+            raise LaunchSafetyError("Candidate child-process binding is unavailable")
+
+        cleanup_errors: list[str] = []
+        for tracked in binding.sidecars:
+            try:
+                if tracked_sidecar_is_current(
+                    tracked,
+                    expected_executable=self.sidecar_identity.path,
+                ):
+                    _stop_matching_sidecar(
+                        tracked,
+                        expected_executable=self.sidecar_identity.path,
+                        expected_parent_pid=None,
+                    )
+                if tracked_sidecar_is_current(
+                    tracked,
+                    expected_executable=self.sidecar_identity.path,
+                ):
+                    cleanup_errors.append(
+                        "armed candidate sidecar remained after graceful App exit: "
+                        f"PID {tracked.identity.pid}"
+                    )
+            except Exception as error:
+                cleanup_errors.append(
+                    f"armed sidecar PID {tracked.identity.pid}: {error}"
+                )
+
+        remaining = matching_sidecars(
+            expected_executable=self.sidecar_identity.path,
+            expected_parent_pid=binding.app_identity.pid,
+            earliest_create_time=binding.app_identity.create_time,
+            latest_create_time=time.time(),
+        )
+        armed_identities = {tracked.identity for tracked in binding.sidecars}
+        unbound = [
+            tracked.identity
+            for tracked in remaining
+            if tracked.identity not in armed_identities
+        ]
+        if unbound:
+            cleanup_errors.append(
+                "unbound candidate sidecar appeared after graceful close: "
+                + ", ".join(
+                    f"PID {identity.pid}@{identity.create_time}"
+                    for identity in unbound
+                )
+            )
+        if cleanup_errors:
+            raise LaunchSafetyError("; ".join(cleanup_errors))
+
+        wait_for_webview_processes_to_exit(self.webview_data_dir)
+        self._assert_isolated_data_binding()
+        self.process = None
+        self.process_identity = None
+        self._graceful_close_binding = None
+        return int(returncode)
+
+    def complete_graceful_close(
+        self,
+        *,
+        timeout: float = NATURAL_APP_EXIT_TIMEOUT_SECONDS,
+        poll_interval: float = NATURAL_APP_EXIT_POLL_INTERVAL_SECONDS,
+    ) -> int:
+        """Accept only a previously armed natural App exit and clean its bound children."""
+        if self._graceful_close_binding is None:
+            raise LaunchSafetyError("Candidate graceful close was not armed")
+        self._wait_for_natural_app_exit(
+            timeout=timeout,
+            poll_interval=poll_interval,
+        )
+        return self._complete_armed_app_exit(require_success=True)
+
+    def restart_with_same_data(
+        self,
+        *,
+        timeout: float = NATURAL_APP_EXIT_TIMEOUT_SECONDS,
+        poll_interval: float = NATURAL_APP_EXIT_POLL_INTERVAL_SECONDS,
+    ) -> "CandidateLaunchSession":
+        """Restart the verified candidate while retaining its bound isolated ledger."""
+        if not self._entered or self._closed:
+            raise LaunchSafetyError("Candidate session is not active")
+        if self._runtime_cleanup_attempted or self._publication_ready:
+            raise LaunchSafetyError("Candidate session has already entered final cleanup")
+        self.complete_graceful_close(
+            timeout=timeout,
+            poll_interval=poll_interval,
+        )
+        if self._candidate_snapshot is None or self.webview_data_dir is None:
+            raise LaunchSafetyError("Candidate restart binding is unavailable")
+        protection_errors = self._candidate_protection_errors()
+        if protection_errors:
+            raise LaunchSafetyError(
+                "Candidate protections changed before restart; "
+                + "; ".join(protection_errors)
+            )
+        if self.data_dir is None:
+            raise LaunchSafetyError("Candidate isolated data directory is unavailable")
+        self.environment = rebuild_child_environment(self.data_dir, self.cdp_port)
+        self._assert_isolated_data_binding()
+        self._launch_runtime(self._candidate_snapshot)
+        self._restart_count += 1
+        return self
 
     def __enter__(self) -> "CandidateLaunchSession":
         if self._entered or self._closed:
@@ -764,29 +1157,18 @@ class CandidateLaunchSession:
 
             self.environment = build_child_environment(location.path, self.cdp_port)
             self.webview_data_dir = location.path / "webview2-user-data"
+            self.knowledge_base_dir = location.path / "no-knowledge-vault"
+            self.legacy_config_path = location.path / "no-legacy-config.json"
             self.data_dir_identity = _path_identity(location.path, "isolated data directory")
             self.webview_data_dir_identity = _path_identity(
                 self.webview_data_dir,
                 "WebView2 data directory",
             )
-
-            self.process = subprocess.Popen(
-                [str(locked_snapshot.executable)],
-                cwd=str(locked_snapshot.candidate_dir),
-                env=self.environment,
+            self.knowledge_base_dir_identity = _path_identity(
+                self.knowledge_base_dir,
+                "isolated knowledge directory",
             )
-            self.process_identity = capture_launched_app_identity(
-                self.process,
-                locked_snapshot.executable,
-            )
-            running_snapshot = validated_candidate_snapshot(
-                locked_snapshot.executable,
-                locked_snapshot.git_commit,
-                locked_snapshot.app_sha256,
-                locked_snapshot.tree_sha256,
-            )
-            if running_snapshot != locked_snapshot:
-                raise LaunchSafetyError("Candidate identity changed during process launch")
+            self._launch_runtime(locked_snapshot)
             self._entered = True
             return self
         except BaseException as error:
@@ -805,17 +1187,10 @@ class CandidateLaunchSession:
             return list(self._runtime_cleanup_errors)
         self._runtime_cleanup_attempted = True
         cleanup_errors: list[str] = []
-        if self.process is not None and self.sidecar_identity is not None:
-            try:
-                cleanup_errors.extend(
-                    cleanup_launched_processes(
-                        self.process,
-                        self.process_identity,
-                        self.sidecar_identity.path,
-                    )
-                )
-            except Exception as error:
-                cleanup_errors.append(f"process cleanup raised unexpectedly: {error}")
+        try:
+            cleanup_errors.extend(self._stop_current_runtime())
+        except Exception as error:
+            cleanup_errors.append(f"process cleanup raised unexpectedly: {error}")
 
         if self._isolated_location is not None:
             if cleanup_errors:
@@ -1019,6 +1394,42 @@ def process_matches_sidecar(
     return current is not None and current.identity == tracked.identity
 
 
+def tracked_sidecar_is_current(
+    tracked: TrackedSidecar,
+    *,
+    expected_executable: Path,
+) -> bool:
+    """Revalidate an armed sidecar without ever following a reused PID."""
+    process = tracked.process
+    try:
+        if int(process.pid) != tracked.identity.pid:
+            return False
+        create_time = float(process.create_time())
+        if create_time != tracked.identity.create_time:
+            return False
+        executable = process.exe()
+        if not executable:
+            raise LaunchSafetyError(
+                f"Armed sidecar PID {tracked.identity.pid} exposed no executable path"
+            )
+        if not process.is_running():
+            return False
+    except psutil.NoSuchProcess:
+        return False
+    except (OSError, ValueError, psutil.Error, LaunchSafetyError) as error:
+        if isinstance(error, LaunchSafetyError):
+            raise
+        raise LaunchSafetyError(
+            f"Could not revalidate armed sidecar PID {tracked.identity.pid}: {error}"
+        ) from error
+    try:
+        return _normalized_path(executable) == _normalized_path(expected_executable)
+    except (OSError, LaunchSafetyError) as error:
+        raise LaunchSafetyError(
+            f"Could not compare armed sidecar PID {tracked.identity.pid} executable: {error}"
+        ) from error
+
+
 def matching_sidecars(
     *,
     expected_executable: Path,
@@ -1042,6 +1453,104 @@ def matching_sidecars(
     return matches
 
 
+def _command_line_option_values(command_line: Sequence[str], name: str) -> list[str]:
+    normalized_name = name.casefold()
+    prefix = f"{normalized_name}="
+    values: list[str] = []
+    for index, argument in enumerate(command_line):
+        normalized_argument = str(argument).casefold()
+        if normalized_argument.startswith(prefix):
+            values.append(str(argument)[len(prefix) :])
+        elif normalized_argument == normalized_name and index + 1 < len(command_line):
+            values.append(str(command_line[index + 1]))
+    return values
+
+
+def matching_webview_processes(
+    webview_data_dir: Path,
+    *,
+    processes: Iterable[psutil.Process] | None = None,
+) -> list[ProcessIdentity]:
+    expected_profiles = {
+        _normalized_path(webview_data_dir),
+        _normalized_path(webview_data_dir / WEBVIEW_RUNTIME_DATA_DIRECTORY_NAME),
+    }
+    candidates = processes if processes is not None else psutil.process_iter()
+    matches: list[ProcessIdentity] = []
+    for process in candidates:
+        try:
+            process_name = process.name()
+        except psutil.NoSuchProcess:
+            continue
+        except (OSError, psutil.Error) as error:
+            raise LaunchSafetyError(
+                f"Could not inspect process name while proving WebView shutdown: {error}"
+            ) from error
+        if process_name.casefold() != WEBVIEW_PROCESS_NAME:
+            continue
+        try:
+            command_line = process.cmdline()
+            profile_paths = _command_line_option_values(
+                command_line,
+                WEBVIEW_USER_DATA_ARGUMENT,
+            )
+            normalized_profiles = [
+                _normalized_path(profile_path) for profile_path in profile_paths
+            ]
+            matching_profiles = [
+                profile
+                for profile in normalized_profiles
+                if profile in expected_profiles
+            ]
+            if not matching_profiles:
+                continue
+            if len(normalized_profiles) != 1:
+                raise LaunchSafetyError(
+                    "Isolated WebView process exposed an ambiguous user-data profile"
+                )
+            if not process.is_running():
+                continue
+            matches.append(
+                ProcessIdentity(
+                    pid=int(process.pid),
+                    create_time=float(process.create_time()),
+                )
+            )
+        except psutil.NoSuchProcess:
+            continue
+        except (OSError, ValueError, psutil.Error, LaunchSafetyError) as error:
+            raise LaunchSafetyError(
+                "Could not prove isolated WebView process identity for "
+                f"PID {getattr(process, 'pid', 'unknown')}: {error}"
+            ) from error
+    return matches
+
+
+def wait_for_webview_processes_to_exit(
+    webview_data_dir: Path,
+    *,
+    timeout: float = WEBVIEW_SHUTDOWN_TIMEOUT_SECONDS,
+    poll_interval: float = WEBVIEW_SHUTDOWN_POLL_INTERVAL_SECONDS,
+) -> None:
+    if timeout < 0 or poll_interval <= 0:
+        raise LaunchSafetyError("WebView shutdown wait values must be positive")
+    deadline = time.monotonic() + timeout
+    while True:
+        matches = matching_webview_processes(webview_data_dir)
+        if not matches:
+            return
+        if time.monotonic() >= deadline:
+            identities = ", ".join(
+                f"PID {identity.pid}@{identity.create_time}"
+                for identity in matches
+            )
+            raise LaunchSafetyError(
+                "Isolated WebView2 processes remained after candidate stop: "
+                + identities
+            )
+        time.sleep(poll_interval)
+
+
 def _stop_launched_app(process, timeout: float = 5.0) -> None:
     if process.poll() is not None:
         return
@@ -1060,11 +1569,19 @@ def _stop_matching_sidecar(
     expected_parent_pid: int | None,
     timeout: float = 5.0,
 ) -> None:
-    if not process_matches_sidecar(
-        tracked,
-        expected_executable=expected_executable,
-        expected_parent_pid=expected_parent_pid,
-    ):
+    def still_matches() -> bool:
+        if expected_parent_pid is None:
+            return tracked_sidecar_is_current(
+                tracked,
+                expected_executable=expected_executable,
+            )
+        return process_matches_sidecar(
+            tracked,
+            expected_executable=expected_executable,
+            expected_parent_pid=expected_parent_pid,
+        )
+
+    if not still_matches():
         return
     process = tracked.process
     try:
@@ -1073,11 +1590,7 @@ def _stop_matching_sidecar(
     except psutil.NoSuchProcess:
         return
     except psutil.TimeoutExpired:
-        if not process_matches_sidecar(
-            tracked,
-            expected_executable=expected_executable,
-            expected_parent_pid=expected_parent_pid,
-        ):
+        if not still_matches():
             return
         process.kill()
         try:

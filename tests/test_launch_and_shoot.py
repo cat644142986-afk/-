@@ -49,6 +49,9 @@ class FakeSidecarProcess:
         self._require_alive()
         return str(self._executable)
 
+    def is_running(self) -> bool:
+        return not self.terminated
+
     def terminate(self) -> None:
         self.terminated = True
 
@@ -795,6 +798,50 @@ class LaunchAndShootSafetyTests(unittest.TestCase):
             )
             self.assertFalse(process.terminated)
 
+    def test_armed_sidecar_pid_reuse_is_not_terminated(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            expected = Path(temporary_dir).resolve() / "python-server.exe"
+            process = FakeSidecarProcess(101, 42, expected, create_time=1000.0)
+            tracked = launcher.TrackedSidecar(
+                process=process,
+                identity=launcher.ProcessIdentity(pid=101, create_time=1000.0),
+            )
+            process._create_time = 2000.0
+
+            self.assertFalse(
+                launcher.tracked_sidecar_is_current(
+                    tracked,
+                    expected_executable=expected,
+                )
+            )
+            launcher._stop_matching_sidecar(
+                tracked,
+                expected_executable=expected,
+                expected_parent_pid=None,
+            )
+
+            self.assertFalse(process.terminated)
+
+    def test_armed_sidecar_access_denied_fails_closed(self) -> None:
+        expected = Path(tempfile.gettempdir()).resolve() / "python-server.exe"
+        process = mock.Mock()
+        process.pid = 101
+        process.create_time.side_effect = launcher.psutil.AccessDenied(101)
+        tracked = launcher.TrackedSidecar(
+            process=process,
+            identity=launcher.ProcessIdentity(pid=101, create_time=1000.0),
+        )
+
+        with self.assertRaisesRegex(
+            launcher.LaunchSafetyError,
+            "Could not revalidate armed sidecar",
+        ):
+            launcher.tracked_sidecar_is_current(
+                tracked,
+                expected_executable=expected,
+            )
+        process.terminate.assert_not_called()
+
     def test_isolated_cleanup_refuses_path_outside_recorded_temp_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir).resolve()
@@ -873,6 +920,37 @@ class LaunchAndShootSafetyTests(unittest.TestCase):
                 "keep",
             )
 
+    def test_isolated_cleanup_retries_transient_windows_directory_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir).resolve()
+            isolated_data = root / f"{launcher.ISOLATED_DATA_PREFIX}transient-lock"
+            isolated_data.mkdir()
+            (isolated_data / "sentinel.txt").write_text("test", encoding="utf-8")
+            location = launcher.IsolatedDataDirectory(isolated_data, root)
+            real_replace = launcher.os.replace
+            attempts = 0
+
+            def transient_replace(source: Path, destination: Path) -> None:
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise PermissionError(13, "directory is still in use", str(source))
+                real_replace(source, destination)
+
+            with (
+                mock.patch.object(launcher.os, "replace", side_effect=transient_replace),
+                mock.patch.object(launcher.time, "sleep") as sleep,
+            ):
+                launcher.cleanup_isolated_data_directory(location)
+
+            self.assertEqual(attempts, 2)
+            sleep.assert_called_once()
+            self.assertFalse(isolated_data.exists())
+            self.assertEqual(
+                list(root.glob(f"{launcher.ISOLATED_DATA_PREFIX}cleanup-*")),
+                [],
+            )
+
     def test_sidecar_discovery_failure_still_stops_launched_app(self) -> None:
         app = FakeAppProcess()
         identity = launcher.ProcessIdentity(pid=app.pid, create_time=1000.0)
@@ -931,6 +1009,684 @@ class LaunchAndShootSafetyTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
         self.assertTrue(late_sidecar.terminated)
+
+    def test_unarmed_graceful_app_exit_does_not_discover_and_kill_sidecar(self) -> None:
+        app = FakeAppProcess()
+        identity = launcher.ProcessIdentity(pid=app.pid, create_time=1000.0)
+        expected_sidecar = Path(tempfile.gettempdir()).resolve() / "python-server.exe"
+        sidecar = FakeSidecarProcess(
+            101,
+            app.pid,
+            expected_sidecar,
+            create_time=1001.0,
+        )
+        app.returncode = 0
+
+        with mock.patch.object(
+            launcher.psutil,
+            "process_iter",
+            side_effect=lambda: iter((sidecar,)),
+        ):
+            errors = launcher.cleanup_launched_processes(app, identity, expected_sidecar)
+
+        self.assertEqual(
+            errors,
+            ["candidate app identity changed before sidecar cleanup"],
+        )
+        self.assertFalse(sidecar.terminated)
+
+    def test_webview_process_filter_requires_exact_profile_path(self) -> None:
+        data_root = Path(tempfile.gettempdir()).resolve() / "isolated-webview"
+
+        def webview_process(pid: int, name: str, profile: Path):
+            process = mock.Mock()
+            process.pid = pid
+            process.name.return_value = name
+            process.cmdline.return_value = [
+                "msedgewebview2.exe",
+                f"--user-data-dir={profile}",
+            ]
+            process.create_time.return_value = 1000.0 + pid
+            process.exe.return_value = r"C:\Program Files\WebView2\msedgewebview2.exe"
+            process.is_running.return_value = True
+            return process
+
+        expected = webview_process(
+            101,
+            "msedgewebview2.exe",
+            data_root / launcher.WEBVIEW_RUNTIME_DATA_DIRECTORY_NAME,
+        )
+        other_profile = webview_process(102, "msedgewebview2.exe", data_root.parent / "other")
+        nested_profile = webview_process(
+            103,
+            "msedgewebview2.exe",
+            data_root / "unexpected-child",
+        )
+        other_name = webview_process(104, "other.exe", data_root)
+
+        matches = launcher.matching_webview_processes(
+            data_root,
+            processes=(expected, other_profile, nested_profile, other_name),
+        )
+
+        self.assertEqual([identity.pid for identity in matches], [101])
+
+    def test_webview_process_filter_rejects_ambiguous_profile_arguments(self) -> None:
+        data_root = Path(tempfile.gettempdir()).resolve() / "isolated-webview"
+        process = mock.Mock()
+        process.pid = 101
+        process.name.return_value = launcher.WEBVIEW_PROCESS_NAME
+        process.cmdline.return_value = [
+            launcher.WEBVIEW_PROCESS_NAME,
+            f"--user-data-dir={data_root}",
+            f"--user-data-dir={data_root.parent / 'other'}",
+        ]
+
+        with self.assertRaisesRegex(
+            launcher.LaunchSafetyError,
+            "ambiguous user-data profile",
+        ):
+            launcher.matching_webview_processes(
+                data_root,
+                processes=(process,),
+            )
+
+    def test_webview_process_inspection_access_denied_fails_closed(self) -> None:
+        data_root = Path(tempfile.gettempdir()).resolve() / "isolated-webview"
+        process = mock.Mock()
+        process.pid = 101
+        process.name.return_value = launcher.WEBVIEW_PROCESS_NAME
+        process.cmdline.side_effect = launcher.psutil.AccessDenied(101)
+
+        with self.assertRaisesRegex(
+            launcher.LaunchSafetyError,
+            "Could not prove isolated WebView process identity",
+        ):
+            launcher.matching_webview_processes(
+                data_root,
+                processes=(process,),
+            )
+
+    def test_webview_shutdown_timeout_reports_the_bound_profile_residual(self) -> None:
+        data_root = Path(tempfile.gettempdir()).resolve() / "isolated-webview"
+        residual = launcher.ProcessIdentity(pid=101, create_time=1000.0)
+
+        with (
+            mock.patch.object(
+                launcher,
+                "matching_webview_processes",
+                return_value=[residual],
+            ),
+            mock.patch.object(launcher.time, "monotonic", side_effect=[0.0, 1.0]),
+            self.assertRaisesRegex(
+                launcher.LaunchSafetyError,
+                "PID 101@1000.0",
+            ),
+        ):
+            launcher.wait_for_webview_processes_to_exit(
+                data_root,
+                timeout=0.5,
+                poll_interval=0.1,
+            )
+
+    @unittest.skipUnless(os.name == "nt", "Windows extended-length paths are Windows-only")
+    def test_webview_process_filter_accepts_extended_length_profile_path(self) -> None:
+        data_root = Path(tempfile.gettempdir()).resolve() / "isolated-webview"
+        process = mock.Mock()
+        process.pid = 101
+        process.name.return_value = launcher.WEBVIEW_PROCESS_NAME
+        process.cmdline.return_value = [
+            launcher.WEBVIEW_PROCESS_NAME,
+            rf"--user-data-dir=\\?\{data_root}\{launcher.WEBVIEW_RUNTIME_DATA_DIRECTORY_NAME}",
+        ]
+        process.is_running.return_value = True
+        process.create_time.return_value = 1000.0
+
+        matches = launcher.matching_webview_processes(
+            data_root,
+            processes=(process,),
+        )
+
+        self.assertEqual(matches, [launcher.ProcessIdentity(pid=101, create_time=1000.0)])
+
+    def test_session_restart_reuses_bound_isolated_data_before_final_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir).resolve()
+            executable, _, app_hash, tree_hash = self._write_candidate(root)
+            isolated_path = root / f"{launcher.ISOLATED_DATA_PREFIX}restart"
+            isolated_path.mkdir()
+            location = launcher.IsolatedDataDirectory(isolated_path, root)
+            apps = [FakeAppProcess(42), FakeAppProcess(43)]
+            identities = [
+                launcher.ProcessIdentity(pid=42, create_time=1000.0),
+                launcher.ProcessIdentity(pid=43, create_time=2000.0),
+            ]
+            sidecar_process = FakeSidecarProcess(
+                101,
+                42,
+                executable.parent / "python-server" / "python-server.exe",
+                create_time=1001.0,
+            )
+            tracked_sidecar = launcher.TrackedSidecar(
+                process=sidecar_process,
+                identity=launcher.ProcessIdentity(pid=101, create_time=1001.0),
+            )
+            webview_identity = launcher.ProcessIdentity(pid=202, create_time=1002.0)
+            launches: list[tuple[Path, dict[str, str]]] = []
+            events: list[str] = []
+
+            def popen(command, *, cwd, env):
+                app = apps[len(launches)]
+                launches.append((Path(cwd), dict(env)))
+                events.append(f"launch-{app.pid}")
+                return app
+
+            def cleanup_processes(app, *_args) -> list[str]:
+                events.append(f"stop-{app.pid}")
+                app.terminate()
+                return []
+
+            sidecar_matches = iter(((tracked_sidecar,), ()))
+
+            def matching_sidecars(**_kwargs):
+                return list(next(sidecar_matches))
+
+            def cleanup_data(actual: launcher.IsolatedDataDirectory) -> None:
+                self.assertEqual(actual, location)
+                self.assertTrue((actual.path / "restart-sentinel.txt").is_file())
+                events.append("data-cleanup")
+
+            file_locks = mock.Mock()
+            file_locks.poll_change_errors.return_value = []
+            file_locks.close.side_effect = lambda: events.append("locks-close") or []
+
+            with (
+                mock.patch.object(
+                    launcher,
+                    "acquire_candidate_tree_locks",
+                    return_value=file_locks,
+                ),
+                mock.patch.object(
+                    launcher,
+                    "create_isolated_data_directory",
+                    return_value=location,
+                ),
+                mock.patch.object(launcher.subprocess, "Popen", side_effect=popen),
+                mock.patch.object(
+                    launcher,
+                    "capture_launched_app_identity",
+                    side_effect=identities,
+                ),
+                mock.patch.object(launcher, "assert_launched_app_identity"),
+                mock.patch.object(
+                    launcher,
+                    "cleanup_launched_processes",
+                    side_effect=cleanup_processes,
+                ),
+                mock.patch.object(
+                    launcher,
+                    "matching_sidecars",
+                    side_effect=matching_sidecars,
+                ),
+                mock.patch.object(
+                    launcher,
+                    "matching_webview_processes",
+                    return_value=[webview_identity],
+                ),
+                mock.patch.object(
+                    launcher,
+                    "wait_for_webview_processes_to_exit",
+                    return_value=None,
+                    create=True,
+                ) as wait_webview,
+                mock.patch.object(
+                    launcher,
+                    "cleanup_isolated_data_directory",
+                    side_effect=cleanup_data,
+                ),
+            ):
+                with launcher.CandidateLaunchSession(
+                    executable=executable,
+                    expected_git_commit=self.COMMIT,
+                    expected_app_sha256=app_hash,
+                    expected_tree_sha256=tree_hash,
+                ) as session:
+                    first_data_dir = session.data_dir
+                    (first_data_dir / "restart-sentinel.txt").write_text(
+                        "preserve", encoding="utf-8"
+                    )
+                    session.arm_graceful_close()
+                    apps[0].returncode = 0
+                    session.restart_with_same_data()
+                    self.assertEqual(session.data_dir, first_data_dir)
+                    self.assertEqual(session.pid, 43)
+                    self.assertTrue((first_data_dir / "restart-sentinel.txt").is_file())
+
+            self.assertEqual(len(launches), 2)
+            self.assertEqual(launches[0], launches[1])
+            self.assertTrue(sidecar_process.terminated)
+            wait_webview.assert_called_once_with(isolated_path / "webview2-user-data")
+            self.assertNotIn("stop-42", events)
+            self.assertLess(events.index("stop-43"), events.index("data-cleanup"))
+            self.assertLess(events.index("data-cleanup"), events.index("locks-close"))
+
+    def test_session_restart_rechecks_isolated_identity_immediately_before_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir).resolve()
+            isolated_path = root / f"{launcher.ISOLATED_DATA_PREFIX}restart-exchange"
+            knowledge_path = isolated_path / "no-knowledge-vault"
+            webview_path = isolated_path / "webview2-user-data"
+            knowledge_path.mkdir(parents=True)
+            webview_path.mkdir()
+            location = launcher.IsolatedDataDirectory(isolated_path, root)
+
+            session = launcher.CandidateLaunchSession(
+                executable=Path("candidate.exe"),
+                expected_git_commit=self.COMMIT,
+                expected_app_sha256="A" * 64,
+                expected_tree_sha256="B" * 64,
+            )
+            session._entered = True
+            session._isolated_location = location
+            session.data_dir = isolated_path
+            session.webview_data_dir = webview_path
+            session.knowledge_base_dir = knowledge_path
+            session.legacy_config_path = isolated_path / "no-legacy-config.json"
+            session.data_dir_identity = launcher._path_identity(
+                isolated_path,
+                "isolated data directory",
+            )
+            session.webview_data_dir_identity = launcher._path_identity(
+                webview_path,
+                "WebView2 data directory",
+            )
+            session.knowledge_base_dir_identity = launcher._path_identity(
+                knowledge_path,
+                "isolated knowledge directory",
+            )
+            session._candidate_snapshot = mock.sentinel.snapshot
+
+            displaced_webview = isolated_path / "webview2-user-data-original"
+
+            def exchange_webview(*_args, **_kwargs) -> dict[str, str]:
+                webview_path.rename(displaced_webview)
+                webview_path.mkdir()
+                return {}
+
+            with (
+                mock.patch.object(session, "complete_graceful_close", return_value=0),
+                mock.patch.object(session, "_candidate_protection_errors", return_value=[]),
+                mock.patch.object(
+                    launcher,
+                    "rebuild_child_environment",
+                    side_effect=exchange_webview,
+                ),
+                mock.patch.object(session, "_launch_runtime") as launch_runtime,
+                self.assertRaisesRegex(
+                    launcher.LaunchSafetyError,
+                    "WebView2 data directory identity changed",
+                ),
+            ):
+                session.restart_with_same_data()
+
+            launch_runtime.assert_not_called()
+
+    def test_graceful_close_waits_for_delayed_natural_exit(self) -> None:
+        session = launcher.CandidateLaunchSession(
+            executable=Path("candidate.exe"),
+            expected_git_commit=self.COMMIT,
+            expected_app_sha256="A" * 64,
+            expected_tree_sha256="B" * 64,
+        )
+        process = mock.Mock()
+        process.pid = 42
+        process.poll.side_effect = [None, 0]
+        identity = launcher.ProcessIdentity(pid=42, create_time=1000.0)
+        session.process = process
+        session.process_identity = identity
+        session._graceful_close_binding = launcher.GracefulCloseBinding(
+            app_identity=identity,
+            sidecars=(),
+            webviews=(),
+            armed_at=1001.0,
+        )
+
+        with (
+            mock.patch.object(launcher.time, "monotonic", side_effect=[0.0, 0.1]),
+            mock.patch.object(launcher.time, "sleep") as sleep,
+            mock.patch.object(
+                session,
+                "_complete_armed_app_exit",
+                return_value=0,
+            ) as complete,
+        ):
+            returncode = session.complete_graceful_close(
+                timeout=1.0,
+                poll_interval=0.1,
+            )
+
+        self.assertEqual(returncode, 0)
+        sleep.assert_called_once_with(0.1)
+        complete.assert_called_once_with(require_success=True)
+
+    def test_graceful_close_timeout_preserves_binding_for_retry(self) -> None:
+        session = launcher.CandidateLaunchSession(
+            executable=Path("candidate.exe"),
+            expected_git_commit=self.COMMIT,
+            expected_app_sha256="A" * 64,
+            expected_tree_sha256="B" * 64,
+        )
+        process = mock.Mock()
+        process.pid = 42
+        process.poll.return_value = None
+        identity = launcher.ProcessIdentity(pid=42, create_time=1000.0)
+        binding = launcher.GracefulCloseBinding(
+            app_identity=identity,
+            sidecars=(),
+            webviews=(),
+            armed_at=1001.0,
+        )
+        session.process = process
+        session.process_identity = identity
+        session._graceful_close_binding = binding
+
+        with (
+            mock.patch.object(launcher.time, "monotonic", side_effect=[0.0, 1.0]),
+            self.assertRaisesRegex(launcher.LaunchSafetyError, "still running"),
+        ):
+            session.complete_graceful_close(timeout=0.5, poll_interval=0.1)
+
+        self.assertIs(session._graceful_close_binding, binding)
+        process.poll.return_value = 0
+        with mock.patch.object(
+            session,
+            "_complete_armed_app_exit",
+            return_value=0,
+        ) as complete:
+            self.assertEqual(
+                session.complete_graceful_close(timeout=0.5, poll_interval=0.1),
+                0,
+            )
+        complete.assert_called_once_with(require_success=True)
+
+    def test_graceful_close_rejects_nonzero_app_exit(self) -> None:
+        session = launcher.CandidateLaunchSession(
+            executable=Path("candidate.exe"),
+            expected_git_commit=self.COMMIT,
+            expected_app_sha256="A" * 64,
+            expected_tree_sha256="B" * 64,
+        )
+        process = FakeAppProcess()
+        process.returncode = 7
+        identity = launcher.ProcessIdentity(pid=process.pid, create_time=1000.0)
+        binding = launcher.GracefulCloseBinding(
+            app_identity=identity,
+            sidecars=(),
+            webviews=(),
+            armed_at=1001.0,
+        )
+        session.process = process
+        session.process_identity = identity
+        session._graceful_close_binding = binding
+
+        with self.assertRaisesRegex(launcher.LaunchSafetyError, "returncode=7"):
+            session.complete_graceful_close(timeout=0.5, poll_interval=0.1)
+
+        self.assertIs(session._graceful_close_binding, binding)
+
+    def test_abort_after_armed_app_exit_cleans_only_bound_children(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir).resolve()
+            isolated_path = root / f"{launcher.ISOLATED_DATA_PREFIX}armed-abort"
+            knowledge_path = isolated_path / "no-knowledge-vault"
+            webview_path = isolated_path / "webview2-user-data"
+            knowledge_path.mkdir(parents=True)
+            webview_path.mkdir()
+            sidecar_path = root / "candidate" / "python-server.exe"
+            sidecar = FakeSidecarProcess(
+                101,
+                42,
+                sidecar_path,
+                create_time=1001.0,
+            )
+            tracked = launcher.TrackedSidecar(
+                process=sidecar,
+                identity=launcher.ProcessIdentity(pid=101, create_time=1001.0),
+            )
+            app = FakeAppProcess()
+            app.returncode = 9
+            app_identity = launcher.ProcessIdentity(pid=42, create_time=1000.0)
+            session = launcher.CandidateLaunchSession(
+                executable=Path("candidate.exe"),
+                expected_git_commit=self.COMMIT,
+                expected_app_sha256="A" * 64,
+                expected_tree_sha256="B" * 64,
+            )
+            session.process = app
+            session.process_identity = app_identity
+            session.sidecar_identity = launcher.VerifiedSidecarIdentity(
+                path=sidecar_path,
+                sha256="C" * 64,
+                manifest_sha256="D" * 64,
+            )
+            session._isolated_location = launcher.IsolatedDataDirectory(
+                isolated_path,
+                root,
+            )
+            session.data_dir = isolated_path
+            session.webview_data_dir = webview_path
+            session.knowledge_base_dir = knowledge_path
+            session.legacy_config_path = isolated_path / "no-legacy-config.json"
+            session.data_dir_identity = launcher._path_identity(
+                isolated_path,
+                "isolated data directory",
+            )
+            session.webview_data_dir_identity = launcher._path_identity(
+                webview_path,
+                "WebView2 data directory",
+            )
+            session.knowledge_base_dir_identity = launcher._path_identity(
+                knowledge_path,
+                "isolated knowledge directory",
+            )
+            session._graceful_close_binding = launcher.GracefulCloseBinding(
+                app_identity=app_identity,
+                sidecars=(tracked,),
+                webviews=(launcher.ProcessIdentity(pid=202, create_time=1002.0),),
+                armed_at=1003.0,
+            )
+
+            with (
+                mock.patch.object(launcher, "matching_sidecars", return_value=[]),
+                mock.patch.object(
+                    launcher,
+                    "wait_for_webview_processes_to_exit",
+                ) as wait_webview,
+            ):
+                errors = session._stop_current_runtime()
+
+            self.assertEqual(errors, [])
+            self.assertTrue(sidecar.terminated)
+            self.assertIsNone(session.process)
+            self.assertIsNone(session._graceful_close_binding)
+            wait_webview.assert_called_once_with(webview_path)
+
+    def test_webview_residual_preserves_isolated_data_during_final_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir).resolve()
+            isolated_path = root / f"{launcher.ISOLATED_DATA_PREFIX}webview-residual"
+            knowledge_path = isolated_path / "no-knowledge-vault"
+            webview_path = isolated_path / "webview2-user-data"
+            knowledge_path.mkdir(parents=True)
+            webview_path.mkdir()
+            app = FakeAppProcess()
+            app.returncode = 0
+            app_identity = launcher.ProcessIdentity(pid=42, create_time=1000.0)
+            session = launcher.CandidateLaunchSession(
+                executable=Path("candidate.exe"),
+                expected_git_commit=self.COMMIT,
+                expected_app_sha256="A" * 64,
+                expected_tree_sha256="B" * 64,
+            )
+            session.process = app
+            session.process_identity = app_identity
+            session.sidecar_identity = launcher.VerifiedSidecarIdentity(
+                path=root / "candidate" / "python-server.exe",
+                sha256="C" * 64,
+                manifest_sha256="D" * 64,
+            )
+            session._isolated_location = launcher.IsolatedDataDirectory(
+                isolated_path,
+                root,
+            )
+            session.data_dir = isolated_path
+            session.webview_data_dir = webview_path
+            session.knowledge_base_dir = knowledge_path
+            session.legacy_config_path = isolated_path / "no-legacy-config.json"
+            session.data_dir_identity = launcher._path_identity(
+                isolated_path,
+                "isolated data directory",
+            )
+            session.webview_data_dir_identity = launcher._path_identity(
+                webview_path,
+                "WebView2 data directory",
+            )
+            session.knowledge_base_dir_identity = launcher._path_identity(
+                knowledge_path,
+                "isolated knowledge directory",
+            )
+            session._graceful_close_binding = launcher.GracefulCloseBinding(
+                app_identity=app_identity,
+                sidecars=(),
+                webviews=(launcher.ProcessIdentity(pid=202, create_time=1002.0),),
+                armed_at=1003.0,
+            )
+
+            with (
+                mock.patch.object(launcher, "matching_sidecars", return_value=[]),
+                mock.patch.object(
+                    launcher,
+                    "wait_for_webview_processes_to_exit",
+                    side_effect=launcher.LaunchSafetyError("WebView residual"),
+                ),
+                mock.patch.object(
+                    launcher,
+                    "cleanup_isolated_data_directory",
+                ) as cleanup_data,
+            ):
+                errors = session._cleanup_runtime()
+
+            self.assertTrue(any("WebView residual" in error for error in errors))
+            self.assertTrue(any("isolated data preserved" in error for error in errors))
+            self.assertTrue(isolated_path.is_dir())
+            cleanup_data.assert_not_called()
+
+    def test_graceful_close_reports_unbound_sidecar_without_stopping_it(self) -> None:
+        expected = Path(tempfile.gettempdir()).resolve() / "python-server.exe"
+        app = FakeAppProcess()
+        app.returncode = 0
+        app_identity = launcher.ProcessIdentity(pid=42, create_time=1000.0)
+        bound_process = FakeSidecarProcess(101, 42, expected, create_time=1001.0)
+        bound_process.terminated = True
+        bound = launcher.TrackedSidecar(
+            process=bound_process,
+            identity=launcher.ProcessIdentity(pid=101, create_time=1001.0),
+        )
+        unbound_process = FakeSidecarProcess(102, 42, expected, create_time=1002.0)
+        unbound = launcher.TrackedSidecar(
+            process=unbound_process,
+            identity=launcher.ProcessIdentity(pid=102, create_time=1002.0),
+        )
+        session = launcher.CandidateLaunchSession(
+            executable=Path("candidate.exe"),
+            expected_git_commit=self.COMMIT,
+            expected_app_sha256="A" * 64,
+            expected_tree_sha256="B" * 64,
+        )
+        session.process = app
+        session.process_identity = app_identity
+        session.sidecar_identity = launcher.VerifiedSidecarIdentity(
+            path=expected,
+            sha256="C" * 64,
+            manifest_sha256="D" * 64,
+        )
+        session.webview_data_dir = Path(tempfile.gettempdir()).resolve() / "webview"
+        session._graceful_close_binding = launcher.GracefulCloseBinding(
+            app_identity=app_identity,
+            sidecars=(bound,),
+            webviews=(launcher.ProcessIdentity(pid=202, create_time=1003.0),),
+            armed_at=1004.0,
+        )
+
+        with (
+            mock.patch.object(launcher, "matching_sidecars", return_value=[unbound]),
+            self.assertRaisesRegex(launcher.LaunchSafetyError, "unbound candidate sidecar"),
+        ):
+            session.complete_graceful_close(timeout=0.5, poll_interval=0.1)
+
+        self.assertFalse(unbound_process.terminated)
+
+    def test_armed_restart_refuses_to_terminate_a_live_app(self) -> None:
+        session = launcher.CandidateLaunchSession(
+            executable=Path("candidate.exe"),
+            expected_git_commit=self.COMMIT,
+            expected_app_sha256="A" * 64,
+            expected_tree_sha256="B" * 64,
+        )
+        session._entered = True
+        session.process = FakeAppProcess()
+        session.process_identity = launcher.ProcessIdentity(pid=42, create_time=1000.0)
+        session._graceful_close_binding = launcher.GracefulCloseBinding(
+            app_identity=session.process_identity,
+            sidecars=(),
+            webviews=(),
+            armed_at=1001.0,
+        )
+
+        with (
+            mock.patch.object(launcher.time, "monotonic", side_effect=[0.0, 1.0]),
+            self.assertRaisesRegex(launcher.LaunchSafetyError, "still running"),
+        ):
+            session.restart_with_same_data(timeout=0.5, poll_interval=0.1)
+
+        self.assertFalse(session.process.terminated)
+
+    def test_cleanup_refuses_quarantine_inode_exchange_before_recursive_delete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir).resolve()
+            isolated_data = root / f"{launcher.ISOLATED_DATA_PREFIX}inode-exchange"
+            isolated_data.mkdir()
+            (isolated_data / "original.txt").write_text("original", encoding="utf-8")
+            location = launcher.IsolatedDataDirectory(isolated_data, root)
+            real_replace = launcher.os.replace
+
+            def exchange_after_replace(source: Path, destination: Path) -> None:
+                real_replace(source, destination)
+                for child in destination.iterdir():
+                    child.unlink()
+                destination.rmdir()
+                destination.mkdir()
+                (destination / "replacement.txt").write_text(
+                    "replacement", encoding="utf-8"
+                )
+
+            with (
+                mock.patch.object(
+                    launcher.os,
+                    "replace",
+                    side_effect=exchange_after_replace,
+                ),
+                mock.patch.object(launcher.shutil, "rmtree") as remove_tree,
+                self.assertRaisesRegex(launcher.LaunchSafetyError, "identity changed"),
+            ):
+                launcher.cleanup_isolated_data_directory(location)
+
+            remove_tree.assert_not_called()
+            quarantines = list(
+                root.glob(f"{launcher.ISOLATED_DATA_PREFIX}cleanup-*")
+            )
+            self.assertEqual(len(quarantines), 1)
+            self.assertTrue((quarantines[0] / "replacement.txt").is_file())
 
     def test_launch_holds_the_promotion_lock_for_the_complete_session(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
