@@ -1169,11 +1169,15 @@ export function createInfiniteCanvasWorkspaceController({
     return session;
   }
 
-  async function addBusinessItems(items) {
+  async function addBusinessItems(items, targetSession = null) {
     const normalized = Array.from(items || []).filter(Boolean);
     if (!normalized.length) return null;
     try {
-      const session = await ensureCanvasForImport();
+      const session = targetSession || await ensureCanvasForImport();
+      if (!canvasSessionIsCurrent(session)) {
+        query('#spatial-save-state').textContent = '素材已导入；画布已切换，未加入节点';
+        return { skipped: true, reason: 'canvas-switched' };
+      }
       query('#spatial-save-state').textContent = `${normalized.length} 项已加入 · 正在保存`;
       const result = await session.island.addBusinessItems(normalized);
       return canvasSessionIsCurrent(session) ? result : null;
@@ -1224,14 +1228,15 @@ export function createInfiniteCanvasWorkspaceController({
         query('#spatial-save-state').textContent = '没有读取到可导入的图片';
         return;
       }
-      query('#spatial-save-state').textContent = `正在导入 ${files.length} 张图片`;
       try {
+        const targetSession = await ensureCanvasForImport();
+        query('#spatial-save-state').textContent = `正在导入 ${files.length} 张图片`;
         const items = Array.from(await onImportFiles(files) || []).filter(Boolean);
         if (!items.length) {
           query('#spatial-save-state').textContent = '没有可加入画布的图片';
           return;
         }
-        await addBusinessItems(items);
+        await addBusinessItems(items, targetSession);
       } catch (error) {
         query('#spatial-save-state').textContent = '图片导入失败，请重试';
         console.error('Infinite canvas file import failed', error);

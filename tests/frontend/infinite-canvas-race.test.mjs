@@ -433,6 +433,49 @@ test('an Explorer FileList drop imports ledger assets before adding canvas refer
   harness.controller.destroy();
 });
 
+test('an Explorer drop never moves from its receiving canvas after an async import', async () => {
+  const imported = deferred();
+  const importedItem = {
+    kind: 'image',
+    business_kind: 'asset',
+    references: {
+      asset_id: 'ast_delayed_external_drop',
+      result_id: null,
+      task_id: null,
+      product_profile_version_id: null,
+      lineage_parent_id: null,
+    },
+  };
+  const harness = createHarness({
+    async onImportFiles() {
+      return imported.promise;
+    },
+  });
+  harness.controller.bind();
+  const mountA = await activateAndOpen(harness, 'canvas:a');
+  const file = { name: 'delayed-coffee.jpg', size: 4096, type: 'image/jpeg' };
+  const dropPromise = harness.documentRef.emit('drop', {
+    dataTransfer: {
+      files: [file],
+      getData() { return ''; },
+      types: ['Files'],
+    },
+  });
+  await Promise.resolve();
+  const mountB = await activateAndOpen(harness, 'canvas:b');
+
+  imported.resolve([importedItem]);
+  await dropPromise;
+
+  assert.deepEqual(mountA.calls.addBusinessItems, []);
+  assert.deepEqual(mountB.calls.addBusinessItems, []);
+  assert.match(
+    harness.documentRef.node('#spatial-save-state').textContent,
+    /画布已切换，未加入节点/,
+  );
+  harness.controller.destroy();
+});
+
 test('a video submission resolved after switching from A to B never mutates B', async () => {
   const execution = deferred();
   const executeCalls = [];
