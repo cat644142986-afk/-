@@ -1120,7 +1120,8 @@ export function createInfiniteCanvasWorkspaceController({
         canvasDocument,
         onChange: (scene) => queueScene(scene, session),
         onOpenFineEdit: (element) => {
-          if (canvasSessionIsCurrent(session)) onFineEdit({ canvasId: session.canvasId, element });
+          if (!canvasSessionIsCurrent(session)) return undefined;
+          return onFineEdit({ canvasId: session.canvasId, element });
         },
         onSelectionChange: (element) => {
           if (canvasSessionIsCurrent(session)) renderInspector(element);

@@ -13,6 +13,7 @@ const html = readFileSync(new URL('../../src/index.html', import.meta.url), 'utf
 const app = readFileSync(new URL('../../src/js/app.js', import.meta.url), 'utf8');
 const workspace = readFileSync(new URL('../../src/js/infinite-canvas-workspace.js', import.meta.url), 'utf8');
 const island = readFileSync(new URL('../../src/js/infinite-canvas-island.jsx', import.meta.url), 'utf8');
+const fineEditGesture = readFileSync(new URL('../../src/js/spatial-fine-edit-gesture.js', import.meta.url), 'utf8');
 const adapterSource = readFileSync(new URL('../../src/js/infinite-canvas-adapter.js', import.meta.url), 'utf8');
 const apiSource = readFileSync(new URL('../../src/js/api.js', import.meta.url), 'utf8');
 const stableUiCss = readFileSync(new URL('../../src/css/stable-ui.css', import.meta.url), 'utf8');
@@ -257,6 +258,18 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(island, /await synchronizeScene\?\.\(nextElements, nextAppState\)/);
   assert.match(island, /waitForVisibleCanvasViewport\(canvasApi, host\)/);
   assert.match(island, /readyFrames >= 2/);
+  assert.match(island, /installSpatialFineEditGestureRouter\(\{/);
+  assert.match(workspace, /return onFineEdit\(\{ canvasId: session\.canvasId, element \}\)/);
+  assert.match(fineEditGesture, /host\.addEventListener\('dblclick', captureDoubleClick, true\)/);
+  assert.match(fineEditGesture, /host\.removeEventListener\('dblclick', captureDoubleClick, true\)/);
+  assert.match(fineEditGesture, /event\.stopImmediatePropagation\?\.\(\)/);
+  assert.match(fineEditGesture, /if \(opening\) return/);
+  assert.match(island, /name: 'cropEditor',[\s\S]{0,180}predicate: \(\) => false/);
+  assert.match(island, /appState: \{ croppingElementId: null, isCropping: false \}/);
+  assert.doesNotMatch(island, /croppingElement[\s\S]{0,300}onOpenFineEdit/);
+  assert.doesNotMatch(island, /event\?\.detail/);
+  assert.match(stableUiCss, /\.spatial-canvas-host\[data-business-image-selected="true"\] \.HintViewer/);
+  assert.match(stableUiCss, /\.spatial-canvas-host \[data-testid="cropEditor"\]/);
   assert.match(island, /mergeSpatialNodeBatch\(existing, additions, batch\.lineageBindings\)/);
   assert.match(island, /captureUpdate: CaptureUpdateAction\.IMMEDIATELY/);
   assert.match(island, /captureUpdate: CaptureUpdateAction\.NEVER/);

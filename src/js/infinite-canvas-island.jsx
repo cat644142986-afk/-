@@ -22,6 +22,7 @@ import {
   updateSpatialTaskElements,
   uniqueSpatialBusinessItems,
 } from './spatial-canvas-items.js';
+import { installSpatialFineEditGestureRouter } from './spatial-fine-edit-gesture.js';
 import {
   createSpatialVideoPlaybackState,
   pauseSpatialVideo,
@@ -170,7 +171,9 @@ async function waitForVisibleCanvasViewport(api, host, maxFrames = 60) {
 function SpatialCanvas({
   canvasDocument,
   onChange,
+  onBusinessImageSelection,
   onOpenFineEdit,
+  onPointerBusinessTarget,
   onReady,
   onSelectionChange,
   resolveProxyUrl,
@@ -265,20 +268,30 @@ function SpatialCanvas({
           ? selectSpatialVideo(current, selectedVideoId)
           : stopSpatialVideoPlayback(current)
       ));
+      onBusinessImageSelection?.(
+        selected?.type === 'image' && Boolean(spatialBusinessKey(selected)),
+      );
       onSelectionChange?.(selected || null);
     }
     await hydration;
-  }, [hydrateProxyFiles, onChange, onSelectionChange]);
+  }, [hydrateProxyFiles, onBusinessImageSelection, onChange, onSelectionChange]);
 
   const bindApi = useCallback((api) => {
     if (!api) return;
     apiRef.current = api;
+    api.registerAction?.({
+      name: 'cropEditor',
+      label: 'helpDialog.cropStart',
+      trackEvent: false,
+      predicate: () => false,
+      perform: () => false,
+    });
     pointerUnsubscribe.current?.();
-    pointerUnsubscribe.current = api.onPointerDown?.((_activeTool, pointerDownState, event) => {
+    pointerUnsubscribe.current = api.onPointerDown?.((_activeTool, pointerDownState) => {
       const element = pointerDownState?.hit?.element;
-      if (Number(event?.detail || 0) >= 2 && element?.type === 'image' && spatialBusinessKey(element)) {
-        onOpenFineEdit?.(element);
-      }
+      onPointerBusinessTarget?.(
+        element?.type === 'image' && spatialBusinessKey(element) ? element : null,
+      );
     });
     hydrateProxyFiles(api.getSceneElementsIncludingDeleted());
     const notifyReady = () => {
@@ -292,9 +305,25 @@ function SpatialCanvas({
     };
     if (readyFrame.current !== null) cancelAnimationFrame(readyFrame.current);
     notifyReady();
-  }, [hydrateProxyFiles, onOpenFineEdit, onReady, synchronizeScene, videoControls]);
+  }, [hydrateProxyFiles, onPointerBusinessTarget, onReady, synchronizeScene, videoControls]);
 
   const handleChange = useCallback((elements, appState) => {
+    const croppingElementId = String(appState?.croppingElementId || '');
+    const croppingElement = croppingElementId
+      ? Array.from(elements || []).find((element) => (
+        element?.id === croppingElementId
+        && !element.isDeleted
+        && element.type === 'image'
+        && spatialBusinessKey(element)
+      ))
+      : null;
+    if (croppingElement) {
+      apiRef.current?.updateScene({
+        appState: { croppingElementId: null, isCropping: false },
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+      return;
+    }
     synchronizeScene(elements, appState);
   }, [synchronizeScene]);
 
@@ -353,10 +382,21 @@ export function mountInfiniteCanvas(host, options) {
   let componentReady = false;
   let synchronizeScene = null;
   let videoControls = null;
+  let pointerBusinessTarget = null;
+  host.dataset.businessImageSelected = 'false';
+  const removeFineEditGestureRouter = installSpatialFineEditGestureRouter({
+    host,
+    getPointerTarget: () => pointerBusinessTarget,
+    onOpenFineEdit: (element) => options.onOpenFineEdit?.(element),
+  });
   const root = createRoot(host);
   root.render(
     <SpatialCanvas
       {...options}
+      onBusinessImageSelection={(selected) => {
+        host.dataset.businessImageSelected = selected ? 'true' : 'false';
+      }}
+      onPointerBusinessTarget={(element) => { pointerBusinessTarget = element; }}
       onReady={(api, synchronize, controls) => {
         canvasApi = api;
         synchronizeScene = synchronize;
@@ -433,6 +473,8 @@ export function mountInfiniteCanvas(host, options) {
   return {
     unmount: () => {
       videoControls?.stop?.();
+      removeFineEditGestureRouter();
+      delete host.dataset.businessImageSelected;
       root.unmount();
     },
     playVideo: (elementId) => videoControls?.play?.(elementId),
