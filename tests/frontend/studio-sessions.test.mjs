@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   formatStudioTime,
   sessionActionCopy,
+  sessionEmptyPresentation,
   sessionProjectName,
   sessionStatusCopy,
 } from '../../src/js/studio-sessions.js';
@@ -18,6 +19,15 @@ test('session presentation keeps durable fallbacks Chinese-first', () => {
   assert.equal(sessionActionCopy({ status: 'partial' }), '处理');
   assert.equal(sessionActionCopy({ status: 'completed' }), '查看');
   assert.equal(sessionActionCopy({ status: 'draft' }), '继续');
+});
+
+test('session empty states always expose a concrete next action', () => {
+  assert.deepEqual(sessionEmptyPresentation('all', 0).action, {
+    label: '开始创作', value: 'start',
+  });
+  assert.deepEqual(sessionEmptyPresentation('秋季上新', 8).action, {
+    label: '查看全部现场', value: 'all',
+  });
 });
 
 test('session timestamps keep empty and invalid values readable', () => {

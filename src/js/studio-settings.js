@@ -69,8 +69,38 @@ export function createSettingsController({
   toast,
   updateQuickControls,
   compileKnowledgePreview,
+  statusPanelHtml,
+  formatApiError,
+  windowRef = globalThis,
 }) {
   let bound = false;
+  let pageStatusTimer = null;
+
+  function setPageStatus(kind = '', options = {}) {
+    const host = query('#settings-page-status');
+    if (!host) return;
+    if (pageStatusTimer) windowRef.clearTimeout(pageStatusTimer);
+    pageStatusTimer = null;
+    if (!kind) {
+      host.hidden = true;
+      host.replaceChildren();
+      delete host.dataset.kind;
+      return;
+    }
+    host.dataset.kind = kind;
+    host.innerHTML = statusPanelHtml(kind, { ...options, inline: true });
+    host.hidden = false;
+    const action = query('[data-settings-status-action]', host);
+    action?.addEventListener('click', () => {
+      if (action.dataset.settingsStatusAction === 'retry-save-key') save(true);
+      else if (action.dataset.settingsStatusAction === 'retry-save') save(false);
+      else load();
+    });
+    const autoHide = Number(options.autoHide || 0);
+    if (autoHide > 0) pageStatusTimer = windowRef.setTimeout(() => {
+      if (host.dataset.kind === kind) setPageStatus();
+    }, autoHide);
+  }
 
   function renderKnowledgeStatus(status) {
     if (!status) return;
@@ -107,6 +137,10 @@ export function createSettingsController({
   }
 
   async function load({ silent = false } = {}) {
+    setPageStatus('loading', {
+      title: '正在读取本机设置',
+      detail: '正在核对模型、交付目录和可选能力包。',
+    });
     try {
       const settings = await api.getSettings();
       state.settings = settings;
@@ -137,8 +171,18 @@ export function createSettingsController({
       query('#setting-knowledge-path').value = settings.knowledge_base_path || '';
       renderKnowledgeStatus(settings.knowledge);
       updateQuickControls();
+      setPageStatus('recovered', {
+        title: '设置已同步',
+        detail: '当前配置来自本机持久账本。',
+        autoHide: 2400,
+      });
       return true;
     } catch (error) {
+      setPageStatus('offline', {
+        title: '设置暂时无法读取',
+        detail: formatApiError(error, '本机设置服务暂不可用'),
+        action: { label: '重新读取', attribute: 'data-settings-status-action', value: 'retry-load' },
+      });
       if (!silent) toast(`读取设置失败：${error}`, 'error');
       return false;
     }
@@ -156,6 +200,10 @@ export function createSettingsController({
   }
 
   async function save(includeKey = false) {
+    setPageStatus('loading', {
+      title: '正在保存设置',
+      detail: '当前输入会写入本机配置；运行中任务继续使用原快照。',
+    });
     try {
       const result = await api.saveSettings(readPayload(includeKey));
       state.settings = result;
@@ -163,8 +211,22 @@ export function createSettingsController({
       renderKnowledgeStatus(result.knowledge);
       renderOutputRoot(result);
       renderGroundingPack(result);
+      setPageStatus('recovered', {
+        title: '设置已保存',
+        detail: '新配置从下一项适用任务开始生效。',
+        autoHide: 3200,
+      });
       toast('设置已保存', 'success');
     } catch (error) {
+      setPageStatus('error', {
+        title: '设置尚未保存',
+        detail: formatApiError(error, '本机设置暂不可写'),
+        action: {
+          label: '重新保存',
+          attribute: 'data-settings-status-action',
+          value: includeKey ? 'retry-save-key' : 'retry-save',
+        },
+      });
       toast(`保存失败：${error}`, 'error');
     }
   }
@@ -299,5 +361,6 @@ export function createSettingsController({
     renderGroundingPack,
     renderOutputRoot,
     save,
+    setPageStatus,
   };
 }

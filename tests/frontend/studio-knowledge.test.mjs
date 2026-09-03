@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   memoryFilterCounts,
   memoryHistoryLabel,
+  memoryQueueNextAction,
   memoryQueueEmptyCopy,
   memorySuggestionCardMarkup,
 } from '../../src/js/studio-knowledge.js';
@@ -32,6 +33,8 @@ test('knowledge queue empty and history copy remains Chinese-first', () => {
   assert.deepEqual(memoryQueueEmptyCopy('future-filter'), ['暂无内容', '请稍后刷新。']);
   assert.equal(memoryHistoryLabel({ action: 'evidence_refresh' }), '证据更新');
   assert.equal(memoryHistoryLabel({ action: 'future-action' }), '版本变更');
+  assert.deepEqual(memoryQueueNextAction(false), { label: '开始创作', value: 'start' });
+  assert.deepEqual(memoryQueueNextAction(true), { label: '回到当前结果', value: 'result' });
 });
 
 test('knowledge suggestion cards escape evidence and retain exact source cursors', () => {

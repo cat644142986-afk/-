@@ -33,6 +33,19 @@ export function sessionActionCopy(session) {
   return '继续';
 }
 
+export function sessionEmptyPresentation(filter = 'all', totalSessions = 0) {
+  const filtered = filter !== 'all' && Number(totalSessions) > 0;
+  return filtered ? {
+    title: '这个项目还没有创作现场',
+    detail: '查看全部项目，或回到创作工作台开始第一项任务。',
+    action: { label: '查看全部现场', value: 'all' },
+  } : {
+    title: '还没有创作现场',
+    detail: '从创作工作台开始第一项任务，素材、参数和结果会自动保存在这里。',
+    action: { label: '开始创作', value: 'start' },
+  };
+}
+
 export function createSessionsController({
   api,
   state,
@@ -50,6 +63,8 @@ export function createSessionsController({
   formatApiError,
   statusPanelHtml,
   escapeHtml,
+  switchPage,
+  windowRef = globalThis,
 }) {
   function sessionJob(sessionId) {
     const matches = state.jobs.filter((job) => (
@@ -129,10 +144,25 @@ export function createSessionsController({
     toggle.textContent = state.sessionShowAll ? '收起列表' : `查看全部 ${sessions.length} 个`;
     toggle.setAttribute('aria-expanded', String(state.sessionShowAll));
     if (!sessions.length) {
+      const empty = sessionEmptyPresentation(filter, state.sessions.length);
       grid.innerHTML = statusPanelHtml('empty', {
-        title: '还没有创作现场',
-        detail: '完成第一项任务后，现场会自动保存在这里。',
+        title: empty.title,
+        detail: empty.detail,
         fill: true,
+        action: {
+          label: empty.action.label,
+          attribute: 'data-history-status-action',
+          value: empty.action.value,
+        },
+      });
+      query('[data-history-status-action="start"]', grid)?.addEventListener('click', () => {
+        switchPage('process');
+        windowRef.setTimeout(() => query('#btn-browse')?.focus({ preventScroll: true }), 0);
+      });
+      query('[data-history-status-action="all"]', grid)?.addEventListener('click', () => {
+        state.sessionProjectFilter = 'all';
+        query('#history-project-filter').value = 'all';
+        render();
       });
       return;
     }

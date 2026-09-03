@@ -22,6 +22,12 @@ export function memoryQueueEmptyCopy(filter) {
   }[filter] || ['暂无内容', '请稍后刷新。'];
 }
 
+export function memoryQueueNextAction(hasCurrentResult = false) {
+  return hasCurrentResult
+    ? { label: '回到当前结果', value: 'result' }
+    : { label: '开始创作', value: 'start' };
+}
+
 export function memoryHistoryLabel(entry) {
   const actions = {
     created: '建立建议', evidence_refresh: '证据更新', edit: '编辑', approve: '采用',
@@ -161,7 +167,24 @@ export function createKnowledgeController({
       .sort((left, right) => Number(Boolean(left.governance?.postponed_at)) - Number(Boolean(right.governance?.postponed_at)));
     if (!suggestions.length) {
       const [title, detail] = memoryQueueEmptyCopy(state.memoryFilter);
-      list.innerHTML = statusPanelHtml('empty', { title, detail, fill: true });
+      const hasCurrentResult = ['main', 'cutout'].some((role) => (
+        Array.isArray(state.results?.[role]) && state.results[role].length > 0
+      ));
+      const next = memoryQueueNextAction(hasCurrentResult);
+      list.innerHTML = statusPanelHtml('empty', {
+        title,
+        detail,
+        fill: true,
+        action: {
+          label: next.label,
+          attribute: 'data-memory-status-action',
+          value: next.value,
+        },
+      });
+      query(`[data-memory-status-action="${next.value}"]`, list)?.addEventListener('click', () => {
+        switchPage('process');
+        windowRef.setTimeout(() => query(hasCurrentResult ? '#btn-open-compare' : '#btn-browse')?.focus({ preventScroll: true }), 0);
+      });
       return;
     }
     list.innerHTML = suggestions.map((item) => cardMarkup(item, targetId)).join('');

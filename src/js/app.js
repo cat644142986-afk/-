@@ -176,6 +176,9 @@ const settingsController = createSettingsController({
   toast,
   updateQuickControls,
   compileKnowledgePreview,
+  statusPanelHtml,
+  formatApiError,
+  windowRef: window,
 });
 const assetManager = createAssetManagerController({
   api: API,
@@ -260,6 +263,8 @@ const sessionsController = createSessionsController({
   formatApiError,
   statusPanelHtml,
   escapeHtml,
+  switchPage,
+  windowRef: window,
 });
 const memoryProjectionController = createMemoryProjectionController({
   state,
@@ -1253,6 +1258,10 @@ function switchPage(page) {
 }
 
 function setupAppearance() {
+  const settingsLayout = $('.settings-layout');
+  if (settingsLayout && !$('#settings-page-status')) {
+    settingsLayout.insertAdjacentHTML('afterbegin', '<div class="settings-page-status" id="settings-page-status" hidden></div>');
+  }
   const groundingCard = $('.settings-card--grounding');
   if (groundingCard && !$('.settings-card--appearance')) {
     groundingCard.insertAdjacentHTML('beforebegin', appearanceSettingsHtml());

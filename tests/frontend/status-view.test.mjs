@@ -33,10 +33,12 @@ test('status markup is accessible, actionable, and safely escaped', () => {
 });
 
 test('major durable surfaces use shared states and visible conflict recovery', async () => {
-  const [app, assets, knowledge, state, html, css] = await Promise.all([
+  const [app, assets, knowledge, sessions, settings, state, html, css] = await Promise.all([
     readFile(path.join(root, 'src/js/app.js'), 'utf8'),
     readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
     readFile(path.join(root, 'src/js/studio-knowledge.js'), 'utf8'),
+    readFile(path.join(root, 'src/js/studio-sessions.js'), 'utf8'),
+    readFile(path.join(root, 'src/js/studio-settings.js'), 'utf8'),
     readFile(path.join(root, 'src/js/studio-state.js'), 'utf8'),
     readFile(path.join(root, 'src/index.html'), 'utf8'),
     readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8'),
@@ -49,8 +51,13 @@ test('major durable surfaces use shared states and visible conflict recovery', a
   assert.match(app, /state\.draftConflictModes\.add\(mode\)/);
   assert.match(assets, /statusPanelHtml\('empty'/);
   assert.match(assets, /data-asset-status-action/);
+  assert.match(sessions, /data-history-status-action/);
+  assert.match(knowledge, /data-memory-status-action/);
+  assert.match(settings, /setPageStatus\('offline'/);
+  assert.match(settings, /data-settings-status-action/);
   assert.match(state, /draftConflictModes: new Set\(\)/);
   assert.match(html, /id="workspace-sync-state"/);
+  assert.match(app, /id="settings-page-status"/);
   assert.match(css, /\.status-panel--offline/);
   assert.match(css, /\.status-panel--conflict/);
   assert.match(css, /\.status-panel--recovered/);

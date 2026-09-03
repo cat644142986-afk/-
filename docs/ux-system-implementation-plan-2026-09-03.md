@@ -4,7 +4,7 @@ Date: 2026-09-03
 Branch: `codex/infinite-canvas-ui-integration`
 Worktree: `D:\ProductAtelier-UI-Integration`
 Base: `9c25142`
-Status: Milestone 1 integrated; Milestone 2 source gate complete and awaiting final Tauri acceptance
+Status: Milestones 1–2 integrated; Milestone 3 source gate complete and awaiting final Tauri acceptance
 
 ## Isolation Boundary
 
@@ -84,6 +84,18 @@ Exit gate: every durable job status maps to one label, tone, icon, next action, 
 - Validate keyboard navigation and minimum-window behavior.
 
 Exit gate: the user can start, leave, recover, inspect, revise, and export a task without losing context.
+
+### Milestone 3 Workflow Audit
+
+- Creation already exposes import, durable offline recovery, processing state, result review, send-to-canvas, export, and explicit workspace completion.
+- Infinite canvas already exposes new-canvas, load retry, conflict-copy recovery, task/result lineage, and a tested return path from Fabric fine edit.
+- Result review already exposes a visible return to creation, persisted A/B state, durable feedback, immediate derived-version adjustment, and knowledge-suggestion follow-up.
+- Sessions now turn both a genuinely empty ledger and an empty project filter into actionable states: start creation or restore the all-project view.
+- Growth now returns directly to the current result when one exists, otherwise it starts creation; it never treats an empty suggestion queue as an error.
+- Settings now keeps loading, recovered, offline, and save-error states visible inside the page with exact retry actions instead of relying on a transient toast.
+- All added navigation returns to existing durable state; no second workflow store or parallel task identity was introduced.
+
+Source gate: 249 frontend tests, JavaScript syntax checks, production build, and the lazy-canvas boundary pass. The production `dist` is 9,141,995 bytes with a projected formal package size of 367.28 MiB. Real Tauri minimum-window and keyboard verification remain before this milestone can be closed.
 
 ## Milestone 4: Debt Reduction
 
