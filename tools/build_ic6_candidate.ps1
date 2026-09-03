@@ -65,6 +65,35 @@ function Invoke-GitCapture([string[]]$Arguments) {
     return Invoke-GitCaptureAt -Repository $ProjectRoot -Arguments $Arguments
 }
 
+function Refresh-GitIndexAt([string]$Repository) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = @(& git.exe -C $Repository update-index --really-refresh 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    # Exit 1 means tracked content still needs update; the status gate below
+    # reports that real change. Any other exit code is an index failure.
+    if ($exitCode -ne 0 -and $exitCode -ne 1) {
+        throw "Git index refresh failed: $($output -join ' ')"
+    }
+}
+
+function Assert-NoHiddenTrackedEntriesAt([string]$Repository) {
+    $entries = Invoke-GitCaptureAt `
+        -Repository $Repository `
+        -Arguments @("ls-files", "-v")
+    $hiddenEntries = @(
+        $entries -split "`n" | Where-Object { $_ -cmatch "^(?:[a-z]|S) " }
+    )
+    if ($hiddenEntries.Count -gt 0) {
+        $summary = ($hiddenEntries | Select-Object -First 10) -join "`n"
+        throw "IC6 source index contains hidden tracked entries:`n$summary"
+    }
+}
+
 function Assert-NoReparsePath([string]$PathToCheck, [string]$Label) {
     $current = [System.IO.Path]::GetFullPath($PathToCheck)
     while ($current) {
@@ -172,6 +201,8 @@ function Assert-IsolatedSourceState([string]$Expected) {
     if (-not [string]::IsNullOrWhiteSpace($branch)) {
         throw "IC6 isolated build source must remain detached; branch was $branch"
     }
+    Assert-NoHiddenTrackedEntriesAt -Repository $IsolatedProjectRoot
+    Refresh-GitIndexAt -Repository $IsolatedProjectRoot
     $status = Invoke-GitCaptureAt `
         -Repository $IsolatedProjectRoot `
         -Arguments @("status", "--porcelain=v1", "--untracked-files=no")

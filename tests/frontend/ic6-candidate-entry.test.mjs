@@ -23,6 +23,13 @@ test('IC6 candidate entry is commit-bound and encoded for Windows PowerShell', (
   assert.match(script, /"rev-parse", "--verify", "HEAD"/);
   assert.match(script, /"rev-parse", "--verify", \$RequiredUpstream/);
   assert.match(script, /fetch --no-tags origin/);
+  assert.match(
+    script,
+    /@\(& git\.exe -C \$Repository update-index --really-refresh 2>&1\)/,
+  );
+  assert.match(script, /\$exitCode -ne 0 -and \$exitCode -ne 1/);
+  assert.match(script, /-Arguments @\("ls-files", "-v"\)/);
+  assert.match(script, /-cmatch "\^\(\?:\[a-z\]\|S\) "/);
   assert.match(script, /\$WorktreeBase = "D:\\pa6-w"/);
   assert.match(script, /\$CargoTargetBase = "D:\\rust-target\\ic6-candidate"/);
   assert.match(script, /\$NpmCacheRoot = "D:\\ProductAtelier-Cache\\npm"/);
@@ -41,6 +48,26 @@ test('IC6 candidate entry is commit-bound and encoded for Windows PowerShell', (
   const isolatedAssertions = script.match(/Assert-IsolatedSourceState -Expected \$ExpectedCommit/g) || [];
   assert.ok(sourceAssertions.length >= 2, 'active source identity must be checked before build and publication');
   assert.ok(isolatedAssertions.length >= 2, 'detached source identity must be checked before and after build');
+  const isolatedGate = script.slice(
+    script.indexOf('function Assert-IsolatedSourceState'),
+    script.indexOf('function Remove-IsolatedBuildWorktree'),
+  );
+  const hiddenIndexPosition = isolatedGate.indexOf(
+    'Assert-NoHiddenTrackedEntriesAt -Repository $IsolatedProjectRoot',
+  );
+  const refreshPosition = isolatedGate.indexOf(
+    'Refresh-GitIndexAt -Repository $IsolatedProjectRoot',
+  );
+  const statusPosition = isolatedGate.indexOf(
+    '"status", "--porcelain=v1", "--untracked-files=no"',
+  );
+  assert.ok(hiddenIndexPosition >= 0, 'hidden tracked-entry gate is missing');
+  assert.ok(refreshPosition >= 0, 'metadata refresh call is missing');
+  assert.ok(statusPosition >= 0, 'tracked-content status gate is missing');
+  assert.ok(
+    hiddenIndexPosition < refreshPosition && refreshPosition < statusPosition,
+    'metadata-only rewrites must be refreshed before the tracked-content gate',
+  );
   assert.ok(
     script.indexOf('Assert-SourceState -Expected $ExpectedCommit -FetchOrigin')
       < script.indexOf('"worktree", "add", "--detach"'),

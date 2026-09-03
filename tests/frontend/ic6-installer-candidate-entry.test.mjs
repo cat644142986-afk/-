@@ -26,6 +26,13 @@ test('IC6 installer entry is commit-bound, CRLF, and isolates every large path o
   assert.match(script, /\$RequiredUpstream = "origin\/\$RequiredBranch"/);
   assert.match(script, /status", "--porcelain=v1", "--untracked-files=all"/);
   assert.match(script, /fetch --no-tags origin/);
+  assert.match(
+    script,
+    /@\(& git\.exe -C \$RepositoryPath update-index --really-refresh 2>&1\)/,
+  );
+  assert.match(script, /\$exitCode -ne 0 -and \$exitCode -ne 1/);
+  assert.match(script, /-Arguments @\("ls-files", "-v"\)/);
+  assert.match(script, /-cmatch "\^\(\?:\[a-z\]\|S\) "/);
   assert.match(script, /"rev-parse", "--verify", "HEAD"/);
   assert.match(script, /"rev-parse", "--verify", \$RequiredUpstream/);
 
@@ -70,6 +77,27 @@ test('NSIS build uses only a unique detached worktree and its pinned local Tauri
   assert.match(script, /-Arguments @\("ci", "--no-audit", "--no-fund", "--ignore-scripts"\)/);
   assert.match(script, /& npx\.cmd --no-install tauri build --bundles nsis --features custom-protocol --no-sign/);
   assert.doesNotMatch(script, /& npx\.cmd tauri build/);
+
+  const isolatedGate = script.slice(
+    script.indexOf('function Assert-IsolatedWorktreeState'),
+    script.indexOf('function Remove-IsolatedDetachedWorktree'),
+  );
+  const hiddenIndexPosition = isolatedGate.indexOf(
+    'Assert-NoHiddenTrackedEntriesAt -RepositoryPath $IsolatedWorktree',
+  );
+  const refreshPosition = isolatedGate.indexOf(
+    'Refresh-GitIndexAt -RepositoryPath $IsolatedWorktree',
+  );
+  const statusPosition = isolatedGate.indexOf(
+    '"status", "--porcelain=v1", "--untracked-files=all"',
+  );
+  assert.ok(hiddenIndexPosition >= 0, 'hidden tracked-entry gate is missing');
+  assert.ok(refreshPosition >= 0, 'metadata refresh call is missing');
+  assert.ok(statusPosition >= 0, 'tracked-content status gate is missing');
+  assert.ok(
+    hiddenIndexPosition < refreshPosition && refreshPosition < statusPosition,
+    'metadata-only rewrites must be refreshed before the tracked-content gate',
+  );
 
   const sourceGate = script.indexOf('Assert-SourceState -FetchOrigin');
   const worktreeAdd = script.indexOf('    New-IsolatedDetachedWorktree\r\n');
