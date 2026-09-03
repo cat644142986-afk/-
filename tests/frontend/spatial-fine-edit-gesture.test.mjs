@@ -35,6 +35,21 @@ function doubleClick(tagName = 'CANVAS') {
   };
 }
 
+function keyDown({ key = 'Enter', target = { tagName: 'DIV' } } = {}) {
+  const calls = [];
+  return {
+    event: {
+      key,
+      target,
+      defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; calls.push('prevent'); },
+      stopPropagation: () => calls.push('stop'),
+      stopImmediatePropagation: () => calls.push('immediate'),
+    },
+    calls,
+  };
+}
+
 const image = {
   id: 'asset-image-1',
   type: 'image',
@@ -71,6 +86,7 @@ test('business image double-click opens Fabric once while an async open is pendi
 
   remove();
   assert.equal(host.has('dblclick'), false);
+  assert.equal(host.has('keydown'), false);
 });
 
 test('toolbar and non-business double-clicks keep their native behavior', () => {
@@ -93,4 +109,70 @@ test('toolbar and non-business double-clicks keep their native behavior', () => 
   host.dispatch('dblclick', shape.event);
   assert.equal(opened, 0);
   assert.deepEqual(shape.calls, []);
+});
+
+test('business image Enter is reserved from Excalidraw crop without opening Fabric', () => {
+  const host = fakeHost();
+  let selected = true;
+  let opened = 0;
+  const remove = installSpatialFineEditGestureRouter({
+    host,
+    getPointerTarget: () => null,
+    isBusinessImageSelected: () => selected,
+    onOpenFineEdit: () => { opened += 1; },
+  });
+
+  const businessImageEnter = keyDown();
+  host.dispatch('keydown', businessImageEnter.event);
+  assert.deepEqual(businessImageEnter.calls, ['prevent', 'stop', 'immediate']);
+  assert.equal(opened, 0);
+
+  selected = false;
+  const ordinaryEnter = keyDown();
+  host.dispatch('keydown', ordinaryEnter.event);
+  assert.deepEqual(ordinaryEnter.calls, []);
+
+  selected = true;
+  const nonEnter = keyDown({ key: 'Escape' });
+  host.dispatch('keydown', nonEnter.event);
+  assert.deepEqual(nonEnter.calls, []);
+  remove();
+});
+
+test('business image Enter remains available to editable controls', () => {
+  const host = fakeHost();
+  const remove = installSpatialFineEditGestureRouter({
+    host,
+    isBusinessImageSelected: () => true,
+  });
+  const editableTargets = [
+    { tagName: 'INPUT' },
+    { tagName: 'TEXTAREA' },
+    { tagName: 'SELECT' },
+    { tagName: 'BUTTON' },
+    { tagName: 'DIV', isContentEditable: true },
+    { tagName: 'SPAN', getAttribute: (name) => (name === 'contenteditable' ? '' : null) },
+    { tagName: 'SVG', parentElement: { tagName: 'BUTTON' } },
+    { tagName: 'A', href: 'https://example.invalid' },
+    { tagName: 'SVG', parentElement: { tagName: 'A', href: 'https://example.invalid' } },
+  ];
+
+  for (const target of editableTargets) {
+    const event = keyDown({ target });
+    host.dispatch('keydown', event.event);
+    assert.deepEqual(event.calls, []);
+  }
+  remove();
+});
+
+test('a previously prevented Enter still cannot reach Excalidraw crop', () => {
+  const host = fakeHost();
+  installSpatialFineEditGestureRouter({
+    host,
+    isBusinessImageSelected: () => true,
+  });
+  const event = keyDown();
+  event.event.defaultPrevented = true;
+  host.dispatch('keydown', event.event);
+  assert.deepEqual(event.calls, ['prevent', 'stop', 'immediate']);
 });

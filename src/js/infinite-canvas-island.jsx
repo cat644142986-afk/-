@@ -279,13 +279,6 @@ function SpatialCanvas({
   const bindApi = useCallback((api) => {
     if (!api) return;
     apiRef.current = api;
-    api.registerAction?.({
-      name: 'cropEditor',
-      label: 'helpDialog.cropStart',
-      trackEvent: false,
-      predicate: () => false,
-      perform: () => false,
-    });
     pointerUnsubscribe.current?.();
     pointerUnsubscribe.current = api.onPointerDown?.((_activeTool, pointerDownState) => {
       const element = pointerDownState?.hit?.element;
@@ -300,6 +293,15 @@ function SpatialCanvas({
         readyFrame.current = requestAnimationFrame(notifyReady);
         return;
       }
+      // Excalidraw invokes excalidrawAPI before registering its built-in actions.
+      // Override crop only after loading, otherwise the built-in action wins.
+      api.registerAction?.({
+        name: 'cropEditor',
+        label: 'helpDialog.cropStart',
+        trackEvent: false,
+        predicate: () => false,
+        perform: () => false,
+      });
       readyFrame.current = null;
       onReady?.(api, synchronizeScene, videoControls);
     };
@@ -387,6 +389,7 @@ export function mountInfiniteCanvas(host, options) {
   const removeFineEditGestureRouter = installSpatialFineEditGestureRouter({
     host,
     getPointerTarget: () => pointerBusinessTarget,
+    isBusinessImageSelected: () => host.dataset.businessImageSelected === 'true',
     onOpenFineEdit: (element) => options.onOpenFineEdit?.(element),
   });
   const root = createRoot(host);

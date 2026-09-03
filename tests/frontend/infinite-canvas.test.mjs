@@ -264,12 +264,20 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(fineEditGesture, /host\.removeEventListener\('dblclick', captureDoubleClick, true\)/);
   assert.match(fineEditGesture, /event\.stopImmediatePropagation\?\.\(\)/);
   assert.match(fineEditGesture, /if \(opening\) return/);
-  assert.match(island, /name: 'cropEditor',[\s\S]{0,180}predicate: \(\) => false/);
+  assert.match(
+    island,
+    /const notifyReady = \(\) => \{[\s\S]{0,360}if \(api\.getAppState\(\)\?\.isLoading\)[\s\S]{0,180}return;[\s\S]{0,260}name: 'cropEditor',[\s\S]{0,180}predicate: \(\) => false/,
+  );
+  assert.doesNotMatch(island, /apiRef\.current = api;\s*api\.registerAction/);
+  assert.doesNotMatch(island, /name: 'cropEditor',[\s\S]{0,220}api\.refresh\?\.\(\)/);
   assert.match(island, /appState: \{ croppingElementId: null, isCropping: false \}/);
   assert.doesNotMatch(island, /croppingElement[\s\S]{0,300}onOpenFineEdit/);
   assert.doesNotMatch(island, /event\?\.detail/);
   assert.match(stableUiCss, /\.spatial-canvas-host\[data-business-image-selected="true"\] \.HintViewer/);
   assert.match(stableUiCss, /\.spatial-canvas-host \[data-testid="cropEditor"\]/);
+  assert.match(fineEditGesture, /host\.addEventListener\('keydown', captureKeyDown, true\)/);
+  assert.match(fineEditGesture, /host\.removeEventListener\('keydown', captureKeyDown, true\)/);
+  assert.match(island, /isBusinessImageSelected: \(\) => host\.dataset\.businessImageSelected === 'true'/);
   assert.match(island, /mergeSpatialNodeBatch\(existing, additions, batch\.lineageBindings\)/);
   assert.match(island, /captureUpdate: CaptureUpdateAction\.IMMEDIATELY/);
   assert.match(island, /captureUpdate: CaptureUpdateAction\.NEVER/);
