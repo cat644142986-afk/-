@@ -1,3 +1,14 @@
+import {
+  Ban,
+  CircleAlert,
+  CircleCheck,
+  Clock3,
+  LoaderCircle,
+  Pause,
+  TriangleAlert,
+  createIcons,
+} from 'lucide';
+
 import * as API from './api.js';
 import {
   collectResultItems,
@@ -37,7 +48,7 @@ import {
   selectRestorableResult,
 } from './workspace-lifecycle.js';
 import { boundedAssetRenderList, createAssetManagerController } from './studio-assets.js';
-import { JOB_STATUS, MODE_CONFIG, MODE_IDS, PAGE_CONFIG, STAGE_IDS } from './studio-config.js';
+import { MODE_CONFIG, MODE_IDS, PAGE_CONFIG, STAGE_IDS } from './studio-config.js';
 import {
   boundedJobsForDisplay,
   jobAnnouncementCopy,
@@ -70,6 +81,11 @@ import { statusPanelHtml } from './status-view.js';
 import { taskPresenceModel } from './task-presence.js';
 import { createTaskPresenceController } from './task-presence-view.js';
 import {
+  taskStatusNextAction,
+  taskStatusPresentation,
+  taskStatusSummary,
+} from './task-status.js';
+import {
   SEMANTIC_CANVAS_PALETTE,
   createSemanticCutoutState,
   semanticCutoutPayload,
@@ -82,12 +98,33 @@ import {
 const MODE_STATE_KEY = 'pa-workspace-ui-v2';
 const PENDING_SUBMISSION_KEY = 'pa-pending-job-v1';
 const PENDING_REVIEW_KEY = 'pa-pending-result-reviews-v1';
+const TASK_STATUS_ICONS = {
+  Ban,
+  CircleAlert,
+  CircleCheck,
+  Clock3,
+  LoaderCircle,
+  Pause,
+  TriangleAlert,
+};
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 let modalReturnFocus = null;
 let drawerReturnFocus = null;
 let semanticReturnFocus = null;
 let workspaceStatusTimer = null;
+
+function hydrateTaskStatusIcons(root) {
+  if (!root) return;
+  createIcons({ icons: TASK_STATUS_ICONS, nameAttr: 'data-lucide', root });
+}
+
+function setTaskStatusIcon(root, name) {
+  if (!root) return;
+  root.innerHTML = `<i data-lucide="${name}" aria-hidden="true"></i>`;
+  hydrateTaskStatusIcons(root);
+}
+
 const semanticCanvasState = {
   image: null,
   assetId: '',
@@ -2334,6 +2371,8 @@ async function fetchResultItem(assetId, job, index = 0, overrides = {}) {
 
 function renderJobDockSummary() {
   const jobs = state.jobs;
+  const summary = taskStatusSummary(jobs);
+  const presence = taskPresenceModel(jobs, { available: state.jobsAvailable });
   const ongoing = jobs.filter((job) => ['queued', 'running', 'paused', 'canceling', 'interrupted'].includes(job.status));
   const progressing = ongoing.filter((job) => job.status !== 'paused');
   const paused = ongoing.filter((job) => job.status === 'paused');
@@ -2348,12 +2387,16 @@ function renderJobDockSummary() {
   $('#job-dock-progress').textContent = `${percent}%`;
   $('#workspace-progress-percent').textContent = `${percent}%`;
   $('#workspace-progress-bar').style.width = `${percent}%`;
-  $('#job-dock-summary').textContent = state.jobsAvailable
-    ? (ongoing.length
-      ? `${ongoing.length} 个未结束${paused.length ? ` · ${paused.length} 个已暂停` : ''} · ${jobs.length} 个记录`
-      : (jobs.length ? `${jobs.length} 个任务已恢复` : '暂无任务'))
-    : '任务接口未就绪';
-  $('#job-dock-dot').className = `job-dock-dot ${progressing.length ? 'active' : ''} ${paused.length && !progressing.length ? 'paused' : ''} ${state.jobsAvailable ? '' : 'error'}`.trim();
+  $('#job-dock-summary').textContent = presence.label;
+  const dockButton = $('#btn-job-dock');
+  dockButton.dataset.taskState = presence.state;
+  dockButton.setAttribute('aria-label', `任务中心：${presence.label}。${presence.detail}`);
+  dockButton.title = `${presence.label} · ${presence.detail}`;
+  const dotClass = state.jobsAvailable ? ({
+    active: 'active', queued: 'active', paused: 'paused', attention: 'attention',
+    error: 'error', complete: 'complete', idle: '',
+  }[presence.state] || 'error') : 'error';
+  $('#job-dock-dot').className = `job-dock-dot ${dotClass}`.trim();
   $('#jobs-overall-percent').textContent = `${percent}%`;
   $('#jobs-overall-bar').style.width = `${percent}%`;
   $('#jobs-overall-copy').textContent = progressing.length
@@ -2361,38 +2404,37 @@ function renderJobDockSummary() {
     : (paused.length
       ? `${paused.length} 个任务已暂停，继续后将领取剩余排队项${outcomeCopy}`
       : (jobs.length ? `任务状态已从本地账本恢复${outcomeCopy}` : '新任务会在这里持续追踪'));
-  $('#job-summary-completed').textContent = String(jobs.filter((job) => job.status === 'completed').length);
-  $('#job-summary-running').textContent = String(jobs.filter((job) => ['queued', 'running', 'canceling'].includes(job.status)).length);
-  $('#job-summary-attention').textContent = String(jobs.filter((job) => ['partial', 'failed', 'interrupted', 'paused'].includes(job.status)).length);
+  $('#job-summary-completed').textContent = String(summary.completed);
+  $('#job-summary-running').textContent = String(summary.processing);
+  $('#job-summary-attention').textContent = String(summary.attention);
   renderJobRuntime();
-  renderRailNotice();
-  renderTaskPresence();
+  renderRailNotice(presence, summary);
+  renderTaskPresence(presence);
 }
 
-function renderTaskPresence() {
+function renderTaskPresence(model = taskPresenceModel(state.jobs, { available: state.jobsAvailable })) {
   const control = $('#sidebar-logo');
   if (!control) return;
-  const model = taskPresenceModel(state.jobs, { available: state.jobsAvailable });
   taskPresenceController.setTaskState(model.state, { available: state.jobsAvailable });
   taskPresenceController.setMotion(document.visibilityState === 'hidden' ? 'paused' : 'running');
   control.setAttribute('aria-label', model.ariaLabel);
   control.title = `${model.label} · 打开任务中心`;
 }
 
-function renderRailNotice() {
-  const badge = $('.rail-notice-dot', $('#btn-rail-jobs'));
+function renderRailNotice(
+  model = taskPresenceModel(state.jobs, { available: state.jobsAvailable }),
+  summary = taskStatusSummary(state.jobs),
+) {
+  const button = $('#btn-rail-jobs');
+  const badge = $('.rail-notice-dot', button);
   if (!badge) return;
-  const jobs = state.jobs || [];
-  const pendingItems = (jobs || []).reduce((sum, job) => {
-    if (!['partial', 'failed', 'interrupted', 'paused', 'queued', 'running'].includes(job.status)) return sum;
-    const items = Array.isArray(job.items) ? job.items : [];
-    return sum + items.filter((item) => ['failed', 'interrupted', 'running'].includes(item.status)).length;
-  }, 0);
-  const attention = pendingItems
-    || jobs.filter((job) => ['partial', 'failed', 'interrupted', 'paused'].includes(job.status)).length;
+  const attention = state.jobsAvailable ? summary.attention : 0;
   badge.textContent = attention > 0 ? String(Math.min(attention, 99)) : '';
   badge.classList.toggle('has-count', attention > 0);
-  badge.setAttribute('aria-hidden', attention > 0 ? 'false' : 'true');
+  badge.setAttribute('aria-hidden', 'true');
+  button.dataset.taskState = model.state;
+  button.setAttribute('aria-label', `任务中心：${model.label}。${model.detail}`);
+  button.title = `${model.label} · ${model.detail}`;
 }
 
 function renderJobRuntime() {
@@ -2404,7 +2446,7 @@ function renderJobRuntime() {
   root.classList.remove('is-active', 'is-warning');
   if (!runtime) {
     root.classList.add('is-warning');
-    icon.textContent = '·';
+    setTaskStatusIcon(icon, 'circle-alert');
     title.textContent = '资源状态暂不可读';
     detail.textContent = '任务账本仍可用，等待执行器重新连接';
     return;
@@ -2417,21 +2459,21 @@ function renderJobRuntime() {
   const resourceCopy = Object.entries(limits).map(([name, limit]) => `${resourceNames[name] || name} ${Number(use[name] || 0)}/${Number(limit || 0)}`).join(' · ');
   if (unreconciled) {
     root.classList.add('is-warning');
-    icon.textContent = '!';
+    setTaskStatusIcon(icon, 'triangle-alert');
     title.textContent = '后台正在收口中断现场';
     detail.textContent = `${unreconciled} 个工作项等待账本确认${resourceCopy ? ` · ${resourceCopy}` : ''}`;
   } else if (inFlight || Object.values(use).some((value) => Number(value) > 0)) {
     root.classList.add('is-active');
-    icon.textContent = '↻';
+    setTaskStatusIcon(icon, 'loader-circle');
     title.textContent = '后台资源正在工作';
     detail.textContent = `${inFlight} 个执行项${resourceCopy ? ` · ${resourceCopy}` : ''}`;
   } else if (runtime.running) {
-    icon.textContent = '✓';
+    setTaskStatusIcon(icon, 'circle-check');
     title.textContent = '后台资源已释放';
     detail.textContent = `${resourceCopy || '执行资源 0 占用'} · 没有未归属工作项`;
   } else {
     root.classList.add('is-warning');
-    icon.textContent = '·';
+    setTaskStatusIcon(icon, 'pause');
     title.textContent = '任务执行器尚未启动';
     detail.textContent = '任务记录安全保存在本地账本中';
   }
@@ -2582,7 +2624,7 @@ function renderJobs(force = false) {
     }) : '';
     list.innerHTML = partialSummary + visibleJobs.map((job) => {
       const videoJob = isSpatialVideoJob(job);
-      const status = JOB_STATUS[job.status] || { label: job.status || '未知', tone: 'unknown' };
+      const status = taskStatusPresentation(job.status);
       const progress = Math.round(jobProgress(job) * 100);
       const counts = jobCounts(job);
       const retryable = retryableJobItems(job);
@@ -2596,7 +2638,7 @@ function renderJobs(force = false) {
       const items = visibleItems.map((item) => {
         const source = findJobSourceAsset(item.source_asset_id);
         const sourceIndex = Math.max(0, (job.items || []).findIndex((candidate) => candidate.id === item.id));
-        const itemStatus = JOB_STATUS[item.status] || { label: item.status || '未知', tone: 'unknown' };
+        const itemStatus = taskStatusPresentation(item.status);
         const itemProgress = Math.round(itemCompletionProgress(item) * 100);
         const failure = jobFailureCopy(item);
         const canRetryItem = !videoJob && ['failed', 'interrupted'].includes(item.status) && !failure.permanent;
@@ -2627,21 +2669,25 @@ function renderJobs(force = false) {
           : (['running', 'queued', 'canceling'].includes(status.tone)
             ? '任务在后台继续推进，切换页面不会中断当前工作。'
             : '任务现场、素材选择与参数快照均已保存在本地账本。'));
-      const icon = status.tone === 'completed' ? '✓' : (['partial', 'failed', 'interrupted'].includes(status.tone) ? '!' : '↻');
-      return `<article class="job-card job-card--${escapeHtml(status.tone)}" data-job-id="${escapeHtml(job.id)}" data-spatial-job-id="${escapeHtml(job.id)}" draggable="true" tabindex="-1">
-        <header><span><i class="job-card__icon">${icon}</i><small>${escapeHtml(videoJob ? '视频' : MODE_CONFIG[job.mode]?.badge || '创作任务')} · ${escapeHtml(status.label)}</small><strong>${escapeHtml(job.title || MODE_CONFIG[job.mode]?.label || '创作任务')}</strong></span><span class="job-status job-status--${escapeHtml(status.tone)}">${counts.completed}/${counts.total}</span></header>
+      const nextAction = taskStatusNextAction(job.status, {
+        video: videoJob,
+        hasResults,
+        retryableCount: retryable.length,
+      });
+      return `<article class="job-card job-card--${escapeHtml(status.tone)}" data-job-id="${escapeHtml(job.id)}" data-spatial-job-id="${escapeHtml(job.id)}" data-task-status="${escapeHtml(status.status || 'unknown')}" data-task-next-action="${escapeHtml(nextAction)}" draggable="true" tabindex="-1">
+        <header><span><i class="job-card__icon" data-lucide="${escapeHtml(status.icon)}" aria-hidden="true"></i><small>${escapeHtml(videoJob ? '视频' : MODE_CONFIG[job.mode]?.badge || '创作任务')} · ${escapeHtml(status.label)}</small><strong>${escapeHtml(job.title || MODE_CONFIG[job.mode]?.label || '创作任务')}</strong></span><span class="job-status job-status--${escapeHtml(status.tone)}">${counts.completed}/${counts.total}</span></header>
         <div class="job-progress"><span><i style="width:${progress}%"></i></span><strong>${progressCopy}</strong></div>
         <div class="job-counts"><span>${counts.total} 项</span><span>${counts.completed} 成功</span><span>${counts.failed} 失败</span><span>${counts.canceled} 取消</span><span>成功率 ${counts.successRate === null ? '—' : `${counts.successRate}%`}</span><time>${escapeHtml(formatStudioTime(job.updated_at || job.created_at))}</time></div>
-        <p class="job-outcome"><i></i><span>${escapeHtml(outcome)}</span></p>
+        <p class="job-outcome"><i></i><span><strong>下一步：${escapeHtml(nextAction)}</strong><small>${escapeHtml(outcome || status.recovery)}</small></span></p>
         ${items ? `<ul class="job-items ${itemsExpanded ? 'is-expanded' : ''}">${items}</ul>` : ''}
         ${(job.items || []).length > Math.max(5, visibleItems.length) || itemsExpanded ? `<button class="job-items-toggle" type="button" data-job-action="toggle-items" data-job-id="${escapeHtml(job.id)}" aria-expanded="${itemsExpanded}">${itemsExpanded ? '收起项目' : `查看全部 ${(job.items || []).length} 项`}</button>` : ''}
         <footer>
-          ${videoJob ? `<button type="button" data-job-action="open-video-canvas" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-video-canvas', job.id) ? 'disabled aria-busy="true"' : ''}>${['failed', 'interrupted', 'canceled'].includes(job.status) ? '返回画布重新确认' : '打开画布'}</button>` : `<button type="button" data-job-action="send-canvas" data-job-id="${escapeHtml(job.id)}">发送到画布</button>`}
-          ${!videoJob && hasResults ? `<button type="button" data-job-action="open-results" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-results', job.id) ? 'disabled aria-busy="true"' : ''}>打开结果</button>` : ''}
-          ${!videoJob && !hasResults ? `<button type="button" data-job-action="open-workspace" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-workspace', job.id) ? 'disabled aria-busy="true"' : ''}>回到现场</button>` : ''}
+          ${videoJob ? `<button class="primary-job-action" type="button" data-job-action="open-video-canvas" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-video-canvas', job.id) ? 'disabled aria-busy="true"' : ''}>${['failed', 'interrupted', 'canceled'].includes(job.status) ? '返回画布重新确认' : '打开画布'}</button>` : `<button type="button" data-job-action="send-canvas" data-job-id="${escapeHtml(job.id)}">发送到画布</button>`}
+          ${!videoJob && hasResults ? `<button class="${retryable.length ? '' : 'primary-job-action'}" type="button" data-job-action="open-results" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-results', job.id) ? 'disabled aria-busy="true"' : ''}>打开结果</button>` : ''}
+          ${!videoJob && !hasResults ? `<button class="${retryable.length || canResume ? '' : 'primary-job-action'}" type="button" data-job-action="open-workspace" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-workspace', job.id) ? 'disabled aria-busy="true"' : ''}>回到现场</button>` : ''}
           ${!videoJob && retryable.length ? `<button class="primary-job-action" type="button" data-job-action="retry-failed" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('retry-failed', job.id) ? 'disabled aria-busy="true"' : ''}>只重试失败项</button>` : ''}
           ${canPause ? `<button type="button" data-job-action="pause" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('pause', job.id) ? 'disabled aria-busy="true"' : ''}>暂停任务</button>` : ''}
-          ${canResume ? `<button type="button" data-job-action="resume" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('resume', job.id) ? 'disabled aria-busy="true"' : ''}>继续任务</button>` : ''}
+          ${canResume ? `<button class="primary-job-action" type="button" data-job-action="resume" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('resume', job.id) ? 'disabled aria-busy="true"' : ''}>继续任务</button>` : ''}
           ${canCancel ? `<button class="danger" type="button" data-job-action="cancel" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('cancel', job.id) ? 'disabled aria-busy="true"' : ''}>取消任务</button>` : ''}
         </footer>
       </article>`;
@@ -2649,6 +2695,7 @@ function renderJobs(force = false) {
       ? `<button class="job-list-more" type="button" data-job-action="show-more-jobs">再显示 ${Math.min(12, hiddenJobCount)} 个任务 <small>剩余 ${hiddenJobCount} 个</small></button>`
       : '');
   }
+  hydrateTaskStatusIcons(list);
   $$('[data-job-action]', list).forEach((button) => button.addEventListener('click', () => handleJobAction(button)));
   $$('[data-spatial-job-id]', list).forEach((card) => card.addEventListener('dragstart', (event) => {
     const job = state.jobs.find((entry) => String(entry.id) === String(card.dataset.spatialJobId));

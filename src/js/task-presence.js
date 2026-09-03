@@ -1,3 +1,5 @@
+import { taskStatusPresentation } from './task-status.js';
+
 const COMPLETION_WINDOW_MS = 45_000;
 
 const STATE_COPY = Object.freeze({
@@ -61,21 +63,23 @@ export function taskPresenceModel(jobs, options = {}) {
       ? Number(options.completionWindowMs)
       : COMPLETION_WINDOW_MS,
   );
-  const count = (...statuses) => items.filter((job) => statuses.includes(String(job?.status || ''))).length;
+  const countPresence = (presence) => items.filter((job) => (
+    taskStatusPresentation(job?.status).presence === presence
+  )).length;
 
-  const failed = count('failed');
+  const failed = countPresence('error');
   if (failed) return presenceResult('error', failed);
 
-  const attention = count('partial', 'interrupted');
+  const attention = countPresence('attention');
   if (attention) return presenceResult('attention', attention);
 
-  const active = count('running', 'canceling');
+  const active = countPresence('active');
   if (active) return presenceResult('active', active);
 
-  const paused = count('paused');
+  const paused = countPresence('paused');
   if (paused) return presenceResult('paused', paused);
 
-  const queued = count('queued');
+  const queued = countPresence('queued');
   if (queued) return presenceResult('queued', queued);
 
   const recentlyCompleted = items.filter((job) => {

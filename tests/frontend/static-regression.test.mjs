@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const [app, api, assets, config, jobs, knowledge, memory, review, compare, sessions, settings, productProfiles, shell, studioState, html, css, mainRust, tauriConfig] = await Promise.all([
+const [app, api, assets, config, jobs, knowledge, memory, review, compare, sessions, settings, productProfiles, shell, studioState, taskStatus, html, css, mainRust, tauriConfig] = await Promise.all([
   readFile(path.join(root, 'src/js/app.js'), 'utf8'),
   readFile(path.join(root, 'src/js/api.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-assets.js'), 'utf8'),
@@ -20,6 +20,7 @@ const [app, api, assets, config, jobs, knowledge, memory, review, compare, sessi
   readFile(path.join(root, 'src/js/studio-product-profiles.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-shell.js'), 'utf8'),
   readFile(path.join(root, 'src/js/studio-state.js'), 'utf8'),
+  readFile(path.join(root, 'src/js/task-status.js'), 'utf8'),
   readFile(path.join(root, 'src/index.html'), 'utf8'),
   readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8'),
   readFile(path.join(root, 'src-tauri/src/main.rs'), 'utf8'),
@@ -202,7 +203,8 @@ test('durable job polling has timeout, cancellation, stale-response guard, and s
 test('durable jobs expose pause and resume controls with per-job mutation locking', () => {
   assert.match(api, /export async function pauseJob\(jobId\)/);
   assert.match(api, /export async function resumeJob\(jobId\)/);
-  assert.match(config, /paused: \{ label: '已暂停', tone: 'paused' \}/);
+  assert.match(config, /export const JOB_STATUS = TASK_STATUS/);
+  assert.match(taskStatus, /paused: \{[\s\S]{0,220}label: '已暂停'[\s\S]{0,220}nextAction: '继续任务'/);
   assert.match(app, /jobLifecycleActions\(job\.status\)/);
   assert.match(app, /data-job-action="pause"/);
   assert.match(app, /data-job-action="resume"/);

@@ -1129,7 +1129,9 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .job-dock-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ink-3) 13%, transparent); }
 .job-dock-dot.active { background: var(--green); box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 14%, transparent); animation: jobPulse 1.6s ease-in-out infinite; }
 .job-dock-dot.paused { background: var(--yellow); box-shadow: 0 0 0 4px color-mix(in srgb, var(--yellow) 18%, transparent); }
+.job-dock-dot.attention { background: var(--status-warning-solid); box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-warning-solid) 16%, transparent); }
 .job-dock-dot.error { background: var(--red); box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 14%, transparent); animation: none; }
+.job-dock-dot.complete { background: var(--status-success-solid); box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-success-solid) 14%, transparent); }
 @keyframes jobPulse { 50% { transform: scale(.78); opacity: .72; } }
 
 .drawer--jobs { width: min(460px,calc(100vw - 26px)); grid-template-rows: auto auto auto minmax(0,1fr) auto; padding: 0; border-radius: 29px; }
@@ -1225,8 +1227,11 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .job-card > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .job-card > header > span:first-child { display: grid; grid-template-columns: 40px minmax(0,1fr); grid-template-rows: auto auto; align-items: center; gap: 2px 10px; min-width: 0; }
 .job-card__icon { grid-row: 1 / 3; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 13px; background: color-mix(in srgb,var(--green) 14%,var(--paper)); color: var(--green); font-size: 16px; font-weight: 850; }
+.job-card__icon svg { width: 18px; height: 18px; }
 .job-card--running .job-card__icon, .job-card--queued .job-card__icon, .job-card--canceling .job-card__icon { background: var(--coral-soft); color: var(--coral); }
+.job-card--paused .job-card__icon { background: color-mix(in srgb,var(--yellow) 20%,var(--paper)); color: var(--status-warning-ink); }
 .job-card--partial .job-card__icon, .job-card--failed .job-card__icon, .job-card--interrupted .job-card__icon { background: #ffe3c2; color: #ae6c16; }
+.job-card--canceled .job-card__icon { background: color-mix(in srgb,var(--ink-3) 12%,var(--paper)); color: var(--ink-3); }
 .job-card > header small { color: var(--ink-3); font-size: 6.5px; font-weight: 850; letter-spacing: .12em; }
 .job-card > header strong { overflow: hidden; font-size: var(--type-control); white-space: nowrap; text-overflow: ellipsis; }
 .job-status { flex: 0 0 auto; padding: 5px 7px; border-radius: 999px; background: var(--shell-deep); color: var(--ink-2); font-size: var(--type-caption); font-weight: 750; }
@@ -1244,6 +1249,9 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .job-outcome { display: flex; align-items: flex-start; gap: 7px; margin: 0; color: var(--ink-2); font-size: var(--type-caption); line-height: 1.55; }
 .job-outcome > i { flex: 0 0 auto; width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--green); }
 .job-card--partial .job-outcome > i, .job-card--failed .job-outcome > i, .job-card--interrupted .job-outcome > i { background: #e4a62d; }
+.job-outcome > span { display: grid; gap: 2px; min-width: 0; }
+.job-outcome strong { color: var(--ink); font-size: var(--type-caption); }
+.job-outcome small { color: var(--ink-2); font-size: var(--type-caption); line-height: 1.55; }
 .job-items { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .job-items.is-expanded { max-height: 330px; padding-right: 3px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .job-item { position: relative; display: grid; grid-template-columns: 40px minmax(0,1fr) auto; grid-template-rows: auto 3px; align-items: center; gap: 6px 9px; min-width: 0; padding: 7px; border: 1px solid color-mix(in srgb,var(--line-2) 70%,transparent); border-radius: 12px; background: color-mix(in srgb,var(--paper) 86%,transparent); }
@@ -1261,13 +1269,16 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .job-card > footer button { min-height: 31px; padding: 0 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); font-size: var(--type-caption); }
 .job-card > footer button:hover { border-color: var(--line-2); }
 .job-card > footer .danger { color: var(--red); }
-.job-card > footer .primary-job-action { border-color: var(--dark); background: var(--dark); color: #fff; }
+.job-card > footer .primary-job-action { min-height: 38px; border-color: var(--dark); background: var(--dark); color: #fff; }
 .job-list-more { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 42px; margin-top: 11px; border-radius: 12px; background: var(--shell-deep); color: var(--ink); font-size: var(--type-control); font-weight: 750; }
 .job-list-more small { color: var(--ink-3); font-size: var(--type-caption); font-weight: 600; }
 .job-runtime { display: grid; grid-template-columns: 34px minmax(0,1fr); align-items: center; gap: 10px; margin: 0 22px 20px; padding: 12px 13px; border-radius: 17px; background: color-mix(in srgb,var(--green) 10%,var(--paper)); color: #347d47; }
 .job-runtime.is-active { background: var(--coral-soft); color: var(--coral-deep); }
 .job-runtime.is-warning { background: #fff3dc; color: #9c6718; }
 .job-runtime__icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 12px; background: color-mix(in srgb,currentColor 10%,transparent); font-size: 14px; font-weight: 850; }
+.job-runtime__icon svg { width: 17px; height: 17px; }
+.job-runtime.is-active .job-runtime__icon svg { animation: taskRuntimeSpin 1.2s linear infinite; }
+@keyframes taskRuntimeSpin { to { transform: rotate(360deg); } }
 .job-runtime p { display: grid; gap: 2px; min-width: 0; margin: 0; }
 .job-runtime strong { font-size: var(--type-caption); }
 .job-runtime small { overflow: hidden; color: color-mix(in srgb,currentColor 72%,transparent); font-size: var(--type-micro); white-space: nowrap; text-overflow: ellipsis; }

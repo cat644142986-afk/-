@@ -1,3 +1,5 @@
+import { TASK_STATUS } from './task-status.js';
+
 export const PAGE_CONFIG = {
   process: { eyebrow: 'PRODUCT ATELIER', title: '创作', subtitle: '素材与任务现场' },
   canvas: { eyebrow: 'SPATIAL WORKSPACE', title: '无限画布', subtitle: '方案、素材与结果空间' },
@@ -34,17 +36,7 @@ export const MODE_CONFIG = {
   },
 };
 
-export const JOB_STATUS = {
-  queued: { label: '排队中', tone: 'queued' },
-  running: { label: '运行中', tone: 'running' },
-  paused: { label: '已暂停', tone: 'paused' },
-  completed: { label: '已完成', tone: 'completed' },
-  partial: { label: '部分完成', tone: 'partial' },
-  failed: { label: '失败', tone: 'failed' },
-  canceling: { label: '正在取消', tone: 'canceling' },
-  canceled: { label: '已取消', tone: 'canceled' },
-  interrupted: { label: '已中断', tone: 'interrupted' },
-};
+export const JOB_STATUS = TASK_STATUS;
 
 export const MODE_IDS = Object.freeze(Object.keys(MODE_CONFIG));
 export const STAGE_IDS = Object.freeze({

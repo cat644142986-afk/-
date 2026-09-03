@@ -1,14 +1,14 @@
 # Product Atelier UX System Implementation Plan
 
 Date: 2026-09-03
-Branch: `codex/ui-experience-system`
-Worktree: `D:\ProductAtelier-UX-Lab`
-Base: `cec6748`
-Status: Milestone 1 visual correction implemented and verified in the isolated worktree
+Branch: `codex/infinite-canvas-ui-integration`
+Worktree: `D:\ProductAtelier-UI-Integration`
+Base: `9c25142`
+Status: Milestone 1 integrated; Milestone 2 source gate complete and awaiting final Tauri acceptance
 
 ## Isolation Boundary
 
-The active infinite-canvas work remains in `D:\ProductAtelier-Desktop`. At the start of this milestone it contained uncommitted IC6 test and build-script changes. UX work is isolated in a separate Git worktree, uses separate runtime data and ports for manual testing, and does not build or publish a formal installer.
+The protected formal portable version remains untouched in `D:\ProductAtelier-Desktop`. UX integration uses a separate Git worktree, separate runtime data, and separate ports for manual testing. Candidate builds are never promoted or wired to the formal desktop shortcut until all gates pass and the user explicitly authorizes promotion.
 
 ## Milestone 1: System Foundation
 
@@ -54,7 +54,7 @@ Reference: the supplied Be.Healthy dashboard screenshot.
 
 Visual evidence is stored under `artifacts/ux-system-2026-09-03/` for 1440 x 900, 1280 x 720, and the 960 x 600 open-drawer state.
 
-The main infinite-canvas branch advanced from `cec6748` through `ced8a7e` to `03715ff` during this isolated work. The `ced8a7e` range touches `src/js/app.js` and `src/css/stable-ui.css`, while `03715ff` adds release-pipeline hardening. Reconcile the complete range with a reviewed three-way integration and rerun the full gate; do not merge or rebase it into this uncommitted UX worktree implicitly.
+Milestone 1 was committed as `cd914f2` on `codex/ui-experience-system`, then reviewed and merged onto the current infinite-canvas baseline `9c25142` as integration checkpoint `e854117`. The combined checkpoint passed 244 frontend tests, the production build, the lazy-canvas boundary check, and a projected formal-package size gate of 367.27 MiB.
 
 ## Milestone 2: Task Center Coherence
 
@@ -64,6 +64,17 @@ The main infinite-canvas branch advanced from `cec6748` through `ced8a7e` to `03
 - Keep one polite live announcement source.
 
 Exit gate: every durable job status maps to one label, tone, icon, next action, and recovery path.
+
+### Milestone 2 Verification
+
+- Added one immutable task-status contract covering queued, running, paused, completed, partial, failed, canceling, canceled, and interrupted states.
+- The header task pill, left-rail notice, task lifeform, drawer summary, and task cards now derive presentation from the same contract instead of maintaining separate status rules.
+- Replaced bare status punctuation with accessible Lucide icons and retained one polite live-announcement source.
+- Each task card exposes a concrete next action and contextual recovery guidance; unavailable task services present an error state without a misleading attention count.
+- `npm test`: 248 passed, 0 failed.
+- `npm run build`: passed. Existing Excalidraw chunk-size and Radix `use client` warnings remain non-blocking.
+- Lazy-canvas bundle boundary and projected formal-package size remain within the 450 MiB gate.
+- Real Tauri interaction, DWM/DPI, and minimum-window verification are intentionally deferred until the approved evening acceptance window. The formal portable build has not been modified or promoted.
 
 ## Milestone 3: Core Workflow Pass
 
