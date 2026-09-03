@@ -19,6 +19,83 @@ import verify_packaged_schema_upgrade as packaged_gate  # noqa: E402
 
 
 class PackagedSchemaUpgradeFixtureTests(unittest.TestCase):
+    def test_manifest_source_hash_format_only_defaults_when_field_is_absent(self) -> None:
+        self.assertEqual(
+            packaged_gate._manifest_source_hash_format({}),
+            packaged_gate.RAW_SOURCE_HASH_FORMAT,
+        )
+        for source_hash_format in (
+            packaged_gate.RAW_SOURCE_HASH_FORMAT,
+            packaged_gate.CANONICAL_SOURCE_HASH_FORMAT,
+        ):
+            with self.subTest(source_hash_format=source_hash_format):
+                self.assertEqual(
+                    packaged_gate._manifest_source_hash_format(
+                        {"source_hash_format": source_hash_format}
+                    ),
+                    source_hash_format,
+                )
+
+        for invalid_value in (
+            None,
+            "",
+            " ",
+            f" {packaged_gate.CANONICAL_SOURCE_HASH_FORMAT}",
+            f"{packaged_gate.CANONICAL_SOURCE_HASH_FORMAT} ",
+            "sha256-platform-default-v1",
+            1,
+            True,
+            [],
+            {},
+        ):
+            with self.subTest(invalid_value=invalid_value):
+                with self.assertRaisesRegex(RuntimeError, "unsupported"):
+                    packaged_gate._manifest_source_hash_format(
+                        {"source_hash_format": invalid_value}
+                    )
+
+    def test_manifest_source_hash_normalizes_text_eol_but_not_binary(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="ProductAtelier-source-hash-"
+        ) as temporary_dir:
+            root = Path(temporary_dir)
+            lf_source = root / "source.py"
+            crlf_source = root / "source-copy.py"
+            changed_source = root / "source-changed.py"
+            binary_source = root / "fixture.webm"
+            lf_source.write_bytes(b"first\nsecond\n")
+            crlf_source.write_bytes(b"first\r\nsecond\r\n")
+            changed_source.write_bytes(b"first\nchanged\n")
+            binary_source.write_bytes(b"header\r\npayload\r\n")
+
+            lf_hash = packaged_gate._manifest_source_sha256(
+                lf_source, packaged_gate.CANONICAL_SOURCE_HASH_FORMAT
+            )
+            crlf_hash = packaged_gate._manifest_source_sha256(
+                crlf_source, packaged_gate.CANONICAL_SOURCE_HASH_FORMAT
+            )
+            self.assertEqual(lf_hash, crlf_hash)
+            self.assertNotEqual(
+                packaged_gate._manifest_source_sha256(
+                    changed_source, packaged_gate.CANONICAL_SOURCE_HASH_FORMAT
+                ),
+                lf_hash,
+            )
+            self.assertNotEqual(
+                packaged_gate._manifest_source_sha256(
+                    crlf_source, packaged_gate.RAW_SOURCE_HASH_FORMAT
+                ),
+                lf_hash,
+            )
+            self.assertEqual(
+                packaged_gate._manifest_source_sha256(
+                    binary_source, packaged_gate.CANONICAL_SOURCE_HASH_FORMAT
+                ),
+                packaged_gate._sha256(binary_source),
+            )
+            with self.assertRaisesRegex(RuntimeError, "unsupported"):
+                packaged_gate._manifest_source_sha256(lf_source, "unknown-v1")
+
     def test_packaged_start_environment_supplies_complete_candidate_isolation(self) -> None:
         inherited = {
             "PRODUCT_ATELIER_DATA_DIR": "unsafe-data",

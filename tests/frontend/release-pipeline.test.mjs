@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -77,6 +80,9 @@ test('sidecar build cannot overwrite the formal portable release', () => {
   assert.match(script, /FileAttributes\]::ReparsePoint/);
   assert.match(script, /sidecarBuildLockOwned/);
   assert.match(script, /rev-parse --verify HEAD/);
+  assert.match(script, /sha256-text-lf-v1/);
+  assert.match(script, /Get-SourceFileSha256/);
+  assert.match(script, /source_hash_format = \$CanonicalSourceHashFormat/);
   assert.match(spec, /'torch'/);
   assert.match(spec, /'transformers'/);
   assert.match(spec, /'tokenizers'/);
@@ -121,12 +127,115 @@ test('portable smoke binds runtime identity to the candidate artifacts', () => {
 
   assert.match(sidecarSmoke, /manifest\.git_commit/);
   assert.match(sidecarSmoke, /source_fingerprint does not match source_hashes/);
+  assert.match(sidecarSmoke, /sha256-text-lf-v1/);
+  assert.match(sidecarSmoke, /Get-SourceFileSha256/);
+  assert.match(sidecarSmoke, /PSObject\.Properties\["source_hash_format"\]/);
+  assert.match(sidecarSmoke, /\$null -eq \$sourceHashFormatProperty/);
+  assert.match(sidecarSmoke, /sourceHashFormatProperty\.Value -isnot \[string\]/);
+  assert.doesNotMatch(sidecarSmoke, /IsNullOrWhiteSpace\(\$sourceHashFormat\)/);
   assert.match(sidecarSmoke, /health\.service\.git_commit/);
   assert.match(appSmoke, /ParentProcessId/);
   assert.match(appSmoke, /ExecutablePath/);
   assert.match(appSmoke, /Test-ExpectedSidecarProcess/);
   assert.match(appSmoke, /health\.service\.git_commit/);
   assert.doesNotMatch(appSmoke, /beforeSidecars/);
+});
+
+test('portable smoke only treats an absent source hash format as legacy raw', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-source-hash-format-'));
+  const sidecarDir = path.join(temporaryRoot, 'python-server');
+  const sidecarExe = path.join(sidecarDir, 'python-server.exe');
+  const manifestPath = path.join(sidecarDir, 'sidecar-manifest.json');
+  const sourceKey = 'python/server.py';
+  const sourceBytes = fs.readFileSync(path.join(root, sourceKey));
+  const rawHash = crypto.createHash('sha256').update(sourceBytes).digest('hex').toUpperCase();
+  const canonicalHash = crypto.createHash('sha256')
+    .update(Buffer.from(sourceBytes.toString('latin1').replaceAll('\r\n', '\n'), 'latin1'))
+    .digest('hex')
+    .toUpperCase();
+  const executableBytes = Buffer.from('source-hash-format-fixture');
+  const executableHash = crypto.createHash('sha256')
+    .update(executableBytes)
+    .digest('hex')
+    .toUpperCase();
+  const gitCommit = spawnSync('git.exe', ['-C', root, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).stdout.trim();
+
+  fs.mkdirSync(sidecarDir);
+  fs.writeFileSync(sidecarExe, executableBytes);
+  const powershellEnvironment = { ...process.env };
+  for (const name of Object.keys(powershellEnvironment)) {
+    if (name.toLowerCase() === 'psmodulepath') delete powershellEnvironment[name];
+  }
+
+  const runCase = ({ label, present, value, sourceHash, expectedStatus }) => {
+    const sourceHashes = { [sourceKey]: sourceHash };
+    const sourceFingerprint = crypto.createHash('sha256')
+      .update(`${sourceKey}:${sourceHash}`, 'utf8')
+      .digest('hex')
+      .toUpperCase();
+    const manifest = {
+      product: 'Product Atelier',
+      contract_version: 'test-contract',
+      ledger_schema_version: 8,
+      git_commit: gitCommit,
+      source_fingerprint: sourceFingerprint,
+      built_at: '2026-09-03T00:00:00Z',
+      executable_sha256: executableHash,
+      source_hashes: sourceHashes,
+    };
+    if (present) manifest.source_hash_format = value;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    const result = spawnSync('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', path.join(root, 'tools/Test-Portable.ps1'),
+      '-PortableDir', temporaryRoot,
+      '-ExpectedGitCommit', gitCommit,
+      '-StaticOnly',
+    ], { encoding: 'utf8', env: powershellEnvironment });
+    assert.equal(result.status, expectedStatus, `${label}: ${result.stderr || result.stdout}`);
+    if (expectedStatus !== 0) {
+      assert.match(
+        `${result.stdout}\n${result.stderr}`,
+        /Unsupported sidecar source hash format/,
+        `${label} must fail on the source hash format gate`,
+      );
+    }
+  };
+
+  try {
+    runCase({ label: 'absent', present: false, sourceHash: rawHash, expectedStatus: 0 });
+    runCase({
+      label: 'explicit raw',
+      present: true,
+      value: 'sha256-raw-v1',
+      sourceHash: rawHash,
+      expectedStatus: 0,
+    });
+    runCase({
+      label: 'canonical',
+      present: true,
+      value: 'sha256-text-lf-v1',
+      sourceHash: canonicalHash,
+      expectedStatus: 0,
+    });
+    for (const [label, value] of [
+      ['null', null],
+      ['empty', ''],
+      ['non-string', 1],
+      ['unknown', 'sha256-platform-default-v1'],
+      ['leading whitespace', ' sha256-text-lf-v1'],
+    ]) {
+      runCase({ label, present: true, value, sourceHash: rawHash, expectedStatus: 1 });
+    }
+  } finally {
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 test('all Windows entry points use the manifest-producing release chain', () => {

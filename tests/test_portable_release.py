@@ -511,6 +511,40 @@ class PortableReleaseTests(unittest.TestCase):
 
         self.assertFalse(self.candidate.exists())
 
+    def test_legacy_manifest_without_source_hash_format_is_accepted(self) -> None:
+        result = self._stage()
+
+        self.assertEqual(result["artifacts"]["git_commit"], self.commit)
+        self.assertTrue(self.candidate.is_dir())
+
+    def test_manifest_accepts_supported_source_hash_formats(self) -> None:
+        manifest_path = self.sidecar_source / portable_release.SIDECAR_MANIFEST.name
+        for source_hash_format in (
+            portable_release.RAW_SOURCE_HASH_FORMAT,
+            portable_release.CANONICAL_SOURCE_HASH_FORMAT,
+        ):
+            with self.subTest(source_hash_format=source_hash_format):
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["source_hash_format"] = source_hash_format
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+                result = self._stage()
+                self.assertEqual(result["artifacts"]["git_commit"], self.commit)
+
+    def test_manifest_rejects_unknown_source_hash_format_during_staging(self) -> None:
+        manifest_path = self.sidecar_source / portable_release.SIDECAR_MANIFEST.name
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["source_hash_format"] = "sha256-platform-default-v1"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            portable_release.ReleaseError,
+            "unsupported source_hash_format",
+        ):
+            self._stage()
+
+        self.assertFalse(self.candidate.exists())
+
     def test_post_swap_validation_failure_restores_the_previous_candidate(self) -> None:
         previous = self._stage()
         previous_inventory = portable_release.directory_inventory(self.candidate)

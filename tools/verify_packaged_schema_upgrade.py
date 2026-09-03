@@ -42,6 +42,9 @@ SOURCE_COLOR = (220, 100, 40)
 CANDIDATE_COLOR = (30, 120, 230)
 VIDEO_SIZE = (320, 180)
 VIDEO_DURATION_SECONDS = 3
+RAW_SOURCE_HASH_FORMAT = "sha256-raw-v1"
+CANONICAL_SOURCE_HASH_FORMAT = "sha256-text-lf-v1"
+CANONICAL_TEXT_SOURCE_SUFFIXES = frozenset({".py", ".json", ".spec"})
 
 
 def _seed_v5_business_graph(
@@ -895,6 +898,33 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest().upper()
 
 
+def _manifest_source_sha256(path: Path, source_hash_format: str) -> str:
+    if source_hash_format == RAW_SOURCE_HASH_FORMAT:
+        return _sha256(path)
+    if source_hash_format != CANONICAL_SOURCE_HASH_FORMAT:
+        raise RuntimeError(
+            f"unsupported sidecar source hash format: {source_hash_format}"
+        )
+    if path.suffix.lower() not in CANONICAL_TEXT_SOURCE_SUFFIXES:
+        return _sha256(path)
+    canonical_bytes = path.read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(canonical_bytes).hexdigest().upper()
+
+
+def _manifest_source_hash_format(manifest: dict[str, Any]) -> str:
+    if "source_hash_format" not in manifest:
+        return RAW_SOURCE_HASH_FORMAT
+    source_hash_format = manifest["source_hash_format"]
+    if not isinstance(source_hash_format, str) or source_hash_format not in {
+        RAW_SOURCE_HASH_FORMAT,
+        CANONICAL_SOURCE_HASH_FORMAT,
+    }:
+        raise RuntimeError(
+            f"unsupported sidecar source hash format: {source_hash_format!r}"
+        )
+    return source_hash_format
+
+
 def _sqlite_identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
@@ -1226,6 +1256,7 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     source_hashes = manifest.get("source_hashes") or {}
+    source_hash_format = _manifest_source_hash_format(manifest)
     required_sources = {
         "python/command_registry.py": "command registry",
         "python/canvas_export.py": "canvas export renderer",
@@ -1248,7 +1279,9 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
     for source_key, label in required_sources.items():
         if source_key not in source_hashes:
             raise RuntimeError(f"sidecar manifest does not fingerprint {label}")
-        if _sha256(ROOT / source_key) != str(source_hashes[source_key]).upper():
+        if _manifest_source_sha256(
+            ROOT / source_key, source_hash_format
+        ) != str(source_hashes[source_key]).upper():
             raise RuntimeError(f"sidecar manifest {label} hash is stale")
     packaged_schema = int(manifest.get("ledger_schema_version", 0))
     if packaged_schema != SCHEMA_VERSION:
@@ -1746,6 +1779,7 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
         return {
             "status": "passed",
             "contract_version": manifest["contract_version"],
+            "source_hash_format": source_hash_format,
             "schema_before": FORMAL_SOURCE_SCHEMA_VERSION,
             "schema_after": packaged_schema,
             "backup_source_schema": FORMAL_SOURCE_SCHEMA_VERSION,

@@ -19,6 +19,46 @@ $SidecarDir = Join-Path $PortableDir "python-server"
 $SidecarExe = Join-Path $SidecarDir "python-server.exe"
 $ManifestPath = Join-Path $SidecarDir "sidecar-manifest.json"
 $CodeSigningTool = Join-Path $PSScriptRoot "Windows-CodeSigning.ps1"
+$CanonicalSourceHashFormat = "sha256-text-lf-v1"
+$RawSourceHashFormat = "sha256-raw-v1"
+
+function Get-SourceFileSha256([string]$PathToHash, [string]$HashFormat) {
+    if ($HashFormat -eq $RawSourceHashFormat) {
+        return (Get-FileHash -Algorithm SHA256 -LiteralPath $PathToHash).Hash
+    }
+    if ($HashFormat -ne $CanonicalSourceHashFormat) {
+        throw "Unsupported sidecar source hash format: $HashFormat"
+    }
+    $extension = [System.IO.Path]::GetExtension($PathToHash).ToLowerInvariant()
+    if ($extension -notin @(".py", ".json", ".spec")) {
+        return (Get-FileHash -Algorithm SHA256 -LiteralPath $PathToHash).Hash
+    }
+
+    $sourceBytes = [System.IO.File]::ReadAllBytes($PathToHash)
+    $normalized = New-Object System.IO.MemoryStream
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        for ($index = 0; $index -lt $sourceBytes.Length; $index++) {
+            if (
+                $sourceBytes[$index] -eq 13 -and
+                $index + 1 -lt $sourceBytes.Length -and
+                $sourceBytes[$index + 1] -eq 10
+            ) {
+                $normalized.WriteByte([byte]10)
+                $index++
+            } else {
+                $normalized.WriteByte($sourceBytes[$index])
+            }
+        }
+        $normalized.Position = 0
+        return ([System.BitConverter]::ToString(
+            $sha256.ComputeHash($normalized)
+        )).Replace("-", "")
+    } finally {
+        $sha256.Dispose()
+        $normalized.Dispose()
+    }
+}
 
 if (-not $ExpectedGitCommit) {
     $headOutput = @(& git.exe -C $ProjectRoot rev-parse --verify HEAD 2>&1)
@@ -69,10 +109,23 @@ $sourceProperties = @($manifest.source_hashes.PSObject.Properties)
 if ($sourceProperties.Count -lt 1) {
     throw "Sidecar manifest source_hashes must contain at least one source file"
 }
+$sourceHashFormatProperty = $manifest.PSObject.Properties["source_hash_format"]
+if ($null -eq $sourceHashFormatProperty) {
+    $sourceHashFormat = $RawSourceHashFormat
+} elseif ($sourceHashFormatProperty.Value -isnot [string]) {
+    throw "Unsupported sidecar source hash format: source_hash_format must be a string"
+} else {
+    $sourceHashFormat = [string]$sourceHashFormatProperty.Value
+}
+if ($sourceHashFormat -notin @($RawSourceHashFormat, $CanonicalSourceHashFormat)) {
+    throw "Unsupported sidecar source hash format: $sourceHashFormat"
+}
 foreach ($property in $sourceProperties) {
     $sourcePath = Join-Path $ProjectRoot $property.Name
     if (-not (Test-Path -LiteralPath $sourcePath)) { throw "Manifest source is missing: $($property.Name)" }
-    $actualSourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourcePath).Hash
+    $actualSourceHash = Get-SourceFileSha256 `
+        -PathToHash $sourcePath `
+        -HashFormat $sourceHashFormat
     if ($actualSourceHash -ne $property.Value) {
         throw "Portable sidecar is stale relative to source: $($property.Name)"
     }

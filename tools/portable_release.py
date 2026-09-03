@@ -32,6 +32,12 @@ LOCK_FILE_NAME = "portable-promotion.lock"
 CANDIDATE_IDENTITY_FORMAT_VERSION = 1
 CANDIDATE_IDENTITY_FILE_NAME = "portable-candidate-current.identity.json"
 CANDIDATE_IDENTITY_KIND = "product-atelier-portable-candidate-identity"
+RAW_SOURCE_HASH_FORMAT = "sha256-raw-v1"
+CANONICAL_SOURCE_HASH_FORMAT = "sha256-text-lf-v1"
+SUPPORTED_SOURCE_HASH_FORMATS = {
+    RAW_SOURCE_HASH_FORMAT,
+    CANONICAL_SOURCE_HASH_FORMAT,
+}
 TRANSACTION_PHASES = {
     "prepared",
     "backed_up",
@@ -526,6 +532,21 @@ def _load_manifest(release_dir: Path) -> tuple[dict[str, Any], Path, str]:
     return manifest, manifest_path, manifest_sha256
 
 
+def _manifest_source_hash_format(manifest: dict[str, Any], manifest_path: Path) -> str:
+    if "source_hash_format" not in manifest:
+        return RAW_SOURCE_HASH_FORMAT
+    source_hash_format = manifest["source_hash_format"]
+    if (
+        not isinstance(source_hash_format, str)
+        or source_hash_format not in SUPPORTED_SOURCE_HASH_FORMATS
+    ):
+        raise ReleaseError(
+            "Candidate manifest has an unsupported source_hash_format "
+            f"{source_hash_format!r}: {manifest_path}"
+        )
+    return source_hash_format
+
+
 def validate_candidate(release_dir: str | Path, expected_git_commit: str) -> dict[str, Any]:
     if not re.fullmatch(r"[0-9a-fA-F]{40}", expected_git_commit):
         raise ReleaseError(f"Expected Git commit must be a full 40-character hash: {expected_git_commit!r}")
@@ -560,6 +581,7 @@ def validate_candidate(release_dir: str | Path, expected_git_commit: str) -> dic
             raise ReleaseError(f"Candidate manifest is missing {field}: {manifest_path}")
     if not isinstance(manifest.get("ledger_schema_version"), int):
         raise ReleaseError(f"Candidate manifest has no numeric ledger_schema_version: {manifest_path}")
+    _manifest_source_hash_format(manifest, manifest_path)
 
     source_hashes = manifest.get("source_hashes")
     if not isinstance(source_hashes, dict) or not source_hashes:

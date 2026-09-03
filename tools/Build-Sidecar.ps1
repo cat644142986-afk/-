@@ -16,6 +16,45 @@ $StagedDir = Join-Path $DistRoot "python-server"
 $SourceDestination = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "src-tauri\bin\python-server"))
 $SidecarBuildLockPath = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "build\sidecar-build.lock"))
 $CodeSigningTool = Join-Path $PSScriptRoot "Windows-CodeSigning.ps1"
+$CanonicalSourceHashFormat = "sha256-text-lf-v1"
+
+function Get-SourceFileSha256([string]$PathToHash, [string]$HashFormat) {
+    if ($HashFormat -eq "sha256-raw-v1") {
+        return (Get-FileHash -Algorithm SHA256 -LiteralPath $PathToHash).Hash
+    }
+    if ($HashFormat -ne $CanonicalSourceHashFormat) {
+        throw "Unsupported sidecar source hash format: $HashFormat"
+    }
+    $extension = [System.IO.Path]::GetExtension($PathToHash).ToLowerInvariant()
+    if ($extension -notin @(".py", ".json", ".spec")) {
+        return (Get-FileHash -Algorithm SHA256 -LiteralPath $PathToHash).Hash
+    }
+
+    $sourceBytes = [System.IO.File]::ReadAllBytes($PathToHash)
+    $normalized = New-Object System.IO.MemoryStream
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        for ($index = 0; $index -lt $sourceBytes.Length; $index++) {
+            if (
+                $sourceBytes[$index] -eq 13 -and
+                $index + 1 -lt $sourceBytes.Length -and
+                $sourceBytes[$index + 1] -eq 10
+            ) {
+                $normalized.WriteByte([byte]10)
+                $index++
+            } else {
+                $normalized.WriteByte($sourceBytes[$index])
+            }
+        }
+        $normalized.Position = 0
+        return ([System.BitConverter]::ToString(
+            $sha256.ComputeHash($normalized)
+        )).Replace("-", "")
+    } finally {
+        $sha256.Dispose()
+        $normalized.Dispose()
+    }
+}
 
 function Assert-ProjectPath([string]$PathToCheck) {
     $full = [System.IO.Path]::GetFullPath($PathToCheck)
@@ -222,7 +261,9 @@ try {
         $sourceHashes = [ordered]@{}
         foreach ($relativePath in $sourceFiles) {
             $absolutePath = Join-Path $ProjectRoot $relativePath
-            $sourceHashes[$relativePath] = (Get-FileHash -Algorithm SHA256 -LiteralPath $absolutePath).Hash
+            $sourceHashes[$relativePath] = Get-SourceFileSha256 `
+                -PathToHash $absolutePath `
+                -HashFormat $CanonicalSourceHashFormat
         }
         $fingerprintText = ($sourceHashes.GetEnumerator() | ForEach-Object { "$($_.Key):$($_.Value)" }) -join "`n"
         $sha256 = [System.Security.Cryptography.SHA256]::Create()
@@ -245,6 +286,7 @@ try {
             contract_version = $contractVersion
             ledger_schema_version = $ledgerSchemaVersion
             git_commit = $gitCommit
+            source_hash_format = $CanonicalSourceHashFormat
             source_fingerprint = $sourceFingerprint
             built_at = (Get-Date).ToUniversalTime().ToString("o")
             executable_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $StagedDir "python-server.exe")).Hash
