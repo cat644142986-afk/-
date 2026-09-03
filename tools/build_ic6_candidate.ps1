@@ -41,10 +41,13 @@ $env:npm_config_cache = $NpmCacheRoot
 $env:TEMP = $ProcessTempRoot
 $env:TMP = $ProcessTempRoot
 $SourceExe = Join-Path $env:CARGO_TARGET_DIR "release\product-atelier.exe"
+$SourceExePeer = Join-Path $env:CARGO_TARGET_DIR "release\deps\product_atelier.exe"
+$DetachedApp = Join-Path $ProcessTempRoot "product-atelier-stage-source.exe"
 $SourceSidecar = Join-Path $IsolatedProjectRoot "src-tauri\bin\python-server"
 $IsolatedPromotionTool = Join-Path $IsolatedProjectRoot "tools\portable_release.py"
 $IsolatedSidecarBuild = Join-Path $IsolatedProjectRoot "tools\Build-Sidecar.ps1"
 $WorktreeAdded = $false
+$DetachedAppLock = $null
 
 function Invoke-GitCaptureAt([string]$Repository, [string[]]$Arguments) {
     $previousErrorActionPreference = $ErrorActionPreference
@@ -166,6 +169,335 @@ function Assert-NoReparsePath([string]$PathToCheck, [string]$Label) {
             break
         }
         $current = $parent
+    }
+}
+
+function Initialize-CandidateBuildFileIdentity {
+    if (-not ("ProductAtelier.CandidateBuildFileIdentity" -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace ProductAtelier
+{
+    public static class CandidateBuildFileIdentity
+    {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FILETIME
+        {
+            public uint Low;
+            public uint High;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BY_HANDLE_FILE_INFORMATION
+        {
+            public uint FileAttributes;
+            public FILETIME CreationTime;
+            public FILETIME LastAccessTime;
+            public FILETIME LastWriteTime;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandle(
+            SafeFileHandle file,
+            out BY_HANDLE_FILE_INFORMATION information
+        );
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile
+        );
+
+        private const uint GENERIC_READ = 0x80000000;
+        private const uint GENERIC_WRITE = 0x40000000;
+        private const uint FILE_SHARE_READ = 0x00000001;
+        private const uint CREATE_NEW = 1;
+        private const uint OPEN_EXISTING = 3;
+        private const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
+        private const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+
+        private static FileStream Open(
+            string path,
+            uint desiredAccess,
+            uint creationDisposition,
+            FileAccess access
+        )
+        {
+            SafeFileHandle handle = CreateFileW(
+                path,
+                desiredAccess,
+                FILE_SHARE_READ,
+                IntPtr.Zero,
+                creationDisposition,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+                IntPtr.Zero
+            );
+            if (handle == null || handle.IsInvalid)
+            {
+                int error = Marshal.GetLastWin32Error();
+                if (handle != null) handle.Dispose();
+                throw new Win32Exception(error);
+            }
+            try
+            {
+                return new FileStream(handle, access);
+            }
+            catch
+            {
+                handle.Dispose();
+                throw;
+            }
+        }
+
+        public static FileStream OpenReadNoFollow(string path)
+        {
+            return Open(path, GENERIC_READ, OPEN_EXISTING, FileAccess.Read);
+        }
+
+        public static FileStream CreateReadWriteNoFollow(string path)
+        {
+            return Open(
+                path,
+                GENERIC_READ | GENERIC_WRITE,
+                CREATE_NEW,
+                FileAccess.ReadWrite
+            );
+        }
+
+        public static ulong[] Read(SafeFileHandle file)
+        {
+            BY_HANDLE_FILE_INFORMATION information;
+            if (file == null || file.IsInvalid ||
+                !GetFileInformationByHandle(file, out information))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            ulong fileIndex = ((ulong)information.FileIndexHigh << 32) |
+                information.FileIndexLow;
+            ulong fileSize = ((ulong)information.FileSizeHigh << 32) |
+                information.FileSizeLow;
+            return new ulong[] {
+                information.VolumeSerialNumber,
+                fileIndex,
+                information.NumberOfLinks,
+                information.FileAttributes,
+                fileSize
+            };
+        }
+    }
+}
+'@
+    }
+}
+
+function Get-StableWindowsFileIdentity([System.IO.FileStream]$Stream) {
+    Initialize-CandidateBuildFileIdentity
+    $values = [ProductAtelier.CandidateBuildFileIdentity]::Read($Stream.SafeFileHandle)
+    return [pscustomobject]@{
+        VolumeSerialNumber = [uint64]$values[0]
+        FileIndex = [uint64]$values[1]
+        NumberOfLinks = [uint64]$values[2]
+        FileAttributes = [uint64]$values[3]
+        FileSize = [uint64]$values[4]
+    }
+}
+
+function Test-SameFileIdentity($Left, $Right) {
+    return (
+        [uint64]$Left.VolumeSerialNumber -eq [uint64]$Right.VolumeSerialNumber -and
+        [uint64]$Left.FileIndex -eq [uint64]$Right.FileIndex
+    )
+}
+
+function Assert-RegularArtifactHandle($Identity, [string]$Label) {
+    $attributes = [uint64]$Identity.FileAttributes
+    if (
+        ($attributes -band [uint64][System.IO.FileAttributes]::Directory) -ne 0 -or
+        ($attributes -band [uint64][System.IO.FileAttributes]::ReparsePoint) -ne 0
+    ) {
+        throw "$Label must remain a regular non-reparse file."
+    }
+}
+
+function Get-StreamSha256([System.IO.FileStream]$Stream) {
+    $originalPosition = $Stream.Position
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $Stream.Position = 0
+        $digest = $sha256.ComputeHash($Stream)
+        return ([System.BitConverter]::ToString($digest)).Replace("-", "")
+    } finally {
+        $sha256.Dispose()
+        $Stream.Position = $originalPosition
+    }
+}
+
+function New-DetachedCargoArtifact(
+    [string]$SourcePath,
+    [string]$ExpectedPeerPath,
+    [string]$CargoRoot,
+    [string]$DestinationPath,
+    [string]$DestinationRoot
+) {
+    Initialize-CandidateBuildFileIdentity
+    $fullCargoRoot = [System.IO.Path]::GetFullPath($CargoRoot)
+    $fullSource = [System.IO.Path]::GetFullPath($SourcePath)
+    $fullPeer = [System.IO.Path]::GetFullPath($ExpectedPeerPath)
+    $fullDestinationRoot = [System.IO.Path]::GetFullPath($DestinationRoot)
+    $fullDestination = [System.IO.Path]::GetFullPath($DestinationPath)
+    $requiredSource = [System.IO.Path]::GetFullPath(
+        (Join-Path $fullCargoRoot "release\product-atelier.exe")
+    )
+    $requiredPeer = [System.IO.Path]::GetFullPath(
+        (Join-Path $fullCargoRoot "release\deps\product_atelier.exe")
+    )
+    $requiredDestination = [System.IO.Path]::GetFullPath(
+        (Join-Path $fullDestinationRoot "product-atelier-stage-source.exe")
+    )
+    foreach ($pathPair in @(
+        @($fullSource, $requiredSource, "Cargo application source"),
+        @($fullPeer, $requiredPeer, "Cargo application peer"),
+        @($fullDestination, $requiredDestination, "detached application target")
+    )) {
+        if (-not [string]::Equals(
+            [string]$pathPair[0],
+            [string]$pathPair[1],
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "$($pathPair[2]) is outside its exact build-owned path: $($pathPair[0])"
+        }
+    }
+    Assert-NoReparsePath -PathToCheck $fullCargoRoot -Label "IC6 Cargo artifact root"
+    Assert-NoReparsePath -PathToCheck $fullSource -Label "Built Tauri executable"
+    Assert-NoReparsePath -PathToCheck $fullDestinationRoot -Label "IC6 process temp"
+    Assert-NoReparsePath -PathToCheck $fullDestination -Label "Detached Tauri executable"
+    if (Test-Path -LiteralPath $fullDestination) {
+        throw "Detached Tauri executable already exists: $fullDestination"
+    }
+
+    $sourceStream = $null
+    $peerStream = $null
+    $destinationStream = $null
+    $destinationReadLock = $null
+    try {
+        $sourceStream = [ProductAtelier.CandidateBuildFileIdentity]::OpenReadNoFollow(
+            $fullSource
+        )
+        Assert-NoReparsePath -PathToCheck $fullSource -Label "Built Tauri executable"
+        $sourceBefore = Get-StableWindowsFileIdentity -Stream $sourceStream
+        Assert-RegularArtifactHandle -Identity $sourceBefore -Label "Built Tauri executable"
+        if ([uint64]$sourceBefore.NumberOfLinks -notin @(1, 2)) {
+            throw "Built Tauri executable must have one link or Cargo's exact two links."
+        }
+
+        if ([uint64]$sourceBefore.NumberOfLinks -eq 2) {
+            Assert-NoReparsePath -PathToCheck $fullPeer -Label "Built Tauri executable peer"
+            $peerStream = [ProductAtelier.CandidateBuildFileIdentity]::OpenReadNoFollow(
+                $fullPeer
+            )
+            Assert-NoReparsePath -PathToCheck $fullPeer -Label "Built Tauri executable peer"
+            $peerBefore = Get-StableWindowsFileIdentity -Stream $peerStream
+            Assert-RegularArtifactHandle -Identity $peerBefore -Label "Built Tauri executable peer"
+            if (
+                [uint64]$peerBefore.NumberOfLinks -ne 2 -or
+                -not (Test-SameFileIdentity -Left $sourceBefore -Right $peerBefore)
+            ) {
+                throw "Built Tauri executable hard links do not match Cargo's exact peer."
+            }
+        }
+
+        $sourceHashBefore = Get-StreamSha256 -Stream $sourceStream
+        $sourceStream.Position = 0
+        $destinationStream = [ProductAtelier.CandidateBuildFileIdentity]::CreateReadWriteNoFollow(
+            $fullDestination
+        )
+        $destinationBefore = Get-StableWindowsFileIdentity -Stream $destinationStream
+        Assert-RegularArtifactHandle -Identity $destinationBefore -Label "Detached Tauri executable"
+        if ([uint64]$destinationBefore.NumberOfLinks -ne 1) {
+            throw "Detached Tauri executable must start with exactly one hard link."
+        }
+
+        $sourceStream.CopyTo($destinationStream)
+        $destinationStream.Flush($true)
+        if ([uint64]$destinationStream.Length -ne [uint64]$sourceBefore.FileSize) {
+            throw "Detached Tauri executable size does not match the locked Cargo source."
+        }
+        $destinationHash = Get-StreamSha256 -Stream $destinationStream
+        $sourceAfter = Get-StableWindowsFileIdentity -Stream $sourceStream
+        $sourceHashAfter = Get-StreamSha256 -Stream $sourceStream
+        if (
+            -not (Test-SameFileIdentity -Left $sourceBefore -Right $sourceAfter) -or
+            [uint64]$sourceBefore.NumberOfLinks -ne [uint64]$sourceAfter.NumberOfLinks -or
+            [uint64]$sourceBefore.FileSize -ne [uint64]$sourceAfter.FileSize -or
+            $sourceHashBefore -cne $sourceHashAfter
+        ) {
+            throw "Built Tauri executable changed while its detached copy was created."
+        }
+        if ($peerStream) {
+            $peerAfter = Get-StableWindowsFileIdentity -Stream $peerStream
+            if (
+                -not (Test-SameFileIdentity -Left $sourceAfter -Right $peerAfter) -or
+                [uint64]$peerAfter.NumberOfLinks -ne 2
+            ) {
+                throw "Built Tauri executable peer changed while its detached copy was created."
+            }
+        }
+        $destinationAfter = Get-StableWindowsFileIdentity -Stream $destinationStream
+        if (
+            -not (Test-SameFileIdentity -Left $destinationBefore -Right $destinationAfter) -or
+            [uint64]$destinationAfter.NumberOfLinks -ne 1 -or
+            [uint64]$destinationAfter.FileSize -ne [uint64]$sourceBefore.FileSize -or
+            $destinationHash -cne $sourceHashBefore
+        ) {
+            throw "Detached Tauri executable identity or content is invalid."
+        }
+        Assert-NoReparsePath -PathToCheck $fullDestination -Label "Detached Tauri executable"
+
+        $destinationStream.Dispose()
+        $destinationStream = $null
+        $destinationReadLock = [ProductAtelier.CandidateBuildFileIdentity]::OpenReadNoFollow(
+            $fullDestination
+        )
+        $lockedDestination = Get-StableWindowsFileIdentity -Stream $destinationReadLock
+        $lockedDestinationHash = Get-StreamSha256 -Stream $destinationReadLock
+        if (
+            -not (Test-SameFileIdentity -Left $destinationAfter -Right $lockedDestination) -or
+            [uint64]$lockedDestination.NumberOfLinks -ne 1 -or
+            [uint64]$lockedDestination.FileSize -ne [uint64]$sourceBefore.FileSize -or
+            $lockedDestinationHash -cne $sourceHashBefore
+        ) {
+            throw "Detached Tauri executable changed while its read lock was acquired."
+        }
+
+        $result = [pscustomobject]@{
+            Path = $fullDestination
+            Sha256 = $lockedDestinationHash
+            Length = [uint64]$lockedDestination.FileSize
+            Lock = $destinationReadLock
+        }
+        $destinationReadLock = $null
+        return $result
+    } finally {
+        if ($destinationReadLock) { $destinationReadLock.Dispose() }
+        if ($destinationStream) { $destinationStream.Dispose() }
+        if ($peerStream) { $peerStream.Dispose() }
+        if ($sourceStream) { $sourceStream.Dispose() }
     }
 }
 
@@ -466,6 +798,14 @@ try {
         throw "Built Python sidecar is missing: $SourceSidecar"
     }
 
+    $DetachedAppSnapshot = New-DetachedCargoArtifact `
+        -SourcePath $SourceExe `
+        -ExpectedPeerPath $SourceExePeer `
+        -CargoRoot $env:CARGO_TARGET_DIR `
+        -DestinationPath $DetachedApp `
+        -DestinationRoot $ProcessTempRoot
+    $DetachedAppLock = $DetachedAppSnapshot.Lock
+
     Write-Step "9/9" "Assembling only the canonical portable candidate..."
     Invoke-CheckedNative `
         -Command "python.exe" `
@@ -473,13 +813,17 @@ try {
             $IsolatedPromotionTool,
             "stage",
             "--project-root", $ProjectRoot,
-            "--app-exe", $SourceExe,
+            "--app-exe", $DetachedAppSnapshot.Path,
             "--sidecar-dir", $SourceSidecar,
             "--candidate-dir", $CandidateDir,
             "--git-commit", $ExpectedCommit
         ) `
         -FailureMessage "Portable candidate assembly failed"
 } finally {
+    if ($DetachedAppLock) {
+        $DetachedAppLock.Dispose()
+        $DetachedAppLock = $null
+    }
     Remove-IsolatedBuildWorktree
     foreach ($ownedDirectory in @(
         [pscustomobject]@{
