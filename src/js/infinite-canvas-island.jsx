@@ -168,6 +168,39 @@ async function waitForVisibleCanvasViewport(api, host, maxFrames = 60) {
   return false;
 }
 
+const THEMED_CANVAS_BACKGROUNDS = Object.freeze({
+  light: '#d4d0cb',
+  dark: '#cfd3d7',
+});
+
+function themedCanvasBackground(value, theme) {
+  const current = String(value || '').trim().toLowerCase();
+  const usesProductDefault = !current
+    || Object.values(THEMED_CANVAS_BACKGROUNDS).includes(current);
+  return usesProductDefault
+    ? THEMED_CANVAS_BACKGROUNDS[theme === 'dark' ? 'dark' : 'light']
+    : value;
+}
+
+function runtimeSceneForTheme(scene, theme) {
+  const source = scene && typeof scene === 'object' ? scene : {};
+  const appState = source.appState || source.app_state || {};
+  return {
+    ...source,
+    appState: {
+      ...appState,
+      viewBackgroundColor: themedCanvasBackground(appState.viewBackgroundColor, theme),
+    },
+  };
+}
+
+function persistentAppState(appState) {
+  const source = appState && typeof appState === 'object' ? appState : {};
+  const current = String(source.viewBackgroundColor || '').trim().toLowerCase();
+  if (!Object.values(THEMED_CANVAS_BACKGROUNDS).includes(current)) return source;
+  return { ...source, viewBackgroundColor: THEMED_CANVAS_BACKGROUNDS.light };
+}
+
 function SpatialCanvas({
   canvasDocument,
   onChange,
@@ -208,7 +241,15 @@ function SpatialCanvas({
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
-      setTheme(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+      const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+      setTheme(nextTheme);
+      const api = apiRef.current;
+      if (!api) return;
+      const appState = api.getAppState();
+      const viewBackgroundColor = themedCanvasBackground(appState?.viewBackgroundColor, nextTheme);
+      if (viewBackgroundColor !== appState?.viewBackgroundColor) {
+        api.updateScene({ appState: { viewBackgroundColor } });
+      }
     });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     return () => observer.disconnect();
@@ -253,7 +294,7 @@ function SpatialCanvas({
   }, []);
 
   const synchronizeScene = useCallback(async (elements, appState, { persist = true } = {}) => {
-    if (persist) onChange?.({ elements, appState, files: {} });
+    if (persist) onChange?.({ elements, appState: persistentAppState(appState), files: {} });
     const hydration = hydrateProxyFiles(elements);
     const selected = selectedSpatialBusinessElement(elements, appState);
     const nextKey = selected?.id || '';
@@ -351,7 +392,7 @@ function SpatialCanvas({
 
   return (
     <Excalidraw
-      initialData={canvasDocument.scene}
+      initialData={runtimeSceneForTheme(canvasDocument.scene, theme)}
       excalidrawAPI={bindApi}
       onChange={handleChange}
       renderEmbeddable={renderVideoEmbeddable}

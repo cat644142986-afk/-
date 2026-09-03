@@ -1999,8 +1999,8 @@ export function createCanvasController({
       height: artboard.rect.height,
       originX: 'left',
       originY: 'top',
-      fill: '#fffefd',
-      stroke: '#c8c0b4',
+      fill: '#ffffff',
+      stroke: '#c5c9ce',
       strokeWidth: 2,
       selectable: false,
       evented: false,
@@ -2035,7 +2035,7 @@ export function createCanvasController({
     const { Canvas, Point } = fabricRuntime;
     const element = query('#studio-fabric-canvas');
     canvas = new Canvas(element, {
-      backgroundColor: '#d7d3cb',
+      backgroundColor: 'transparent',
       preserveObjectStacking: true,
       selection: true,
       stopContextMenu: true,

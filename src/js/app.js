@@ -20,6 +20,7 @@ import {
   appearanceSettingsHtml,
   appearanceStatusCopy,
   explicitThemeAfterToggle,
+  normalizeAppearancePreferences,
   readAppearancePreferences,
   resolveAppearancePreferences,
 } from './appearance.js';
@@ -66,6 +67,8 @@ import {
   spatialItemFromJob,
 } from './spatial-canvas-items.js';
 import { statusPanelHtml } from './status-view.js';
+import { taskPresenceModel } from './task-presence.js';
+import { createTaskPresenceController } from './task-presence-view.js';
 import {
   SEMANTIC_CANVAS_PALETTE,
   createSemanticCutoutState,
@@ -111,6 +114,7 @@ const semanticCanvasState = {
 };
 
 const state = createStudioState(MODE_IDS);
+const taskPresenceController = createTaskPresenceController($('#sidebar-logo'));
 const workflowDock = createWorkflowDockController();
 const productProfiles = createProductProfileController({
   api: API,
@@ -1224,6 +1228,7 @@ function setupAppearance() {
   const persist = () => {
     localStorage.setItem('pa-theme-preference', preferences.themePreference);
     localStorage.setItem('pa-theme', preferences.themePreference === 'system' ? 'light' : preferences.themePreference);
+    localStorage.setItem('pa-colorway', preferences.colorway);
     localStorage.setItem('pa-text-scale', preferences.textScale);
     localStorage.setItem('pa-contrast', preferences.contrast);
     localStorage.setItem('pa-motion', preferences.motionPreference);
@@ -1236,6 +1241,7 @@ function setupAppearance() {
     const root = document.documentElement;
     root.dataset.themePreference = resolved.themePreference;
     root.dataset.theme = resolved.theme;
+    root.dataset.colorway = resolved.colorway;
     root.dataset.textScale = resolved.textScale;
     root.dataset.contrast = resolved.contrast;
     root.dataset.motion = resolved.reducedMotion ? 'reduced' : 'full';
@@ -1246,6 +1252,7 @@ function setupAppearance() {
     toggle.setAttribute('aria-label', `当前为${dark ? '深色' : '浅色'}主题，切换为${dark ? '浅色' : '深色'}主题`);
     toggle.title = toggle.getAttribute('aria-label');
     $$('input[name="appearance-theme"]').forEach((input) => { input.checked = input.value === resolved.themePreference; });
+    $$('input[name="appearance-colorway"]').forEach((input) => { input.checked = input.value === resolved.colorway; });
     $$('input[name="appearance-text-scale"]').forEach((input) => { input.checked = input.value === resolved.textScale; });
     $$('input[name="appearance-contrast"]').forEach((input) => { input.checked = input.value === resolved.contrast; });
     $$('input[name="appearance-motion"]').forEach((input) => { input.checked = input.value === resolved.motionPreference; });
@@ -1255,19 +1262,28 @@ function setupAppearance() {
 
   $('#theme-toggle').addEventListener('click', () => {
     const resolved = resolveAppearancePreferences(preferences, { systemDark: themeMedia.matches });
-    preferences = { ...preferences, themePreference: explicitThemeAfterToggle(resolved.theme) };
+    const themePreference = explicitThemeAfterToggle(resolved.theme);
+    preferences = {
+      ...preferences,
+      themePreference,
+      colorway: themePreference === 'dark' && preferences.colorway === 'mono' ? 'warm' : preferences.colorway,
+    };
     persist();
     apply(true);
   });
   const bindChoice = (name, key) => {
     $$(`input[name="${name}"]`).forEach((input) => input.addEventListener('change', () => {
       if (!input.checked) return;
-      preferences = { ...preferences, [key]: input.value };
+      const next = { ...preferences, [key]: input.value };
+      if (key === 'colorway' && input.value === 'mono') next.themePreference = 'light';
+      if (key === 'themePreference' && input.value !== 'light' && next.colorway === 'mono') next.colorway = 'warm';
+      preferences = normalizeAppearancePreferences(next);
       persist();
       apply(true);
     }));
   };
   bindChoice('appearance-theme', 'themePreference');
+  bindChoice('appearance-colorway', 'colorway');
   bindChoice('appearance-text-scale', 'textScale');
   bindChoice('appearance-contrast', 'contrast');
   bindChoice('appearance-motion', 'motionPreference');
@@ -2350,6 +2366,17 @@ function renderJobDockSummary() {
   $('#job-summary-attention').textContent = String(jobs.filter((job) => ['partial', 'failed', 'interrupted', 'paused'].includes(job.status)).length);
   renderJobRuntime();
   renderRailNotice();
+  renderTaskPresence();
+}
+
+function renderTaskPresence() {
+  const control = $('#sidebar-logo');
+  if (!control) return;
+  const model = taskPresenceModel(state.jobs, { available: state.jobsAvailable });
+  taskPresenceController.setTaskState(model.state, { available: state.jobsAvailable });
+  taskPresenceController.setMotion(document.visibilityState === 'hidden' ? 'paused' : 'running');
+  control.setAttribute('aria-label', model.ariaLabel);
+  control.title = `${model.label} · 打开任务中心`;
 }
 
 function renderRailNotice() {
@@ -4043,6 +4070,7 @@ function bindEvents() {
   $('#btn-open-intelligence').addEventListener('click', () => openDrawer('intelligence'));
   $('#btn-job-dock').addEventListener('click', () => openDrawer('jobs'));
   $('#btn-rail-jobs').addEventListener('click', () => openDrawer('jobs'));
+  $('#sidebar-logo').addEventListener('click', () => openDrawer('jobs'));
   $('#btn-spatial-assets').addEventListener('click', () => assetManager.open());
   $('#btn-spatial-jobs').addEventListener('click', () => openDrawer('jobs'));
   $('#btn-refresh-jobs').addEventListener('click', async () => {
@@ -4230,6 +4258,7 @@ function bindEvents() {
     workflowDock.destroy();
     canvasController.flush();
     infiniteCanvasWorkspace.destroy();
+    taskPresenceController.destroy();
     if (state.jobPollTimer) window.clearTimeout(state.jobPollTimer);
     state.draftSaveTimers.forEach((timer) => window.clearTimeout(timer));
     state.draftSaveTimers.clear();
@@ -4238,6 +4267,7 @@ function bindEvents() {
     invalidateJobsRead();
   });
   document.addEventListener('visibilitychange', () => {
+    renderTaskPresence();
     if (document.visibilityState === 'hidden' && state.backendReady) flushWorkspaceDraft(state.currentMode, true);
   });
 }

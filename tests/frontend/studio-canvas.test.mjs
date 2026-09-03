@@ -359,6 +359,9 @@ test('production canvas uses SQLite APIs and is wired into the Studio lifecycle'
   assert.match(htmlSource, /id="page-canvas"[^>]*data-page-name="canvas"/);
   assert.match(htmlSource, /id="studio-fabric-canvas"/);
   assert.match(controllerSource, /api\.getCanvasRois\(entry\.currentVersionId, layer\.id/);
+  assert.match(controllerSource, /backgroundColor: 'transparent'/);
+  assert.doesNotMatch(controllerSource, /backgroundColor: '#d7d3cb'/);
+  assert.match(controllerSource, /fill: '#ffffff',[\s\S]*?stroke: '#c5c9ce'/);
   assert.match(controllerSource, /api\.createCanvasRoi\(local\.roiRequest/);
   assert.match(controllerSource, /api\.saveCanvasMask\(local\.roi\.id/);
   assert.match(controllerSource, /api\.createLocalEditSpec\(local\.specRequest/);

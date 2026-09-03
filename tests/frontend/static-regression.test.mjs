@@ -263,7 +263,10 @@ test('production shell uses DWM system corners without a hard-clipped resize reg
   assert.match(html, /<strong>设计依据<\/strong>/);
   assert.match(html, /<strong>任务中心<\/strong>/);
   assert.doesNotMatch(html, />Studio<\/span>/);
-  assert.match(css, /\.canvas-empty::before, \.canvas-empty::after \{ display: none; \}/);
+  assert.match(css, /\.canvas-empty::before \{[^}]*background-image:/);
+  assert.match(css, /\.canvas-empty::after \{[^}]*animation: stageGuideSweep/);
+  assert.match(css, /\.upload-orbit__ring \{[^}]*animation: orbitSpin/);
+  assert.match(css, /:root\[data-motion="reduced"\] \*, :root\[data-motion="reduced"\] \*::before, :root\[data-motion="reduced"\] \*::after/);
 });
 
 test('desktop startup paints an embedded shell before waiting for the sidecar', () => {
@@ -556,6 +559,8 @@ test('real workflow controls share the dark production dock without stretching e
   assert.match(css, /\.task-dock \{[^}]*display: grid;[^}]*grid-template-rows: auto minmax\(0,1fr\) auto/);
   assert.match(css, /\.task-dock__body \{[^}]*overflow: hidden/);
   assert.doesNotMatch(css, /\.task-dock__body \{[^}]*overflow: hidden auto/);
+  assert.match(css, /@media \(max-height: 760px\)[\s\S]*?\.task-dock__body \{[^}]*overflow-y: auto/);
+  assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.task-dock\.is-open \.task-dock__body \{[^}]*overflow-y: auto/);
   assert.match(css, /\.task-dock \.folder-source \{[^}]*border-radius: 17px/);
 });
 
@@ -596,6 +601,6 @@ test('rendering a workspace queue must commit items before appending the add slo
 test('compact production canvas keeps its empty guidance clear of the footer', () => {
   assert.match(
     css,
-    /@media \(max-height: 680px\) \{[\s\S]*?\.canvas-empty-state \{[^}]*align-content: center;[^}]*padding-bottom: 0;[^}]*\}/,
+    /@media \(max-height: 760px\) \{[\s\S]*?\.canvas-empty-state \{[^}]*align-content: center;[^}]*padding-bottom: 0;[^}]*\}/,
   );
 });
