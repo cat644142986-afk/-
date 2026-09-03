@@ -112,6 +112,17 @@ function createFakeDocument() {
     removeEventListener(type, listener) {
       listeners.set(type, (listeners.get(type) || []).filter((item) => item !== listener));
     },
+    async emit(type, event = {}) {
+      const value = {
+        defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() {},
+        target: node('#spatial-canvas-host'),
+        ...event,
+      };
+      for (const listener of listeners.get(type) || []) await listener(value);
+      return value;
+    },
   };
 }
 
@@ -259,6 +270,7 @@ function createFakeRuntime() {
       mountInfiniteCanvas(_host, options) {
         const canvasId = options.canvasDocument.id;
         const calls = {
+          addBusinessItems: [],
           addBusinessItemsOnce: [],
           selectBusinessReference: [],
           updateScene: [],
@@ -268,7 +280,10 @@ function createFakeRuntime() {
         let currentScene = options.canvasDocument.scene;
         const island = {
           getScene: () => currentScene,
-          addBusinessItems: async () => null,
+          async addBusinessItems(items) {
+            calls.addBusinessItems.push(items);
+            return { skipped: false };
+          },
           async addBusinessItemsOnce(items) {
             calls.addBusinessItemsOnce.push(items);
             return { skipped: false };
@@ -331,7 +346,7 @@ function completedVideoJob(canvasId = 'canvas:a') {
   };
 }
 
-function createHarness({ api: apiOverrides = {}, createCanvas, updateScene, runtimeLoader } = {}) {
+function createHarness({ api: apiOverrides = {}, createCanvas, onImportFiles, updateScene, runtimeLoader } = {}) {
   const documentRef = createFakeDocument();
   const clock = createFakeWindow();
   const adapterState = createFakeAdapter({ createCanvas, updateScene });
@@ -361,6 +376,7 @@ function createHarness({ api: apiOverrides = {}, createCanvas, updateScene, runt
     windowRef: clock.windowRef,
     api,
     adapter: adapterState.adapter,
+    onImportFiles,
     runtimeLoader: runtimeLoader || (async () => runtimeState.runtime),
   });
   return { api, clock, controller, documentRef, ...adapterState, ...runtimeState };
@@ -373,6 +389,49 @@ async function activateAndOpen(harness, canvasId) {
   await settle();
   return harness.mounts.get(canvasId);
 }
+
+test('an Explorer FileList drop imports ledger assets before adding canvas references', async () => {
+  const importCalls = [];
+  const importedItem = {
+    kind: 'image',
+    business_kind: 'asset',
+    references: {
+      asset_id: 'ast_external_drop',
+      result_id: null,
+      task_id: null,
+      product_profile_version_id: null,
+      lineage_parent_id: null,
+    },
+  };
+  const harness = createHarness({
+    async onImportFiles(files) {
+      importCalls.push(files);
+      return [importedItem];
+    },
+  });
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const file = { name: 'coffee-powder.jpg', size: 4096, type: 'image/jpeg' };
+  const transfer = {
+    dropEffect: 'none',
+    files: [file],
+    getData() { return ''; },
+    types: ['Files'],
+  };
+
+  const dragover = await harness.documentRef.emit('dragover', { dataTransfer: transfer });
+  assert.equal(dragover.defaultPrevented, true);
+  assert.equal(transfer.dropEffect, 'copy');
+  assert.equal(harness.documentRef.node('#spatial-canvas-host').dataset.fileDropActive, 'true');
+  const drop = await harness.documentRef.emit('drop', { dataTransfer: transfer });
+
+  assert.equal(drop.defaultPrevented, true);
+  assert.equal(harness.documentRef.node('#spatial-canvas-host').dataset.fileDropActive, 'false');
+  assert.deepEqual(importCalls, [[file]]);
+  assert.deepEqual(mount.calls.addBusinessItems, [[importedItem]]);
+  assert.match(harness.documentRef.node('#spatial-save-state').textContent, /已加入|正在保存/);
+  harness.controller.destroy();
+});
 
 test('a video submission resolved after switching from A to B never mutates B', async () => {
   const execution = deferred();

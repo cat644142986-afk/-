@@ -172,6 +172,7 @@ const canvasController = createCanvasController({
 const infiniteCanvasWorkspace = createInfiniteCanvasWorkspaceController({
   onAction: handleSpatialAction,
   onFineEdit: handleSpatialFineEdit,
+  onImportFiles: importSpatialCanvasFiles,
   onVideoJobSubmitted: () => loadJobs(true),
   onVideoJobSettled: () => loadJobs(true),
 });
@@ -1559,18 +1560,62 @@ function renderQueue() {
   renderFileMeta();
 }
 
+function validImageImports(fileList) {
+  const incoming = Array.from(fileList || []);
+  const valid = incoming.filter((file) => {
+    const supportedMime = /^image\/(png|jpeg|webp)$/i.test(file.type);
+    const supportedUntypedName = !String(file.type || '').trim() && /\.(png|jpe?g|webp)$/i.test(file.name);
+    if (!supportedMime && !supportedUntypedName) { toast(`${file.name} 不是支持的图片格式`, 'error'); return false; }
+    if (file.size > 20 * 1024 * 1024) { toast(`${file.name} 超过 20 MB`, 'error'); return false; }
+    return true;
+  });
+  if (valid.length > 100) {
+    toast('一次最多导入 100 张素材', 'error');
+    return [];
+  }
+  return valid;
+}
+
+async function importSpatialCanvasFiles(fileList) {
+  const valid = validImageImports(fileList);
+  if (!valid.length) return [];
+  if (state.importing) {
+    toast('上一批素材仍在导入，请稍候', 'error');
+    return [];
+  }
+  state.importing = true;
+  renderFileMeta();
+  $('#btn-browse').disabled = true;
+  toast(`正在导入 ${valid.length} 张图片到无限画布…`);
+  try {
+    const result = await API.importAssets(valid, MODE_CONFIG.single.collection);
+    const imported = Array.isArray(result?.assets) ? result.assets : [];
+    const errors = Array.isArray(result?.errors) ? result.errors : [];
+    if (imported.length) await loadWorkspace('single', true);
+    if (errors.length) {
+      toast(`${imported.length} 张导入成功，${errors.length} 张失败`, 'error', 5200);
+    } else if (imported.length) {
+      toast(`已导入 ${imported.length} 张图片`, 'success');
+    }
+    assetManager.sync();
+    return imported.map((asset) => spatialItemFromAsset(asset));
+  } catch (error) {
+    toast(`图片导入失败：${formatApiError(error, '持久素材接口不可用')}`, 'error', 6000);
+    throw error;
+  } finally {
+    state.importing = false;
+    $('#btn-browse').disabled = false;
+    renderFileMeta();
+  }
+}
+
 async function handleFiles(fileList) {
   const incoming = Array.from(fileList || []);
   if (!incoming.length) return;
   if (state.importing) { toast('上一批素材仍在导入，请稍候', 'error'); return; }
   const importMode = state.currentMode;
-  const valid = incoming.filter((file) => {
-    if (!/^image\/(png|jpeg|webp)$/i.test(file.type)) { toast(`${file.name} 不是支持的图片格式`, 'error'); return false; }
-    if (file.size > 20 * 1024 * 1024) { toast(`${file.name} 超过 20 MB`, 'error'); return false; }
-    return true;
-  });
+  const valid = validImageImports(incoming);
   if (!valid.length) return;
-  if (valid.length > 100) { toast('一次最多导入 100 张素材', 'error'); return; }
   state.importing = true;
   renderFileMeta();
   $('#btn-browse').disabled = true;

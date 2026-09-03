@@ -162,6 +162,7 @@ export function createInfiniteCanvasWorkspaceController({
   runtimeLoader = () => import('./infinite-canvas-island.jsx'),
   onAction = () => {},
   onFineEdit = () => {},
+  onImportFiles = async () => [],
   onVideoJobSubmitted = () => {},
   onVideoJobSettled = () => {},
   resolveProxyUrl = (assetId) => api.getAssetThumbnailUrl(assetId, 960),
@@ -1198,18 +1199,61 @@ export function createInfiniteCanvasWorkspaceController({
     }
   }
 
-  function onDrop(event) {
+  function setFileDropActive(value) {
+    const host = query('#spatial-canvas-host');
+    if (host) host.dataset.fileDropActive = value ? 'true' : 'false';
+    const status = query('#spatial-save-state');
+    if (!status) return;
+    if (value) status.textContent = '正在接收图片';
+    else if (status.textContent === '正在接收图片') status.textContent = '本次会话 · 已打开';
+  }
+
+  async function onDrop(event) {
     if (!active) return;
-    const payload = event.dataTransfer?.getData(SPATIAL_DRAG_MIME);
-    if (!payload) return;
+    const transfer = event.dataTransfer;
+    const transferTypes = Array.from(transfer?.types || []);
+    const files = Array.from(transfer?.files || []);
+    const hasFileTransfer = files.length > 0 || transferTypes.includes('Files');
+    const payload = transfer?.getData(SPATIAL_DRAG_MIME);
+    if (!payload && !hasFileTransfer) return;
     event.preventDefault();
     event.stopPropagation();
-    try { addBusinessItems([parseSpatialDragItem(payload)]); }
+    if (hasFileTransfer) {
+      setFileDropActive(false);
+      if (!files.length) {
+        query('#spatial-save-state').textContent = '没有读取到可导入的图片';
+        return;
+      }
+      query('#spatial-save-state').textContent = `正在导入 ${files.length} 张图片`;
+      try {
+        const items = Array.from(await onImportFiles(files) || []).filter(Boolean);
+        if (!items.length) {
+          query('#spatial-save-state').textContent = '没有可加入画布的图片';
+          return;
+        }
+        await addBusinessItems(items);
+      } catch (error) {
+        query('#spatial-save-state').textContent = '图片导入失败，请重试';
+        console.error('Infinite canvas file import failed', error);
+      }
+      return;
+    }
+    setFileDropActive(false);
+    try { await addBusinessItems([parseSpatialDragItem(payload)]); }
     catch (error) { console.error('Infinite canvas drop payload was rejected', error); }
   }
 
   function onDragOver(event) {
-    if (active && event.dataTransfer?.types?.includes(SPATIAL_DRAG_MIME)) event.preventDefault();
+    if (!active) return;
+    const transferTypes = Array.from(event.dataTransfer?.types || []);
+    if (!transferTypes.includes(SPATIAL_DRAG_MIME) && !transferTypes.includes('Files')) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    if (transferTypes.includes('Files')) setFileDropActive(true);
+  }
+
+  function onDragLeave(event) {
+    if (active && !event.relatedTarget) setFileDropActive(false);
   }
 
   async function createCanvas() {
@@ -1332,6 +1376,7 @@ export function createInfiniteCanvasWorkspaceController({
     query('#page-canvas').addEventListener('change', onChange);
     query('#page-canvas').addEventListener('submit', onSubmit);
     documentRef.addEventListener('dragover', onDragOver);
+    documentRef.addEventListener('dragleave', onDragLeave);
     documentRef.addEventListener('drop', onDrop);
     renderLibrary();
   }
@@ -1367,6 +1412,7 @@ export function createInfiniteCanvasWorkspaceController({
     stopVideoPolling();
     flushScene(currentCanvasSession?.canvasId || currentId);
     documentRef.removeEventListener('dragover', onDragOver);
+    documentRef.removeEventListener('dragleave', onDragLeave);
     documentRef.removeEventListener('drop', onDrop);
     currentCanvasSession = null;
     mountedIsland?.unmount?.();
