@@ -1,10 +1,10 @@
 # Product Atelier UX System Implementation Plan
 
 Date: 2026-09-03
-Branch: `codex/infinite-canvas-ui-integration`
-Worktree: `D:\ProductAtelier-UI-Integration`
-Base: `9c25142`
-Status: Milestones 1–2 integrated; Milestone 3 source gate complete and awaiting final Tauri acceptance
+Branch: `codex/excalidraw-infinite-canvas`
+Worktree: `D:\ProductAtelier-Desktop`
+Integrated HEAD: `dc53c3b75b42e0b76f28c5e46f2da25d0fa7cf46`
+Status: Milestones 1–3 integrated and packaged as an isolated candidate; final Tauri acceptance remains open
 
 ## Isolation Boundary
 
@@ -96,6 +96,8 @@ Exit gate: the user can start, leave, recover, inspect, revise, and export a tas
 - All added navigation returns to existing durable state; no second workflow store or parallel task identity was introduced.
 
 Source gate: 249 frontend tests, JavaScript syntax checks, production build, and the lazy-canvas boundary pass. The production `dist` is 9,141,995 bytes with a projected formal package size of 367.28 MiB. Real Tauri minimum-window and keyboard verification remain before this milestone can be closed.
+
+Milestones 1–3 were fast-forward integrated into `codex/excalidraw-infinite-canvas` at `dc53c3b`. A clean candidate was rebuilt from that exact pushed identity and passed the packaged sidecar and schema-upgrade gates. These milestones remain release-incomplete until the evening real-window checks pass; the protected formal portable directory and shortcut are unchanged.
 
 ## Milestone 4: Debt Reduction
 

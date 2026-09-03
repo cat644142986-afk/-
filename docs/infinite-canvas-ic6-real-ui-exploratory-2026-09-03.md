@@ -41,3 +41,17 @@
 ## 下一步
 
 从包含本修复的干净且已推送 HEAD 重建 IC6 候选，再完成双击 Fabric、Crop 全入口消失、视频、重启恢复、DWM/DPI、启动黑帧、圆角、Explorer 系统拖拽以及未签名 NSIS 隔离安装/卸载验收。全部通过后仍只保留候选，不自动提升正式便携版。
+
+## 新集成候选预检（前序 headless 证据）
+
+- 候选软件源码身份：`codex/excalidraw-infinite-canvas` @ `dc53c3b75b42e0b76f28c5e46f2da25d0fa7cf46`。
+- 当前候选：`build/portable-candidate-current`，contract `2026-09-02.4`、schema v8、`378,354,298 bytes`（约 360.83 MiB）。
+- App / sidecar / manifest SHA-256：`5CF280610A6E364DF5A155F7939E18CAF753A8C6AA281ECE4C3786E32C4F3A9B` / `B35AE0871FA1EAAAD28A4E60E6C1D4C47259E2B5B53B7B3FA3AACF4D1A8CB004` / `37DD80166D27BD2A6F8C20AD13D9E2E2E3744B6EF8E45EF16BCE02C13DEA0E8E`。
+- source fingerprint / tree / identity receipt SHA-256：`5DF9B0CA10C8C8C6AEA2123D7ECD8AD0FE02FC4840A07FE906BF02F05404282F` / `C4ECB6FAD4CEA9AFECA740046614C267E294C5F316EB91D3252AFB1168323CF5` / `F4DC1EA149C91E4462CE280DA12C33DB658C05623A7A045F9C5DA79DEDDA7478`。
+- clean build 门禁：前端 `249/249`、Python `534/534`（4 项平台条件跳过）、Rust `42/42`、Vite、lazy bundle、PyInstaller sidecar 与 Tauri release 全部通过。
+- 打包门禁：候选 sidecar smoke 通过；packaged v7→v8 与 legacy v5→v8、迁移备份、十项画布命令、ProductProfile、严格 outpaint、离线视频完成/重启/幂等重放通过，网络调用为 0。
+- 正式 App、sidecar、manifest、账本和桌面快捷方式已在候选构建后再次按冻结 SHA-256 只读复核，全部未变；快捷方式目标和工作目录也未变。
+
+本节记录的是路线图提交前已通过的 headless 候选。NSIS 发布入口要求分支 HEAD、upstream 与 canonical candidate receipt 完全一致，因此路线图提交后必须从最终文档 HEAD 重新 stage 候选，并以新 identity receipt 进入晚间 App/GUI/installer 链；不得把本节 `dc53c3b` receipt 继续用于 NSIS。
+
+21:00 后只启动以上身份的隔离候选，先完成 `Test-Portable-App.ps1`，再用真实 Tauri 窗口复验属性栏、右键、命令面板和 Enter 均无 Crop，双击业务图片只进入 Fabric，撤销历史无 Crop 污染。随后完成系统拖拽、空间操作、Fabric 回填、原图导出、视频闭环、同一隔离账本两轮自然关闭、三窗口尺寸、三档 DPI、DWM/圆角/启动黑帧和未签名 NSIS 隔离安装卸载。未产生最终截图、交互记录和恢复后的保护哈希前，本节不得改写为通过结论。

@@ -1987,3 +1987,13 @@ G0–G3 已完成源码、构建、正式 WebView/DPI、schema v5→v7 打包迁
 #### 当前游标
 
 IC6 预构建门禁完成。下一步从干净且已推送的检查点依次构建隔离 sidecar、Tauri EXE、`build/portable-candidate-current` 和 `build/installer-candidate/<commit>`，完成 packaged v5→v8 与 v7→v8、候选 sidecar/App 双 smoke，但不提升正式版。用户已授权 2026-09-03 20:00 后使用真实 GUI，并允许在记录与恢复当前显示状态的前提下临时切换缩放；届时继续完成三档真实 Tauri WebView、DWM、100%/125%/150% DPI、启动黑屏和圆角锯齿、Explorer 系统拖拽、视频播放/暂停/seek/导出、Fabric 回填、重启恢复和 NSIS 隔离安装卸载。显示器关闭或交互桌面不可用时继续其他不依赖 GUI 的工作，不得伪造证据或停止总目标。所有门禁通过后仍保持 candidate 状态，只有用户再次明确授权才允许提升正式便携版。G4 Agent、公开签名证书、多轨时间线和本地大模型继续顺延，IC6 关闭后自动进入 G5。
+
+#### 2026-09-03 IC6 集成候选与晚间实机执行游标
+
+- UI M1–M3 已并入无限画布分支并推送，软件代码检查点为 `dc53c3b75b42e0b76f28c5e46f2da25d0fa7cf46`。任务中心九态合同、恢复动作、Sessions / Growth / Settings 的空态、离线态与错误恢复已完成源码门禁；前端 `249/249`。
+- 已从该干净 Git 身份完整重建 `build/portable-candidate-current`。候选为 contract `2026-09-02.4`、schema v8、`378,354,298 bytes`（约 360.83 MiB）；App / sidecar / manifest / tree / identity receipt SHA-256 分别为 `5CF280610A6E364DF5A155F7939E18CAF753A8C6AA281ECE4C3786E32C4F3A9B`、`B35AE0871FA1EAAAD28A4E60E6C1D4C47259E2B5B53B7B3FA3AACF4D1A8CB004`、`37DD80166D27BD2A6F8C20AD13D9E2E2E3744B6EF8E45EF16BCE02C13DEA0E8E`、`C4ECB6FAD4CEA9AFECA740046614C267E294C5F316EB91D3252AFB1168323CF5`、`F4DC1EA149C91E4462CE280DA12C33DB658C05623A7A045F9C5DA79DEDDA7478`。
+- clean build 已通过 Python `534/534`（4 项平台条件跳过）、前端 `249/249`、Rust `42/42`、Vite、无限画布 lazy bundle、PyInstaller sidecar 和 Tauri release。候选 `Test-Portable.ps1` 以及 packaged v7→v8 / legacy v5→v8、重启备份、十项画布命令、ProductProfile、outpaint 像素保护和离线视频闭环均通过，网络调用为 0。
+- 正式保护基线已再次只读核对：App、sidecar、manifest、正式账本和桌面快捷方式 SHA-256 均与冻结值相同；快捷方式仍精确指向正式便携目录。本轮候选构建与测试没有读取 API Key、调用付费接口、写入正式账本或覆盖正式版本。
+- 2026-09-03 21:00 后按固定顺序连续执行：候选 App smoke → 新候选 Crop 全入口与 Fabric 边界复验 → Explorer 图片/视频拖拽、Frame/分组/锁定/连线、Fabric 回填、原图导出与视频任务闭环 → 同一隔离账本两次自然关闭/恢复 → 960×600、1280×720、1440×900 与 100%/125%/150% DPI、DWM 圆角、启动黑帧 → 同一 receipt 的未签名 NSIS 隔离安装/运行/卸载 → 恢复原显示配置并复核正式五项哈希。
+- 任一实机门禁失败都保留失败证据并回到源码修复、重建新候选；不得沿用失败候选。全部通过后只关闭 IC6 并保留候选，仍不得自动提升正式便携版。
+- NSIS 入口要求分支 HEAD、upstream 和候选 receipt 精确一致；因此本段路线图提交后必须从该最终文档 HEAD 重新 stage canonical candidate，再开始 App/GUI/installer 验收。`dc53c3b` 候选保留为已通过 headless 门禁的前序证据，但不再进入后续安装器链。
