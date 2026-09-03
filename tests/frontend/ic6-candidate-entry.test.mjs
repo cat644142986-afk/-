@@ -23,11 +23,14 @@ test('IC6 candidate entry is commit-bound and encoded for Windows PowerShell', (
   assert.match(script, /"rev-parse", "--verify", "HEAD"/);
   assert.match(script, /"rev-parse", "--verify", \$RequiredUpstream/);
   assert.match(script, /fetch --no-tags origin/);
-  assert.match(script, /\$WorktreeBase = "D:\\ProductAtelier-Temp\\ic6-build-worktrees"/);
+  assert.match(script, /\$WorktreeBase = "D:\\pa6-w"/);
   assert.match(script, /\$CargoTargetBase = "D:\\rust-target\\ic6-candidate"/);
   assert.match(script, /\$NpmCacheRoot = "D:\\ProductAtelier-Cache\\npm"/);
   assert.match(script, /\$ProcessTempBase = "D:\\ProductAtelier-Temp\\ic6-process-temp"/);
   assert.match(script, /\$BuildToken = \[guid\]::NewGuid\(\)\.ToString\("N"\)/);
+  assert.match(script, /\$BuildIdentity = "\$\(\$ExpectedCommit\.Substring\(0, 12\)\)-\$BuildToken"/);
+  assert.match(script, /\$MaxLegacyCopyRootLength = 58/);
+  assert.match(script, /\$IsolatedProjectRoot\.Length -gt \$MaxLegacyCopyRootLength/);
   assert.match(script, /\$env:CARGO_TARGET_DIR = Join-Path \$CargoTargetBase \$BuildIdentity/);
   assert.match(script, /\$env:npm_config_cache = \$NpmCacheRoot/);
   assert.match(script, /\$env:TEMP = \$ProcessTempRoot/);
@@ -51,6 +54,12 @@ test('IC6 candidate entry is commit-bound and encoded for Windows PowerShell', (
   assert.match(script, /-PathToRemove \$ownedDirectory\.Path/);
   assert.match(script, /-ExpectedLeaf \$BuildIdentity/);
   assert.doesNotMatch(script, /Remove-Item[^\r\n]*-Recurse/i);
+
+  const runKey = `${'a'.repeat(12)}-${'b'.repeat(32)}`;
+  assert.ok(
+    path.win32.join('D:\\pa6-w', runKey).length <= 58,
+    'detached worktree root must leave room for PowerShell 5 sidecar replacement paths',
+  );
 });
 
 test('IC6 candidate entry runs the required gates in order and stages last', () => {

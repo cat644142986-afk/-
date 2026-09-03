@@ -30,8 +30,9 @@ test('IC6 installer entry is commit-bound, CRLF, and isolates every large path o
   assert.match(script, /"rev-parse", "--verify", \$RequiredUpstream/);
 
   assert.match(script, /\$BuildToken = \[guid\]::NewGuid\(\)\.ToString\("N"\)/);
-  assert.match(script, /\$WorktreeLeaf = "\$ExpectedCommit-\$BuildToken"/);
-  assert.match(script, /\$CargoTargetLeaf = "\$ExpectedCommit-\$BuildToken"/);
+  assert.match(script, /\$RunKey = "\$\(\$ExpectedCommit\.Substring\(0, 12\)\)-\$BuildToken"/);
+  assert.match(script, /\$WorktreeLeaf = \$RunKey/);
+  assert.match(script, /\$CargoTargetLeaf = \$RunKey/);
   assert.match(script, /\$env:CARGO_TARGET_DIR = Join-Path \$CargoTargetBase \$CargoTargetLeaf/);
   assert.match(script, /\$env:npm_config_cache = \$NpmCacheRoot/);
   assert.match(script, /\$env:TEMP = \$BuildTemp/);
@@ -42,6 +43,21 @@ test('IC6 installer entry is commit-bound, CRLF, and isolates every large path o
   assert.match(script, /Assert-RegularDirectory -PathToCheck \$env:npm_config_cache/);
   assert.match(script, /Assert-RegularDirectory -PathToCheck \$env:TEMP/);
   assert.match(script, /Assert-RegularDirectory -PathToCheck \$env:TMP/);
+  assert.match(script, /\$MaxLegacyBuildRootLength = 90/);
+  assert.match(script, /foreach \(\$legacyBuildRoot in @\(\$IsolatedWorktree, \$env:CARGO_TARGET_DIR, \$BuildTemp\)\)/);
+  assert.match(script, /\$legacyBuildRoot\.Length -gt \$MaxLegacyBuildRootLength/);
+
+  const runKey = `${'a'.repeat(12)}-${'b'.repeat(32)}`;
+  for (const base of [
+    'D:\\ProductAtelier-IC6-Installer-Worktrees',
+    'D:\\rust-target\\ic6-installer-candidate',
+    'D:\\ProductAtelier-IC6-Installer-Temp',
+  ]) {
+    assert.ok(
+      path.win32.join(base, runKey).length <= 90,
+      `${base} must leave enough room for legacy Windows build descendants`,
+    );
+  }
 });
 
 test('NSIS build uses only a unique detached worktree and its pinned local Tauri CLI', () => {

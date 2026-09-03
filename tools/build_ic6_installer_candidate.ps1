@@ -31,18 +31,25 @@ $PortablePromotionLockPath = Join-Path $BuildRoot "portable-promotion.lock"
 $InstallerCandidateRoot = Join-Path $BuildRoot "installer-candidate"
 $DestinationDir = Join-Path $InstallerCandidateRoot $ExpectedCommit
 $WorktreeBase = "D:\ProductAtelier-IC6-Installer-Worktrees"
-$WorktreeLeaf = "$ExpectedCommit-$BuildToken"
+$RunKey = "$($ExpectedCommit.Substring(0, 12))-$BuildToken"
+$WorktreeLeaf = $RunKey
 $IsolatedWorktree = Join-Path $WorktreeBase $WorktreeLeaf
 $IsolatedPortableReleaseTool = Join-Path $IsolatedWorktree "tools\portable_release.py"
 $TauriConfigPath = Join-Path $IsolatedWorktree "src-tauri\tauri.conf.json"
 $WindowsTauriConfigPath = Join-Path $IsolatedWorktree "src-tauri\tauri.windows.conf.json"
 $PackagingSidecarDir = Join-Path $IsolatedWorktree "src-tauri\bin\python-server"
 $CargoTargetBase = "D:\rust-target\ic6-installer-candidate"
-$CargoTargetLeaf = "$ExpectedCommit-$BuildToken"
+$CargoTargetLeaf = $RunKey
 $env:CARGO_TARGET_DIR = Join-Path $CargoTargetBase $CargoTargetLeaf
 $NpmCacheRoot = "D:\ProductAtelier-IC6-Installer-Npm-Cache"
 $TempBase = "D:\ProductAtelier-IC6-Installer-Temp"
 $BuildTemp = Join-Path $TempBase $WorktreeLeaf
+$MaxLegacyBuildRootLength = 90
+foreach ($legacyBuildRoot in @($IsolatedWorktree, $env:CARGO_TARGET_DIR, $BuildTemp)) {
+    if ($legacyBuildRoot.Length -gt $MaxLegacyBuildRootLength) {
+        throw "IC6 installer build root exceeds the legacy Windows path budget: $legacyBuildRoot"
+    }
+}
 $env:npm_config_cache = $NpmCacheRoot
 $env:TEMP = $BuildTemp
 $env:TMP = $BuildTemp

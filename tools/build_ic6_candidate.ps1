@@ -23,7 +23,7 @@ $RequiredBranch = "codex/excalidraw-infinite-canvas"
 $RequiredUpstream = "origin/$RequiredBranch"
 $CandidateDir = Join-Path $ProjectRoot "build\portable-candidate-current"
 $TransactionPath = Join-Path $ProjectRoot "build\portable-promotion-transaction.json"
-$WorktreeBase = "D:\ProductAtelier-Temp\ic6-build-worktrees"
+$WorktreeBase = "D:\pa6-w"
 $CargoTargetBase = "D:\rust-target\ic6-candidate"
 $NpmCacheRoot = "D:\ProductAtelier-Cache\npm"
 $ProcessTempBase = "D:\ProductAtelier-Temp\ic6-process-temp"
@@ -31,6 +31,10 @@ $BuildToken = [guid]::NewGuid().ToString("N")
 $BuildIdentity = "$($ExpectedCommit.Substring(0, 12))-$BuildToken"
 $IsolatedProjectRoot = Join-Path $WorktreeBase $BuildIdentity
 $ProcessTempRoot = Join-Path $ProcessTempBase $BuildIdentity
+$MaxLegacyCopyRootLength = 58
+if ($IsolatedProjectRoot.Length -gt $MaxLegacyCopyRootLength) {
+    throw "IC6 worktree root exceeds the Windows PowerShell copy budget: $IsolatedProjectRoot"
+}
 $env:PATH = "$env:APPDATA\npm;C:\Program Files\nodejs;$env:USERPROFILE\.cargo\bin;C:\mingw64\bin;C:\msys64\mingw64\bin;$env:PATH"
 $env:CARGO_TARGET_DIR = Join-Path $CargoTargetBase $BuildIdentity
 $env:npm_config_cache = $NpmCacheRoot
