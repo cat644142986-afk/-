@@ -9,9 +9,11 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const scriptPath = path.join(root, 'tools/build_ic6_installer_candidate.ps1');
 const validatorPath = path.join(root, 'tools/validate_ic6_installer_candidate.py');
+const bundleIdentityPath = path.join(root, 'tools/tauri_bundle_app_identity.py');
 const scriptBytes = fs.readFileSync(scriptPath);
 const script = scriptBytes.toString('utf8').replace(/^\uFEFF/, '');
 const validator = fs.readFileSync(validatorPath, 'utf8');
+const bundleIdentity = fs.readFileSync(bundleIdentityPath, 'utf8');
 
 test('IC6 installer entry is commit-bound, CRLF, and isolates every large path on D', () => {
   assert.deepEqual(
@@ -75,7 +77,7 @@ test('IC6 installer entry is commit-bound, CRLF, and isolates every large path o
   }
 });
 
-test('NSIS build uses only a unique detached worktree and its pinned local Tauri CLI', () => {
+test('NSIS build and bundle use only a unique detached worktree and its pinned local Tauri CLI', () => {
   assert.match(script, /"worktree", "add", "--detach", \$IsolatedWorktree, \$ExpectedCommit/);
   assert.match(script, /\$TauriConfigPath = Join-Path \$IsolatedWorktree "src-tauri\\tauri\.conf\.json"/);
   assert.match(script, /\$WindowsTauriConfigPath = Join-Path \$IsolatedWorktree "src-tauri\\tauri\.windows\.conf\.json"/);
@@ -83,7 +85,9 @@ test('NSIS build uses only a unique detached worktree and its pinned local Tauri
   assert.match(script, /Push-Location \$IsolatedWorktree/);
   assert.doesNotMatch(script, /Push-Location \$ProjectRoot/);
   assert.match(script, /-Arguments @\("ci", "--no-audit", "--no-fund", "--ignore-scripts"\)/);
-  assert.match(script, /& npx\.cmd --no-install tauri build --bundles nsis --features custom-protocol --no-sign/);
+  assert.match(script, /& npx\.cmd --no-install tauri build --no-bundle --features custom-protocol --no-sign/);
+  assert.match(script, /& npx\.cmd --no-install tauri bundle --bundles nsis --features custom-protocol --no-sign/);
+  assert.doesNotMatch(script, /tauri build --bundles nsis/);
   assert.doesNotMatch(script, /& npx\.cmd tauri build/);
 
   const contentGate = script.slice(
@@ -123,6 +127,8 @@ test('NSIS build uses only a unique detached worktree and its pinned local Tauri
   const sidecarCopy = script.indexOf('Copy-Item -LiteralPath $canonicalSidecarDir -Destination $isolatedBinRoot -Recurse');
   const npmCi = script.indexOf('-Arguments @("ci", "--no-audit", "--no-fund", "--ignore-scripts")');
   const tauriBuild = script.indexOf('& npx.cmd --no-install tauri build');
+  const canonicalAppCopy = script.indexOf('Copy-Item -LiteralPath $canonicalAppPath -Destination $BuiltApp -Force');
+  const tauriBundle = script.indexOf('& npx.cmd --no-install tauri bundle');
 
   for (const [label, position] of Object.entries({
     sourceGate,
@@ -133,6 +139,8 @@ test('NSIS build uses only a unique detached worktree and its pinned local Tauri
     sidecarCopy,
     npmCi,
     tauriBuild,
+    canonicalAppCopy,
+    tauriBundle,
   })) {
     assert.ok(position >= 0, `${label} is missing`);
   }
@@ -143,6 +151,8 @@ test('NSIS build uses only a unique detached worktree and its pinned local Tauri
   assert.ok(configRead < sidecarCopy);
   assert.ok(sidecarCopy < npmCi);
   assert.ok(npmCi < tauriBuild);
+  assert.ok(tauriBuild < canonicalAppCopy);
+  assert.ok(canonicalAppCopy < tauriBundle);
 });
 
 test('portable candidate is locked, copied, and revalidated throughout the build', () => {
@@ -156,6 +166,10 @@ test('portable candidate is locked, copied, and revalidated throughout the build
   assert.match(
     script,
     /\$IsolatedCandidateValidationTool = Join-Path \$IsolatedWorktree "tools\\validate_ic6_installer_candidate\.py"/,
+  );
+  assert.match(
+    script,
+    /\$IsolatedBundleIdentityTool = Join-Path \$IsolatedWorktree "tools\\tauri_bundle_app_identity\.py"/,
   );
   assert.match(script, /\$IsolatedCandidateValidationTool,[\s\S]*?--portable-release-tool/);
   assert.match(script, /--expected-candidate-identity-sha256/);
@@ -193,6 +207,38 @@ test('portable candidate is locked, copied, and revalidated throughout the build
   assert.ok(firstValidation < finalValidation);
   assert.ok(finalValidation < publication);
   assert.ok(publication < unlockCall, 'promotion lock must be held through atomic publication');
+});
+
+test('canonical app is the exact bundle input and the restored app keeps that identity', () => {
+  assert.match(bundleIdentity, /UNKNOWN_MARKER = b"__TAURI_BUNDLE_TYPE_VAR_UNK"/);
+  assert.match(bundleIdentity, /NSIS_MARKER = b"__TAURI_BUNDLE_TYPE_VAR_NSS"/);
+  assert.match(bundleIdentity, /MSI_MARKER = b"__TAURI_BUNDLE_TYPE_VAR_MSI"/);
+  assert.match(bundleIdentity, /len\(changed_offsets\) != 3/);
+  assert.match(script, /\$rawRebuildAppHash = \(Get-FileHash -LiteralPath \$BuiltApp/);
+  assert.match(script, /\$canonicalAppHashBeforeCopy -cne \$canonicalAppHashAfterCopy/);
+  assert.match(script, /\$canonicalAppHashBeforeCopy -cne \$bundleInputHash/);
+  assert.match(script, /source_app_sha256 -cne \$bundleInputHash/);
+  assert.match(script, /\$postBundleRestoredAppHash -cne \$bundleInputHash/);
+  assert.match(
+    script,
+    /\$postBundleRestoredAppHash -cne\s+\[string\]\$candidateEvidence\.Data\.canonical\.candidate\.artifacts\.app_sha256/,
+  );
+
+  const rawBuild = script.indexOf('& npx.cmd --no-install tauri build --no-bundle');
+  const rawHash = script.indexOf('$rawRebuildAppHash = (Get-FileHash');
+  const preBundleValidation = script.indexOf('$preBundleEvidence = Invoke-CanonicalCandidateValidation');
+  const canonicalCopy = script.indexOf('Copy-Item -LiteralPath $canonicalAppPath -Destination $BuiltApp -Force');
+  const identityPlan = script.indexOf('$bundleInputIdentity = Invoke-TauriBundleSourceIdentity');
+  const bundle = script.indexOf('& npx.cmd --no-install tauri bundle');
+  const restoredHash = script.indexOf('$postBundleRestoredAppHash =');
+  const restoredIdentity = script.indexOf('$postBundleIdentity = Invoke-TauriBundleSourceIdentity');
+  assert.ok(rawBuild < rawHash);
+  assert.ok(rawHash < preBundleValidation);
+  assert.ok(preBundleValidation < canonicalCopy);
+  assert.ok(canonicalCopy < identityPlan);
+  assert.ok(identityPlan < bundle);
+  assert.ok(bundle < restoredHash);
+  assert.ok(restoredHash < restoredIdentity);
 });
 
 test(
@@ -383,8 +429,8 @@ test('publication is exclusive, hash-bound, and has no fallible post-publication
   assert.match(script, /catch \{\r\n\s+Write-Warning "Could not clean the unique D: build temp/);
 
   for (const field of [
-    'schema_version = 3',
-    'build_mode = "detached-worktree"',
+    'schema_version = 4',
+    'build_mode = "detached-worktree-canonical-app-bundle"',
     'build_token = $BuildToken',
     'detached_head = $ExpectedCommit',
     'cargo_target_key = $CargoTargetLeaf',
@@ -400,9 +446,22 @@ test('publication is exclusive, hash-bound, and has no fallible post-publication
     'sha256 = $stagedHash',
     'size_bytes = [long]$stagedItem.Length',
     'authenticode_status = "NotSigned"',
+    'bundle_identity_algorithm',
+    'raw_rebuild_app_sha256',
+    'portable_app_sha256',
+    'bundle_input_app_sha256',
+    'expected_installed_app_sha256',
+    'post_bundle_restored_app_sha256',
+    'bundle_type_marker_offset',
+    'bundle_type_changed_byte_count',
+    'bundle_type_changed_byte_offsets',
+    'ManifestSha256 = $stagedManifestHash',
+    'ExpectedInstalledAppSha256 = [string]$bundleInputIdentity.expected_installed_app_sha256',
   ]) {
     assert.ok(script.includes(field), `manifest evidence is missing ${field}`);
   }
+  assert.match(script, /Manifest SHA-256: \$\(\$result\.ManifestSha256\)/);
+  assert.match(script, /Expected installed App SHA-256: \$\(\$result\.ExpectedInstalledAppSha256\)/);
 });
 
 test('IC6 installer candidate entry cannot promote, execute, install, or touch formal paths', () => {

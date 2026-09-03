@@ -329,20 +329,97 @@ test('signed Windows release is fail-closed and candidate-first', () => {
   assert.match(installerGate, /\$cleanupErrors\.Count -eq 0/);
   assert.match(installerGate, /Shortcut safety backup retained at/);
   assert.match(installerGate, /SkipAppSmoke is only allowed for an explicit UnsignedInternal headless preflight/);
+  assert.match(installerGate, /\[string\]\$InstallerManifestPath = ""/);
+  assert.match(installerGate, /\[string\]\$ExpectedInstallerManifestSha256 = ""/);
+  assert.match(installerGate, /\[string\]\$ExpectedInstalledAppSha256 = ""/);
+  assert.match(installerGate, /UnsignedInternal requires an explicit installer manifest SHA-256 anchor/);
+  assert.match(installerGate, /UnsignedInternal requires an explicit installed App SHA-256 anchor/);
+  assert.match(installerGate, /tauri_bundle_app_identity\.py/);
+  assert.match(installerGate, /installer-candidate-manifest\.json/);
+  assert.match(installerGate, /\[long\]\$installerManifest\.schema_version -ne 4/);
+  assert.match(installerGate, /manifestInstaller\.sha256 -cne \$actualInstallerSha256/);
+  assert.match(installerGate, /manifestInstaller\.bundle_input_app_sha256 -cne \[string\]\$manifestCanonical\.app_sha256/);
+  assert.match(installerGate, /manifestInstaller\.expected_installed_app_sha256/);
+  assert.match(installerGate, /manifestInstaller\.post_bundle_restored_app_sha256 -cne \[string\]\$manifestCanonical\.app_sha256/);
+  assert.match(installerGate, /bundle_type_marker_source -cne "__TAURI_BUNDLE_TYPE_VAR_UNK"/);
+  assert.match(installerGate, /bundle_type_marker_installed -cne "__TAURI_BUNDLE_TYPE_VAR_NSS"/);
+  assert.match(installerGate, /bundle_type_changed_byte_count -ne 3/);
+  assert.match(installerGate, /--mode installed/);
+  assert.match(installerGate, /marker_counts\.unknown -ne 0/);
+  assert.match(installerGate, /marker_counts\.nsis -ne 1/);
+  assert.match(installerGate, /Installed NSIS app size does not match the installer manifest/);
+  assert.match(installerGate, /installedIdentity\.marker_offset -ne \[long\]\$manifestInstaller\.bundle_type_marker_offset/);
+  assert.match(installerGate, /function Assert-NoReparsePath/);
+  assert.match(installerGate, /function Assert-RegularFile/);
+  assert.match(installerGate, /Assert-RegularFile[\s\S]*?-PathToCheck \$appExe/);
+  assert.match(installerGate, /Assert-RegularFile[\s\S]*?-PathToCheck \$sidecarExe/);
+  assert.match(installerGate, /Assert-RegularFile[\s\S]*?-PathToCheck \$uninstaller/);
+  assert.match(installerGate, /\$executionInstallerPath = Join-Path \$safetyRoot "installer-execution-copy\.exe"/);
+  assert.match(installerGate, /Copy-Item -LiteralPath \$InstallerPath -Destination \$executionInstallerPath/);
+  assert.match(installerGate, /\$sourceInstallerHashBeforeCopy -cne \$sourceInstallerHashAfterCopy/);
+  assert.match(installerGate, /\$sourceInstallerHashBeforeCopy -cne \$executionInstallerHash/);
+  assert.match(installerGate, /-FilePath \$executionInstallerPath/);
 
   const shortcutBackup = installerGate.indexOf('$shortcutStates += Backup-Shortcut');
+  const installerCopy = installerGate.indexOf('Copy-Item -LiteralPath $InstallerPath -Destination $executionInstallerPath');
   const installLaunch = installerGate.indexOf('$installProcess = Start-Process');
+  const installedAppGate = installerGate.indexOf('$installedIdentity = Invoke-InstalledNsisIdentityValidation');
+  const installedPortableGate = installerGate.indexOf('& "$PSScriptRoot\\Test-Portable.ps1"');
   const postUninstallFingerprint = installerGate.indexOf('"post-uninstall"');
   const shortcutRestore = installerGate.lastIndexOf('Restore-Shortcut `');
   const registryRestore = installerGate.lastIndexOf('Restore-RegistryValueState $registryState');
   const postRecoveryFingerprint = installerGate.indexOf('"post-recovery"');
   const finalReport = installerGate.indexOf('$failures =');
   assert.ok(shortcutBackup >= 0 && shortcutBackup < installLaunch, 'shortcut backup must precede install');
+  assert.ok(installerCopy > shortcutBackup && installerCopy < installLaunch, 'owned installer copy must be verified before execution');
+  assert.ok(installedAppGate > installLaunch, 'installed App identity must be checked after install');
+  assert.ok(installedPortableGate > installedAppGate, 'installed App identity must be checked before smoke');
   assert.ok(postUninstallFingerprint > installLaunch, 'post-uninstall fingerprints must follow install');
   assert.ok(shortcutRestore > postUninstallFingerprint, 'shortcut recovery must follow violation capture');
   assert.ok(registryRestore > postUninstallFingerprint, 'registry recovery must follow uninstall');
   assert.ok(postRecoveryFingerprint > shortcutRestore, 'post-recovery verification must follow restore');
   assert.ok(finalReport > postRecoveryFingerprint, 'final reporting must follow recovery verification');
+});
+
+test('unsigned installer validation requires both external identity anchors before install', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-installer-anchor-'));
+  const installerPath = path.join(temporaryRoot, 'fixture-installer.exe');
+  const scriptPath = path.join(root, 'tools/Test-SignedInstaller.ps1');
+  const gitCommit = 'a'.repeat(40);
+  fs.writeFileSync(installerPath, 'not-an-installer');
+
+  const run = (extraArguments) => spawnSync('powershell.exe', [
+    '-NoProfile',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', scriptPath,
+    '-InstallerPath', installerPath,
+    '-ExpectedGitCommit', gitCommit,
+    '-TrustMode', 'UnsignedInternal',
+    ...extraArguments,
+  ], { encoding: 'utf8', windowsHide: true });
+
+  try {
+    const missingManifestAnchor = run([]);
+    assert.notEqual(missingManifestAnchor.status, 0);
+    assert.match(
+      `${missingManifestAnchor.stdout}\n${missingManifestAnchor.stderr}`,
+      /requires an explicit installer manifest SHA-256 anchor/,
+    );
+
+    const missingAppAnchor = run([
+      '-ExpectedInstallerManifestSha256',
+      'A'.repeat(64),
+    ]);
+    assert.notEqual(missingAppAnchor.status, 0);
+    assert.match(
+      `${missingAppAnchor.stdout}\n${missingAppAnchor.stderr}`,
+      /requires an explicit installed App SHA-256 anchor/,
+    );
+  } finally {
+    fs.rmSync(temporaryRoot, { force: true, recursive: true });
+  }
 });
 
 test('Windows build-tool verification uses a file entry point instead of fragile python -c quoting', () => {

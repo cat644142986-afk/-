@@ -1,5 +1,6 @@
 ﻿# Product Atelier IC6 unsigned NSIS candidate-only build entry point.
 # Builds from a unique detached worktree and never executes or promotes the app.
+# The NSIS bundle input is the exact portable candidate app that already passed smoke.
 
 [CmdletBinding()]
 param(
@@ -36,6 +37,8 @@ $WorktreeLeaf = $RunKey
 $IsolatedWorktree = Join-Path $WorktreeBase $WorktreeLeaf
 $IsolatedPortableReleaseTool = Join-Path $IsolatedWorktree "tools\portable_release.py"
 $IsolatedCandidateValidationTool = Join-Path $IsolatedWorktree "tools\validate_ic6_installer_candidate.py"
+$IsolatedBundleIdentityTool = Join-Path $IsolatedWorktree "tools\tauri_bundle_app_identity.py"
+$TauriBundleIdentityAlgorithm = "tauri-bundler-v2-bundle-type-marker-v1"
 $TauriConfigPath = Join-Path $IsolatedWorktree "src-tauri\tauri.conf.json"
 $WindowsTauriConfigPath = Join-Path $IsolatedWorktree "src-tauri\tauri.windows.conf.json"
 $PackagingSidecarDir = Join-Path $IsolatedWorktree "src-tauri\bin\python-server"
@@ -593,6 +596,59 @@ function Assert-CanonicalCandidateEvidence(
     }
 }
 
+function Invoke-TauriBundleSourceIdentity([string]$AppPath) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = @(
+            & python.exe `
+                $IsolatedBundleIdentityTool `
+                --mode source `
+                --app $AppPath `
+                2>&1
+        )
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $rawJson = (($output | ForEach-Object { [string]$_ }) -join "`n").Trim()
+    if ($exitCode -ne 0) {
+        throw "Tauri bundle app identity validation failed: $rawJson"
+    }
+    try {
+        $data = $rawJson | ConvertFrom-Json
+    } catch {
+        throw "Tauri bundle app identity validation returned invalid JSON: $rawJson"
+    }
+    if ([string]$data.algorithm_version -cne $TauriBundleIdentityAlgorithm) {
+        throw "Unexpected Tauri bundle app identity algorithm."
+    }
+    foreach ($hash in @(
+        [string]$data.source_app_sha256,
+        [string]$data.expected_installed_app_sha256
+    )) {
+        if ($hash -notmatch '^[0-9A-F]{64}$') {
+            throw "Tauri bundle app identity returned an invalid SHA-256: $hash"
+        }
+    }
+    if (
+        [long]$data.source_app_size_bytes -le 0 -or
+        [long]$data.source_app_size_bytes -ne [long]$data.expected_installed_app_size_bytes -or
+        [long]$data.marker_offset -lt 0 -or
+        [long]$data.changed_byte_count -ne 3 -or
+        @($data.changed_byte_offsets).Count -ne 3 -or
+        [long]$data.source_marker_counts.unknown -ne 1 -or
+        [long]$data.source_marker_counts.nsis -ne 0 -or
+        [long]$data.source_marker_counts.msi -ne 0 -or
+        [long]$data.expected_installed_marker_counts.unknown -ne 0 -or
+        [long]$data.expected_installed_marker_counts.nsis -ne 1 -or
+        [long]$data.expected_installed_marker_counts.msi -ne 0
+    ) {
+        throw "Tauri bundle app identity returned an invalid UNK to NSS marker contract."
+    }
+    return $data
+}
+
 function Invoke-CheckedNative(
     [string]$Command,
     [string[]]$Arguments,
@@ -799,6 +855,7 @@ try {
     foreach ($requiredFile in @(
         $IsolatedPortableReleaseTool,
         $IsolatedCandidateValidationTool,
+        $IsolatedBundleIdentityTool,
         $TauriConfigPath,
         $WindowsTauriConfigPath,
         (Join-Path $IsolatedWorktree "package.json"),
@@ -830,6 +887,10 @@ try {
     }
 
     $canonicalSidecarDir = Join-Path $CanonicalCandidateDir "python-server"
+    $canonicalAppPath = Join-Path $CanonicalCandidateDir "Product Atelier.exe"
+    $candidateApp = Assert-RegularFile `
+        -PathToCheck $canonicalAppPath `
+        -Label "Canonical candidate app"
     Assert-RegularDirectory -PathToCheck $canonicalSidecarDir -Label "Canonical candidate sidecar"
     $isolatedBinRoot = Split-Path -Parent $PackagingSidecarDir
     if (Test-Path -LiteralPath $PackagingSidecarDir) {
@@ -849,6 +910,13 @@ try {
     }
     Assert-IsolatedWorktreeState
 
+    $BuiltApp = Join-Path $env:CARGO_TARGET_DIR "release\product-atelier.exe"
+    $rawRebuildAppHash = ""
+    $rawRebuildAppSize = 0
+    $bundleInputHash = ""
+    $bundleInputSize = 0
+    $bundleInputIdentity = $null
+
     Push-Location $IsolatedWorktree
     try {
         Invoke-CheckedNative `
@@ -867,9 +935,66 @@ try {
         Assert-RegularDirectory -PathToCheck $env:TEMP -Label "Unique IC6 TEMP"
         Assert-RegularDirectory -PathToCheck $env:TMP -Label "Unique IC6 TMP"
 
-        & npx.cmd --no-install tauri build --bundles nsis --features custom-protocol --no-sign
+        & npx.cmd --no-install tauri build --no-bundle --features custom-protocol --no-sign
         if ($LASTEXITCODE -ne 0) {
-            throw "Unsigned isolated Tauri NSIS build failed (exit code $LASTEXITCODE)"
+            throw "Unsigned isolated Tauri app build failed (exit code $LASTEXITCODE)"
+        }
+
+        $rawRebuildApp = Assert-RegularFile `
+            -PathToCheck $BuiltApp `
+            -Label "Raw isolated rebuilt Tauri app"
+        $rawRebuildAppHash = (Get-FileHash -LiteralPath $BuiltApp -Algorithm SHA256).Hash
+        $rawRebuildAppSize = [long]$rawRebuildApp.Length
+        Assert-IsolatedWorktreeState
+        $preBundleEvidence = Invoke-CanonicalCandidateValidation `
+            -PackagedSidecarPath $PackagingSidecarDir `
+            -ExpectedCandidateIdentitySha256 $reviewedCandidateIdentitySha256
+        Assert-CanonicalCandidateEvidence `
+            -Evidence $preBundleEvidence `
+            -RequirePackagingSidecar
+        if ($preBundleEvidence.CanonicalFingerprint -cne $candidateEvidence.CanonicalFingerprint) {
+            throw "Canonical candidate changed before the isolated NSIS bundle."
+        }
+
+        $canonicalAppHashBeforeCopy = (Get-FileHash `
+            -LiteralPath $canonicalAppPath `
+            -Algorithm SHA256).Hash
+        if (
+            $canonicalAppHashBeforeCopy -cne
+            [string]$candidateEvidence.Data.canonical.candidate.artifacts.app_sha256
+        ) {
+            throw "Canonical candidate app changed before it became the NSIS bundle input."
+        }
+        Copy-Item -LiteralPath $canonicalAppPath -Destination $BuiltApp -Force
+        $bundleInputApp = Assert-RegularFile `
+            -PathToCheck $BuiltApp `
+            -Label "Canonical NSIS bundle input app"
+        $canonicalAppHashAfterCopy = (Get-FileHash `
+            -LiteralPath $canonicalAppPath `
+            -Algorithm SHA256).Hash
+        $bundleInputHash = (Get-FileHash -LiteralPath $BuiltApp -Algorithm SHA256).Hash
+        $bundleInputSize = [long]$bundleInputApp.Length
+        if (
+            $canonicalAppHashBeforeCopy -cne $canonicalAppHashAfterCopy -or
+            $canonicalAppHashBeforeCopy -cne $bundleInputHash -or
+            [long]$candidateApp.Length -ne $bundleInputSize
+        ) {
+            throw "Canonical candidate app changed or its NSIS bundle input copy is not exact."
+        }
+        $bundleInputIdentity = Invoke-TauriBundleSourceIdentity -AppPath $BuiltApp
+        if (
+            [string]$bundleInputIdentity.source_app_sha256 -cne $bundleInputHash -or
+            [long]$bundleInputIdentity.source_app_size_bytes -ne $bundleInputSize
+        ) {
+            throw "Tauri bundle identity is not bound to the exact canonical bundle input."
+        }
+        if ((Get-FileHash -LiteralPath $BuiltApp -Algorithm SHA256).Hash -cne $bundleInputHash) {
+            throw "Canonical NSIS bundle input changed after identity planning."
+        }
+
+        & npx.cmd --no-install tauri bundle --bundles nsis --features custom-protocol --no-sign
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unsigned isolated Tauri NSIS bundle failed (exit code $LASTEXITCODE)"
         }
     } finally {
         Pop-Location
@@ -891,15 +1016,30 @@ try {
     $DefaultNsisOutput = Join-Path `
         $env:CARGO_TARGET_DIR `
         "release\bundle\nsis\$defaultNsisName"
-    $BuiltApp = Join-Path $env:CARGO_TARGET_DIR "release\product-atelier.exe"
     $builtAppItem = Assert-RegularFile -PathToCheck $BuiltApp -Label "Isolated built Tauri app"
     $installerItem = Assert-RegularFile -PathToCheck $DefaultNsisOutput -Label "Isolated NSIS output"
-    $builtAppHash = (Get-FileHash -LiteralPath $BuiltApp -Algorithm SHA256).Hash
+    $postBundleRestoredAppHash = (Get-FileHash -LiteralPath $BuiltApp -Algorithm SHA256).Hash
     if (
-        $builtAppHash -cne
-        [string]$candidateEvidence.Data.canonical.candidate.artifacts.app_sha256
+        $postBundleRestoredAppHash -cne $bundleInputHash -or
+        $postBundleRestoredAppHash -cne
+            [string]$candidateEvidence.Data.canonical.candidate.artifacts.app_sha256 -or
+        [long]$builtAppItem.Length -ne $bundleInputSize
     ) {
-        throw "Isolated built app does not match the canonical candidate app SHA-256."
+        throw "Tauri bundler did not restore the canonical bundle input app byte-for-byte."
+    }
+    $postBundleIdentity = Invoke-TauriBundleSourceIdentity -AppPath $BuiltApp
+    foreach ($field in @(
+        "algorithm_version",
+        "source_app_sha256",
+        "source_app_size_bytes",
+        "expected_installed_app_sha256",
+        "expected_installed_app_size_bytes",
+        "marker_offset",
+        "changed_byte_count"
+    )) {
+        if ($postBundleIdentity.$field -cne $bundleInputIdentity.$field) {
+            throw "Tauri bundle input identity changed after restoration: $field"
+        }
     }
     $sourceSignature = Get-AuthenticodeSignature -LiteralPath $DefaultNsisOutput
     if ([string]$sourceSignature.Status -ne "NotSigned") {
@@ -932,21 +1072,18 @@ try {
         throw "Staged IC6 NSIS candidate is not unsigned."
     }
 
-    $candidateApp = Assert-RegularFile `
-        -PathToCheck (Join-Path $CanonicalCandidateDir "Product Atelier.exe") `
-        -Label "Canonical candidate app"
     $candidateSidecar = Assert-RegularFile `
         -PathToCheck (Join-Path $CanonicalCandidateDir "python-server\python-server.exe") `
         -Label "Canonical candidate sidecar"
     $manifest = [ordered]@{
-        schema_version = 3
+        schema_version = 4
         kind = "product-atelier-unsigned-nsis-candidate"
         created_at_utc = [DateTime]::UtcNow.ToString("o")
         git_commit = $ExpectedCommit
         source = [ordered]@{
             branch = $RequiredBranch
             upstream = $RequiredUpstream
-            build_mode = "detached-worktree"
+            build_mode = "detached-worktree-canonical-app-bundle"
             build_token = $BuildToken
             detached_head = $ExpectedCommit
             cargo_target_key = $CargoTargetLeaf
@@ -976,8 +1113,22 @@ try {
             sha256 = $stagedHash
             size_bytes = [long]$stagedItem.Length
             authenticode_status = "NotSigned"
-            built_app_sha256 = $builtAppHash
-            built_app_size_bytes = [long]$builtAppItem.Length
+            bundle_identity_algorithm = [string]$bundleInputIdentity.algorithm_version
+            raw_rebuild_app_sha256 = $rawRebuildAppHash
+            raw_rebuild_app_size_bytes = [long]$rawRebuildAppSize
+            portable_app_sha256 = [string]$candidateEvidence.Data.canonical.candidate.artifacts.app_sha256
+            portable_app_size_bytes = [long]$candidateApp.Length
+            bundle_input_app_sha256 = $bundleInputHash
+            bundle_input_app_size_bytes = [long]$bundleInputSize
+            expected_installed_app_sha256 = [string]$bundleInputIdentity.expected_installed_app_sha256
+            expected_installed_app_size_bytes = [long]$bundleInputIdentity.expected_installed_app_size_bytes
+            post_bundle_restored_app_sha256 = $postBundleRestoredAppHash
+            post_bundle_restored_app_size_bytes = [long]$builtAppItem.Length
+            bundle_type_marker_offset = [long]$bundleInputIdentity.marker_offset
+            bundle_type_marker_source = [string]$bundleInputIdentity.source_marker
+            bundle_type_marker_installed = [string]$bundleInputIdentity.installed_marker
+            bundle_type_changed_byte_count = [long]$bundleInputIdentity.changed_byte_count
+            bundle_type_changed_byte_offsets = @($bundleInputIdentity.changed_byte_offsets)
             bundles = @("nsis")
             features = @("custom-protocol")
         }
@@ -1001,11 +1152,15 @@ try {
     }
 
     $FinalInstaller = Join-Path $DestinationDir $defaultNsisName
+    $FinalManifest = Join-Path $DestinationDir $ManifestName
     $result = [pscustomobject]@{
         Directory = $DestinationDir
         Installer = $FinalInstaller
+        Manifest = $FinalManifest
         Bytes = [long]$stagedItem.Length
         Sha256 = $stagedHash
+        ManifestSha256 = $stagedManifestHash
+        ExpectedInstalledAppSha256 = [string]$bundleInputIdentity.expected_installed_app_sha256
         GitCommit = $ExpectedCommit
         CandidateIdentitySha256 = $reviewedCandidateIdentitySha256
     }
@@ -1054,8 +1209,11 @@ if ($published) {
     Write-Host "Unsigned IC6 NSIS candidate published without execution." -ForegroundColor Green
     Write-Host "Directory: $($result.Directory)"
     Write-Host "Installer: $($result.Installer)"
+    Write-Host "Manifest: $($result.Manifest)"
     Write-Host "Bytes: $($result.Bytes)"
     Write-Host "SHA-256: $($result.Sha256)"
+    Write-Host "Manifest SHA-256: $($result.ManifestSha256)"
+    Write-Host "Expected installed App SHA-256: $($result.ExpectedInstalledAppSha256)"
     Write-Host "Git commit: $($result.GitCommit)"
     Write-Host "Candidate identity SHA-256: $($result.CandidateIdentitySha256)"
 }

@@ -1,9 +1,12 @@
-# Installs an NSIS candidate into a unique temporary directory, runs the
+﻿# Installs an NSIS candidate into a unique temporary directory, runs the
 # packaged gates, uninstalls it, and protects pre-existing shortcuts.
 param(
     [Parameter(Mandatory = $true)]
     [string]$InstallerPath,
     [string]$ExpectedGitCommit = "",
+    [string]$InstallerManifestPath = "",
+    [string]$ExpectedInstallerManifestSha256 = "",
+    [string]$ExpectedInstalledAppSha256 = "",
     [string]$CertificateThumbprint = $env:PRODUCT_ATELIER_SIGN_CERT_SHA1,
     [ValidateSet("Signed", "UnsignedInternal")]
     [string]$TrustMode = "Signed",
@@ -16,7 +19,9 @@ $ProjectRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $InstallerPath = [System.IO.Path]::GetFullPath($InstallerPath)
 $CodeSigningTool = Join-Path $PSScriptRoot "Windows-CodeSigning.ps1"
 $SchemaGate = Join-Path $PSScriptRoot "verify_packaged_schema_upgrade.py"
+$BundleIdentityTool = Join-Path $PSScriptRoot "tauri_bundle_app_identity.py"
 $TauriConfigPath = Join-Path $ProjectRoot "src-tauri\tauri.conf.json"
+$TauriBundleIdentityAlgorithm = "tauri-bundler-v2-bundle-type-marker-v1"
 
 if (-not (Test-Path -LiteralPath $TauriConfigPath -PathType Leaf)) {
     throw "Tauri bundle config is missing: $TauriConfigPath"
@@ -41,11 +46,25 @@ if (-not $ExpectedGitCommit) {
 if ($ExpectedGitCommit -notmatch '^[0-9a-fA-F]{40}$') {
     throw "Expected Git commit must be a full 40-character hash"
 }
+$ExpectedGitCommit = $ExpectedGitCommit.ToLowerInvariant()
+if ($TrustMode -eq "UnsignedInternal") {
+    if ($ExpectedInstallerManifestSha256 -notmatch '^[0-9a-fA-F]{64}$') {
+        throw "UnsignedInternal requires an explicit installer manifest SHA-256 anchor."
+    }
+    if ($ExpectedInstalledAppSha256 -notmatch '^[0-9a-fA-F]{64}$') {
+        throw "UnsignedInternal requires an explicit installed App SHA-256 anchor."
+    }
+    $ExpectedInstallerManifestSha256 = $ExpectedInstallerManifestSha256.ToUpperInvariant()
+    $ExpectedInstalledAppSha256 = $ExpectedInstalledAppSha256.ToUpperInvariant()
+}
 if ($TrustMode -eq "Signed" -and -not (Test-Path -LiteralPath $CodeSigningTool -PathType Leaf)) {
     throw "Windows code-signing helper is missing: $CodeSigningTool"
 }
 if (-not (Test-Path -LiteralPath $SchemaGate -PathType Leaf)) {
     throw "Packaged schema gate is missing: $SchemaGate"
+}
+if (-not (Test-Path -LiteralPath $BundleIdentityTool -PathType Leaf)) {
+    throw "Tauri bundle app identity helper is missing: $BundleIdentityTool"
 }
 if ($SkipAppSmoke -and $TrustMode -ne "UnsignedInternal") {
     throw "SkipAppSmoke is only allowed for an explicit UnsignedInternal headless preflight"
@@ -83,6 +102,35 @@ function Test-PathInside([string]$PathToCheck, [string]$Directory) {
     return $fullPath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Assert-NoReparsePath([string]$PathToCheck, [string]$Label) {
+    $current = [System.IO.Path]::GetFullPath($PathToCheck)
+    while ($current) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "$Label may not contain a reparse point: $current"
+            }
+        }
+        $parent = Split-Path -Parent $current
+        if (-not $parent -or (Test-SamePath $parent $current)) {
+            break
+        }
+        $current = $parent
+    }
+}
+
+function Assert-RegularFile([string]$PathToCheck, [string]$Label) {
+    if (-not (Test-Path -LiteralPath $PathToCheck -PathType Leaf)) {
+        throw "$Label is missing: $PathToCheck"
+    }
+    Assert-NoReparsePath -PathToCheck $PathToCheck -Label $Label
+    $item = Get-Item -LiteralPath $PathToCheck -Force
+    if ($item.PSIsContainer -or $item.Length -le 0) {
+        throw "$Label must be a non-empty regular file: $PathToCheck"
+    }
+    return $item
+}
+
 function Assert-UnsignedArtifacts([string[]]$ArtifactPaths) {
     foreach ($artifact in $ArtifactPaths) {
         if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
@@ -93,6 +141,48 @@ function Assert-UnsignedArtifacts([string[]]$ArtifactPaths) {
             throw "UnsignedInternal requires Authenticode NotSigned, got $($signature.Status): $artifact"
         }
     }
+}
+
+function Invoke-InstalledNsisIdentityValidation(
+    [string]$AppPath,
+    [string]$ExpectedSha256
+) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = @(
+            & python.exe `
+                $BundleIdentityTool `
+                --mode installed `
+                --app $AppPath `
+                --expected-sha256 $ExpectedSha256 `
+                2>&1
+        )
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $rawJson = (($output | ForEach-Object { [string]$_ }) -join "`n").Trim()
+    if ($exitCode -ne 0) {
+        throw "Installed NSIS app identity validation failed: $rawJson"
+    }
+    try {
+        $data = $rawJson | ConvertFrom-Json
+    } catch {
+        throw "Installed NSIS app identity validation returned invalid JSON: $rawJson"
+    }
+    if (
+        [string]$data.algorithm_version -cne $TauriBundleIdentityAlgorithm -or
+        [string]$data.installed_app_sha256 -cne $ExpectedSha256 -or
+        [long]$data.installed_app_size_bytes -le 0 -or
+        [long]$data.marker_offset -lt 0 -or
+        [long]$data.marker_counts.unknown -ne 0 -or
+        [long]$data.marker_counts.nsis -ne 1 -or
+        [long]$data.marker_counts.msi -ne 0
+    ) {
+        throw "Installed NSIS app identity helper returned an invalid result."
+    }
+    return $data
 }
 
 function Get-ShortcutFingerprint([string]$Path) {
@@ -334,6 +424,107 @@ function Restore-Shortcut($State, $Before, [string]$InstallDirectory) {
     return $true
 }
 
+$installerManifest = $null
+$installerManifestSha256 = ""
+$expectedInstalledAppSize = 0
+if ($TrustMode -eq "UnsignedInternal") {
+    if (-not $InstallerManifestPath) {
+        $InstallerManifestPath = Join-Path `
+            (Split-Path -Parent $InstallerPath) `
+            "installer-candidate-manifest.json"
+    }
+    $InstallerManifestPath = [System.IO.Path]::GetFullPath($InstallerManifestPath)
+    if (-not (Test-SamePath `
+        (Split-Path -Parent $InstallerManifestPath) `
+        (Split-Path -Parent $InstallerPath)
+    )) {
+        throw "UnsignedInternal installer manifest must be beside the installer."
+    }
+    $installerManifestItem = Assert-RegularFile `
+        -PathToCheck $InstallerManifestPath `
+        -Label "UnsignedInternal installer manifest"
+    $installerManifestSha256 = (Get-FileHash `
+        -LiteralPath $InstallerManifestPath `
+        -Algorithm SHA256).Hash
+    if ($installerManifestSha256 -cne $ExpectedInstallerManifestSha256) {
+        throw "UnsignedInternal installer manifest does not match the external SHA-256 anchor."
+    }
+    try {
+        $installerManifest = Get-Content -LiteralPath $InstallerManifestPath -Raw | ConvertFrom-Json
+    } catch {
+        throw "UnsignedInternal installer manifest is invalid JSON: $($_.Exception.Message)"
+    }
+    $manifestInstaller = $installerManifest.installer
+    $manifestCanonical = $installerManifest.canonical_candidate
+    $actualInstaller = Assert-RegularFile `
+        -PathToCheck $InstallerPath `
+        -Label "UnsignedInternal installer"
+    $actualInstallerSha256 = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash
+    if (
+        [long]$installerManifest.schema_version -ne 4 -or
+        [string]$installerManifest.kind -cne "product-atelier-unsigned-nsis-candidate" -or
+        [string]$installerManifest.git_commit -cne $ExpectedGitCommit.ToLowerInvariant() -or
+        [string]$manifestInstaller.filename -cne $actualInstaller.Name -or
+        [string]$manifestInstaller.sha256 -cne $actualInstallerSha256 -or
+        [long]$manifestInstaller.size_bytes -ne [long]$actualInstaller.Length -or
+        [string]$manifestInstaller.authenticode_status -cne "NotSigned" -or
+        [string]$manifestInstaller.bundle_identity_algorithm -cne $TauriBundleIdentityAlgorithm
+    ) {
+        throw "UnsignedInternal installer manifest is not bound to this installer and Git commit."
+    }
+    foreach ($hash in @(
+        [string]$manifestCanonical.app_sha256,
+        [string]$manifestInstaller.raw_rebuild_app_sha256,
+        [string]$manifestInstaller.portable_app_sha256,
+        [string]$manifestInstaller.bundle_input_app_sha256,
+        [string]$manifestInstaller.expected_installed_app_sha256,
+        [string]$manifestInstaller.post_bundle_restored_app_sha256
+    )) {
+        if ($hash -notmatch '^[0-9A-F]{64}$') {
+            throw "UnsignedInternal installer manifest contains an invalid App SHA-256: $hash"
+        }
+    }
+    if (
+        [string]$manifestInstaller.portable_app_sha256 -cne [string]$manifestCanonical.app_sha256 -or
+        [string]$manifestInstaller.bundle_input_app_sha256 -cne [string]$manifestCanonical.app_sha256 -or
+        [string]$manifestInstaller.post_bundle_restored_app_sha256 -cne [string]$manifestCanonical.app_sha256 -or
+        [long]$manifestInstaller.portable_app_size_bytes -le 0 -or
+        [long]$manifestInstaller.bundle_input_app_size_bytes -ne [long]$manifestInstaller.portable_app_size_bytes -or
+        [long]$manifestInstaller.expected_installed_app_size_bytes -ne [long]$manifestInstaller.portable_app_size_bytes -or
+        [long]$manifestInstaller.post_bundle_restored_app_size_bytes -ne [long]$manifestInstaller.portable_app_size_bytes -or
+        [long]$manifestInstaller.bundle_type_marker_offset -lt 0 -or
+        [string]$manifestInstaller.bundle_type_marker_source -cne "__TAURI_BUNDLE_TYPE_VAR_UNK" -or
+        [string]$manifestInstaller.bundle_type_marker_installed -cne "__TAURI_BUNDLE_TYPE_VAR_NSS" -or
+        [long]$manifestInstaller.bundle_type_changed_byte_count -ne 3 -or
+        @($manifestInstaller.bundle_type_changed_byte_offsets).Count -ne 3
+    ) {
+        throw "UnsignedInternal installer manifest contains an invalid App bundle identity chain."
+    }
+    $manifestExpectedInstalledAppSha256 = [string]$manifestInstaller.expected_installed_app_sha256
+    if ($ExpectedInstalledAppSha256 -cne $manifestExpectedInstalledAppSha256) {
+        throw "Installed App SHA-256 anchor does not match the installer manifest."
+    }
+    $expectedInstalledAppSize = [long]$manifestInstaller.expected_installed_app_size_bytes
+    $markerSource = [string]$manifestInstaller.bundle_type_marker_source
+    $markerInstalled = [string]$manifestInstaller.bundle_type_marker_installed
+    $expectedChangedOffsets = @()
+    for ($index = 0; $index -lt $markerSource.Length; $index++) {
+        if ($markerSource[$index] -cne $markerInstalled[$index]) {
+            $expectedChangedOffsets += [long]$manifestInstaller.bundle_type_marker_offset + $index
+        }
+    }
+    $manifestChangedOffsets = @(
+        $manifestInstaller.bundle_type_changed_byte_offsets |
+            ForEach-Object { [long]$_ }
+    )
+    if (
+        ($expectedChangedOffsets -join ",") -cne ($manifestChangedOffsets -join ",") -or
+        $expectedChangedOffsets.Count -ne 3
+    ) {
+        throw "UnsignedInternal installer manifest contains invalid marker diff offsets."
+    }
+}
+
 $existingInstallations = Get-ProductUninstallEntries
 if ($existingInstallations.Count -gt 0) {
     throw "A registered Product Atelier installation already exists; refusing an isolated installer test that could overwrite it."
@@ -412,6 +603,7 @@ $recoveryNotePath = Join-Path $safetyRoot "RECOVERY.txt"
     [System.Text.UTF8Encoding]::new($true)
 )
 Write-Host "Installer safety backup prepared: $safetyRoot"
+$executionInstallerPath = Join-Path $safetyRoot "installer-execution-copy.exe"
 
 $installSucceeded = $false
 $installAttempted = $false
@@ -422,15 +614,58 @@ $protectionViolations = [System.Collections.Generic.List[string]]::new()
 $cleanupErrors = [System.Collections.Generic.List[string]]::new()
 $safetyBackupRetained = $false
 try {
-    $installAttempted = $true
+    $sourceInstaller = Assert-RegularFile `
+        -PathToCheck $InstallerPath `
+        -Label "Installer source"
+    $sourceInstallerHashBeforeCopy = (Get-FileHash `
+        -LiteralPath $InstallerPath `
+        -Algorithm SHA256).Hash
+    if ($TrustMode -eq "UnsignedInternal") {
+        if (
+            (Get-FileHash -LiteralPath $InstallerManifestPath -Algorithm SHA256).Hash -cne
+                $ExpectedInstallerManifestSha256 -or
+            $sourceInstallerHashBeforeCopy -cne [string]$installerManifest.installer.sha256
+        ) {
+            throw "UnsignedInternal installer or manifest changed before installation."
+        }
+    }
+    if (Test-Path -LiteralPath $executionInstallerPath) {
+        throw "Owned installer execution copy already exists: $executionInstallerPath"
+    }
+    Copy-Item -LiteralPath $InstallerPath -Destination $executionInstallerPath
+    $executionInstaller = Assert-RegularFile `
+        -PathToCheck $executionInstallerPath `
+        -Label "Owned installer execution copy"
+    $sourceInstallerHashAfterCopy = (Get-FileHash `
+        -LiteralPath $InstallerPath `
+        -Algorithm SHA256).Hash
+    $executionInstallerHash = (Get-FileHash `
+        -LiteralPath $executionInstallerPath `
+        -Algorithm SHA256).Hash
+    if (
+        $sourceInstallerHashBeforeCopy -cne $sourceInstallerHashAfterCopy -or
+        $sourceInstallerHashBeforeCopy -cne $executionInstallerHash -or
+        [long]$sourceInstaller.Length -ne [long]$executionInstaller.Length
+    ) {
+        throw "Installer changed or its owned execution copy is not exact."
+    }
+    if ($TrustMode -eq "Signed") {
+        & $CodeSigningTool `
+            -Mode Verify `
+            -ArtifactPath $executionInstallerPath `
+            -CertificateThumbprint $CertificateThumbprint
+    } else {
+        Assert-UnsignedArtifacts @($executionInstallerPath)
+    }
     $installerArguments = @("/S", "/D=$installDirectory")
     if ($TrustMode -eq "UnsignedInternal") {
         # Tauri CLI 2.11.4 maps /NS to NoShortcutMode. Backups below remain
         # the recovery boundary if a future installer ever ignores the switch.
         $installerArguments = @("/S", "/NS", "/D=$installDirectory")
     }
+    $installAttempted = $true
     $installProcess = Start-Process `
-        -FilePath $InstallerPath `
+        -FilePath $executionInstallerPath `
         -ArgumentList $installerArguments `
         -Wait `
         -PassThru `
@@ -456,17 +691,34 @@ try {
 
     $appExe = Join-Path $installDirectory "Product Atelier.exe"
     $sidecarExe = Join-Path $installDirectory "python-server\python-server.exe"
-    if (-not (Test-Path -LiteralPath $appExe -PathType Leaf)) {
-        throw "Installed application is missing: $appExe"
-    }
-    if (-not (Test-Path -LiteralPath $sidecarExe -PathType Leaf)) {
-        throw "Installed sidecar is missing: $sidecarExe"
-    }
+    $installedApp = Assert-RegularFile -PathToCheck $appExe -Label "Installed application"
+    $installedSidecar = Assert-RegularFile -PathToCheck $sidecarExe -Label "Installed sidecar"
     $uninstallers = @(Get-ChildItem -LiteralPath $installDirectory -File -Filter "uninstall*.exe")
     if ($uninstallers.Count -ne 1) {
         throw "Expected exactly one installed NSIS uninstaller, found $($uninstallers.Count)"
     }
     $uninstaller = $uninstallers[0].FullName
+    $installedUninstaller = Assert-RegularFile `
+        -PathToCheck $uninstaller `
+        -Label "Installed NSIS uninstaller"
+
+    if ($TrustMode -eq "UnsignedInternal") {
+        $installedIdentity = Invoke-InstalledNsisIdentityValidation `
+            -AppPath $appExe `
+            -ExpectedSha256 $ExpectedInstalledAppSha256
+        if (
+            [long]$installedIdentity.installed_app_size_bytes -ne $expectedInstalledAppSize -or
+            [long]$installedApp.Length -ne $expectedInstalledAppSize
+        ) {
+            throw "Installed NSIS app size does not match the installer manifest."
+        }
+        if ([long]$installedIdentity.marker_offset -ne [long]$manifestInstaller.bundle_type_marker_offset) {
+            throw "Installed NSIS app marker offset does not match the installer manifest."
+        }
+        if ((Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash -cne $ExpectedInstalledAppSha256) {
+            throw "Installed NSIS app changed after identity validation."
+        }
+    }
 
     if ($TrustMode -eq "Signed") {
         & $CodeSigningTool `
@@ -498,6 +750,9 @@ try {
     }
     try {
         if (-not $uninstaller -and (Test-Path -LiteralPath $installDirectory -PathType Container)) {
+            Assert-NoReparsePath `
+                -PathToCheck $installDirectory `
+                -Label "Isolated install directory"
             $cleanupUninstallers = @(
                 Get-ChildItem -LiteralPath $installDirectory -File -Filter "uninstall*.exe"
             )
@@ -509,8 +764,11 @@ try {
         $cleanupErrors.Add("Could not inspect the isolated uninstaller: $($_.Exception.Message)")
     }
     if ($installAttempted -and $uninstaller -and (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
-        $uninstallAttempted = $true
         try {
+            Assert-RegularFile `
+                -PathToCheck $uninstaller `
+                -Label "Isolated NSIS uninstaller before cleanup" | Out-Null
+            $uninstallAttempted = $true
             $uninstallProcess = Start-Process `
                 -FilePath $uninstaller `
                 -ArgumentList @("/S", "/UPDATE") `
