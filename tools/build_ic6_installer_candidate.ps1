@@ -35,6 +35,7 @@ $RunKey = "$($ExpectedCommit.Substring(0, 12))-$BuildToken"
 $WorktreeLeaf = $RunKey
 $IsolatedWorktree = Join-Path $WorktreeBase $WorktreeLeaf
 $IsolatedPortableReleaseTool = Join-Path $IsolatedWorktree "tools\portable_release.py"
+$IsolatedCandidateValidationTool = Join-Path $IsolatedWorktree "tools\validate_ic6_installer_candidate.py"
 $TauriConfigPath = Join-Path $IsolatedWorktree "src-tauri\tauri.conf.json"
 $WindowsTauriConfigPath = Join-Path $IsolatedWorktree "src-tauri\tauri.windows.conf.json"
 $PackagingSidecarDir = Join-Path $IsolatedWorktree "src-tauri\bin\python-server"
@@ -502,63 +503,26 @@ function Invoke-CanonicalCandidateValidation(
     [string]$PackagedSidecarPath = "",
     [string]$ExpectedCandidateIdentitySha256 = ""
 ) {
-    $validationCode = @'
-import hashlib
-import importlib.util
-import json
-import pathlib
-import sys
-
-tool_path = pathlib.Path(sys.argv[1]).resolve(strict=True)
-spec = importlib.util.spec_from_file_location("ic6_portable_release", tool_path)
-if spec is None or spec.loader is None:
-    raise RuntimeError(f"Could not load candidate validator: {tool_path}")
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-project_root = pathlib.Path(sys.argv[2])
-candidate_dir = pathlib.Path(sys.argv[3])
-expected_identity_sha256 = None if sys.argv[5] == "-" else sys.argv[5]
-verified = module.verify_candidate_identity(
-    project_root=project_root,
-    candidate_dir=candidate_dir,
-    expected_git_commit=sys.argv[4],
-    expected_candidate_identity_sha256=expected_identity_sha256,
-    _lock_held=True,
-)
-canonical = {
-    "candidate": verified["candidate"],
-    "candidate_sidecar": module.directory_inventory(candidate_dir / "python-server"),
-}
-canonical_json = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
-payload = {
-    "canonical": canonical,
-    "canonical_fingerprint": hashlib.sha256(canonical_json.encode("utf-8")).hexdigest().upper(),
-    "candidate_identity": verified["identity_receipt"],
-}
-if sys.argv[6] != "-":
-    payload["packaging_sidecar"] = module.directory_inventory(sys.argv[6])
-print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
-'@
-    $expectedIdentityArgument = if ($ExpectedCandidateIdentitySha256) {
-        $ExpectedCandidateIdentitySha256
-    } else {
-        "-"
-    }
-    $packagingSidecarArgument = if ($PackagedSidecarPath) {
-        $PackagedSidecarPath
-    } else {
-        "-"
-    }
     $arguments = @(
-        "-c",
-        $validationCode,
+        $IsolatedCandidateValidationTool,
+        "--portable-release-tool",
         $IsolatedPortableReleaseTool,
+        "--project-root",
         $ProjectRoot,
+        "--candidate-dir",
         $CanonicalCandidateDir,
-        $ExpectedCommit,
-        $expectedIdentityArgument,
-        $packagingSidecarArgument
+        "--expected-git-commit",
+        $ExpectedCommit
     )
+    if ($ExpectedCandidateIdentitySha256) {
+        $arguments += @(
+            "--expected-candidate-identity-sha256",
+            $ExpectedCandidateIdentitySha256
+        )
+    }
+    if ($PackagedSidecarPath) {
+        $arguments += @("--packaging-sidecar", $PackagedSidecarPath)
+    }
     $previousErrorActionPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = "Continue"
@@ -834,6 +798,7 @@ try {
     Assert-IsolatedWorktreeState
     foreach ($requiredFile in @(
         $IsolatedPortableReleaseTool,
+        $IsolatedCandidateValidationTool,
         $TauriConfigPath,
         $WindowsTauriConfigPath,
         (Join-Path $IsolatedWorktree "package.json"),

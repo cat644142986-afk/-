@@ -8,8 +8,10 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const scriptPath = path.join(root, 'tools/build_ic6_installer_candidate.ps1');
+const validatorPath = path.join(root, 'tools/validate_ic6_installer_candidate.py');
 const scriptBytes = fs.readFileSync(scriptPath);
 const script = scriptBytes.toString('utf8').replace(/^\uFEFF/, '');
+const validator = fs.readFileSync(validatorPath, 'utf8');
 
 test('IC6 installer entry is commit-bound, CRLF, and isolates every large path on D', () => {
   assert.deepEqual(
@@ -151,11 +153,29 @@ test('portable candidate is locked, copied, and revalidated throughout the build
   assert.match(script, /\$Stream\.Unlock\(0, 1\)/);
   assert.doesNotMatch(script, /Delete\(\$PortablePromotionLockPath\)|Remove-Item[^\r\n]*PortablePromotionLockPath/);
 
-  assert.match(script, /module\.verify_candidate_identity\(/);
-  assert.match(script, /expected_candidate_identity_sha256=expected_identity_sha256/);
-  assert.match(script, /"candidate_identity": verified\["identity_receipt"\]/);
-  assert.match(script, /module\.directory_inventory\(candidate_dir \/ "python-server"\)/);
-  assert.match(script, /payload\["packaging_sidecar"\] = module\.directory_inventory\(sys\.argv\[6\]\)/);
+  assert.match(
+    script,
+    /\$IsolatedCandidateValidationTool = Join-Path \$IsolatedWorktree "tools\\validate_ic6_installer_candidate\.py"/,
+  );
+  assert.match(script, /\$IsolatedCandidateValidationTool,[\s\S]*?--portable-release-tool/);
+  assert.match(script, /--expected-candidate-identity-sha256/);
+  assert.match(script, /--packaging-sidecar/);
+  const validationFunction = script.slice(
+    script.indexOf('function Invoke-CanonicalCandidateValidation'),
+    script.indexOf('function Assert-CanonicalCandidateEvidence'),
+  );
+  assert.doesNotMatch(validationFunction, /"-c"|\$validationCode|@'/);
+  assert.match(validator, /release_module\.verify_candidate_identity\(/);
+  assert.match(
+    validator,
+    /expected_candidate_identity_sha256=expected_candidate_identity_sha256/,
+  );
+  assert.match(validator, /"candidate_identity": verified\["identity_receipt"\]/);
+  assert.match(validator, /candidate_path \/ "python-server"/);
+  assert.match(
+    validator,
+    /payload\["packaging_sidecar"\] = release_module\.directory_inventory\(/,
+  );
   assert.match(script, /Isolated packaged sidecar \$field does not match the canonical candidate/);
   assert.match(script, /\$copiedSidecarEvidence\.CanonicalFingerprint -cne \$candidateEvidence\.CanonicalFingerprint/);
   assert.match(script, /\$prePublishEvidence\.CanonicalFingerprint -cne \$candidateEvidence\.CanonicalFingerprint/);
