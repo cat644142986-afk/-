@@ -131,20 +131,46 @@ function Invoke-GitCapture([string[]]$Arguments) {
     return Invoke-GitCaptureAt -RepositoryPath $ProjectRoot -Arguments $Arguments
 }
 
-function Refresh-GitIndexAt([string]$RepositoryPath) {
+function Assert-EmptyGitDiffAt(
+    [string]$RepositoryPath,
+    [string[]]$QuietArguments,
+    [string[]]$ReportArguments,
+    [string]$Label
+) {
     $previousErrorActionPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = "Continue"
-        $output = @(& git.exe -C $RepositoryPath update-index --really-refresh 2>&1)
+        $output = @(& git.exe -C $RepositoryPath @QuietArguments 2>&1)
         $exitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
     }
-    # Exit 1 means tracked content still needs update; the status gate below
-    # reports that real change. Any other exit code is an index failure.
-    if ($exitCode -ne 0 -and $exitCode -ne 1) {
-        throw "Git index refresh failed: $($output -join ' ')"
+    if ($exitCode -eq 0) {
+        return
     }
+    if ($exitCode -ne 1) {
+        throw "Git content check failed for ${Label}: $($output -join ' ')"
+    }
+    $changes = Invoke-GitCaptureAt `
+        -RepositoryPath $RepositoryPath `
+        -Arguments $ReportArguments
+    if ([string]::IsNullOrWhiteSpace($changes)) {
+        $changes = "(Git reported a content difference without naming a path)"
+    }
+    throw "$Label contains source changes:`n$changes"
+}
+
+function Assert-NoTrackedContentChangesAt([string]$RepositoryPath, [string]$Label) {
+    Assert-EmptyGitDiffAt `
+        -RepositoryPath $RepositoryPath `
+        -QuietArguments @("diff", "--cached", "--quiet", "--no-ext-diff", "--ita-visible-in-index", "--ignore-submodules=none", "HEAD", "--") `
+        -ReportArguments @("diff", "--cached", "--name-status", "--no-ext-diff", "--ita-visible-in-index", "--ignore-submodules=none", "HEAD", "--") `
+        -Label "$Label index"
+    Assert-EmptyGitDiffAt `
+        -RepositoryPath $RepositoryPath `
+        -QuietArguments @("diff", "--quiet", "--no-ext-diff", "--ignore-submodules=none", "--") `
+        -ReportArguments @("diff", "--name-status", "--no-ext-diff", "--ignore-submodules=none", "--") `
+        -Label "$Label worktree"
 }
 
 function Assert-NoHiddenTrackedEntriesAt([string]$RepositoryPath) {
@@ -158,6 +184,38 @@ function Assert-NoHiddenTrackedEntriesAt([string]$RepositoryPath) {
         $summary = ($hiddenEntries | Select-Object -First 10) -join "`n"
         throw "IC6 source index contains hidden tracked entries:`n$summary"
     }
+}
+
+function Assert-NoGitlinksAt([string]$RepositoryPath) {
+    $entries = Invoke-GitCaptureAt `
+        -RepositoryPath $RepositoryPath `
+        -Arguments @("ls-files", "--stage")
+    $gitlinks = @(
+        $entries -split "`n" | Where-Object { $_ -cmatch "^160000 " }
+    )
+    if ($gitlinks.Count -gt 0) {
+        $summary = ($gitlinks | Select-Object -First 10) -join "`n"
+        throw "IC6 source may not contain Git submodules:`n$summary"
+    }
+}
+
+function Assert-NoUntrackedEntriesAt([string]$RepositoryPath, [string]$Label) {
+    $entries = Invoke-GitCaptureAt `
+        -RepositoryPath $RepositoryPath `
+        -Arguments @("ls-files", "--others", "--exclude-standard")
+    if (-not [string]::IsNullOrWhiteSpace($entries)) {
+        throw "$Label has untracked, unignored files:`n$entries"
+    }
+}
+
+function Assert-CleanSourceAt([string]$RepositoryPath, [string]$Label) {
+    Assert-NoGitlinksAt -RepositoryPath $RepositoryPath
+    Assert-NoHiddenTrackedEntriesAt -RepositoryPath $RepositoryPath
+    Assert-NoTrackedContentChangesAt -RepositoryPath $RepositoryPath -Label $Label
+    Assert-NoUntrackedEntriesAt -RepositoryPath $RepositoryPath -Label $Label
+    [void](Invoke-GitCaptureAt `
+        -RepositoryPath $RepositoryPath `
+        -Arguments @("diff", "--check", "HEAD", "--"))
 }
 
 function Update-OriginTrackingRef {
@@ -189,17 +247,8 @@ function Update-OriginTrackingRef {
     }
 }
 
-function Assert-CleanWorktree {
-    $status = Invoke-GitCapture -Arguments @(
-        "status", "--porcelain=v1", "--untracked-files=all"
-    )
-    if (-not [string]::IsNullOrWhiteSpace($status)) {
-        throw "IC6 installer candidates require a clean worktree:`n$status"
-    }
-}
-
 function Assert-SourceState([switch]$FetchOrigin) {
-    Assert-CleanWorktree
+    Assert-CleanSourceAt -RepositoryPath $ProjectRoot -Label "IC6 installer source"
     $branch = Invoke-GitCapture -Arguments @("branch", "--show-current")
     if ($branch -ne $RequiredBranch) {
         throw "IC6 installer candidates require branch $RequiredBranch; current branch is $branch"
@@ -231,8 +280,7 @@ function Assert-SourceState([switch]$FetchOrigin) {
     )) {
         throw "Upstream HEAD $upstreamHead does not match -ExpectedCommit $ExpectedCommit"
     }
-    [void](Invoke-GitCapture -Arguments @("diff", "--check"))
-    Assert-CleanWorktree
+    Assert-CleanSourceAt -RepositoryPath $ProjectRoot -Label "IC6 installer source"
 }
 
 function New-IsolatedDetachedWorktree {
@@ -267,14 +315,9 @@ function Assert-IsolatedWorktreeState {
     if (-not [string]::IsNullOrWhiteSpace($branch)) {
         throw "IC6 build worktree must remain detached; current branch is $branch"
     }
-    Assert-NoHiddenTrackedEntriesAt -RepositoryPath $IsolatedWorktree
-    Refresh-GitIndexAt -RepositoryPath $IsolatedWorktree
-    $status = Invoke-GitCaptureAt `
+    Assert-CleanSourceAt `
         -RepositoryPath $IsolatedWorktree `
-        -Arguments @("status", "--porcelain=v1", "--untracked-files=all")
-    if (-not [string]::IsNullOrWhiteSpace($status)) {
-        throw "Detached IC6 worktree has tracked or unignored changes:`n$status"
-    }
+        -Label "Detached IC6 worktree"
 }
 
 function Remove-IsolatedDetachedWorktree {

@@ -19,17 +19,23 @@ test('IC6 candidate entry is commit-bound and encoded for Windows PowerShell', (
   assert.match(script, /\[ValidatePattern\("\^\[0-9a-fA-F\]\{40\}\$"\)\]/);
   assert.match(script, /\$RequiredBranch = "codex\/excalidraw-infinite-canvas"/);
   assert.match(script, /\$RequiredUpstream = "origin\/\$RequiredBranch"/);
-  assert.match(script, /status", "--porcelain=v1", "--untracked-files=all"/);
   assert.match(script, /"rev-parse", "--verify", "HEAD"/);
   assert.match(script, /"rev-parse", "--verify", \$RequiredUpstream/);
   assert.match(script, /fetch --no-tags origin/);
-  assert.match(
-    script,
-    /@\(& git\.exe -C \$Repository update-index --really-refresh 2>&1\)/,
-  );
-  assert.match(script, /\$exitCode -ne 0 -and \$exitCode -ne 1/);
+  assert.match(script, /@\(& git\.exe -C \$Repository @QuietArguments 2>&1\)/);
+  assert.match(script, /"diff", "--cached", "--quiet", "--no-ext-diff", "--ita-visible-in-index", "--ignore-submodules=none", "HEAD", "--"/);
+  assert.match(script, /"diff", "--quiet", "--no-ext-diff", "--ignore-submodules=none", "--"/);
+  assert.match(script, /"diff", "--cached", "--name-status", "--no-ext-diff", "--ita-visible-in-index", "--ignore-submodules=none", "HEAD", "--"/);
+  assert.match(script, /"diff", "--name-status", "--no-ext-diff", "--ignore-submodules=none", "--"/);
+  assert.match(script, /\$exitCode -ne 1/);
+  assert.match(script, /"ls-files", "--others", "--exclude-standard"/);
   assert.match(script, /-Arguments @\("ls-files", "-v"\)/);
   assert.match(script, /-cmatch "\^\(\?:\[a-z\]\|S\) "/);
+  assert.match(script, /-Arguments @\("ls-files", "--stage"\)/);
+  assert.match(script, /-cmatch "\^160000 "/);
+  assert.match(script, /"diff", "--check", "HEAD", "--"/);
+  assert.doesNotMatch(script, /update-index --really-refresh/);
+  assert.doesNotMatch(script, /"status", "--porcelain/);
   assert.match(script, /\$WorktreeBase = "D:\\pa6-w"/);
   assert.match(script, /\$CargoTargetBase = "D:\\rust-target\\ic6-candidate"/);
   assert.match(script, /\$NpmCacheRoot = "D:\\ProductAtelier-Cache\\npm"/);
@@ -48,25 +54,33 @@ test('IC6 candidate entry is commit-bound and encoded for Windows PowerShell', (
   const isolatedAssertions = script.match(/Assert-IsolatedSourceState -Expected \$ExpectedCommit/g) || [];
   assert.ok(sourceAssertions.length >= 2, 'active source identity must be checked before build and publication');
   assert.ok(isolatedAssertions.length >= 2, 'detached source identity must be checked before and after build');
-  const isolatedGate = script.slice(
-    script.indexOf('function Assert-IsolatedSourceState'),
-    script.indexOf('function Remove-IsolatedBuildWorktree'),
+  const contentGate = script.slice(
+    script.indexOf('function Assert-CleanSourceAt'),
+    script.indexOf('function Assert-NoReparsePath'),
   );
-  const hiddenIndexPosition = isolatedGate.indexOf(
-    'Assert-NoHiddenTrackedEntriesAt -Repository $IsolatedProjectRoot',
-  );
-  const refreshPosition = isolatedGate.indexOf(
-    'Refresh-GitIndexAt -Repository $IsolatedProjectRoot',
-  );
-  const statusPosition = isolatedGate.indexOf(
-    '"status", "--porcelain=v1", "--untracked-files=no"',
-  );
+  const gitlinkPosition = contentGate.indexOf('Assert-NoGitlinksAt');
+  const hiddenIndexPosition = contentGate.indexOf('Assert-NoHiddenTrackedEntriesAt');
+  const trackedPosition = contentGate.indexOf('Assert-NoTrackedContentChangesAt');
+  const untrackedPosition = contentGate.indexOf('Assert-NoUntrackedEntriesAt');
+  const whitespacePosition = contentGate.indexOf('"diff", "--check", "HEAD", "--"');
+  assert.ok(gitlinkPosition >= 0, 'submodule rejection gate is missing');
   assert.ok(hiddenIndexPosition >= 0, 'hidden tracked-entry gate is missing');
-  assert.ok(refreshPosition >= 0, 'metadata refresh call is missing');
-  assert.ok(statusPosition >= 0, 'tracked-content status gate is missing');
+  assert.ok(trackedPosition >= 0, 'tracked-content gate is missing');
+  assert.ok(untrackedPosition >= 0, 'untracked-content gate is missing');
+  assert.ok(whitespacePosition >= 0, 'whitespace gate is missing');
   assert.ok(
-    hiddenIndexPosition < refreshPosition && refreshPosition < statusPosition,
-    'metadata-only rewrites must be refreshed before the tracked-content gate',
+    gitlinkPosition < hiddenIndexPosition
+      && hiddenIndexPosition < trackedPosition
+      && trackedPosition < untrackedPosition
+      && untrackedPosition < whitespacePosition,
+    'gitlink, hidden, tracked, untracked, and whitespace gates must run in fail-closed order',
+  );
+  assert.match(
+    script.slice(
+      script.indexOf('function Assert-IsolatedSourceState'),
+      script.indexOf('function Remove-IsolatedBuildWorktree'),
+    ),
+    /Assert-CleanSourceAt[\s\S]*?-Repository \$IsolatedProjectRoot/,
   );
   assert.ok(
     script.indexOf('Assert-SourceState -Expected $ExpectedCommit -FetchOrigin')
