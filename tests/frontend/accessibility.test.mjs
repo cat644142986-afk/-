@@ -56,7 +56,11 @@ test('key interface tokens preserve readable light and dark surface contrast', a
   assert.match(css, /--coral-deep: #c53f20/);
   assert.match(css, /\.task-dock \{ --ink-3: #b7bbc0;/);
   assert.match(css, /:root\[data-contrast="high"\] \.task-dock \{ --ink-3: #e0e2e4;/);
-  assert.match(css, /\.primary-button \{[^}]+color: var\(--dark\)/);
+  assert.match(css, /--on-accent: var\(--dark\)/);
+  assert.match(css, /:root\[data-colorway="mono"\][\s\S]*?--on-accent: #fff/);
+  assert.match(css, /:root\[data-colorway="mono"\] \.app-rail \{ background: #131416; \}/);
+  assert.match(css, /:root\[data-colorway="mono"\] \.task-dock \{[\s\S]*?background: var\(--paper\);[\s\S]*?color: var\(--ink\);/);
+  assert.match(css, /\.primary-button \{[^}]+color: var\(--on-accent\)/);
   assert.match(css, /\.rail-connection \{[^}]+color: var\(--ink\)/);
   assert.match(css, /textarea:focus-visible \{ outline: 3px solid var\(--coral-deep\)/);
   assert.doesNotMatch(css, /letter-spacing:\s*-/);

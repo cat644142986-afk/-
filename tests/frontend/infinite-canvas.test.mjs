@@ -13,6 +13,7 @@ const html = readFileSync(new URL('../../src/index.html', import.meta.url), 'utf
 const app = readFileSync(new URL('../../src/js/app.js', import.meta.url), 'utf8');
 const workspace = readFileSync(new URL('../../src/js/infinite-canvas-workspace.js', import.meta.url), 'utf8');
 const island = readFileSync(new URL('../../src/js/infinite-canvas-island.jsx', import.meta.url), 'utf8');
+const itemsSource = readFileSync(new URL('../../src/js/spatial-canvas-items.js', import.meta.url), 'utf8');
 const adapterSource = readFileSync(new URL('../../src/js/infinite-canvas-adapter.js', import.meta.url), 'utf8');
 const apiSource = readFileSync(new URL('../../src/js/api.js', import.meta.url), 'utf8');
 const stableUiCss = readFileSync(new URL('../../src/css/stable-ui.css', import.meta.url), 'utf8');
@@ -50,6 +51,11 @@ test('Excalidraw is isolated behind a user-triggered dynamic import', () => {
   assert.match(island, /from '@excalidraw\/excalidraw'/);
   assert.match(island, /@excalidraw\/excalidraw\/index\.css/);
   assert.match(adapterSource, /currentItemRoughness:\s*0/);
+  assert.match(island, /dark: '#cfd3d7'/);
+  assert.match(island, /initialData=\{runtimeSceneForTheme\(canvasDocument\.scene, theme\)\}/);
+  assert.match(island, /appState: persistentAppState\(appState\)/);
+  assert.match(island, /api\.updateScene\(\{ appState: \{ viewBackgroundColor \} \}\)/);
+  assert.doesNotMatch(itemsSource, /#fffdf9|#3f3b37/);
   assert.match(island, /changeViewBackgroundColor: false/);
   assert.match(island, /saveAsImage: false/);
   assert.match(island, /aiEnabled=\{false\}/);
