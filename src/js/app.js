@@ -242,11 +242,12 @@ const appCloseCoordinator = createAppCloseCoordinator({
     setAppCloseInteractionLocked(false);
     console.error('Application close was blocked', error);
     const saveFailure = error?.closeStage === 'workspace-save';
+    const failureReason = formatApiError(error, '画布保存确认失败');
     const detail = error?.code === APP_CLOSE_SAVE_TIMEOUT
       ? '保存等待超时；窗口仍保持打开，请检查本地服务后再次关闭。'
       : saveFailure
-        ? '窗口仍保持打开，未保存内容也已保留；恢复连接后再次关闭即可重试。'
-        : `退出确认失败：${formatApiError(error, '窗口关闭服务暂不可用')}。窗口仍保持打开，可再次关闭重试。`;
+        ? `保存确认失败：${failureReason}。窗口仍保持打开，未保存内容也已保留；恢复连接后再次关闭即可重试。`
+        : `退出确认失败：${failureReason}。窗口仍保持打开，可再次关闭重试。`;
     const prefix = saveFailure
       ? '窗口未关闭，最后修改尚未保存。'
       : '窗口未关闭。';

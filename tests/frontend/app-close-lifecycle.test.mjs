@@ -40,6 +40,33 @@ test('close is prevented synchronously before any save work starts', async () =>
   assert.equal(completed, 1);
 });
 
+test('default browser timers retain the global receiver required by WebView', async () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const timerHandle = {};
+  let cleared = false;
+  try {
+    globalThis.setTimeout = function receiverSensitiveSetTimeout() {
+      assert.equal(this, globalThis);
+      return timerHandle;
+    };
+    globalThis.clearTimeout = function receiverSensitiveClearTimeout(timer) {
+      assert.equal(this, globalThis);
+      assert.equal(timer, timerHandle);
+      cleared = true;
+    };
+    const coordinator = createAppCloseCoordinator({
+      prepareForClose: () => true,
+      completeClose: () => {},
+    });
+    assert.equal(await coordinator.handleCloseRequested(closeEvent()), true);
+    assert.equal(cleared, true);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
 test('repeated close clicks share one save and one final shutdown', async () => {
   let releaseSave;
   let prepareCalls = 0;
@@ -173,6 +200,7 @@ test('application wiring saves before exit and both custom close buttons share t
   assert.match(app, /body\.inert = Boolean\(locked\)/);
   assert.match(app, /setAppCloseInteractionLocked\(false\)/);
   assert.match(app, /console\.error\('Application close was blocked', error\)/);
+  assert.match(app, /保存确认失败：\$\{failureReason\}/);
   assert.match(app, /completeClose:\s*\(\)\s*=>\s*API\.completeAppClose\(\)/);
   assert.match(app, /API\.onAppCloseRequested\(appCloseCoordinator\.handleCloseRequested\)/);
   assert.match(app, /btn-close-dot'\)\.addEventListener\('click', requestAppClose\)/);

@@ -39,8 +39,8 @@ export function createAppCloseCoordinator(options = {}) {
   const onFailure = typeof options.onFailure === 'function' ? options.onFailure : () => {};
   const timeoutMs = Math.max(1, Number(options.timeoutMs) || 30000);
   const timers = {
-    setTimeout: options.setTimeout || globalThis.setTimeout,
-    clearTimeout: options.clearTimeout || globalThis.clearTimeout,
+    setTimeout: options.setTimeout || ((handler, delay) => globalThis.setTimeout(handler, delay)),
+    clearTimeout: options.clearTimeout || ((timer) => globalThis.clearTimeout(timer)),
   };
   if (typeof prepareForClose !== 'function') throw new TypeError('prepareForClose is required');
   if (typeof completeClose !== 'function') throw new TypeError('completeClose is required');
