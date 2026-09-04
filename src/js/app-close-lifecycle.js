@@ -49,8 +49,10 @@ export function createAppCloseCoordinator(options = {}) {
   let closeCommitted = false;
 
   async function attemptClose() {
+    let closeStage = 'interaction-lock';
     try {
       onStart();
+      closeStage = 'workspace-save';
       const prepared = await runWithTimeout(prepareForClose, timeoutMs, timers);
       if (prepared !== true) {
         const error = new Error('Workspace did not confirm that it is safe to close');
@@ -58,11 +60,14 @@ export function createAppCloseCoordinator(options = {}) {
         throw error;
       }
       closeCommitted = true;
+      closeStage = 'application-shutdown';
       await completeClose();
       return true;
     } catch (error) {
       closeCommitted = false;
-      try { await onFailure(error); } catch (_) { /* reporting cannot block a retry */ }
+      const failure = error instanceof Error ? error : new Error(String(error));
+      if (!failure.closeStage) failure.closeStage = closeStage;
+      try { await onFailure(failure); } catch (_) { /* reporting cannot block a retry */ }
       return false;
     } finally {
       if (!closeCommitted) closeAttempt = null;

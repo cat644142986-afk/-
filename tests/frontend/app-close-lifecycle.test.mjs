@@ -120,17 +120,41 @@ test('a save timeout does not force exit and resets the coordinator for retry', 
 
 test('a final shutdown transport error also leaves close retryable', async () => {
   let completeCalls = 0;
+  const failures = [];
   const coordinator = createAppCloseCoordinator({
     prepareForClose: () => true,
     completeClose: () => {
       completeCalls += 1;
       if (completeCalls === 1) throw new Error('invoke failed');
     },
+    onFailure: (error) => { failures.push(error); },
   });
 
   assert.equal(await coordinator.handleCloseRequested(closeEvent()), false);
+  assert.equal(failures[0].closeStage, 'application-shutdown');
   assert.equal(await coordinator.handleCloseRequested(closeEvent()), true);
   assert.equal(completeCalls, 2);
+});
+
+test('startup and save failures identify the stage that blocked closing', async () => {
+  const startFailures = [];
+  const startCoordinator = createAppCloseCoordinator({
+    onStart: () => { throw new Error('inert unavailable'); },
+    prepareForClose: () => true,
+    completeClose: () => {},
+    onFailure: (error) => { startFailures.push(error); },
+  });
+  assert.equal(await startCoordinator.handleCloseRequested(closeEvent()), false);
+  assert.equal(startFailures[0].closeStage, 'interaction-lock');
+
+  const saveFailures = [];
+  const saveCoordinator = createAppCloseCoordinator({
+    prepareForClose: () => { throw new Error('ledger unavailable'); },
+    completeClose: () => {},
+    onFailure: (error) => { saveFailures.push(error); },
+  });
+  assert.equal(await saveCoordinator.handleCloseRequested(closeEvent()), false);
+  assert.equal(saveFailures[0].closeStage, 'workspace-save');
 });
 
 test('browser development mode exposes harmless close lifecycle fallbacks', async () => {
@@ -148,6 +172,7 @@ test('application wiring saves before exit and both custom close buttons share t
   assert.match(app, /await infiniteCanvasWorkspace\.prepareForClose\(\)[\s\S]{0,180}return infiniteCanvasWorkspace\.prepareForClose\(\)/);
   assert.match(app, /body\.inert = Boolean\(locked\)/);
   assert.match(app, /setAppCloseInteractionLocked\(false\)/);
+  assert.match(app, /console\.error\('Application close was blocked', error\)/);
   assert.match(app, /completeClose:\s*\(\)\s*=>\s*API\.completeAppClose\(\)/);
   assert.match(app, /API\.onAppCloseRequested\(appCloseCoordinator\.handleCloseRequested\)/);
   assert.match(app, /btn-close-dot'\)\.addEventListener\('click', requestAppClose\)/);
