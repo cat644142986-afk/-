@@ -196,6 +196,7 @@ export function createInfiniteCanvasWorkspaceController({
   let videoPollEpoch = 0;
   let videoRecoveryAttempt = 0;
   let videoRecoveryPending = false;
+  let emptySceneRecoveryPromise = null;
   const activeVideoJobIds = new Set();
   const notifiedVideoJobs = new Set();
 
@@ -823,8 +824,41 @@ export function createInfiniteCanvasWorkspaceController({
     if (restoreFocus) windowRef.requestAnimationFrame(() => query('#btn-spatial-new')?.focus());
   }
 
+  function recoverUnexpectedEmptyScene(scene, session) {
+    if (!session || !canvasSessionIsCurrent(session)) return false;
+    if (Array.from(scene?.elements || []).length) return false;
+    const pendingScene = pendingScenes.get(session.canvasId)?.scene;
+    const durableScene = adapter.get(session.canvasId)?.scene;
+    const fallback = [pendingScene, durableScene].find((candidate) => (
+      Array.from(candidate?.elements || []).length > 0
+    ));
+    if (!fallback) return false;
+    query('#spatial-save-state').textContent = '检测到异常空场景 · 正在恢复上一版本';
+    if (!emptySceneRecoveryPromise) {
+      emptySceneRecoveryPromise = Promise.resolve()
+        .then(() => {
+          if (!canvasSessionIsCurrent(session)) return null;
+          return session.island.updateScene(fallback);
+        })
+        .then(() => {
+          if (canvasSessionIsCurrent(session)) {
+            query('#spatial-save-state').textContent = '已阻止空场景覆盖 · 上一版本已恢复';
+          }
+        })
+        .catch((error) => {
+          if (canvasSessionIsCurrent(session)) {
+            query('#spatial-save-state').textContent = '已阻止空场景覆盖 · 自动恢复失败，请重新打开画布';
+          }
+          console.error('Infinite canvas empty scene recovery failed', error);
+        })
+        .finally(() => { emptySceneRecoveryPromise = null; });
+    }
+    return true;
+  }
+
   function queueScene(scene, session = captureCanvasSession()) {
     if (!session || !canvasSessionIsCurrent(session)) return false;
+    if (recoverUnexpectedEmptyScene(scene, session)) return false;
     const entry = {
       canvasId: session.canvasId,
       scene,

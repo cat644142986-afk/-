@@ -162,10 +162,10 @@ function createFakeWindow() {
   };
 }
 
-function scene(label, elements = []) {
+function scene(label, elements = null) {
   return {
     label,
-    elements,
+    elements: elements ?? [{ id: `shape-${label}`, type: 'rectangle', isDeleted: false }],
     appState: { zoom: { value: 1 }, scrollX: 0, scrollY: 0 },
     files: {},
   };
@@ -581,6 +581,24 @@ test('a 409 save preserves the newest local scene in an atomic conflict copy wit
   const copy = [...harness.records.values()].find((item) => item.id.startsWith('canvas:copy:'));
   assert.deepEqual(copy.scene, newestScene);
   assert.deepEqual(mountA.calls.updateScene, [record.scene]);
+  harness.controller.destroy();
+});
+
+test('a transient empty Excalidraw callback cannot overwrite a non-empty durable scene', async () => {
+  const harness = createHarness();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const durableScene = harness.records.get('canvas:a').scene;
+
+  mount.emitChange(scene('unexpected-empty', []));
+  await settle(20);
+
+  assert.deepEqual(mount.calls.updateScene, [durableScene]);
+  assert.equal(harness.updateCalls.length, 0);
+  assert.equal(harness.clock.pendingCount(), 0);
+  assert.equal(
+    harness.documentRef.node('#spatial-save-state').textContent,
+    '已阻止空场景覆盖 · 上一版本已恢复',
+  );
   harness.controller.destroy();
 });
 

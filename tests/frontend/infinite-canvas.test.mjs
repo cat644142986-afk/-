@@ -292,9 +292,20 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(island, /canvasApi\.getAppState\(\),\s*\);/);
   assert.match(island, /synchronizeScene\?\.\(elements, appState, \{ persist: false \}\)/);
   assert.match(workspace, /const session = await ensureCanvasForImport\(\)[\s\S]{0,220}session\.island\.addBusinessItems/);
+  assert.match(workspace, /recoverUnexpectedEmptyScene\(scene, session\)/);
+  assert.match(workspace, /已阻止空场景覆盖 · 上一版本已恢复/);
 });
 
 test('IC5 production island renders only Product Atelier video embeddables on demand', () => {
+  assert.match(island, /restoreElements/);
+  assert.match(
+    island,
+    /skeleton\.type === 'embeddable'[\s\S]{0,220}restoreElements\(\[skeleton\], existing,[\s\S]{0,180}repairBindings: false/,
+  );
+  assert.match(
+    island,
+    /convertToExcalidrawElements\(normalizedSkeletons, \{ regenerateIds: false \}\)/,
+  );
   assert.match(island, /renderEmbeddable=\{renderVideoEmbeddable\}/);
   assert.match(island, /validateEmbeddable=\{validateVideoEmbeddable\}/);
   assert.equal(island.includes('product-atelier-video:\\/\\/'), true);

@@ -10,6 +10,7 @@ import {
   Excalidraw,
   convertToExcalidrawElements,
   newElementWith,
+  restoreElements,
 } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 
@@ -467,7 +468,21 @@ export function mountInfiniteCanvas(host, options) {
     }
     const appState = canvasApi.getAppState();
     const batch = buildSpatialNodeBatch(normalized, { elements: existing, appState });
-    const additions = convertToExcalidrawElements(batch.skeletons, { regenerateIds: false });
+    // convertToExcalidrawElements accepts iframe-like elements only when they
+    // already satisfy the complete Excalidraw element contract. Passing our
+    // partial video skeleton through unchanged can make Excalidraw publish a
+    // transient empty scene before rendering the result, which would persist
+    // as a destructive new canvas revision. Restore video elements through the
+    // public data API first so every required lifecycle field is present.
+    const normalizedSkeletons = batch.skeletons.map((skeleton) => (
+      skeleton.type === 'embeddable'
+        ? restoreElements([skeleton], existing, {
+          refreshDimensions: false,
+          repairBindings: false,
+        })[0]
+        : skeleton
+    ));
+    const additions = convertToExcalidrawElements(normalizedSkeletons, { regenerateIds: false });
     const selectedElementIds = Object.fromEntries(batch.nodeIds.map((id) => [id, true]));
     const nextElements = mergeSpatialNodeBatch(existing, additions, batch.lineageBindings);
     const boundExisting = nextElements.slice(0, existing.length);
