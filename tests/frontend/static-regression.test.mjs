@@ -220,6 +220,12 @@ test('job dialog does not repeatedly announce or focus its backdrop', () => {
   assert.match(html, /id="job-drawer"[\s\S]*?class="drawer-backdrop"[^>]*tabindex="-1"/);
   assert.match(html, /id="job-list" aria-live="off"/);
   assert.match(html, /id="job-status-announcer" role="status" aria-live="polite"/);
+  assert.match(app, /function openDrawer\(name, returnFocusTarget = document\.activeElement\)/);
+  assert.match(app, /drawerReturnFocus = returnFocusTarget instanceof HTMLElement/);
+  assert.match(app, /\$\('#btn-job-dock'\)\.addEventListener\('click', \(event\) => openDrawer\('jobs', event\.currentTarget\)\)/);
+  assert.match(app, /\$\('#btn-rail-jobs'\)\.addEventListener\('click', \(event\) => openDrawer\('jobs', event\.currentTarget\)\)/);
+  assert.match(app, /\$\('#sidebar-logo'\)\.addEventListener\('click', \(event\) => openDrawer\('jobs', event\.currentTarget\)\)/);
+  assert.match(app, /returnFocus\.focus\(\{ preventScroll: true \}\)/);
   assert.match(app, /openLayer\.id === 'semantic-selection-modal'/);
   assert.match(app, /\$\('\.semantic-modal-card', openLayer\)/);
   assert.match(app, /openLayer\.id === 'img-modal'/);

@@ -86,7 +86,7 @@ test('production shell exposes one accessible event-driven SVG task presence', a
   assert.match(app, /taskPresenceController\.setTaskState\(model\.state, \{ available: state\.jobsAvailable \}\)/);
   assert.match(app, /taskPresenceController\.setMotion\(document\.visibilityState === 'hidden' \? 'paused' : 'running'\)/);
   assert.match(app, /taskPresenceController\.destroy\(\)/);
-  assert.match(app, /\$\('#sidebar-logo'\)\.addEventListener\('click', \(\) => openDrawer\('jobs'\)\)/);
+  assert.match(app, /\$\('#sidebar-logo'\)\.addEventListener\('click', \(event\) => openDrawer\('jobs', event\.currentTarget\)\)/);
   assert.match(css, /\.brand-mark \{[\s\S]*?background: transparent;/);
   assert.match(css, /\.task-presence__scene \{[^}]*width: 44px;[^}]*height: 44px;/);
   assert.match(css, /\.task-presence__ink \{[^}]*fill: var\(--presence-ink\)/);

@@ -3322,7 +3322,7 @@ async function completeCurrentWorkspace() {
   }
 }
 
-function openDrawer(name) {
+function openDrawer(name, returnFocusTarget = document.activeElement) {
   const drawers = { assets: $('#asset-drawer'), advanced: $('#advanced-drawer'), intelligence: $('#intelligence-drawer'), jobs: $('#job-drawer') };
   const layer = drawers[name];
   if (!layer) return;
@@ -3343,7 +3343,9 @@ function openDrawer(name) {
     backdrop.tabIndex = -1;
     if (!backdrop.getAttribute('aria-label')) backdrop.setAttribute('aria-label', `关闭${heading?.textContent?.trim() || '抽屉'}`);
   }
-  drawerReturnFocus = document.activeElement;
+  drawerReturnFocus = returnFocusTarget instanceof HTMLElement
+    ? returnFocusTarget
+    : document.activeElement;
   layer.hidden = false;
   if (name === 'jobs') {
     state.jobDrawerOpen = true;
@@ -3363,8 +3365,11 @@ function closeDrawer(name) {
     $('#btn-job-dock').setAttribute('aria-expanded', 'false');
   }
   if (name === 'advanced') updateQuickControls();
-  if (drawerReturnFocus instanceof HTMLElement) drawerReturnFocus.focus();
+  const returnFocus = drawerReturnFocus;
   drawerReturnFocus = null;
+  if (returnFocus instanceof HTMLElement && returnFocus.isConnected && !returnFocus.hasAttribute('disabled')) {
+    returnFocus.focus({ preventScroll: true });
+  }
 }
 
 function openModal(src) {
@@ -4119,16 +4124,16 @@ function bindEvents() {
   $$('input[name="platter"]').forEach((radio) => radio.addEventListener('change', updateQuickControls));
   $('#param-refine').addEventListener('change', updateQuickControls);
   $$('[data-lock]').forEach((input) => input.addEventListener('change', () => { input.closest('.lock-chip').classList.toggle('active', input.checked); updateCtaState(); scheduleKnowledgeCompile(); }));
-  $('#btn-advanced').addEventListener('click', () => openDrawer('advanced'));
+  $('#btn-advanced').addEventListener('click', (event) => openDrawer('advanced', event.currentTarget));
   $('#btn-workflow-drawer').addEventListener('click', workflowDock.open);
   $('#task-dock-backdrop').addEventListener('click', () => workflowDock.close());
-  $$('[data-open-advanced]').forEach((button) => button.addEventListener('click', () => openDrawer('advanced')));
-  $('#btn-open-intelligence').addEventListener('click', () => openDrawer('intelligence'));
-  $('#btn-job-dock').addEventListener('click', () => openDrawer('jobs'));
-  $('#btn-rail-jobs').addEventListener('click', () => openDrawer('jobs'));
-  $('#sidebar-logo').addEventListener('click', () => openDrawer('jobs'));
+  $$('[data-open-advanced]').forEach((button) => button.addEventListener('click', (event) => openDrawer('advanced', event.currentTarget)));
+  $('#btn-open-intelligence').addEventListener('click', (event) => openDrawer('intelligence', event.currentTarget));
+  $('#btn-job-dock').addEventListener('click', (event) => openDrawer('jobs', event.currentTarget));
+  $('#btn-rail-jobs').addEventListener('click', (event) => openDrawer('jobs', event.currentTarget));
+  $('#sidebar-logo').addEventListener('click', (event) => openDrawer('jobs', event.currentTarget));
   $('#btn-spatial-assets').addEventListener('click', () => assetManager.open());
-  $('#btn-spatial-jobs').addEventListener('click', () => openDrawer('jobs'));
+  $('#btn-spatial-jobs').addEventListener('click', (event) => openDrawer('jobs', event.currentTarget));
   $('#btn-refresh-jobs').addEventListener('click', async () => {
     const button = $('#btn-refresh-jobs');
     if (button.disabled) return;
@@ -4140,7 +4145,7 @@ function bindEvents() {
     state.jobVisibleLimit = 12;
     renderJobs(true);
   }));
-  $('#btn-knowledge-card').addEventListener('click', () => openDrawer('intelligence'));
+  $('#btn-knowledge-card').addEventListener('click', (event) => openDrawer('intelligence', event.currentTarget));
   $$('[data-close-drawer]').forEach((button) => button.addEventListener('click', () => closeDrawer(button.dataset.closeDrawer)));
   const resultTabs = $$('.result-tab');
   resultTabs.forEach((button, index) => {
@@ -4166,7 +4171,7 @@ function bindEvents() {
     const items = getResultItems();
     if (items.length) selectResultVersion((state.viewerIndex + 1) % items.length);
   });
-  $('#btn-review-why').addEventListener('click', () => openDrawer('intelligence'));
+  $('#btn-review-why').addEventListener('click', (event) => openDrawer('intelligence', event.currentTarget));
   $('#btn-review-edit').addEventListener('click', () => {
     const item = getResultItems()[state.viewerIndex];
     state.editingFeedbackResultKey = activeFeedbackResultKey(item);
@@ -4262,8 +4267,8 @@ function bindEvents() {
     else connectBackend();
   });
   memoryProjectionController.bind();
-  $('#btn-open-memory-evidence').addEventListener('click', () => openDrawer('intelligence'));
-  $('#btn-open-memory-trace').addEventListener('click', () => openDrawer('intelligence'));
+  $('#btn-open-memory-evidence').addEventListener('click', (event) => openDrawer('intelligence', event.currentTarget));
+  $('#btn-open-memory-trace').addEventListener('click', (event) => openDrawer('intelligence', event.currentTarget));
   assetManager.bind();
   productProfiles.bind();
   settingsController.bind();
