@@ -195,6 +195,8 @@ class LaunchAndShootSafetyTests(unittest.TestCase):
             self.assertEqual(expected_final, final_output)
             self.assertTrue(session.publication_ready)
             self.assertTrue(session.publication_protections_held)
+            self.assertIsNone(session.process_identity)
+            self.assertEqual(session.publication_process_identity, identity)
             self.assertTrue(state["promotion_lock_held"])
             self.assertFalse(file_locks.close.called)
             self.assertIn("process-cleanup", events)

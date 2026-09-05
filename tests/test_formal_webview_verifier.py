@@ -477,6 +477,34 @@ class FormalWebViewVerifierTests(unittest.TestCase):
             self.assertEqual(optional_name_proof.command_line_proof["webview_exe_name"], "")
             self.assertEqual(optional_name_proof.command_line_proof["ancestry_app_pid"], "101")
 
+            edge_profile = isolation.webview_data_root / "EBWebView"
+            edge_profile.mkdir()
+            browser_with_edge_profile = FakeProcess(
+                202,
+                browser_exe,
+                create_time=101.0,
+                parent_pid=101,
+                name="msedgewebview2.exe",
+                command_line=[
+                    str(browser_exe),
+                    "--remote-debugging-port=9222",
+                    f"--user-data-dir={edge_profile}",
+                    f"--webview-exe-name={candidate.executable.name}",
+                ],
+            )
+            edge_profile_proof = verifier.prove_cdp_browser_process(
+                9222,
+                app_identity,
+                candidate,
+                isolation,
+                connections=[connection],
+                process_factory={101: app, 202: browser_with_edge_profile}.__getitem__,
+            )
+            self.assertEqual(
+                edge_profile_proof.command_line_proof["user_data_dir"],
+                str(edge_profile.resolve()),
+            )
+
             ambiguous_browser = FakeProcess(
                 202,
                 browser_exe,
@@ -568,6 +596,29 @@ class FormalWebViewVerifierTests(unittest.TestCase):
                     isolation,
                     connections=[connection],
                     process_factory={101: app, 202: browser}.__getitem__,
+                )
+
+            alternate_profile = FakeProcess(
+                202,
+                browser_exe,
+                create_time=101.0,
+                parent_pid=101,
+                name="msedgewebview2.exe",
+                command_line=[
+                    str(browser_exe),
+                    "--remote-debugging-port=9222",
+                    f"--user-data-dir={isolation.webview_data_root / 'OtherProfile'}",
+                    f"--webview-exe-name={candidate.executable.name}",
+                ],
+            )
+            with self.assertRaisesRegex(verifier.VerificationError, "isolated user-data"):
+                verifier.prove_cdp_browser_process(
+                    9222,
+                    app_identity,
+                    candidate,
+                    isolation,
+                    connections=[connection],
+                    process_factory={101: app, 202: alternate_profile}.__getitem__,
                 )
 
     def test_cdp_target_is_bound_to_tauri_origin_and_listener(self) -> None:
@@ -1036,6 +1087,48 @@ class FormalWebViewVerifierTests(unittest.TestCase):
         self.assertEqual(verifier.KEY_CHARACTER_TEXT["Enter"], "\r")
         with self.assertRaises(verifier.VerificationError):
             verifier.key_event_params("Unmapped")
+
+    def test_keyboard_review_path_enters_edit_mode_for_a_durable_review(self) -> None:
+        class ReviewClient:
+            def __init__(self) -> None:
+                self.expressions: list[str] = []
+                self.keys: list[str] = []
+
+            def evaluate(self, expression: str):
+                self.expressions.append(expression)
+                if "summaryVisible" in expression:
+                    return {"summaryVisible": True, "optionsVisible": False}
+                return None
+
+            def press_key(self, key: str) -> None:
+                self.keys.append(key)
+
+        client = ReviewClient()
+        with (
+            patch.object(verifier, "wait_for") as wait,
+            patch.object(
+                verifier,
+                "focus_snapshot",
+                return_value={"reviewDecision": "adjusted", "visible": True},
+            ),
+        ):
+            result = verifier.prepare_review_form_for_keyboard(client)
+
+        self.assertTrue(result["entered_edit_mode"])
+        self.assertEqual(client.keys, ["Enter"])
+        self.assertTrue(any("#btn-review-edit" in item for item in client.expressions))
+        wait.assert_called_once_with(
+            client,
+            "!document.querySelector('#review-options').hidden",
+        )
+
+    def test_keyboard_review_path_rejects_an_inaccessible_review_panel(self) -> None:
+        class HiddenReviewClient:
+            def evaluate(self, _expression: str):
+                return {"summaryVisible": False, "optionsVisible": False}
+
+        with self.assertRaisesRegex(verifier.VerificationError, "neither"):
+            verifier.prepare_review_form_for_keyboard(HiddenReviewClient())
 
 
 if __name__ == "__main__":

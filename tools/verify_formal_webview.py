@@ -617,6 +617,34 @@ def _is_literal_loopback(host: str | None) -> bool:
     return host in {"127.0.0.1", "::1"}
 
 
+def _validate_webview_user_data_directory(
+    value: str,
+    isolation: IsolationBinding,
+) -> Path:
+    requested = Path(unquote(value))
+    if not requested.is_absolute():
+        raise VerificationError("WebView2 command line does not bind the isolated user-data root")
+    if _same_path(requested, isolation.webview_data_root):
+        return isolation.webview_data_root
+
+    # Current Edge WebView2 runtimes append this fixed profile directory to
+    # the data_directory supplied by Tauri. Keep the allowance exact: no
+    # arbitrary descendant, alternate leaf name, or reparse point is valid.
+    expected_profile = isolation.webview_data_root / "EBWebView"
+    if not _same_path(requested, expected_profile):
+        raise VerificationError("WebView2 command line does not bind the isolated user-data root")
+    profile = _require_regular_directory(
+        requested,
+        "Isolated Edge WebView2 profile directory",
+    )
+    if (
+        profile.name.casefold() != "ebwebview"
+        or not _same_path(profile.parent, isolation.webview_data_root)
+    ):
+        raise VerificationError("WebView2 command line does not bind the isolated user-data root")
+    return profile
+
+
 def _listener_address(connection: Any) -> tuple[str, int] | None:
     local = getattr(connection, "laddr", None)
     if not local:
@@ -700,8 +728,12 @@ def prove_cdp_browser_process(
         raise VerificationError("WebView2 command line does not bind the expected CDP port")
     if remote_address and not _is_literal_loopback(remote_address):
         raise VerificationError("WebView2 command line does not bind a literal loopback CDP host")
-    if not user_data_dir or not _same_path(user_data_dir, isolation.webview_data_root):
+    if not user_data_dir:
         raise VerificationError("WebView2 command line does not bind the isolated user-data root")
+    proven_user_data_dir = _validate_webview_user_data_directory(
+        user_data_dir,
+        isolation,
+    )
     if (
         webview_exe_name
         and Path(unquote(webview_exe_name)).name.casefold()
@@ -761,7 +793,7 @@ def prove_cdp_browser_process(
         command_line_proof={
             "remote_debugging_port": remote_port,
             "remote_debugging_address": remote_address,
-            "user_data_dir": str(isolation.webview_data_root),
+            "user_data_dir": str(proven_user_data_dir),
             "webview_exe_name": webview_exe_name or "",
             "ancestry_app_pid": str(app_identity.pid),
         },
@@ -1800,6 +1832,32 @@ def focus_snapshot(client: CdpClient) -> dict[str, Any]:
     """)
 
 
+def prepare_review_form_for_keyboard(client: CdpClient) -> dict[str, Any]:
+    state = client.evaluate("""
+      (() => {
+        const summary = document.querySelector('#review-summary');
+        const options = document.querySelector('#review-options');
+        return {
+          summaryVisible: Boolean(summary && !summary.hidden),
+          optionsVisible: Boolean(options && !options.hidden),
+        };
+      })()
+    """)
+    if state.get("summaryVisible"):
+        client.evaluate("document.querySelector('#btn-review-edit').focus()")
+        client.press_key("Enter")
+        wait_for(client, "!document.querySelector('#review-options').hidden")
+        return {
+            "entered_edit_mode": True,
+            "focus_after_edit": focus_snapshot(client),
+        }
+    if not state.get("optionsVisible"):
+        raise VerificationError(
+            "Result review exposed neither its durable summary nor decision options"
+        )
+    return {"entered_edit_mode": False}
+
+
 def run_keyboard_path(client: CdpClient) -> dict[str, Any]:
     report: dict[str, Any] = {}
     job = open_result_view(client)
@@ -1827,6 +1885,7 @@ def run_keyboard_path(client: CdpClient) -> dict[str, Any]:
     time.sleep(0.15)
     after = focus_snapshot(client)
     report["compare_slider"] = {"before": before, "after": after}
+    report["review_form"] = prepare_review_form_for_keyboard(client)
     client.evaluate("document.querySelector('[data-review-decision=\"adjusted\"]').focus()")
     client.press_key("Enter")
     wait_for(client, "!document.querySelector('#review-reason').hidden")

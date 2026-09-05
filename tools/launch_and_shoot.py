@@ -778,6 +778,7 @@ class CandidateLaunchSession:
         self._runtime_cleanup_attempted = False
         self._runtime_cleanup_errors: tuple[str, ...] = ()
         self._publication_ready = False
+        self._publication_process_identity: ProcessIdentity | None = None
         self._restart_count = 0
         self._graceful_close_binding: GracefulCloseBinding | None = None
 
@@ -800,6 +801,10 @@ class CandidateLaunchSession:
     @property
     def publication_ready(self) -> bool:
         return self._publication_ready
+
+    @property
+    def publication_process_identity(self) -> ProcessIdentity | None:
+        return self._publication_process_identity
 
     @property
     def publication_protections_held(self) -> bool:
@@ -1247,6 +1252,11 @@ class CandidateLaunchSession:
             raise LaunchSafetyError("Candidate session is not open for publication")
         if self._publication_ready:
             raise LaunchSafetyError("Candidate session was already prepared for publication")
+        if self.process_identity is None:
+            raise LaunchSafetyError(
+                "Candidate process identity is unavailable for evidence publication"
+            )
+        self._publication_process_identity = self.process_identity
         preparation_errors = self._cleanup_runtime()
         if not preparation_errors:
             preparation_errors.extend(self._candidate_protection_errors())
@@ -1970,7 +1980,7 @@ def validate_staged_verification_receipt(
         session.data_dir,
         session.webview_data_dir,
         session.sidecar_identity,
-        session.process_identity,
+        session.publication_process_identity,
     )
     if any(value is None for value in required_session_values):
         raise LaunchSafetyError("Candidate session identity is incomplete")
@@ -2039,7 +2049,7 @@ def validate_staged_verification_receipt(
     candidate_exe = session.candidate_exe
     candidate_dir = session.candidate_dir
     sidecar_identity = session.sidecar_identity
-    process_identity = session.process_identity
+    process_identity = session.publication_process_identity
     if (
         _normalized_path(str(candidate.get("executable") or ""))
         != _normalized_path(candidate_exe)  # type: ignore[arg-type]
@@ -2231,6 +2241,11 @@ def finalize_staged_verification(
         session,
         expected_final_output,
     )
+    process_identity = session.publication_process_identity
+    if process_identity is None:
+        raise LaunchSafetyError(
+            "Candidate publication process identity is unavailable"
+        )
     inventory_before_finalization = directory_inventory(staged.staging_dir)
     finalization_payload = {
         "format_version": 1,
@@ -2248,8 +2263,8 @@ def finalize_staged_verification(
             "manifest_sha256": session.sidecar_identity.manifest_sha256,  # type: ignore[union-attr]
         },
         "process": {
-            "pid": session.pid,
-            "create_time": session.create_time,
+            "pid": process_identity.pid,
+            "create_time": process_identity.create_time,
             "cleaned": True,
         },
         "isolation": {
