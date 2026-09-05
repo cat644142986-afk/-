@@ -211,6 +211,26 @@ try {
         if (-not $resolvedTestData.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "Refusing to remove smoke-test data outside the temporary directory"
         }
-        Remove-Item -LiteralPath $resolvedTestData -Recurse -Force
+
+        # WebView2 can release its per-run lock files shortly after the Tauri
+        # process exits.  A single eager Remove-Item turns an otherwise passed
+        # application smoke into a false failure, and leaves the test ledger on
+        # C:.  Retry only this exact, validated temp root for a bounded period;
+        # never widen the target or kill unrelated browser processes.
+        $cleanupDeadline = (Get-Date).AddSeconds(12)
+        $cleanupError = $null
+        while ((Get-Date) -lt $cleanupDeadline -and (Test-Path -LiteralPath $resolvedTestData)) {
+            try {
+                Remove-Item -LiteralPath $resolvedTestData -Recurse -Force -ErrorAction Stop
+                $cleanupError = $null
+                break
+            } catch {
+                $cleanupError = $_
+                Start-Sleep -Milliseconds 300
+            }
+        }
+        if (Test-Path -LiteralPath $resolvedTestData) {
+            throw "Smoke-test data cleanup did not complete within the bounded retry window: $($cleanupError.Exception.Message)"
+        }
     }
 }
