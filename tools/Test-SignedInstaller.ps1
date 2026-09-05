@@ -370,14 +370,36 @@ function Get-DirectoryFingerprint([string]$Path) {
     return ([pscustomobject]@{ exists = $true; entries = $entries } | ConvertTo-Json -Depth 4 -Compress)
 }
 
+function Resolve-InstalledAppPath([string]$Directory) {
+    $candidates = @(
+        (Join-Path $Directory "Product Atelier.exe"),
+        (Join-Path $Directory "product-atelier.exe")
+    )
+    $existing = @(
+        $candidates |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    )
+    if ($existing.Count -ne 1) {
+        throw "Expected exactly one installed application executable, found $($existing.Count)"
+    }
+    return [System.IO.Path]::GetFullPath($existing[0])
+}
+
 function Stop-TestProcesses([string]$Directory) {
-    $expectedApp = Join-Path $Directory "Product Atelier.exe"
+    $expectedApps = @(
+        (Join-Path $Directory "Product Atelier.exe"),
+        (Join-Path $Directory "product-atelier.exe")
+    )
     $expectedSidecar = Join-Path $Directory "python-server\python-server.exe"
     foreach ($name in @("Product Atelier.exe", "product-atelier.exe", "python-server.exe")) {
         foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name='$name'" -ErrorAction SilentlyContinue)) {
             if (-not $process.ExecutablePath) { continue }
+            $matchesExpectedApp = @(
+                $expectedApps |
+                    Where-Object { Test-SamePath ([string]$process.ExecutablePath) $_ }
+            ).Count -gt 0
             if (
-                (Test-SamePath ([string]$process.ExecutablePath) $expectedApp) -or
+                $matchesExpectedApp -or
                 (Test-SamePath ([string]$process.ExecutablePath) $expectedSidecar)
             ) {
                 Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
@@ -689,7 +711,7 @@ try {
         }
     }
 
-    $appExe = Join-Path $installDirectory "Product Atelier.exe"
+    $appExe = Resolve-InstalledAppPath $installDirectory
     $sidecarExe = Join-Path $installDirectory "python-server\python-server.exe"
     $installedApp = Assert-RegularFile -PathToCheck $appExe -Label "Installed application"
     $installedSidecar = Assert-RegularFile -PathToCheck $sidecarExe -Label "Installed sidecar"

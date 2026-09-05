@@ -351,6 +351,10 @@ test('signed Windows release is fail-closed and candidate-first', () => {
   assert.match(installerGate, /installedIdentity\.marker_offset -ne \[long\]\$manifestInstaller\.bundle_type_marker_offset/);
   assert.match(installerGate, /function Assert-NoReparsePath/);
   assert.match(installerGate, /function Assert-RegularFile/);
+  assert.match(installerGate, /function Resolve-InstalledAppPath/);
+  assert.match(installerGate, /Join-Path \$Directory "Product Atelier\.exe"/);
+  assert.match(installerGate, /Join-Path \$Directory "product-atelier\.exe"/);
+  assert.match(installerGate, /\$appExe = Resolve-InstalledAppPath \$installDirectory/);
   assert.match(installerGate, /Assert-RegularFile[\s\S]*?-PathToCheck \$appExe/);
   assert.match(installerGate, /Assert-RegularFile[\s\S]*?-PathToCheck \$sidecarExe/);
   assert.match(installerGate, /Assert-RegularFile[\s\S]*?-PathToCheck \$uninstaller/);
