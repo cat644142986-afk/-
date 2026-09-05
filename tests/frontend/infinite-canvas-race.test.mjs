@@ -128,12 +128,13 @@ function createFakeDocument() {
 
 function createFakeWindow() {
   let nextId = 1;
+  let now = 0;
   const timers = new Map();
   const windowRef = {
     setTimeout(callback, delay = 0) {
       const id = nextId;
       nextId += 1;
-      timers.set(id, { callback, delay: Number(delay) || 0 });
+      timers.set(id, { callback, delay: Number(delay) || 0, due: now + (Number(delay) || 0) });
       return id;
     },
     clearTimeout(id) {
@@ -149,6 +150,15 @@ function createFakeWindow() {
     windowRef,
     delays: () => [...timers.values()].map((timer) => timer.delay).sort((left, right) => left - right),
     pendingCount: () => timers.size,
+    async advance(milliseconds) {
+      now += milliseconds;
+      for (const [id, timer] of [...timers]) {
+        if (timer.due > now || !timers.has(id)) continue;
+        timers.delete(id);
+        await timer.callback();
+        await settle();
+      }
+    },
     async runNext() {
       const next = [...timers.entries()].sort((left, right) => (
         left[1].delay - right[1].delay || left[0] - right[0]
@@ -389,6 +399,73 @@ async function activateAndOpen(harness, canvasId) {
   await settle();
   return harness.mounts.get(canvasId);
 }
+
+test('video and selection callbacks cannot postpone an unchanged scene save', async () => {
+  const harness = createHarness();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const edited = scene('edited');
+  mount.emitChange(edited);
+  for (let index = 0; index < 8; index += 1) {
+    await harness.clock.advance(80);
+    mount.emitChange({ ...edited, appState: { ...edited.appState, selectedElementIds: { video: true }, cursorButton: index % 2 ? 'up' : 'down' } });
+  }
+  assert.equal(harness.updateCalls.length, 1, 'the edit must be durable even while runtime callbacks continue');
+  assert.doesNotMatch(harness.documentRef.node('#spatial-save-state').textContent, /正在保存/);
+  harness.controller.destroy();
+});
+
+test('undo to the durable scene while a different save is in flight is still persisted', async () => {
+  const saving = deferred();
+  const harness = createHarness({
+    async updateScene({ call, record, updateCalls }) {
+      if (updateCalls.length === 1) await saving.promise;
+      record.scene = call.scene;
+      record.current_revision += 1;
+      return record;
+    },
+  });
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const original = harness.adapter.get('canvas:a').scene;
+  mount.emitChange(scene('edit-in-flight'));
+  const firstSave = harness.clock.runNext();
+  await waitFor(() => harness.updateCalls.length === 1);
+  mount.emitChange(original);
+  saving.resolve();
+  await firstSave;
+  await harness.clock.advance(240);
+  assert.equal(harness.updateCalls.length, 2);
+  assert.deepEqual(harness.adapter.get('canvas:a').scene, original);
+  harness.controller.destroy();
+});
+
+test('an unchanged callback retries a failed save and viewport changes remain durable', async () => {
+  const harness = createHarness({
+    async updateScene({ call, record, updateCalls }) {
+      if (updateCalls.length === 1) throw new Error('temporary save outage');
+      record.scene = call.scene;
+      record.current_revision += 1;
+      return record;
+    },
+  });
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const edited = scene('retry');
+  mount.emitChange(edited);
+  await harness.clock.advance(240);
+  assert.match(harness.documentRef.node('#spatial-save-state').textContent, /保存失败/);
+  mount.emitChange(edited);
+  await harness.clock.advance(240);
+  assert.equal(harness.updateCalls.length, 2);
+  const restoredOrder = { ...edited, elements: edited.elements.map(({ id, type, isDeleted }) => ({ isDeleted, type, id })) };
+  mount.emitChange(restoredOrder);
+  await harness.clock.advance(240);
+  assert.equal(harness.updateCalls.length, 2, 'JSON key order is not an edit');
+  const moved = { ...edited, appState: { zoom: { value: 0.75 }, scrollX: 90, scrollY: -45 } };
+  mount.emitChange(moved);
+  await harness.clock.advance(240);
+  assert.equal(harness.updateCalls.length, 3);
+  assert.deepEqual(harness.adapter.get('canvas:a').scene.appState, moved.appState);
+  harness.controller.destroy();
+});
 
 test('an Explorer FileList drop imports ledger assets before adding canvas references', async () => {
   const importCalls = [];

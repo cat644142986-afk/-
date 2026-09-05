@@ -1,5 +1,5 @@
 import * as API from './api.js';
-import { createApiSpatialCanvasAdapter } from './infinite-canvas-adapter.js';
+import { createApiSpatialCanvasAdapter, spatialSceneSignature } from './infinite-canvas-adapter.js';
 import {
   SPATIAL_DRAG_MIME,
   parseSpatialDragItem,
@@ -177,6 +177,7 @@ export function createInfiniteCanvasWorkspaceController({
   let runtimePromise = null;
   let recordsPromise = null;
   const pendingScenes = new Map();
+  const savingScenes = new Map();
   const sceneConflicts = new Map();
   let sceneSequence = 0;
   let sceneTimer = null;
@@ -859,9 +860,22 @@ export function createInfiniteCanvasWorkspaceController({
   function queueScene(scene, session = captureCanvasSession()) {
     if (!session || !canvasSessionIsCurrent(session)) return false;
     if (recoverUnexpectedEmptyScene(scene, session)) return false;
+    const signature = spatialSceneSignature(scene);
+    const pending = pendingScenes.get(session.canvasId);
+    const saving = savingScenes.get(session.canvasId);
+    const latest = pending || saving;
+    if (latest?.signature === signature) {
+      // Preserve the first deadline. A failed save has no timer and must remain
+      // retryable, even when the next callback carries exactly the same scene.
+      if (!pending || (sceneTimer !== null && sceneTimerCanvasId === session.canvasId)) return false;
+    } else if (!latest) {
+      const durable = adapter.get(session.canvasId)?.scene;
+      if (durable && spatialSceneSignature(durable) === signature) return false;
+    }
     const entry = {
       canvasId: session.canvasId,
       scene,
+      signature,
       sequence: ++sceneSequence,
     };
     pendingScenes.set(session.canvasId, entry);
@@ -1004,6 +1018,7 @@ export function createInfiniteCanvasWorkspaceController({
     const saveId = entry.canvasId;
     const scene = entry.scene;
     if (pendingScenes.get(saveId) === entry) pendingScenes.delete(saveId);
+    savingScenes.set(saveId, entry);
     savePromise = savePromise
       .catch(() => {})
       .then(() => adapter.updateScene(saveId, scene))
@@ -1036,6 +1051,9 @@ export function createInfiniteCanvasWorkspaceController({
         }
         console.error('Infinite canvas scene save failed', error);
         return null;
+      })
+      .finally(() => {
+        if (savingScenes.get(saveId) === entry) savingScenes.delete(saveId);
       });
     return savePromise;
   }

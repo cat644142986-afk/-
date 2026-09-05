@@ -69,6 +69,16 @@ function apiScene(scene) {
   };
 }
 
+// Match the persisted contract, excluding selection, media playback and other
+// runtime-only state. Sort object keys because restored JSON may use a different
+// property order from Excalidraw's live objects; element array order is meaningful.
+export function spatialSceneSignature(scene) {
+  return JSON.stringify(apiScene(scene), (_key, value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]]));
+  });
+}
+
 function sceneSummary(scene) {
   const elements = Array.from(scene?.elements || []).filter((element) => !element?.isDeleted);
   return {
