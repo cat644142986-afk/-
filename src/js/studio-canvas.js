@@ -25,6 +25,8 @@ import {
   createIcons,
 } from 'lucide';
 
+import { isVideoAsset } from './spatial-media-import.js';
+
 import {
   CANVAS_PAGE_SIZE,
   addAssetLayer,
@@ -238,7 +240,7 @@ export function createCanvasController({
   }
 
   function assets() {
-    return Array.from(state.assets || []);
+    return Array.from(state.assets || []).filter((asset) => !isVideoAsset(asset));
   }
 
   function assetById(assetId) {

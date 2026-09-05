@@ -1,3 +1,5 @@
+import { isVideoAsset } from './spatial-media-import.js';
+
 const PROFILE_ID_PATTERN = /^[a-z][a-z0-9._:-]{2,127}$/;
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 const SELECTION_UI_KEY = 'product_profile_selection';
@@ -372,10 +374,10 @@ export function createProductProfileController({
   async function loadReferenceAssets() {
     try {
       const workspace = await api.getWorkspace('single', { timeoutMs: 12000 });
-      referenceAssets = Array.isArray(workspace?.assets) ? workspace.assets : [];
+      referenceAssets = (Array.isArray(workspace?.assets) ? workspace.assets : []).filter((asset) => !isVideoAsset(asset));
       await hydrateAssetUrls(referenceAssets);
     } catch (_) {
-      referenceAssets = Array.from(state.assetsByCollection?.product || []);
+      referenceAssets = Array.from(state.assetsByCollection?.product || []).filter((asset) => !isVideoAsset(asset));
     }
   }
 

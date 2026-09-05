@@ -3037,12 +3037,16 @@ class AtelierLedger:
         width: int,
         height: int,
         name: str,
+        kind: str = "image",
         metadata: dict[str, Any] | None = None,
         collection_key: str = "product",
     ) -> dict[str, Any]:
         """Register one content-addressed source and return its stable logical asset."""
         if collection_key not in COLLECTION_IDS:
             raise ValueError(f"unsupported asset collection: {collection_key}")
+        kind = str(kind or "").strip().lower()
+        if kind not in {"image", "video"}:
+            raise ValueError(f"unsupported workspace asset kind: {kind}")
         blob_id = new_id("blob")
         asset_id = new_id("ast")
         now = utc_now()
@@ -3083,9 +3087,13 @@ class AtelierLedger:
                     f"content hash metadata conflict for asset blob: {sha256}"
                 )
             existing = connection.execute(
-                "SELECT id FROM assets WHERE blob_id = ? AND role = 'workspace_source'",
+                "SELECT id, kind FROM assets WHERE blob_id = ? AND role = 'workspace_source'",
                 (blob["id"],),
             ).fetchone()
+            if existing is not None and str(existing["kind"]) != kind:
+                raise LedgerSchemaError(
+                    f"content hash kind conflict for workspace asset: {sha256}"
+                )
             if existing is None:
                 try:
                     connection.execute(
@@ -3093,20 +3101,24 @@ class AtelierLedger:
                         INSERT INTO assets(
                             id, session_id, parent_asset_id, role, kind, path, name,
                             mime, width, height, sha256, metadata_json, created_at, blob_id
-                        ) VALUES(?, ?, NULL, 'workspace_source', 'image', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES(?, ?, NULL, 'workspace_source', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            asset_id, WORKSPACE_SESSION_ID, storage_path, name, mime,
+                            asset_id, WORKSPACE_SESSION_ID, kind, storage_path, name, mime,
                             width, height, sha256, encode_json(metadata), now, blob["id"],
                         ),
                     )
                 except sqlite3.IntegrityError:
                     existing = connection.execute(
-                        "SELECT id FROM assets WHERE blob_id = ? AND role = 'workspace_source'",
+                        "SELECT id, kind FROM assets WHERE blob_id = ? AND role = 'workspace_source'",
                         (blob["id"],),
                     ).fetchone()
                     if existing is None:
                         raise
+                    if str(existing["kind"]) != kind:
+                        raise LedgerSchemaError(
+                            f"content hash kind conflict for workspace asset: {sha256}"
+                        )
             if existing is not None:
                 asset_id = str(existing["id"])
             membership = connection.execute(

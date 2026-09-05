@@ -1698,20 +1698,35 @@ async def ledger_status():
 
 
 def workspace_asset_response(asset: dict) -> dict:
+    metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+    public_metadata = {
+        key: value for key, value in metadata.items()
+        if key not in {"cover_storage_path", "cover_sha256"}
+    }
+    mime = str(asset.get("mime") or "")
+    kind = str(asset.get("kind") or ("video" if mime.startswith("video/") else "image"))
     response = {
         "id": asset["id"],
         "name": asset.get("name", ""),
-        "mime": asset.get("mime", ""),
+        "kind": kind,
+        "mime": mime,
         "size_bytes": asset.get("size_bytes", 0),
         "width": asset.get("width"),
         "height": asset.get("height"),
         "sha256": asset.get("sha256", ""),
         "created_at": asset.get("created_at"),
-        "metadata": asset.get("metadata", {}),
+        "metadata": public_metadata,
         "role": asset.get("role", "workspace_source"),
         "thumbnail_url": f"/api/assets/{asset['id']}/thumbnail",
         "content_url": f"/api/assets/{asset['id']}/content",
+        "download_url": f"/api/assets/{asset['id']}/content?download=true",
     }
+    if kind == "video":
+        response.update({
+            "duration_seconds": metadata.get("duration_seconds"),
+            "cover_url": f"/api/assets/{asset['id']}/thumbnail",
+            "stream_url": f"/api/assets/{asset['id']}/content",
+        })
     if asset.get("membership"):
         response["membership"] = dict(asset["membership"])
     return response
@@ -1906,7 +1921,10 @@ def raise_asset_http_error(exc: AssetStoreError) -> None:
     elif isinstance(exc, AssetValidationError):
         if exc.code == "FILE_TOO_LARGE":
             status_code = 413
-        elif exc.code in {"UNSUPPORTED_EXTENSION", "UNSUPPORTED_IMAGE_FORMAT", "EXTENSION_MISMATCH"}:
+        elif exc.code in {
+            "UNSUPPORTED_EXTENSION", "UNSUPPORTED_IMAGE_FORMAT", "EXTENSION_MISMATCH",
+            "INVALID_VIDEO_CONTAINER",
+        }:
             status_code = 415
         else:
             status_code = 400
@@ -1988,6 +2006,36 @@ async def import_workspace_assets(
         finally:
             await file.close()
     return {"assets": imported, "errors": errors, "count": len(imported)}
+
+
+@app.post("/api/assets/import-video")
+async def import_workspace_video_asset(
+    file: UploadFile = File(...),
+    cover: UploadFile = File(...),
+    width: int = Form(...),
+    height: int = Form(...),
+    duration_seconds: float = Form(...),
+    collection: str = "product",
+):
+    collection = _validate_collection_key(collection)
+    try:
+        asset = await run_in_threadpool(
+            ASSET_STORE.import_video_stream,
+            file.file,
+            file.filename or "video.webm",
+            cover.file,
+            cover.filename or "video-cover.jpg",
+            width=width,
+            height=height,
+            duration_seconds=duration_seconds,
+            collection_key=collection,
+        )
+        return workspace_asset_response(asset)
+    except AssetStoreError as exc:
+        raise_asset_http_error(exc)
+    finally:
+        await file.close()
+        await cover.close()
 
 
 class FolderSourceRequest(BaseModel):

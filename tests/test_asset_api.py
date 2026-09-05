@@ -37,6 +37,12 @@ def png_bytes(color: tuple[int, int, int] = (220, 100, 40)) -> bytes:
     return buffer.getvalue()
 
 
+VIDEO_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "python" / "video_fixtures" / "offline-preview-v1" / "1x1" / "5s.webm"
+)
+
+
 def local_edit_canvas_payload(source_id: str) -> dict:
     return {
         "id": "canvas:api-local-edit",
@@ -446,6 +452,78 @@ class AssetApiTests(unittest.TestCase):
         restarted_listing = self.client.get("/api/assets").json()
         self.assertEqual(restarted_listing["count"], 1)
         self.assertEqual(restarted_listing["assets"][0]["id"], imported["id"])
+
+    def test_video_import_exposes_cover_stream_download_and_restart_metadata(self) -> None:
+        data = VIDEO_FIXTURE.read_bytes()
+        response = self.client.post(
+            "/api/assets/import-video",
+            params={"collection": "product"},
+            data={"width": "320", "height": "320", "duration_seconds": "5"},
+            files={
+                "file": ("preview.webm", data, "video/webm"),
+                "cover": ("preview-cover.png", png_bytes(), "image/png"),
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        imported = response.json()
+        self.assertEqual(imported["kind"], "video")
+        self.assertEqual(imported["mime"], "video/webm")
+        self.assertEqual(imported["duration_seconds"], 5.0)
+        self.assertEqual(imported["stream_url"], imported["content_url"])
+        self.assertEqual(imported["cover_url"], imported["thumbnail_url"])
+        self.assertNotIn("path", imported)
+        self.assertNotIn("cover_storage_path", imported)
+        self.assertNotIn("cover_storage_path", imported["metadata"])
+        self.assertNotIn("cover_sha256", imported["metadata"])
+
+        streamed = self.client.get(imported["stream_url"])
+        self.assertEqual(streamed.status_code, 200, streamed.text)
+        self.assertEqual(streamed.content, data)
+        self.assertIn("inline", streamed.headers.get("content-disposition", ""))
+        downloaded = self.client.get(imported["download_url"])
+        self.assertEqual(downloaded.status_code, 200, downloaded.text)
+        self.assertIn("attachment", downloaded.headers.get("content-disposition", ""))
+        cover = self.client.get(imported["cover_url"])
+        self.assertEqual(cover.status_code, 200, cover.text)
+        self.assertEqual(cover.headers["content-type"], "image/jpeg")
+
+        server.LEDGER = AtelierLedger(self.root / "atelier.sqlite3")
+        server.ASSET_STORE = AssetStore(self.asset_dir, server.LEDGER)
+        recovered = self.client.get(f"/api/assets/{imported['id']}")
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual(recovered.json()["kind"], "video")
+        self.assertEqual(recovered.json()["duration_seconds"], 5.0)
+
+        internal = server.LEDGER.get_workspace_asset(imported["id"])
+        video_path = Path(internal["blob"]["storage_path"])
+        cover_path = Path(internal["metadata"]["cover_storage_path"])
+        self.client.delete(f"/api/collections/product/assets/{imported['id']}")
+        original_retention = server.TRASH_RETENTION_DAYS
+        server.TRASH_RETENTION_DAYS = 0
+        try:
+            purged = self.client.delete(
+                f"/api/trash/assets/{imported['id']}",
+                params={"confirm_asset_id": imported["id"]},
+            )
+            self.assertEqual(purged.status_code, 200, purged.text)
+            self.assertTrue(purged.json()["file_deleted"])
+            self.assertFalse(video_path.exists())
+            self.assertFalse(cover_path.exists())
+        finally:
+            server.TRASH_RETENTION_DAYS = original_retention
+
+    def test_video_import_rejects_spoofed_container_without_dirty_asset(self) -> None:
+        response = self.client.post(
+            "/api/assets/import-video",
+            data={"width": "320", "height": "320", "duration_seconds": "5"},
+            files={
+                "file": ("spoofed.webm", b"not a webm", "video/webm"),
+                "cover": ("cover.png", png_bytes(), "image/png"),
+            },
+        )
+        self.assertEqual(response.status_code, 415, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "INVALID_VIDEO_CONTAINER")
+        self.assertEqual(self.client.get("/api/assets").json()["count"], 0)
 
     def test_folder_source_import_is_flat_durable_and_plans_delivery_inside_source(self) -> None:
         source_folder = self.root / "待处理商品"

@@ -26,6 +26,12 @@ def image_bytes(
     return buffer.getvalue()
 
 
+VIDEO_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "python" / "video_fixtures" / "offline-preview-v1" / "1x1" / "5s.webm"
+)
+
+
 class AssetStoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -75,6 +81,75 @@ class AssetStoreTests(unittest.TestCase):
         self.assertEqual(self.ledger.stats()["counts"]["workspace_assets"], 1)
         self.assertEqual(self.ledger.stats()["counts"]["sessions"], 0)
         self.assertEqual(self.ledger.list_sessions(), [])
+
+    def test_video_import_persists_original_cover_metadata_and_deduplicates(self) -> None:
+        data = VIDEO_FIXTURE.read_bytes()
+        cover = image_bytes("JPEG", size=(320, 320))
+        imported = self.store.import_video_stream(
+            io.BytesIO(data),
+            "preview.webm",
+            io.BytesIO(cover),
+            "preview-cover.jpg",
+            width=320,
+            height=320,
+            duration_seconds=5,
+        )
+
+        self.assertEqual(imported["kind"], "video")
+        self.assertEqual(imported["mime"], "video/webm")
+        self.assertEqual(imported["metadata"]["duration_seconds"], 5.0)
+        self.assertEqual(len(self.physical_files()), 2)
+        asset, path = self.store.resolve_asset_path(imported["id"])
+        self.assertEqual(path.read_bytes(), data)
+        self.assertEqual(asset["blob"]["sha256"], imported["sha256"])
+        with Image.open(io.BytesIO(self.store.thumbnail_bytes(imported["id"]))) as thumbnail:
+            self.assertLessEqual(max(thumbnail.size), 512)
+
+        duplicate = self.store.import_video_stream(
+            io.BytesIO(data),
+            "same-preview.webm",
+            io.BytesIO(cover),
+            "same-preview-cover.jpg",
+            width=320,
+            height=320,
+            duration_seconds=5,
+        )
+        self.assertEqual(duplicate["id"], imported["id"])
+        self.assertEqual(len(self.physical_files()), 2)
+
+    def test_invalid_video_container_or_cover_leaves_no_dirty_data(self) -> None:
+        cases = [
+            (b"not webm", "broken.webm", image_bytes("JPEG"), "cover.jpg", "INVALID_VIDEO_CONTAINER"),
+            (VIDEO_FIXTURE.read_bytes(), "preview.webm", b"not an image", "cover.jpg", "INVALID_IMAGE"),
+        ]
+        for video, video_name, cover, cover_name, code in cases:
+            with self.subTest(code=code):
+                with self.assertRaises(AssetValidationError) as caught:
+                    self.store.import_video_stream(
+                        io.BytesIO(video), video_name, io.BytesIO(cover), cover_name,
+                        width=320, height=320, duration_seconds=5,
+                    )
+                self.assertEqual(caught.exception.code, code)
+        self.assertEqual(self.ledger.list_workspace_assets(), [])
+        self.assertEqual(self.physical_files(), [])
+
+    def test_video_database_failure_removes_original_and_cover(self) -> None:
+        with mock.patch.object(
+            self.ledger,
+            "register_workspace_asset",
+            side_effect=sqlite3.OperationalError("database failure"),
+        ):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.store.import_video_stream(
+                    io.BytesIO(VIDEO_FIXTURE.read_bytes()),
+                    "preview.webm",
+                    io.BytesIO(image_bytes("JPEG")),
+                    "cover.jpg",
+                    width=320,
+                    height=320,
+                    duration_seconds=5,
+                )
+        self.assertEqual(self.physical_files(), [])
 
     def test_concurrent_duplicate_imports_are_idempotent(self) -> None:
         data = image_bytes(size=(64, 64))

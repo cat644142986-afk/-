@@ -1,4 +1,5 @@
 import { statusPanelHtml } from './status-view.js';
+import { isVideoAsset } from './spatial-media-import.js';
 
 const ASSET_PAGE_SIZE = 40;
 
@@ -191,7 +192,7 @@ export function createAssetManagerController({
     const selection = selected[view];
     const visibleIds = visible.map((asset) => String(asset.id));
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((assetId) => selection.has(assetId));
-    query('#asset-manager-status').textContent = search ? `找到 ${filtered.length} 张 · 已显示 ${visible.length}` : `已显示 ${visible.length} / ${filtered.length}`;
+    query('#asset-manager-status').textContent = search ? `找到 ${filtered.length} 项 · 已显示 ${visible.length}` : `已显示 ${visible.length} / ${filtered.length}`;
     query('#asset-select-visible').textContent = allVisibleSelected ? '取消当前' : '选择当前';
     query('#asset-select-visible').disabled = busy || !visible.length;
     query('#asset-clear-selection').hidden = selection.size === 0;
@@ -199,7 +200,7 @@ export function createAssetManagerController({
     const bulk = query('#asset-bulk-action');
     bulk.hidden = selection.size === 0;
     bulk.disabled = busy;
-    bulk.textContent = busy ? '正在处理…' : `${view === 'trash' ? '批量恢复' : '批量移出'} ${selection.size} 张`;
+    bulk.textContent = busy ? '正在处理…' : `${view === 'trash' ? '批量恢复' : '批量移出'} ${selection.size} 项`;
   }
 
   function renderList() {
@@ -209,7 +210,7 @@ export function createAssetManagerController({
     if (!currentItems().length) {
       list.innerHTML = statusPanelHtml('empty', {
         title: view === 'trash' ? '回收站是空的' : '当前还没有素材',
-        detail: view === 'trash' ? '移出的图片会保留在这里，可随时恢复。' : '导入图片后，会持久保存在这个素材域。',
+        detail: view === 'trash' ? '移出的素材会保留在这里，可随时恢复。' : '导入素材后，会持久保存在这个素材域。',
         fill: true,
       });
       return;
@@ -223,6 +224,7 @@ export function createAssetManagerController({
     const allItems = currentItems();
     list.innerHTML = visible.map((asset) => {
       const assetId = String(asset.id);
+      const video = isVideoAsset(asset);
       const dimensions = asset.width && asset.height ? `${asset.width}×${asset.height}` : '已持久化';
       const bytes = formatBytes(asset.size_bytes);
       const checked = selected[view].has(assetId);
@@ -230,7 +232,7 @@ export function createAssetManagerController({
       const orderActions = manualOrder
         ? `<span class="asset-manager-item__order"><button type="button" data-asset-move-id="${escapeHtml(assetId)}" data-asset-move-delta="-1" aria-label="上移 ${escapeHtml(asset.name)}" ${itemIndex <= 0 ? 'disabled' : ''}>↑</button><button type="button" data-asset-move-id="${escapeHtml(assetId)}" data-asset-move-delta="1" aria-label="下移 ${escapeHtml(asset.name)}" ${itemIndex >= allItems.length - 1 ? 'disabled' : ''}>↓</button></span>`
         : '';
-      const taskAction = view === 'active'
+      const taskAction = view === 'active' && !video
         ? `<button class="${taskSelection.has(assetId) ? 'is-selected' : ''}" type="button" data-asset-use-id="${escapeHtml(assetId)}">${taskSelection.has(assetId) ? '已选' : '用于任务'}</button>` : '';
       const stateAction = view === 'trash'
         ? `<button class="is-primary" type="button" data-asset-restore-id="${escapeHtml(assetId)}">恢复</button>`
@@ -242,11 +244,11 @@ export function createAssetManagerController({
       return `<article class="asset-manager-item ${checked ? 'is-checked' : ''}"${spatialAttributes}>
         <label class="asset-manager-item__check"><input type="checkbox" data-asset-select-id="${escapeHtml(assetId)}" ${checked ? 'checked' : ''} /><span aria-hidden="true">${checked ? '✓' : ''}</span><span class="sr-only">批量选择 ${escapeHtml(asset.name)}</span></label>
         <img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" decoding="async" />
-        <div class="asset-manager-item__copy"><strong title="${escapeHtml(asset.name)}">${escapeHtml(asset.name || '未命名素材')}</strong><small>${escapeHtml([dimensions, bytes, view === 'trash' ? '可恢复' : '当前素材域'].filter(Boolean).join(' · '))}</small></div>
+        <div class="asset-manager-item__copy"><strong title="${escapeHtml(asset.name)}">${escapeHtml(asset.name || '未命名素材')}</strong><small>${escapeHtml([video ? '视频' : '', dimensions, bytes, view === 'trash' ? '可恢复' : '当前素材域'].filter(Boolean).join(' · '))}</small></div>
         ${orderActions}<div class="asset-manager-item__actions">${taskAction}${canvasAction}<button type="button" data-asset-reference-id="${escapeHtml(assetId)}">占用</button>${stateAction}</div>
       </article>`;
     }).join('') + (visible.length < filtered.length
-      ? `<button class="asset-manager-more" id="asset-manager-more" type="button">再显示 ${Math.min(ASSET_PAGE_SIZE, filtered.length - visible.length)} 张 <small>剩余 ${filtered.length - visible.length} 张</small></button>` : '');
+      ? `<button class="asset-manager-more" id="asset-manager-more" type="button">再显示 ${Math.min(ASSET_PAGE_SIZE, filtered.length - visible.length)} 项 <small>剩余 ${filtered.length - visible.length} 项</small></button>` : '');
     queryAll('[data-asset-select-id]', list).forEach((input) => input.addEventListener('change', () => {
       if (input.checked) selected[view].add(input.dataset.assetSelectId);
       else selected[view].delete(input.dataset.assetSelectId);
@@ -362,7 +364,7 @@ export function createAssetManagerController({
     clearPurgeState();
     if (view === 'trash') await loadTrash();
     else renderList();
-    toast(failed.length ? `${succeeded.length} 张处理完成，${failed.length} 张失败` : `${succeeded.length} 张素材已${mutationView === 'trash' ? '恢复' : '移入回收站'}`, failed.length ? 'error' : 'success', 5200);
+    toast(failed.length ? `${succeeded.length} 项处理完成，${failed.length} 项失败` : `${succeeded.length} 项素材已${mutationView === 'trash' ? '恢复' : '移入回收站'}`, failed.length ? 'error' : 'success', 5200);
   }
 
   async function reorder(assetId, delta) {

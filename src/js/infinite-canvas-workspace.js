@@ -1278,12 +1278,12 @@ export function createInfiniteCanvasWorkspaceController({
     if (hasFileTransfer) {
       setFileDropActive(false);
       if (!files.length) {
-        query('#spatial-save-state').textContent = '没有读取到可导入的图片';
+        query('#spatial-save-state').textContent = '没有读取到可导入的图片或视频';
         return;
       }
       try {
         const targetSession = await ensureCanvasForImport();
-        query('#spatial-save-state').textContent = `正在导入 ${files.length} 张图片`;
+        query('#spatial-save-state').textContent = `正在导入 ${files.length} 项素材`;
         const items = Array.from(await onImportFiles(files) || []).filter(Boolean);
         if (!items.length) {
           query('#spatial-save-state').textContent = '没有可加入画布的图片';
@@ -1291,7 +1291,7 @@ export function createInfiniteCanvasWorkspaceController({
         }
         await addBusinessItems(items, targetSession);
       } catch (error) {
-        query('#spatial-save-state').textContent = '图片导入失败，请重试';
+        query('#spatial-save-state').textContent = '素材导入失败，请重试';
         console.error('Infinite canvas file import failed', error);
       }
       return;

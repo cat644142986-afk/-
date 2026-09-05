@@ -252,7 +252,10 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(workspace, /documentRef\.addEventListener\('dragleave', onDragLeave\)/);
   assert.match(stableUiCss, /\[data-file-drop-active="true"\]/);
   assert.match(app, /onImportFiles: importSpatialCanvasFiles/);
-  assert.match(app, /API\.importAssets\(valid, MODE_CONFIG\.single\.collection\)/);
+  assert.match(app, /partitionSpatialImportFiles\(fileList\)/);
+  assert.match(app, /API\.importAssets\(partition\.images, MODE_CONFIG\.single\.collection\)/);
+  assert.match(app, /createVideoImportDescriptor\(file\)/);
+  assert.match(app, /API\.importVideoAsset\(/);
   assert.doesNotMatch(app, /已导入并加入画布/);
   assert.equal(tauriConfig.app.windows[0].dragDropEnabled, false);
   assert.match(workspace, /addBusinessItems/);

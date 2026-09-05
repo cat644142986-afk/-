@@ -1,5 +1,13 @@
 # 无限画布 IC6 Windows 探索性实机记录（2026-09-03）
 
+## 最新状态（2026-09-06，优先于下文历史记录）
+
+`730366b7c505a6f3ceb85809e7d1f1621071b1ef` 已完成自动保存修复后的 Windows 候选、三窗口 144 DPI WebView、100%/150% DPI 与 DWM、启动无黑帧、Fabric 实际子版本回填、视频完成/取消/播放/seek、两轮自然关闭恢复和同一身份 NSIS 隔离安装/运行/卸载。候选为 contract `2026-09-02.4`、schema v8、`378,354,298 bytes`（360.83 MiB）；App / sidecar / manifest / tree / identity receipt SHA-256 分别为 `41B01F3B05AE15166DACB78DDCDD6E74DB5C4F69B9517A941DB2E83FECF7528A`、`C000ECEF4CE75720041544739D82230BBFDFB923E4BC0CD23C9539A6D4678451`、`B9F1367EEE2F64DAD35D8F57401AA60AD0B5C874AD097A7E42654226B629B0C6`、`43F981E7DD8E045AD1FFD76E2DB4C08A7062940CD16D025D967B9BCEBCE8F03B`、`C355CCD7E19BEA5957936E94CD6C49F8783CBAE1B19DB0F2E966034FD5934D68`。未签名 NSIS 为 `110,050,816 bytes`，SHA-256 `67416A30BD5BC67A61E094FCB640D4033388211255D1219CE59D99BE22F963D6`。
+
+本轮逐项复核已执行步骤时发现一个不能靠旧证据关闭的真实产品缺口：Explorer drop 虽然把 `FileList` 交给应用，但 `importSpatialCanvasFiles()` 仍复用了仅支持 JPG/PNG/WebP 的图片过滤和批量接口，所以“系统拖入视频”实际上没有落地。现已在不改变快捷处理图片入口的前提下补齐：无限画布单独接受 MP4/WebM；WebView 本机读取尺寸/时长并生成最大边 960 px 的 JPEG 封面；sidecar 对视频容器、大小、时长、像素和封面做独立校验，原视频与封面按内容寻址保存，scene 仍只写业务引用；视频不进入生图、抠图、ProductProfile 或 Fabric 的图片输入。重复导入、重启读取、原视频流/下载、封面缩略图、回收站永久清理、数据库失败回滚和内部路径不外泄均有回归。
+
+源码门禁为前端 `259/259`；Python 共 `541` 项（`537` 通过、`4` 项平台条件跳过）；Vite production build、无限画布 lazy bundle、Ruff `--select F`、JavaScript/Python 语法和 Git whitespace 全绿。production dist `10,732,566 bytes`，预计正式目录 `368.8 MiB`。这次业务修复使 `730366b` artifact 成为前序证据而不是当前可发布候选；下一步只从本修复的干净、已推送 Git 身份重建一次候选，执行打包双 smoke、视频文件拖入/封面/播放/导出/重启专项和同身份 NSIS，不重复已证明且改动范围未触及的空间编辑、Fabric 像素合同、DWM 实现或发布事务负向测试。正式便携目录、正式快捷方式和正式账本继续禁止覆盖或提升。
+
 ## 最新状态（2026-09-05，优先于下文历史游标）
 
 IC6 尚未全部通过。`d4df75e550b063d3ecefe79877664bd492f37dfd` 候选修复了视频回填触发异常空 scene 的问题，本轮通过真实窗口验证视频生成、按需播放、原视频导出与同一隔离账本两次自然关闭/恢复；同时发现重复 `onChange` 使自动保存防抖计时持续后移，须修复后重建候选。不得以自然关闭的强制保存成功，替代运行期间自动保存通过。

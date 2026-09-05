@@ -71,6 +71,7 @@ import { createStudioState, draftPayloadFromSnapshot, snapshotFromDraft } from '
 import { createInfiniteCanvasWorkspaceController } from './infinite-canvas-workspace.js';
 import { APP_CLOSE_SAVE_TIMEOUT, createAppCloseCoordinator } from './app-close-lifecycle.js';
 import { isSpatialVideoJob } from './spatial-video.js';
+import { createVideoImportDescriptor, isVideoAsset, partitionSpatialImportFiles } from './spatial-media-import.js';
 import {
   SPATIAL_DRAG_MIME,
   serializeSpatialDragItem,
@@ -329,7 +330,12 @@ function escapeHtml(value) {
 }
 
 function selectedAssetIds(mode = state.currentMode) {
-  return state.modeSelections[mode] || [];
+  const ids = state.modeSelections[mode] || [];
+  const collection = MODE_CONFIG[mode]?.collection;
+  const assets = state.assetsByCollection[collection] || (mode === state.currentMode ? state.assets : []);
+  if (!assets.length) return ids;
+  const videos = new Set(assets.filter(isVideoAsset).map((asset) => String(asset.id)));
+  return ids.filter((assetId) => !videos.has(String(assetId)));
 }
 
 function selectedAssets(mode = state.currentMode) {
@@ -649,7 +655,7 @@ function hydrateWorkspace(mode, payload) {
   const draft = payload?.draft || {};
   const collection = payload?.collection || MODE_CONFIG[mode].collection;
   const assets = Array.isArray(payload?.assets) ? payload.assets : [];
-  const activeAssetIds = new Set(assets.map((asset) => String(asset.id)));
+  const activeAssetIds = new Set(assets.filter((asset) => !isVideoAsset(asset)).map((asset) => String(asset.id)));
   state.hydratingWorkspace = true;
   try {
     state.workspaceDrafts[mode] = draft;
@@ -1569,7 +1575,7 @@ function renderFileMeta() {
   const folderBatch = state.currentMode === 'multi-file'
     ? folderBatchForMode('multi-file', true)
     : null;
-  $('#asset-count').textContent = `素材库 ${state.assets.length} 张`;
+  $('#asset-count').textContent = `素材库 ${state.assets.length} 项`;
   $('#btn-replace').hidden = false;
   $('#btn-replace').disabled = state.importing;
   $('#btn-clear').hidden = count === 0;
@@ -1600,12 +1606,22 @@ function renderQueue() {
   const renderedAssets = boundedAssetRenderList(state.assets, selection, 60);
   const items = renderedAssets.map((asset, index) => {
     const selected = selection.has(asset.id);
+    const video = isVideoAsset(asset);
     const dimensions = asset.width && asset.height ? `${asset.width}×${asset.height}` : '已持久化';
-    return `<article class="queue-item asset-card ${selected ? 'selected' : ''}" data-spatial-asset-id="${escapeHtml(asset.id)}" draggable="true">
-      <button class="asset-card__select" type="button" data-asset-id="${escapeHtml(asset.id)}" aria-pressed="${selected}" aria-label="${selected ? '取消选择' : '选择'} ${escapeHtml(asset.name)}">
+    const duration = video && Number(asset.duration_seconds || asset.metadata?.duration_seconds || 0) > 0
+      ? ` · ${Number(asset.duration_seconds || asset.metadata?.duration_seconds).toFixed(1).replace(/\.0$/, '')}s`
+      : '';
+    const selectControl = video
+      ? `<div class="asset-card__select" aria-label="视频素材 ${escapeHtml(asset.name)}">
+        <span class="asset-card__visual"><img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" decoding="async" /><span class="asset-card__check" aria-hidden="true">▶</span></span>
+        <span class="asset-card__meta"><strong title="${escapeHtml(asset.name)}">${escapeHtml(asset.name || `视频 ${index + 1}`)}</strong><small>视频 · ${escapeHtml(dimensions)}${duration}</small></span>
+      </div>`
+      : `<button class="asset-card__select" type="button" data-asset-id="${escapeHtml(asset.id)}" aria-pressed="${selected}" aria-label="${selected ? '取消选择' : '选择'} ${escapeHtml(asset.name)}">
         <span class="asset-card__visual"><img src="${escapeHtml(assetUrl(asset))}" alt="" loading="lazy" decoding="async" /><span class="asset-card__check" aria-hidden="true">${selected ? '✓' : '+'}</span></span>
         <span class="asset-card__meta"><strong title="${escapeHtml(asset.name)}">${escapeHtml(asset.name || `素材 ${index + 1}`)}</strong><small>${escapeHtml(dimensions)}</small></span>
-      </button>
+      </button>`;
+    return `<article class="queue-item asset-card ${selected ? 'selected' : ''}" data-spatial-asset-id="${escapeHtml(asset.id)}" draggable="true">
+      ${selectControl}
       <button class="asset-card__canvas" type="button" data-send-asset-canvas="${escapeHtml(asset.id)}" aria-label="将 ${escapeHtml(asset.name)} 发送到无限画布" title="发送到无限画布">画布</button>
       <button class="asset-card__remove" type="button" data-remove-asset-id="${escapeHtml(asset.id)}" aria-label="将 ${escapeHtml(asset.name)} 移入回收站" title="移入回收站"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/></svg></button>
     </article>`;
@@ -1647,8 +1663,13 @@ function validImageImports(fileList) {
 }
 
 async function importSpatialCanvasFiles(fileList) {
-  const valid = validImageImports(fileList);
-  if (!valid.length) return [];
+  const partition = partitionSpatialImportFiles(fileList);
+  const accepted = partition.images.length + partition.videos.length;
+  if (!accepted) {
+    const message = partition.rejected[0]?.message || '没有读取到可导入的素材';
+    toast(message, 'error', 5200);
+    return [];
+  }
   if (state.importing) {
     toast('上一批素材仍在导入，请稍候', 'error');
     return [];
@@ -1656,22 +1677,40 @@ async function importSpatialCanvasFiles(fileList) {
   state.importing = true;
   renderFileMeta();
   $('#btn-browse').disabled = true;
-  toast(`正在导入 ${valid.length} 张图片到无限画布…`);
+  toast(`正在导入 ${accepted} 项素材到无限画布…`);
   try {
-    const result = await API.importAssets(valid, MODE_CONFIG.single.collection);
-    const imported = Array.isArray(result?.assets) ? result.assets : [];
-    const errors = Array.isArray(result?.errors) ? result.errors : [];
+    const imported = [];
+    const errors = [...partition.rejected];
+    if (partition.images.length) {
+      try {
+        const result = await API.importAssets(partition.images, MODE_CONFIG.single.collection);
+        imported.push(...(Array.isArray(result?.assets) ? result.assets : []));
+        errors.push(...(Array.isArray(result?.errors) ? result.errors : []));
+      } catch (error) {
+        errors.push({ message: formatApiError(error, '图片导入失败') });
+      }
+    }
+    for (const file of partition.videos) {
+      try {
+        const descriptor = await createVideoImportDescriptor(file);
+        imported.push(await API.importVideoAsset(
+          descriptor.file,
+          descriptor.cover,
+          descriptor,
+          MODE_CONFIG.single.collection,
+        ));
+      } catch (error) {
+        errors.push({ file, message: formatApiError(error, '视频导入失败') });
+      }
+    }
     if (imported.length) await loadWorkspace('single', true);
     if (errors.length) {
-      toast(`${imported.length} 张导入成功，${errors.length} 张失败`, 'error', 5200);
+      toast(`${imported.length} 项导入成功，${errors.length} 项失败`, 'error', 5200);
     } else if (imported.length) {
-      toast(`已导入 ${imported.length} 张图片`, 'success');
+      toast(`已导入 ${imported.length} 项素材`, 'success');
     }
     assetManager.sync();
     return imported.map((asset) => spatialItemFromAsset(asset));
-  } catch (error) {
-    toast(`图片导入失败：${formatApiError(error, '持久素材接口不可用')}`, 'error', 6000);
-    throw error;
   } finally {
     state.importing = false;
     $('#btn-browse').disabled = false;
@@ -1789,6 +1828,11 @@ async function importFolderSource() {
 
 function toggleAssetSelection(assetId) {
   const config = MODE_CONFIG[state.currentMode];
+  const target = state.assets.find((asset) => String(asset.id) === String(assetId));
+  if (target && isVideoAsset(target)) {
+    toast('视频只用于无限画布，不能作为当前图片任务输入', 'error', 4200);
+    return;
+  }
   const current = selectedAssetIds();
   if (state.currentMode === 'multi-file' && folderBatchForMode('multi-file', true)) {
     state.folderBatches['multi-file'] = null;

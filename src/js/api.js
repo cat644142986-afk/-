@@ -271,6 +271,15 @@ export async function importAssets(files, collection = 'product') {
   Array.from(files || []).forEach(function(file) { fd.append('files', file); });
   return postForm('/api/assets/import-batch?collection=' + encodeURIComponent(collection), fd);
 }
+export async function importVideoAsset(file, cover, metadata, collection = 'product') {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('cover', cover);
+  fd.append('width', String(metadata?.width || ''));
+  fd.append('height', String(metadata?.height || ''));
+  fd.append('duration_seconds', String(metadata?.durationSeconds || ''));
+  return postForm('/api/assets/import-video?collection=' + encodeURIComponent(collection), fd);
+}
 export async function importFolderSources(folderPath) {
   return fetchJSON('/api/folder-sources/import', {
     method: 'POST',
