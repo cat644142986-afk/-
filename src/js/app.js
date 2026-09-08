@@ -220,6 +220,9 @@ const infiniteCanvasWorkspace = createInfiniteCanvasWorkspaceController({
   onImportFiles: importSpatialCanvasFiles,
   onVideoJobSubmitted: () => loadJobs(true),
   onVideoJobSettled: () => loadJobs(true),
+  onRecoveryAction: (action) => (
+    action === 'retry-spatial-return' ? canvasController.retrySpatialReturn() : false
+  ),
 });
 let removeAppCloseListener = null;
 function setAppCloseInteractionLocked(locked) {
@@ -1157,8 +1160,22 @@ async function handleSpatialFineEditResult({ origin, resultAsset, replayed }) {
     lineage_parent_id: resultAsset.lineage_parent_id || refs.result_id || refs.asset_id,
   });
   switchPage('canvas');
-  const added = await infiniteCanvasWorkspace.addBusinessItems([item]);
-  if (!added) throw new Error('精修结果未能回填无限画布');
+  const originCanvasId = String(origin?.canvasId || '');
+  if (!originCanvasId) throw new Error('精修结果缺少来源无限画布引用');
+  if (infiniteCanvasWorkspace.currentId !== originCanvasId) {
+    const opened = await infiniteCanvasWorkspace.openCanvas(originCanvasId);
+    if (!opened) throw new Error('来源无限画布尚未恢复，精修结果未回填');
+  }
+  const added = await infiniteCanvasWorkspace.addBusinessItems([item], null, {
+    recoveryId: 'spatial-return',
+    external: true,
+    action: { label: '重试回填', value: 'retry-spatial-return' },
+  });
+  if (!added || added.skipped) throw new Error(
+    added?.reason === 'canvas-switched'
+      ? '回填期间画布已切换，精修结果尚未加入'
+      : '精修结果未能回填无限画布',
+  );
   toast(replayed ? '精修结果已从账本恢复并回填画布' : '精修结果已作为新版本回填画布', 'success', 4200);
 }
 

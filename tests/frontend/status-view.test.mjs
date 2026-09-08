@@ -4,7 +4,14 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-import { STATUS_KINDS, statusPanelHtml, statusViewModel } from '../../src/js/status-view.js';
+import {
+  FAILURE_POLICIES,
+  RECOVERY_DEFINITIONS,
+  STATUS_KINDS,
+  recoveryViewModel,
+  statusPanelHtml,
+  statusViewModel,
+} from '../../src/js/status-view.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -30,6 +37,23 @@ test('status markup is accessible, actionable, and safely escaped', () => {
   assert.match(html, /aria-busy="true"/);
   assert.match(html, /&lt;script&gt;bad\(\)&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<script>/);
+});
+
+test('PWC recovery map covers every failure family with a real action and preservation rule', () => {
+  assert.deepEqual(Object.keys(FAILURE_POLICIES), [
+    'read', 'save', 'conflict', 'reference', 'contract', 'runtime', 'task', 'provider',
+  ]);
+  for (const [id, definition] of Object.entries(RECOVERY_DEFINITIONS)) {
+    const model = recoveryViewModel(id, new Error(`injected ${id} failure`));
+    assert.ok(model.action?.value, `${id} must expose a recovery action`);
+    assert.match(model.cause, /injected/);
+    assert.ok(model.preservation, `${id} must state what is preserved`);
+    assert.equal(model.busy, false);
+  }
+  assert.equal(FAILURE_POLICIES.read.paidCall, 'not-started');
+  assert.equal(FAILURE_POLICIES.save.paidCall, 'not-started');
+  assert.equal(FAILURE_POLICIES.provider.paidCall, 'reconcile-before-retry');
+  assert.equal(FAILURE_POLICIES.task.paidCall, 'reconcile-before-retry');
 });
 
 test('major durable surfaces use shared states and visible conflict recovery', async () => {

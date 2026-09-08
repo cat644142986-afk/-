@@ -1,5 +1,6 @@
 import * as API from './api.js';
 import { createApiSpatialCanvasAdapter, spatialSceneSignature } from './infinite-canvas-adapter.js';
+import { recoveryViewModel } from './status-view.js';
 import {
   SPATIAL_DRAG_MIME,
   parseSpatialDragItem,
@@ -165,6 +166,7 @@ export function createInfiniteCanvasWorkspaceController({
   onImportFiles = async () => [],
   onVideoJobSubmitted = () => {},
   onVideoJobSettled = () => {},
+  onRecoveryAction = () => {},
   resolveProxyUrl = (assetId) => api.getAssetThumbnailUrl(assetId, 960),
   resolveVideoAsset = (assetId, options) => defaultVideoAssetResolver(api, assetId, options),
 } = {}) {
@@ -176,6 +178,10 @@ export function createInfiniteCanvasWorkspaceController({
   let currentCanvasSession = null;
   let runtimePromise = null;
   let recordsPromise = null;
+  let recordsFailure = null;
+  let recoveryContext = null;
+  let pendingBusinessImport = null;
+  let pendingFileImport = null;
   const pendingScenes = new Map();
   const savingScenes = new Map();
   const sceneConflicts = new Map();
@@ -200,6 +206,32 @@ export function createInfiniteCanvasWorkspaceController({
   let emptySceneRecoveryPromise = null;
   const activeVideoJobIds = new Set();
   const notifiedVideoJobs = new Set();
+
+  function setSpatialStatus(text, { kind = '', action = '', actionLabel = '' } = {}) {
+    const status = query('#spatial-save-state');
+    const button = query('#spatial-recovery-action');
+    if (!status) return;
+    status.textContent = String(text || '');
+    status.dataset.kind = kind;
+    status.setAttribute?.('role', kind === 'error' ? 'alert' : 'status');
+    status.setAttribute?.('aria-live', kind === 'error' ? 'assertive' : 'polite');
+    if (button) {
+      button.hidden = !action;
+      button.dataset.spatialRecovery = action;
+      button.textContent = actionLabel || '重试';
+    }
+  }
+
+  function setSpatialRecovery(recoveryId, error, overrides = {}, context = {}) {
+    const model = recoveryViewModel(recoveryId, error, overrides);
+    recoveryContext = { recoveryId, ...context };
+    setSpatialStatus(`${model.title} · ${model.cause} · ${model.preservation}`, {
+      kind: 'error',
+      action: model.action?.value,
+      actionLabel: model.action?.label,
+    });
+    return model;
+  }
 
   function canvasSessionIsCurrent(session) {
     const islandMatches = session?.island
@@ -235,10 +267,41 @@ export function createInfiniteCanvasWorkspaceController({
     const list = query('#spatial-canvas-list');
     const empty = query('#spatial-library-empty');
     if (!list || !empty) return;
+    const title = query('#spatial-library-empty-title');
+    const detail = query('#spatial-library-empty-detail');
+    const action = query('#btn-spatial-empty-new');
+    if (recordsFailure) {
+      const model = recoveryViewModel('spatial-list-read', recordsFailure);
+      list.innerHTML = '';
+      list.hidden = true;
+      empty.hidden = false;
+      empty.dataset.kind = 'error';
+      if (title) title.textContent = model.title;
+      if (detail) {
+        detail.hidden = false;
+        detail.textContent = `${model.cause}；${model.preservation}`;
+      }
+      if (action) {
+        action.dataset.spatialEmptyAction = model.action.value;
+        action.textContent = model.action.label;
+      }
+      query('#spatial-canvas-count').textContent = '读取失败';
+      return;
+    }
     const records = adapter.list();
     list.innerHTML = recordsHtml(records);
     list.hidden = records.length === 0;
     empty.hidden = records.length !== 0;
+    empty.dataset.kind = records.length ? '' : 'empty';
+    if (title) title.textContent = '创建第一张画布';
+    if (detail) {
+      detail.hidden = true;
+      detail.textContent = '';
+    }
+    if (action) {
+      action.dataset.spatialEmptyAction = 'create';
+      action.textContent = '新建画布';
+    }
     query('#spatial-canvas-count').textContent = `${records.length} 个画布`;
   }
 
@@ -428,7 +491,7 @@ export function createInfiniteCanvasWorkspaceController({
 
   function showPermanentVideoRecovery(error) {
     videoRecoveryPending = false;
-    query('#spatial-save-state').textContent = `${permanentVideoRecoveryMessage(error)} · 请在任务中心处理`;
+    setSpatialStatus(`${permanentVideoRecoveryMessage(error)} · 请在任务中心处理`);
   }
 
   function scheduleVideoRecovery(session = captureCanvasSession()) {
@@ -437,7 +500,7 @@ export function createInfiniteCanvasWorkspaceController({
     if (!active || !session || !canvasSessionIsCurrent(session)) return;
     if (videoRecoveryAttempt >= VIDEO_RECOVERY_MAX_ATTEMPTS) {
       videoRecoveryPending = false;
-      query('#spatial-save-state').textContent = '恢复已暂停，重新进入画布或任务中心重试';
+      setSpatialStatus('恢复已暂停，重新进入画布或任务中心重试');
       return;
     }
     videoRecoveryPending = true;
@@ -834,7 +897,7 @@ export function createInfiniteCanvasWorkspaceController({
       Array.from(candidate?.elements || []).length > 0
     ));
     if (!fallback) return false;
-    query('#spatial-save-state').textContent = '检测到异常空场景 · 正在恢复上一版本';
+    setSpatialStatus('检测到异常空场景 · 正在恢复上一版本');
     if (!emptySceneRecoveryPromise) {
       emptySceneRecoveryPromise = Promise.resolve()
         .then(() => {
@@ -843,12 +906,15 @@ export function createInfiniteCanvasWorkspaceController({
         })
         .then(() => {
           if (canvasSessionIsCurrent(session)) {
-            query('#spatial-save-state').textContent = '已阻止空场景覆盖 · 上一版本已恢复';
+            setSpatialStatus('已阻止空场景覆盖 · 上一版本已恢复');
           }
         })
         .catch((error) => {
           if (canvasSessionIsCurrent(session)) {
-            query('#spatial-save-state').textContent = '已阻止空场景覆盖 · 自动恢复失败，请重新打开画布';
+            setSpatialRecovery('spatial-open', error, {
+              title: '异常空场景恢复失败',
+              cause: String(error?.message || error),
+            }, { openId: session.canvasId });
           }
           console.error('Infinite canvas empty scene recovery failed', error);
         })
@@ -879,7 +945,7 @@ export function createInfiniteCanvasWorkspaceController({
       sequence: ++sceneSequence,
     };
     pendingScenes.set(session.canvasId, entry);
-    query('#spatial-save-state').textContent = '正在保存画布';
+    setSpatialStatus('正在保存画布');
     windowRef.clearTimeout(sceneTimer);
     sceneTimerCanvasId = session.canvasId;
     sceneTimer = windowRef.setTimeout(() => flushScene(session.canvasId), 240);
@@ -893,11 +959,11 @@ export function createInfiniteCanvasWorkspaceController({
     sceneTimerCanvasId = '';
   }
 
-  function freezeSceneConflict(message, { allowDiscard = false } = {}) {
+  function freezeSceneConflict(message, { allowDiscard = false, recoveryAction = '' } = {}) {
     query('#spatial-canvas-host').hidden = true;
     const loading = query('#spatial-editor-loading');
     loading.hidden = false;
-    loading.innerHTML = `<strong>${escapeHtml(message)}</strong><button type="button" data-spatial-retry>重试保存副本</button>${allowDiscard ? '<button type="button" data-spatial-conflict-discard>放弃本地并载入远端</button>' : ''}`;
+    loading.innerHTML = `<strong>${escapeHtml(message)}</strong>${recoveryAction ? `<button type="button" data-spatial-recovery="${escapeHtml(recoveryAction)}">重试保存副本</button>` : ''}${allowDiscard ? '<button type="button" data-spatial-conflict-discard>放弃本地并载入远端</button>' : ''}`;
   }
 
   function sceneConflictState(saveId, error, initialEntry) {
@@ -956,9 +1022,10 @@ export function createInfiniteCanvasWorkspaceController({
       }
     } catch (error) {
       if (currentId === saveId) {
-        query('#spatial-save-state').textContent = '保存冲突 · 副本保存失败，已阻止切换和退出';
-        freezeSceneConflict('本地修改仍在内存中，副本保存失败', {
+        const model = setSpatialRecovery('spatial-conflict-copy', error, {}, { canvasId: saveId });
+        freezeSceneConflict(`${model.title}：${model.cause}。${model.preservation}`, {
           allowDiscard: permanentSceneConflictError(error),
+          recoveryAction: model.action.value,
         });
       }
       console.error('Infinite canvas conflict copy failed', error);
@@ -970,7 +1037,7 @@ export function createInfiniteCanvasWorkspaceController({
       mountedIsland?.updateScene?.(state.remote.scene);
       query('#spatial-editor-loading').hidden = true;
       query('#spatial-canvas-host').hidden = false;
-      query('#spatial-save-state').textContent = `保存冲突 · 本地修改已另存为「${state.copyRecord.name}」`;
+      setSpatialStatus(`保存冲突 · 本地修改已另存为「${state.copyRecord.name}」`);
     }
     return state.remote;
   }
@@ -993,11 +1060,18 @@ export function createInfiniteCanvasWorkspaceController({
         mountedIsland?.updateScene?.(remote.scene);
         query('#spatial-editor-loading').hidden = true;
         query('#spatial-canvas-host').hidden = false;
-        query('#spatial-save-state').textContent = '已放弃本地冲突修改 · 已载入远端最新版本';
+        setSpatialStatus('已放弃本地冲突修改 · 已载入远端最新版本');
       }
       return true;
     } catch (error) {
-      freezeSceneConflict('远端版本暂时无法载入，本地修改仍保留', { allowDiscard: true });
+      const model = setSpatialRecovery('spatial-conflict-copy', error, {
+        title: '远端版本暂时无法载入',
+        action: { label: '重试保存副本', value: 'retry-conflict-copy' },
+      }, { canvasId: saveId });
+      freezeSceneConflict(`${model.title}：${model.cause}。${model.preservation}`, {
+        allowDiscard: true,
+        recoveryAction: model.action.value,
+      });
       console.error('Infinite canvas conflict discard failed', error);
       return false;
     }
@@ -1024,9 +1098,9 @@ export function createInfiniteCanvasWorkspaceController({
       .then(() => adapter.updateScene(saveId, scene))
       .then((record) => {
         if (record && currentId === saveId) {
-          query('#spatial-save-state').textContent = record.unchanged
+          setSpatialStatus(record.unchanged
             ? '画布无变化'
-            : `已保存 · 版本 ${record.current_revision}`;
+            : `已保存 · 版本 ${record.current_revision}`);
           syncEditorHeading();
         }
         return record;
@@ -1045,7 +1119,7 @@ export function createInfiniteCanvasWorkspaceController({
           if (!newerPending || newerPending.sequence < entry.sequence) {
             pendingScenes.set(saveId, entry);
           }
-          query('#spatial-save-state').textContent = '保存失败 · 等待下次修改重试';
+          setSpatialRecovery('spatial-save', error, {}, { canvasId: saveId });
         } else if (!newerPending || newerPending.sequence < entry.sequence) {
           pendingScenes.set(saveId, entry);
         }
@@ -1097,7 +1171,9 @@ export function createInfiniteCanvasWorkspaceController({
       const error = new Error('画布仍有未保存的修改，已阻止退出');
       error.code = 'SPATIAL_CANVAS_SAVE_PENDING';
       error.canvasIds = Array.from(pendingScenes.keys());
-      query('#spatial-save-state').textContent = '保存失败 · 已阻止退出，请重试';
+      setSpatialRecovery('spatial-save', error, {
+        title: '仍有未保存修改，已阻止退出',
+      }, { canvasId: error.canvasIds[0] || currentId });
       throw error;
     }
     return true;
@@ -1106,18 +1182,22 @@ export function createInfiniteCanvasWorkspaceController({
   function ensureRecords(force = false) {
     if (!adapter.load) return Promise.resolve(adapter.list());
     if (!recordsPromise || force) {
-      query('#spatial-save-state').textContent = '正在读取画布列表';
+      setSpatialStatus('正在读取画布列表');
       recordsPromise = Promise.resolve(adapter.load({ force }))
         .then((records) => {
+          recordsFailure = null;
+          recoveryContext = null;
           renderLibrary();
-          query('#spatial-save-state').textContent = `${records.length} 个画布 · 已同步`;
+          setSpatialStatus(`${records.length} 个画布 · 已同步`);
           return records;
         })
         .catch((error) => {
           recordsPromise = null;
-          query('#spatial-save-state').textContent = '画布列表读取失败';
+          recordsFailure = error;
+          setSpatialRecovery('spatial-list-read', error);
+          renderLibrary();
           console.error('Infinite canvas list failed to load', error);
-          return [];
+          throw error;
         });
     }
     return recordsPromise;
@@ -1138,7 +1218,10 @@ export function createInfiniteCanvasWorkspaceController({
   async function openCanvas(id) {
     const leavingId = currentCanvasSession?.canvasId || currentId;
     if (!(await flushCanvasForTransition(leavingId))) {
-      query('#spatial-save-state').textContent = '保存失败 · 已留在当前画布，请重试';
+      const pending = pendingScenes.get(String(leavingId || ''));
+      setSpatialRecovery('spatial-save', new Error('本地修改尚未写入版本账本'), {
+        title: '保存失败，已留在当前画布',
+      }, { canvasId: pending?.canvasId || leavingId });
       return false;
     }
     stopVideoPolling();
@@ -1154,7 +1237,7 @@ export function createInfiniteCanvasWorkspaceController({
     query('#spatial-editor-loading').hidden = false;
     query('#spatial-editor-loading').innerHTML = '<span></span><strong>正在载入画布</strong>';
     query('#spatial-canvas-host').hidden = true;
-    query('#spatial-save-state').textContent = '正在载入画布';
+    setSpatialStatus('正在载入画布');
     try {
       const record = await adapter.open(id);
       if (!record || epoch !== openEpoch) return;
@@ -1185,7 +1268,7 @@ export function createInfiniteCanvasWorkspaceController({
           documentRef.documentElement.dataset.spatialRuntime = 'loaded';
           query('#spatial-editor-loading').hidden = true;
           host.hidden = false;
-          query('#spatial-save-state').textContent = '本次会话 · 已打开';
+          setSpatialStatus('本次会话 · 已打开');
           if (pendingEntry) queueScene(pendingEntry.scene, session);
           resolveIslandReady?.();
           resolveIslandReady = null;
@@ -1196,14 +1279,16 @@ export function createInfiniteCanvasWorkspaceController({
       });
       session.island = island;
       mountedIsland = island;
+      return true;
     } catch (error) {
       if (epoch !== openEpoch) return;
       resolveIslandReady?.();
       resolveIslandReady = null;
       query('#spatial-editor-loading').hidden = false;
-      query('#spatial-editor-loading').innerHTML = '<strong>画布加载失败</strong><button type="button" data-spatial-retry>重试</button>';
-      query('#spatial-save-state').textContent = '画布暂不可用';
+      const model = setSpatialRecovery('spatial-open', error, {}, { openId: id });
+      query('#spatial-editor-loading').innerHTML = `<strong>${escapeHtml(model.title)}</strong><p>${escapeHtml(`${model.cause}。${model.preservation}`)}</p><button type="button" data-spatial-recovery="${escapeHtml(model.action.value)}">${escapeHtml(model.action.label)}</button>`;
       console.error('Infinite canvas runtime failed to load', error);
+      return false;
     }
   }
 
@@ -1222,20 +1307,27 @@ export function createInfiniteCanvasWorkspaceController({
     return session;
   }
 
-  async function addBusinessItems(items, targetSession = null) {
+  async function addBusinessItems(items, targetSession = null, recoveryOptions = {}) {
     const normalized = Array.from(items || []).filter(Boolean);
     if (!normalized.length) return null;
     try {
       const session = targetSession || await ensureCanvasForImport();
       if (!canvasSessionIsCurrent(session)) {
-        query('#spatial-save-state').textContent = '素材已导入；画布已切换，未加入节点';
+        setSpatialStatus('素材已导入；画布已切换，未加入节点');
         return { skipped: true, reason: 'canvas-switched' };
       }
-      query('#spatial-save-state').textContent = `${normalized.length} 项已加入 · 正在保存`;
+      setSpatialStatus(`${normalized.length} 项已加入 · 正在保存`);
       const result = await session.island.addBusinessItems(normalized);
+      pendingBusinessImport = null;
       return canvasSessionIsCurrent(session) ? result : null;
     } catch (error) {
-      query('#spatial-save-state').textContent = '内容未能加入画布';
+      const recoveryId = recoveryOptions.recoveryId || 'spatial-import';
+      if (!recoveryOptions.external) {
+        pendingBusinessImport = { items: normalized, recoveryOptions };
+      }
+      setSpatialRecovery(recoveryId, error, recoveryOptions.action
+        ? { action: recoveryOptions.action }
+        : {}, { canvasId: currentId });
       console.error('Infinite canvas business import failed', error);
       return null;
     }
@@ -1246,11 +1338,15 @@ export function createInfiniteCanvasWorkspaceController({
     if (!normalized.length) return null;
     try {
       const session = await ensureCanvasForImport();
-      query('#spatial-save-state').textContent = `${normalized.length} 项正在核对并保存`;
+      setSpatialStatus(`${normalized.length} 项正在核对并保存`);
       const result = await session.island.addBusinessItemsOnce(normalized);
       return canvasSessionIsCurrent(session) ? result : null;
     } catch (error) {
-      query('#spatial-save-state').textContent = '内容未能加入画布';
+      setSpatialRecovery('spatial-import', error, {
+        title: '内容核对失败',
+        action: { label: '重新核对', value: 'retry-import-once' },
+      });
+      pendingBusinessImport = { items: normalized, once: true };
       console.error('Infinite canvas idempotent import failed', error);
       return null;
     }
@@ -1278,20 +1374,22 @@ export function createInfiniteCanvasWorkspaceController({
     if (hasFileTransfer) {
       setFileDropActive(false);
       if (!files.length) {
-        query('#spatial-save-state').textContent = '没有读取到可导入的图片或视频';
+        setSpatialStatus('没有读取到可导入的图片或视频');
         return;
       }
       try {
         const targetSession = await ensureCanvasForImport();
-        query('#spatial-save-state').textContent = `正在导入 ${files.length} 项素材`;
+        setSpatialStatus(`正在导入 ${files.length} 项素材`);
         const items = Array.from(await onImportFiles(files) || []).filter(Boolean);
         if (!items.length) {
-          query('#spatial-save-state').textContent = '没有可加入画布的图片';
+          setSpatialStatus('没有可加入画布的图片');
           return;
         }
         await addBusinessItems(items, targetSession);
+        pendingFileImport = null;
       } catch (error) {
-        query('#spatial-save-state').textContent = '素材导入失败，请重试';
+        pendingFileImport = files;
+        setSpatialRecovery('spatial-import', error, { title: '素材导入失败' });
         console.error('Infinite canvas file import failed', error);
       }
       return;
@@ -1318,13 +1416,16 @@ export function createInfiniteCanvasWorkspaceController({
     const ordinal = adapter.list().length + 1;
     const buttons = [query('#btn-spatial-new'), query('#btn-spatial-empty-new')];
     buttons.forEach((button) => { button.disabled = true; });
-    query('#spatial-save-state').textContent = '正在新建画布';
+    setSpatialStatus('正在新建画布');
     try {
       const record = await adapter.create({ name: `未命名画布 ${ordinal}` });
       renderLibrary();
       return await openCanvas(record.id);
     } catch (error) {
-      query('#spatial-save-state').textContent = '新建画布失败';
+      setSpatialRecovery('spatial-list-read', error, {
+        title: '新建画布失败',
+        action: { label: '重试新建', value: 'retry-create' },
+      });
       console.error('Infinite canvas creation failed', error);
       return null;
     } finally {
@@ -1364,13 +1465,88 @@ export function createInfiniteCanvasWorkspaceController({
       if (!record) return closeRename();
       renderLibrary();
       syncEditorHeading();
-      query('#spatial-save-state').textContent = '画布已重命名';
+      setSpatialStatus('画布已重命名');
       closeRename();
     } catch (error) {
-      query('#spatial-save-state').textContent = '重命名失败';
+      setSpatialRecovery('spatial-save', error, {
+        title: '画布重命名失败',
+        action: { label: '重新保存名称', value: 'retry-rename' },
+      });
       console.error('Infinite canvas rename failed', error);
     } finally {
       buttons.forEach((button) => { button.disabled = false; });
+    }
+  }
+
+  async function retryFileImport() {
+    const files = pendingFileImport;
+    if (!files?.length) return false;
+    try {
+      const targetSession = await ensureCanvasForImport();
+      const items = Array.from(await onImportFiles(files) || []).filter(Boolean);
+      if (!items.length) throw new Error('没有可加入画布的图片或视频');
+      const result = await addBusinessItems(items, targetSession);
+      if (!result || result.skipped) throw new Error('画布已切换，请重新加入内容');
+      pendingFileImport = null;
+      return true;
+    } catch (error) {
+      setSpatialRecovery('spatial-import', error, { title: '素材导入失败' });
+      return false;
+    }
+  }
+
+  async function runSpatialRecovery(action, button = null) {
+    const recoveryAction = String(action || '');
+    if (!recoveryAction) return false;
+    if (button) {
+      button.disabled = true;
+      button.setAttribute?.('aria-busy', 'true');
+    }
+    try {
+      if (recoveryAction === 'retry-list') {
+        await ensureRecords(true);
+        if (active) showLibrary();
+        return true;
+      }
+      if (recoveryAction === 'retry-open') {
+        return Boolean(await openCanvas(recoveryContext?.openId || currentId));
+      }
+      if (recoveryAction === 'retry-save') {
+        const canvasId = recoveryContext?.canvasId || currentId;
+        await flushScene(canvasId);
+        return !pendingScenes.has(String(canvasId || ''));
+      }
+      if (recoveryAction === 'retry-conflict-copy') {
+        const canvasId = String(recoveryContext?.canvasId || currentId || '');
+        const conflict = sceneConflicts.get(canvasId);
+        return Boolean(conflict && await preserveSceneConflict(canvasId, conflict));
+      }
+      if (recoveryAction === 'retry-import') {
+        if (pendingFileImport) return retryFileImport();
+        if (!pendingBusinessImport) return false;
+        return Boolean(await addBusinessItems(pendingBusinessImport.items, null, pendingBusinessImport.recoveryOptions));
+      }
+      if (recoveryAction === 'retry-import-once') {
+        if (!pendingBusinessImport) return false;
+        return Boolean(await addBusinessItemsOnce(pendingBusinessImport.items));
+      }
+      if (recoveryAction === 'retry-create') return Boolean(await createCanvas());
+      if (recoveryAction === 'retry-rename') {
+        await submitRename({ preventDefault() {} });
+        return true;
+      }
+      if (recoveryAction === 'retry-spatial-return') {
+        return Boolean(await onRecoveryAction(recoveryAction));
+      }
+      return false;
+    } catch (error) {
+      console.error('Infinite canvas recovery action failed', recoveryAction, error);
+      return false;
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.removeAttribute?.('aria-busy');
+      }
     }
   }
 
@@ -1398,7 +1574,8 @@ export function createInfiniteCanvasWorkspaceController({
     if (event.target.closest('[data-spatial-conflict-discard]') && currentId) {
       return discardSceneConflict(currentId);
     }
-    if (event.target.closest('[data-spatial-retry]') && currentId) return openCanvas(currentId);
+    const recoveryButton = event.target.closest('[data-spatial-recovery]');
+    if (recoveryButton) return runSpatialRecovery(recoveryButton.dataset.spatialRecovery, recoveryButton);
   }
 
   function onInput(event) {
@@ -1421,7 +1598,11 @@ export function createInfiniteCanvasWorkspaceController({
     if (bound) return;
     bound = true;
     query('#btn-spatial-new').addEventListener('click', createCanvas);
-    query('#btn-spatial-empty-new').addEventListener('click', createCanvas);
+    query('#btn-spatial-empty-new').addEventListener('click', (event) => (
+      event.currentTarget.dataset.spatialEmptyAction === 'retry-list'
+        ? runSpatialRecovery('retry-list', event.currentTarget)
+        : createCanvas()
+    ));
     query('#btn-spatial-home').addEventListener('click', () => showLibrary({ restoreFocus: true }));
     query('#btn-spatial-rename').addEventListener('click', (event) => beginRename(currentId, event.currentTarget));
     query('#spatial-rename-form').addEventListener('submit', submitRename);
@@ -1463,6 +1644,8 @@ export function createInfiniteCanvasWorkspaceController({
           : query('#spatial-canvas-host');
         target?.focus?.({ preventScroll: true });
       });
+    }).catch(() => {
+      if (active) showLibrary();
     });
   }
 

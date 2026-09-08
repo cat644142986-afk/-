@@ -1396,6 +1396,8 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .spatial-library__heading output { flex: 0 0 auto; color: var(--ink-3); font-size: var(--type-caption); font-weight: 750; }
 .spatial-library__empty { display: grid; justify-items: center; align-content: center; min-height: min(430px, 62vh); text-align: center; }
 .spatial-library__empty h3 { margin: 16px 0 13px; font-size: 18px; }
+.spatial-library__empty p { max-width: 620px; margin: -3px 0 15px; color: var(--red); font-size: var(--type-caption); line-height: 1.55; }
+.spatial-library__empty[data-kind="error"] .spatial-empty-mark i { background: var(--red); }
 .spatial-library__empty button { min-height: 40px; padding: 0 16px; border-radius: 12px; background: var(--dark); color: #fff; font-weight: 800; }
 .spatial-empty-mark { width: 72px; height: 72px; border-radius: 22px; box-shadow: 0 15px 32px rgba(32,36,42,.15); }
 .spatial-empty-mark i:nth-child(1) { top: 17px; left: 17px; width: 15px; height: 15px; }
@@ -1472,6 +1474,9 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .spatial-editor-loading span { width: 26px; height: 26px; border: 3px solid var(--line-2); border-top-color: var(--coral); border-radius: 50%; animation: spatialSpin .8s linear infinite; }
 .spatial-editor-loading button { min-height: 38px; padding: 0 14px; border-radius: 11px; background: var(--dark); color: #fff; font-weight: 800; }
 .spatial-status { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 16px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: var(--type-micro); }
+.spatial-status > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.spatial-status > span[data-kind="error"] { color: var(--red); }
+.spatial-status > button { flex: 0 0 auto; min-height: 24px; padding: 0 9px; border-radius: 7px; background: var(--dark); color: #fff; font-size: var(--type-micro); font-weight: 800; }
 .spatial-status strong { color: var(--ink-2); letter-spacing: .08em; text-transform: uppercase; }
 @keyframes spatialSpin { to { transform: rotate(360deg); } }
 

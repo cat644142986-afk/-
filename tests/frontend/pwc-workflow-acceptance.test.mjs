@@ -83,9 +83,9 @@ test('workflow coverage follows product boundaries instead of an arbitrary journ
   }
 });
 
-test('PWC-1 is a dependency-ordered recovery plan and has not started', () => {
+test('PWC-1 implementation follows the dependency-ordered recovery plan', () => {
   const plan = contract.pwc1_plan;
-  assert.equal(plan.implementation_started, false);
+  assert.equal(plan.implementation_started, true);
   assert.equal(plan.estimated_engineering_days, '3-4');
   assert.deepEqual(plan.tasks.map((item) => item.id), [
     'PWC1-1',

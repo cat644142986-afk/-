@@ -297,6 +297,11 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(workspace, /const session = await ensureCanvasForImport\(\)[\s\S]{0,220}session\.island\.addBusinessItems/);
   assert.match(workspace, /recoverUnexpectedEmptyScene\(scene, session\)/);
   assert.match(workspace, /已阻止空场景覆盖 · 上一版本已恢复/);
+  assert.match(workspace, /recordsFailure = error;[\s\S]{0,220}renderLibrary\(\);[\s\S]{0,120}throw error/);
+  assert.match(workspace, /retry-conflict-copy[\s\S]{0,260}preserveSceneConflict/);
+  assert.match(app, /originCanvasId[\s\S]{0,360}infiniteCanvasWorkspace\.openCanvas\(originCanvasId\)/);
+  assert.match(app, /recoveryId: 'spatial-return'/);
+  assert.match(app, /canvasController\.retrySpatialReturn\(\)/);
 });
 
 test('IC5 production island renders only Product Atelier video embeddables on demand', () => {

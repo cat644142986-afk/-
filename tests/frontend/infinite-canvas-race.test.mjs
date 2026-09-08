@@ -65,6 +65,7 @@ class FakeElement {
   }
 
   closest(selector) {
+    if (selector === '[data-spatial-recovery]' && this.dataset.spatialRecovery) return this;
     return selector === this.selector ? this : null;
   }
 
@@ -451,7 +452,8 @@ test('an unchanged callback retries a failed save and viewport changes remain du
   const edited = scene('retry');
   mount.emitChange(edited);
   await harness.clock.advance(240);
-  assert.match(harness.documentRef.node('#spatial-save-state').textContent, /保存失败/);
+  assert.match(harness.documentRef.node('#spatial-save-state').textContent, /temporary save outage/);
+  assert.equal(harness.documentRef.node('#spatial-recovery-action').dataset.spatialRecovery, 'retry-save');
   mount.emitChange(edited);
   await harness.clock.advance(240);
   assert.equal(harness.updateCalls.length, 2);
@@ -696,6 +698,7 @@ test('a conflict copy never adopts video results owned by the original canvas', 
     },
     updateScene() { return firstSave.promise; },
   });
+  harness.controller.bind();
   const mountA = await activateAndOpen(harness, 'canvas:a');
   const localScene = scene('local-video-conflict', [
     sourceElement('canvas:a'),
@@ -777,6 +780,9 @@ test('a failed conflict-copy request is retried with one stable id and blocks cl
   );
 
   copyWritesAllowed = true;
+  const retryCopy = new FakeElement('[data-spatial-recovery]');
+  retryCopy.dataset.spatialRecovery = 'retry-conflict-copy';
+  await harness.documentRef.node('#page-canvas').emit('click', { target: retryCopy });
   assert.equal(await harness.controller.prepareForClose(), true);
   assert.equal(harness.createCalls.length, 3);
   assert.equal(
@@ -903,10 +909,9 @@ test('a failed A save aborts switching to B and destroy retries the pending A sc
   assert.equal(harness.mounts.has('canvas:b'), false);
   assert.equal(harness.updateCalls.length, 1);
   assert.notDeepEqual(harness.records.get('canvas:a').scene, pendingScene);
-  assert.equal(
-    harness.documentRef.node('#spatial-save-state').textContent,
-    '保存失败 · 已留在当前画布，请重试',
-  );
+  assert.match(harness.documentRef.node('#spatial-save-state').textContent, /保存失败，已留在当前画布/);
+  assert.match(harness.documentRef.node('#spatial-save-state').textContent, /未提交修改仍保留/);
+  assert.equal(harness.documentRef.node('#spatial-recovery-action').dataset.spatialRecovery, 'retry-save');
 
   allowSave = true;
   harness.controller.destroy();
@@ -1202,5 +1207,59 @@ test('a rejected runtime loader is cleared so the retry button can load a fresh 
   assert.equal(runtimeCalls, 2);
   assert.equal(harness.controller.runtimeLoaded, true);
   assert.equal(harness.documentRef.node('#spatial-editor-loading').hidden, true);
+  harness.controller.destroy();
+});
+
+test('a failed canvas-list read renders an error instead of an empty library and its action reloads records', async () => {
+  const harness = createHarness();
+  let loadCalls = 0;
+  harness.adapter.load = async () => {
+    loadCalls += 1;
+    if (loadCalls === 1) throw new Error('injected sqlite list failure');
+    return harness.adapter.list();
+  };
+  harness.controller.bind();
+  harness.controller.setPage(true);
+  await waitFor(() => loadCalls === 1);
+  await settle();
+
+  assert.equal(harness.documentRef.node('#spatial-canvas-list').hidden, true);
+  assert.equal(harness.documentRef.node('#spatial-library-empty-title').textContent, '画布列表读取失败');
+  assert.match(harness.documentRef.node('#spatial-library-empty-detail').textContent, /injected sqlite list failure/);
+  const action = harness.documentRef.node('#btn-spatial-empty-new');
+  assert.equal(action.dataset.spatialEmptyAction, 'retry-list');
+
+  await action.emit('click');
+  await waitFor(() => loadCalls === 2);
+  assert.equal(harness.documentRef.node('#spatial-canvas-list').hidden, false);
+  assert.equal(harness.documentRef.node('#spatial-library-empty').hidden, true);
+  assert.equal(harness.documentRef.node('#spatial-recovery-action').hidden, true);
+  harness.controller.destroy();
+});
+
+test('the visible spatial save action retries the retained scene without touching another canvas', async () => {
+  let saveAllowed = false;
+  const harness = createHarness({
+    updateScene({ call, record }) {
+      if (!saveAllowed) throw new Error('injected spatial save failure');
+      record.scene = call.scene;
+      record.current_revision += 1;
+      return record;
+    },
+  });
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const retained = scene('retained-for-visible-retry');
+  mount.emitChange(retained);
+  await harness.clock.advance(240);
+  const action = harness.documentRef.node('#spatial-recovery-action');
+  assert.equal(action.dataset.spatialRecovery, 'retry-save');
+  assert.notDeepEqual(harness.records.get('canvas:a').scene, retained);
+
+  saveAllowed = true;
+  await harness.documentRef.node('#page-canvas').emit('click', { target: action });
+  assert.deepEqual(harness.records.get('canvas:a').scene, retained);
+  assert.equal(harness.records.get('canvas:b').current_revision, 1);
+  assert.equal(action.hidden, true);
   harness.controller.destroy();
 });

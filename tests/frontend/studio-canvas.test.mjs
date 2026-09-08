@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+import { createCanvasController } from '../../src/js/studio-canvas.js';
+
 import {
   CANVAS_COORDINATE_SYSTEM,
   CANVAS_DOCUMENT_SCHEMA_VERSION,
@@ -330,6 +332,118 @@ test('outpaint freezes explicit output placement transition and one paid call wi
   );
 });
 
+test('a failed Fabric-to-spatial handoff retains the committed child payload for the visible retry', async () => {
+  const nodes = new Map();
+  const node = (selector) => {
+    if (!nodes.has(selector)) {
+      nodes.set(selector, {
+        dataset: {},
+        hidden: false,
+        disabled: false,
+        textContent: '',
+        setAttribute() {},
+      });
+    }
+    return nodes.get(selector);
+  };
+  const deliveries = [];
+  let available = false;
+  const controller = createCanvasController({
+    api: {},
+    state: { assets: [], results: {} },
+    query: node,
+    queryAll: () => [],
+    escapeHtml: String,
+    assetUrl: () => '',
+    toast: () => {},
+    formatApiError: (error) => String(error?.message || error),
+    onSpatialResult: async (payload) => {
+      deliveries.push(payload);
+      if (!available) throw new Error('injected spatial return failure');
+    },
+  });
+  const payload = {
+    origin: { canvasId: 'canvas:a', elementId: 'source:a' },
+    resultAsset: { id: 'ast_child_committed' },
+    replayed: false,
+  };
+
+  await assert.rejects(controller.completeSpatialHandoff(payload), /injected spatial return failure/);
+  available = true;
+  assert.equal(await controller.retrySpatialReturn(), true);
+  assert.equal(deliveries.length, 2);
+  assert.strictEqual(deliveries[0], payload);
+  assert.strictEqual(deliveries[1], payload);
+  assert.equal(nodes.get('#canvas-save-title').textContent, '精修结果已回填');
+});
+
+test('a Fabric read failure exposes a read retry and succeeds without invoking save', async () => {
+  class StubNode {
+    constructor() {
+      this.dataset = {};
+      this.hidden = false;
+      this.disabled = false;
+      this.textContent = '';
+      this.innerHTML = '';
+      this.value = '';
+      this.checked = false;
+      this.title = '';
+      this.style = {};
+      this.classList = { toggle() {} };
+    }
+    setAttribute() {}
+    removeAttribute() {}
+    insertAdjacentHTML() {}
+    querySelectorAll() { return []; }
+  }
+  const nodes = new Map();
+  const query = (selector) => {
+    if (!nodes.has(selector)) nodes.set(selector, new StubNode());
+    return nodes.get(selector);
+  };
+  let readCalls = 0;
+  let saveCalls = 0;
+  const controller = createCanvasController({
+    api: {
+      async getCommands() {
+        return {
+          contract_version: 'canvas-command-v1',
+          commands: [
+            'command:transform-layer',
+            'command:toggle-layer',
+            'command:toggle-layer-lock',
+            'command:local-edit-compose',
+          ].map((id) => ({ id })),
+        };
+      },
+      async getCanvas() {
+        readCalls += 1;
+        if (readCalls === 1) throw new Error('injected Fabric ledger read failure');
+        return { document: null, current_revision: 0, proxies: [] };
+      },
+      async saveCanvas() { saveCalls += 1; },
+    },
+    state: { assets: [], results: {} },
+    query,
+    queryAll: () => [],
+    escapeHtml: String,
+    assetUrl: () => '',
+    toast: () => {},
+    formatApiError: (error) => String(error?.message || error),
+  });
+
+  assert.equal(await controller.retryRead(), false);
+  assert.equal(nodes.get('#canvas-save-title').textContent, '画布读取失败');
+  assert.equal(nodes.get('#canvas-save-retry').textContent, '重新读取');
+  assert.equal(nodes.get('#canvas-save-retry').hidden, false);
+  assert.equal(saveCalls, 0);
+
+  assert.equal(await controller.retryRead(), true);
+  assert.equal(readCalls, 2);
+  assert.equal(saveCalls, 0);
+  assert.equal(nodes.get('#canvas-save-title').textContent, '画布已同步');
+});
+
 test('production canvas uses SQLite APIs and is wired into the Studio lifecycle', () => {
   assert.match(apiSource, /export async function getCanvas\(mode/);
   assert.match(apiSource, /export async function saveCanvas\(mode/);
@@ -367,7 +481,8 @@ test('production canvas uses SQLite APIs and is wired into the Studio lifecycle'
   assert.match(controllerSource, /api\.createLocalEditSpec\(local\.specRequest/);
   assert.match(controllerSource, /api\.getLatestLocalEditSpec\(\{/);
   assert.match(controllerSource, /api\.composeLocalEdit\(currentMode, request/);
-  assert.match(controllerSource, /onSpatialResult\(\{/);
+  assert.match(controllerSource, /await deliverSpatialResult\(payload\)/);
+  assert.match(controllerSource, /retrySpatialReturn/);
   assert.match(controllerSource, /async function openAsset\(assetId/);
   assert.match(htmlSource, /id="canvas-return-spatial"/);
   assert.match(controllerSource, /buildPaidOutpaintContract\(\{/);

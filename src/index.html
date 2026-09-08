@@ -281,7 +281,7 @@
 
             <section class="spatial-library" id="spatial-library" aria-labelledby="spatial-library-title">
               <div class="spatial-library__heading"><div><span>RECENT CANVASES</span><h2 id="spatial-library-title">最近画布</h2><p>本次会话</p></div><output id="spatial-canvas-count">0 个画布</output></div>
-              <div class="spatial-library__empty" id="spatial-library-empty"><span class="spatial-empty-mark" aria-hidden="true"><i></i><i></i><i></i></span><h3>创建第一张画布</h3><button id="btn-spatial-empty-new" type="button">新建画布</button></div>
+              <div class="spatial-library__empty" id="spatial-library-empty" data-kind="empty"><span class="spatial-empty-mark" aria-hidden="true"><i></i><i></i><i></i></span><h3 id="spatial-library-empty-title">创建第一张画布</h3><p id="spatial-library-empty-detail" role="alert" hidden></p><button id="btn-spatial-empty-new" type="button" data-spatial-empty-action="create">新建画布</button></div>
               <div class="spatial-canvas-list" id="spatial-canvas-list" aria-label="最近画布" hidden></div>
             </section>
 
@@ -291,7 +291,7 @@
               <aside class="spatial-inspector" id="spatial-inspector" aria-label="对象操作" hidden></aside>
             </section>
 
-            <footer class="spatial-status"><span id="spatial-save-state" role="status" aria-live="polite">本次会话 · 画布列表</span><strong>Product Atelier</strong></footer>
+            <footer class="spatial-status"><span id="spatial-save-state" role="status" aria-live="polite">本次会话 · 画布列表</span><button id="spatial-recovery-action" type="button" hidden></button><strong>Product Atelier</strong></footer>
           </div>
         </section>
 

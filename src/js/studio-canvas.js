@@ -26,6 +26,7 @@ import {
 } from 'lucide';
 
 import { isVideoAsset } from './spatial-media-import.js';
+import { recoveryViewModel } from './status-view.js';
 
 import {
   CANVAS_PAGE_SIZE,
@@ -110,7 +111,10 @@ function loadFabricRuntime() {
       Point,
       Polyline,
       Rect,
-    }));
+    })).catch((error) => {
+      fabricRuntimePromise = null;
+      throw error;
+    });
   }
   return fabricRuntimePromise;
 }
@@ -127,6 +131,9 @@ function blankEntry() {
     saving: false,
     exporting: false,
     blocked: false,
+    blockReason: '',
+    lastError: null,
+    recoveryAction: '',
     pendingSave: null,
     saveTimer: null,
     localEdits: new Map(),
@@ -232,6 +239,8 @@ export function createCanvasController({
   let historySyncing = false;
   let suppressSelectionCleared = false;
   let spatialOrigin = null;
+  let pendingFineEdit = null;
+  let pendingSpatialReturn = null;
   let bound = false;
 
   function entryFor(mode = currentMode) {
@@ -819,14 +828,37 @@ export function createCanvasController({
     createIcons({ icons: ICONS, nameAttr: 'data-lucide', root });
   }
 
-  function setSaveState(kind, title, detail = '') {
+  function setSaveState(kind, title, detail = '', options = {}) {
     const host = query('#canvas-save-state');
     if (!host) return;
+    const action = String(options.action || '');
+    const actionLabel = String(options.actionLabel || '重试');
+    const entry = entryFor();
+    entry.recoveryAction = action;
+    if (!action) entry.lastError = null;
     host.dataset.kind = kind;
+    host.setAttribute('role', ['error', 'conflict', 'export-error'].includes(kind) ? 'alert' : 'status');
+    host.setAttribute('aria-live', ['error', 'conflict', 'export-error'].includes(kind) ? 'assertive' : 'polite');
     query('#canvas-save-title').textContent = title;
     query('#canvas-save-detail').textContent = detail;
-    query('#canvas-save-retry').hidden = kind !== 'error';
-    query('#canvas-save-reload').hidden = kind !== 'conflict';
+    const retry = query('#canvas-save-retry');
+    const reload = query('#canvas-save-reload');
+    retry.hidden = !action || action === 'reload-conflict';
+    reload.hidden = action !== 'reload-conflict';
+    if (!retry.hidden) retry.textContent = actionLabel;
+    if (!reload.hidden) reload.textContent = actionLabel;
+  }
+
+  function setRecoveryState(recoveryId, error, overrides = {}) {
+    const model = recoveryViewModel(recoveryId, error, overrides);
+    const entry = entryFor();
+    entry.lastError = error instanceof Error ? error : new Error(model.cause);
+    entry.blockReason = recoveryId;
+    setSaveState(model.kind, model.title, model.detail, {
+      action: model.action?.value,
+      actionLabel: model.action?.label,
+    });
+    return model;
   }
 
   function setInteractionDisabled(disabled) {
@@ -885,6 +917,9 @@ export function createCanvasController({
     entry.proxies = new Map((response?.proxies || []).map((proxy) => [String(proxy.layer_id), proxy]));
     entry.dirty = false;
     entry.blocked = false;
+    entry.blockReason = '';
+    entry.lastError = null;
+    entry.recoveryAction = '';
     entry.pendingSave = null;
     if (mode === currentMode) {
       selectedLayerId = entry.document?.layers?.some((layer) => layer.id === selectedLayerId)
@@ -912,7 +947,11 @@ export function createCanvasController({
     if (
       response?.contract_version !== CANVAS_COMMAND_CONTRACT
       || [...REQUIRED_MUTATION_COMMANDS].some((id) => !available.has(id))
-    ) throw new Error('画布命令合同与当前界面不一致');
+    ) {
+      const error = new Error('画布命令合同与当前界面不一致');
+      error.code = 'CANVAS_COMMAND_CONTRACT_MISMATCH';
+      throw error;
+    }
   }
 
   async function ensureHydrated(mode = currentMode) {
@@ -931,9 +970,15 @@ export function createCanvasController({
     } catch (error) {
       entry.loading = false;
       entry.blocked = true;
+      entry.blockReason = error?.code === 'CANVAS_COMMAND_CONTRACT_MISMATCH' ? 'contract-refresh' : 'fabric-read';
+      entry.lastError = error;
       if (mode === currentMode) {
         renderCanvasLoading(false);
-        setSaveState('error', '画布读取失败', formatApiError(error, '本地画布接口暂不可用'));
+        setRecoveryState(
+          entry.blockReason,
+          error,
+          { cause: formatApiError(error, '本地画布接口暂不可用') },
+        );
         setInteractionDisabled(true);
       }
     }
@@ -967,6 +1012,7 @@ export function createCanvasController({
     entry.pendingSave = pending;
     entry.saving = true;
     entry.blocked = false;
+    entry.blockReason = '';
     if (mode === currentMode) {
       setSaveState('saving', '正在保存画布', `即将生成 revision ${pending.expected_revision + 1}`);
       setInteractionDisabled(true);
@@ -984,12 +1030,12 @@ export function createCanvasController({
       entry.blocked = true;
       if (mode === currentMode) {
         const conflict = error?.detail?.code === 'CANVAS_REVISION_CONFLICT';
-        setSaveState(
-          conflict ? 'conflict' : 'error',
-          conflict ? '检测到更新冲突' : '画布尚未保存',
+        setRecoveryState(
+          conflict ? 'fabric-conflict' : 'fabric-save',
+          error,
           conflict
-            ? '另一版本已先写入；重新同步后再继续，避免覆盖历史。'
-            : formatApiError(error, '保留了本次修改，可直接重试'),
+            ? { cause: formatApiError(error, '另一版本已先写入') }
+            : { cause: formatApiError(error, '画布保存失败') },
         );
         setInteractionDisabled(true);
         if (!conflict) toast('画布保存失败，本次修改仍保留在当前界面', 'error', 5200);
@@ -1033,9 +1079,14 @@ export function createCanvasController({
         setSaveState('saved', '已取消导出', `画布仍保持 revision ${entry.currentRevision}`);
       } else if (error?.detail?.code === 'CANVAS_REVISION_CONFLICT') {
         entry.blocked = true;
-        setSaveState('conflict', '导出前检测到更新冲突', '重新同步画布后再导出，避免下载错误版本。');
+        setRecoveryState('fabric-conflict', error, {
+          title: '导出前检测到更新冲突',
+          cause: formatApiError(error, '另一版本已先写入'),
+        });
       } else {
-        setSaveState('export-error', '画板导出失败', formatApiError(error, '原始素材可能暂不可用'));
+        setRecoveryState('fabric-export', error, {
+          cause: formatApiError(error, '原始素材可能暂不可用'),
+        });
         toast('画板导出失败，请检查素材后重试', 'error', 5200);
       }
     } finally {
@@ -1060,10 +1111,23 @@ export function createCanvasController({
     entry.hydrated = false;
     entry.loading = false;
     entry.blocked = false;
+    entry.blockReason = '';
+    entry.lastError = null;
+    entry.recoveryAction = '';
     entry.pendingSave = null;
     entry.dirty = false;
     setInteractionDisabled(true);
     await ensureHydrated(currentMode);
+  }
+
+  async function retryCanvasRead() {
+    const entry = entryFor();
+    entry.hydrated = false;
+    entry.loading = false;
+    entry.blocked = false;
+    entry.blockReason = '';
+    await ensureHydrated(currentMode);
+    return !entry.blocked;
   }
 
   function renderCanvasLoading(loading) {
@@ -1827,6 +1891,34 @@ export function createCanvasController({
     updateLocalEditPanel();
   }
 
+  async function deliverSpatialResult(payload) {
+    pendingSpatialReturn = payload;
+    await setView('quick');
+    await onSpatialResult(payload);
+    pendingSpatialReturn = null;
+    spatialOrigin = null;
+    updateSpatialReturnControl();
+    setSaveState('saved', '精修结果已回填', '已作为新版本加入来源无限画布');
+    return true;
+  }
+
+  async function retrySpatialReturn() {
+    if (!pendingSpatialReturn) return false;
+    try {
+      if (pendingSpatialReturn.resultAsset) return await deliverSpatialResult(pendingSpatialReturn);
+      const origin = { ...pendingSpatialReturn.origin };
+      await setView('quick');
+      await onReturnToSpatial(origin);
+      pendingSpatialReturn = null;
+      spatialOrigin = null;
+      updateSpatialReturnControl();
+      return true;
+    } catch (error) {
+      toast(`返回无限画布失败：${formatApiError(error)}`, 'error', 6500);
+      return false;
+    }
+  }
+
   async function applyLocalEditCandidate() {
     const entry = entryFor();
     const local = localEditState({ create: false });
@@ -1854,22 +1946,24 @@ export function createCanvasController({
       toast(response.replayed ? '局部编辑结果已从账本恢复' : '局部编辑结果已应用到画布', 'success');
       if (spatialOrigin && response.result_asset) {
         const origin = { ...spatialOrigin };
-        spatialOrigin = null;
-        updateSpatialReturnControl();
-        await setView('quick');
+        const payload = {
+          origin,
+          resultAsset: response.result_asset,
+          replayed: Boolean(response.replayed),
+        };
         try {
-          await onSpatialResult({
-            origin,
-            resultAsset: response.result_asset,
-            replayed: Boolean(response.replayed),
-          });
+          await deliverSpatialResult(payload);
         } catch (error) {
           toast(`精修已经写入账本，但返回无限画布失败：${formatApiError(error)}`, 'error', 6500);
         }
       }
     } catch (error) {
       local.error = formatApiError(error, '候选结果未能应用到画布');
-      if (error?.detail?.code === 'CANVAS_REVISION_CONFLICT') entry.blocked = true;
+      if (error?.detail?.code === 'CANVAS_REVISION_CONFLICT') {
+        entry.blocked = true;
+        setRecoveryState('fabric-conflict', error, { cause: local.error });
+        setInteractionDisabled(true);
+      }
     } finally {
       local.saving = false;
       updateLocalEditPanel();
@@ -2244,9 +2338,13 @@ export function createCanvasController({
         updateDocumentMeta();
         requestAnimationFrame(() => renderCanvas());
       } catch (error) {
-        entryFor().blocked = true;
+        const entry = entryFor();
+        entry.blocked = true;
+        entry.lastError = error;
         renderCanvasLoading(false);
-        setSaveState('error', '画布组件加载失败', formatApiError(error, '请重试进入自由画布'));
+        setRecoveryState('fabric-runtime', error, {
+          cause: formatApiError(error, '请重试进入自由画布'),
+        });
         setInteractionDisabled(true);
       }
     } else saveMode(currentMode);
@@ -2259,31 +2357,98 @@ export function createCanvasController({
   } = {}) {
     const targetId = String(assetId || '');
     if (!targetId) throw new Error('精细修改缺少素材引用');
-    if (mode && mode !== currentMode) setMode(mode);
-    const response = await api.getAsset(targetId, { timeoutMs: 12000 });
-    const asset = response?.asset || response;
-    assetDetails.set(targetId, asset);
-    spatialOrigin = origin ? { ...origin, assetId: targetId } : null;
+    const request = {
+      assetId: targetId,
+      mode: mode || currentMode,
+      localMode: localMode === 'outpaint' ? 'outpaint' : 'inpaint',
+      origin: origin ? { ...origin, assetId: targetId } : null,
+    };
+    pendingFineEdit = request;
+    if (request.mode !== currentMode) setMode(request.mode);
+    spatialOrigin = request.origin;
     updateSpatialReturnControl();
-    await setView('canvas');
-    await ensureHydrated(currentMode);
-    if (entryFor().blocked) throw new Error('精细修改画布暂不可用');
-    const layer = await addAsset(targetId);
-    if (!layer) throw new Error('精细修改素材无法加入画布');
-    setSelectedLayer(layer.id);
-    setLocalEditMode(localMode === 'outpaint' ? 'outpaint' : 'inpaint');
-    setActivePanel('local-edit');
-    requestAnimationFrame(() => query('#canvas-stage')?.focus({ preventScroll: true }));
-    return layer;
+    try {
+      await setView('canvas');
+      await ensureCanvas();
+      await ensureHydrated(currentMode);
+      const entry = entryFor();
+      if (entry.blocked) throw entry.lastError || new Error('精细修改画布暂不可用');
+      const response = await api.getAsset(targetId, { timeoutMs: 12000 });
+      const asset = response?.asset || response;
+      assetDetails.set(targetId, asset);
+      const layer = await addAsset(targetId);
+      if (!layer) throw new Error('精细修改素材无法加入画布');
+      setSelectedLayer(layer.id);
+      setLocalEditMode(request.localMode);
+      setActivePanel('local-edit');
+      pendingFineEdit = null;
+      requestAnimationFrame(() => query('#canvas-stage')?.focus({ preventScroll: true }));
+      return layer;
+    } catch (error) {
+      setRecoveryState('fine-edit-entry', error, {
+        cause: formatApiError(error, '素材或画布前置条件不可用'),
+      });
+      throw error;
+    }
   }
 
   async function returnToSpatial() {
     if (!spatialOrigin) return;
     const origin = { ...spatialOrigin };
-    spatialOrigin = null;
-    updateSpatialReturnControl();
-    await setView('quick');
-    onReturnToSpatial(origin);
+    pendingSpatialReturn = { origin };
+    try {
+      await setView('quick');
+      await onReturnToSpatial(origin);
+      pendingSpatialReturn = null;
+      spatialOrigin = null;
+      updateSpatialReturnControl();
+    } catch (error) {
+      await setView('canvas');
+      setRecoveryState('spatial-return', error, {
+        title: '尚未返回无限画布',
+        cause: formatApiError(error, '页面切换失败'),
+      });
+    }
+  }
+
+  async function runCanvasRecovery() {
+    const entry = entryFor();
+    const action = entry.recoveryAction;
+    if (!action) return false;
+    const button = action === 'reload-conflict' ? query('#canvas-save-reload') : query('#canvas-save-retry');
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    try {
+      if (action === 'retry-save') return await saveMode(currentMode, true);
+      if (action === 'reload-conflict') return await reloadCurrent();
+      if (action === 'retry-export') return await exportArtboard();
+      if (action === 'retry-fine-edit') {
+        if (!pendingFineEdit) return false;
+        return Boolean(await openAsset(pendingFineEdit.assetId, pendingFineEdit));
+      }
+      if (action === 'retry-spatial-return') return await retrySpatialReturn();
+      if (['retry-read', 'reload-contract'].includes(action)) {
+        setInteractionDisabled(true);
+        return await retryCanvasRead();
+      }
+      if (action === 'retry-runtime') {
+        entry.blocked = false;
+        entry.blockReason = '';
+        await ensureCanvas();
+        await ensureHydrated(currentMode);
+        renderLists();
+        updateDocumentMeta();
+        requestAnimationFrame(() => renderCanvas());
+        return !entry.blocked;
+      }
+      return false;
+    } catch (error) {
+      if (!entry.recoveryAction) setRecoveryState(entry.blockReason || 'fabric-runtime', error);
+      return false;
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+    }
   }
 
   function setPage(processActive) {
@@ -2337,8 +2502,8 @@ export function createCanvasController({
     query('#canvas-export').addEventListener('click', exportArtboard);
     query('#canvas-return-spatial').addEventListener('click', returnToSpatial);
     query('#canvas-apply-transform').addEventListener('click', applyTransform);
-    query('#canvas-save-retry').addEventListener('click', () => saveMode(currentMode, true));
-    query('#canvas-save-reload').addEventListener('click', reloadCurrent);
+    query('#canvas-save-retry').addEventListener('click', runCanvasRecovery);
+    query('#canvas-save-reload').addEventListener('click', runCanvasRecovery);
     query('#local-edit-save-roi').addEventListener('click', saveLocalRoi);
     queryAll('#local-edit-roi-fields input').forEach((input) => {
       input.addEventListener('change', updateRoiDraftFromInputs);
@@ -2481,8 +2646,11 @@ export function createCanvasController({
 
   return {
     bind,
+    completeSpatialHandoff: deliverSpatialResult,
     hydrate,
     openAsset,
+    retryRead: retryCanvasRead,
+    retrySpatialReturn,
     setMode,
     setPage,
     setView,
