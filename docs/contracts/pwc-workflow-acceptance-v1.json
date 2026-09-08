@@ -1,0 +1,255 @@
+{
+  "contract_id": "product-atelier-pwc-v1",
+  "contract_version": 1,
+  "status": "active",
+  "scope": "Close the workflows already exposed by Product Atelier without adding new product capabilities.",
+  "baseline": {
+    "branch": "codex/excalidraw-infinite-canvas",
+    "commit": "e7f8ee3c52cf410e4e698200025c1ee9e074bd1e",
+    "upstream_commit": "2eb137c2eee27e975728523f485cb2d115b5fd7c"
+  },
+  "formal_release": {
+    "path": "D:\\ProductAtelier-Desktop\\release\\ProductAtelier-Portable\\Product Atelier.exe",
+    "product_version": "1.0.0",
+    "git_commit": "146e198a2a90a68d425f6252d0f800e96faede0a",
+    "contract_version": "2026-09-02.4",
+    "ledger_schema_version": 8,
+    "source_fingerprint": "C1195FFE88CCA5CD36D2EAB99C3E8167B740FB38870069787A38AC8164A76A85",
+    "app_sha256": "FC8C0158D6CE9BBB6F3A5F93B94D3A866E66F004FBC801A76EF0B006A70F2B1A",
+    "sidecar_sha256": "F68A15A2DC18D926ECF2E4527018ECCCBDC100D14605725DAD8D80192AA41C49"
+  },
+  "gates": {
+    "feature_freeze_release_requires": [
+      "P0",
+      "P1"
+    ],
+    "p2_scope": "public-distribution-only",
+    "p2_blocks_internal_follow_up_research_and_development": false,
+    "promotion_sequence": [
+      "Build",
+      "Test",
+      "Package",
+      "Smoke",
+      "Automated Workflow Acceptance",
+      "Packaged Manual Acceptance",
+      "Live Provider Canary When Required",
+      "Validated",
+      "Promote",
+      "Update Desktop Entry"
+    ]
+  },
+  "state_policy": {
+    "pwc2_entry_requirement": "Before PWC-2 implementation, classify every state used by the two P0 production workflows as durable or ephemeral and approve its recovery owner.",
+    "durable_when_any": [
+      "Loss changes a user-visible business result or its provenance.",
+      "Loss discards committed user-authored work, an explicit decision, or a reusable business artifact.",
+      "Loss breaks task, result, canvas, local-edit, export, or paid-call accountability.",
+      "Loss prevents safe recovery from the last committed checkpoint without repeating paid work."
+    ],
+    "mandatory_durable_families": [
+      "asset identity and immutable versions",
+      "accepted task input, brief, parameters, and result lineage",
+      "task attempts, terminal state, and recoverable paid-work checkpoints",
+      "committed canvas content and document versions",
+      "committed ROI, mask, local-edit specification, and composition receipt",
+      "review decisions, governed knowledge decisions, and applied-rule trace",
+      "paid-call authorization and provider-attempt receipt",
+      "export identity needed to reproduce or audit a delivery"
+    ],
+    "ephemeral_when_all": [
+      "It can be reconstructed from durable state without a provider call.",
+      "Its loss does not discard user-authored business work or a user decision.",
+      "Its loss does not change lineage, billing accountability, delivery, or recovery safety."
+    ],
+    "default_ephemeral_examples": [
+      "hover and focus state",
+      "open drawer or modal state",
+      "toast visibility and progress animation",
+      "poll timers and in-memory caches",
+      "pointer gesture state before commit",
+      "derivable thumbnails and previews"
+    ],
+    "rules": [
+      "Do not persist UI state merely because it exists.",
+      "Assess user-authored drafts and canvas viewport context explicitly before classifying them.",
+      "Unclassified state must not be promised as restart-safe."
+    ]
+  },
+  "paid_call_policy": {
+    "authorization_must_be_traceable_to_explicit_user_action": true,
+    "per_call_confirmation_modal_required": false,
+    "bounded_authorization_may_cover_multiple_calls": true,
+    "hidden_paid_calls_allowed": false,
+    "automatic_paid_retry_after_failure_allowed": false,
+    "requirements": [
+      "Before authorization, the UI states the paid operation and its maximum bounded call scope.",
+      "The authorization receipt records authorization id, user action, scope, maximum calls, workflow or job id, operation family, timestamp, and consumption.",
+      "Every provider attempt references the authorization receipt that permits it.",
+      "A failed or billing-unknown attempt cannot trigger another paid attempt automatically.",
+      "A user-initiated retry requires a still-valid remaining authorization or a new explicit authorization."
+    ]
+  },
+  "evidence_classes": {
+    "automated": "Contract, state transition, idempotency, failure injection, ledger invariant, and artifact identity checks.",
+    "packaged_manual": "A human completes the specified interaction in the exact packaged candidate and verifies visible identity and result continuity.",
+    "live_provider": "A bounded real-provider canary whose attempt count and authorization receipts are reconciled before validation."
+  },
+  "workflows": [
+    {
+      "id": "core-image-iteration",
+      "priority": "P0",
+      "entry": "A durable imported product asset is selected in the single-product workflow.",
+      "exit": "The original result and its reviewed adjustment are traceable, exportable, and recoverable after restart.",
+      "steps": [
+        "generate main and transparent results",
+        "review one result",
+        "create an immediate adjustment as a child version",
+        "export the selected delivery",
+        "restart and reopen the same result lineage"
+      ],
+      "acceptance": [
+        "Original results are never overwritten by an adjustment.",
+        "Review, adjustment, provider attempt, and export reference the same lineage.",
+        "Only durable state is required to survive restart.",
+        "A failed paid attempt does not retry automatically."
+      ],
+      "evidence": [
+        "automated",
+        "packaged_manual",
+        "live_provider"
+      ]
+    },
+    {
+      "id": "canvas-fine-edit-roundtrip",
+      "priority": "P0",
+      "entry": "A durable image or result node with a valid asset reference is selected in the spatial canvas.",
+      "exit": "A fine-edit child result is committed, returned to the originating spatial canvas, exported, and recoverable after restart.",
+      "steps": [
+        "open the original-pixel Fabric workspace",
+        "commit ROI, mask, and local-edit specification",
+        "generate one authorized candidate",
+        "compose the candidate into a child canvas version",
+        "return the child result to the originating spatial canvas",
+        "export and restart"
+      ],
+      "acceptance": [
+        "Excalidraw owns spatial composition and Fabric owns pixel editing.",
+        "Every handoff preserves asset, task, result, canvas, and local-edit references.",
+        "A handoff failure preserves the committed child result and offers a working recovery action.",
+        "Only the explicitly classified durable state survives restart."
+      ],
+      "evidence": [
+        "automated",
+        "packaged_manual",
+        "live_provider"
+      ]
+    },
+    {
+      "id": "failure-and-recovery",
+      "priority": "P0",
+      "entry": "A workspace, canvas, task, asset, or provider dependency fails or becomes stale.",
+      "exit": "The user can understand the failure, choose a valid next action, and recover or stop without data loss or hidden paid work.",
+      "steps": [
+        "classify the failure source",
+        "show cause, impact, paid-call status, and next action",
+        "retry read, retry save, reload conflict, resume task, or stop as appropriate",
+        "reconcile durable state and provider attempts"
+      ],
+      "acceptance": [
+        "No error action is a no-op for the state that displayed it.",
+        "An empty view cannot silently represent a failed read.",
+        "Blocked state is scoped to the failed capability and is recoverable.",
+        "Billing-unknown and failed provider attempts never trigger automatic paid retry."
+      ],
+      "evidence": [
+        "automated",
+        "packaged_manual"
+      ]
+    },
+    {
+      "id": "exposed-multi-source-workflows",
+      "priority": "P1",
+      "entry": "The user starts an already-exposed multi-file, group-split, batch-cutout, semantic-selection, or outpaint workflow.",
+      "exit": "The batch or derived results are individually traceable, partially recoverable, and delivered to the declared output location.",
+      "acceptance": [
+        "A multi-file run proves more than one independent item.",
+        "Partial failure, cancel, resume, and item-level retry preserve completed outputs.",
+        "Semantic grounding failure offers manual selection without a hidden provider call.",
+        "Outpaint writes only its authorized output region and transition band."
+      ],
+      "evidence": [
+        "automated",
+        "packaged_manual",
+        "live_provider"
+      ]
+    },
+    {
+      "id": "profile-and-governed-learning",
+      "priority": "P1",
+      "entry": "A product profile or result review is committed.",
+      "exit": "Version binding and governed knowledge application are visible in the next task trace without rewriting history.",
+      "acceptance": [
+        "Profile version updates never rebind historical tasks silently.",
+        "Pending suggestions do not affect task compilation.",
+        "Approved suggestions appear in applied-rule trace and disabled suggestions do not.",
+        "Historical review and knowledge evidence remains immutable."
+      ],
+      "evidence": [
+        "automated",
+        "packaged_manual"
+      ]
+    }
+  ],
+  "pwc1_plan": {
+    "implementation_started": false,
+    "estimated_engineering_days": "3-4",
+    "tasks": [
+      {
+        "id": "PWC1-1",
+        "title": "Failure taxonomy and recovery action map",
+        "estimate_days": 0.5,
+        "depends_on": [],
+        "deliverable": "One shared mapping for read, save, conflict, reference, contract, runtime, task, and provider failures, including preservation and paid-call status."
+      },
+      {
+        "id": "PWC1-2",
+        "title": "Fabric workspace recovery semantics",
+        "estimate_days": 0.75,
+        "depends_on": [
+          "PWC1-1"
+        ],
+        "deliverable": "Separate working actions for initial read failure, save retry, conflict reload, and fine-edit prerequisite failure."
+      },
+      {
+        "id": "PWC1-3",
+        "title": "Spatial canvas recovery semantics",
+        "estimate_days": 0.75,
+        "depends_on": [
+          "PWC1-1"
+        ],
+        "deliverable": "Explicit list, open, save, conflict-copy, and retry states; a failed list cannot render as an empty library."
+      },
+      {
+        "id": "PWC1-4",
+        "title": "Cross-canvas handoff safety",
+        "estimate_days": 0.75,
+        "depends_on": [
+          "PWC1-2",
+          "PWC1-3"
+        ],
+        "deliverable": "Recoverable spatial-to-Fabric entry and Fabric-to-spatial return without losing committed child results or blocking unrelated workspaces."
+      },
+      {
+        "id": "PWC1-5",
+        "title": "Recovery acceptance and packaged evidence",
+        "estimate_days": 0.75,
+        "depends_on": [
+          "PWC1-2",
+          "PWC1-3",
+          "PWC1-4"
+        ],
+        "deliverable": "Automated fault-injection coverage plus packaged human verification of every visible recovery action."
+      }
+    ]
+  }
+}
