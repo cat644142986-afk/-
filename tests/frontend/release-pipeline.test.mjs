@@ -47,6 +47,46 @@ test('formal portable promotion is candidate-first and rollback-capable', () => 
   assert.doesNotMatch(script, /Build-Sidecar\.ps1"?\s+-DeployPortable/i);
 });
 
+test('a sealed candidate is validated separately before promotion', () => {
+  const validate = read('tools/Validate-Portable-Stage.ps1');
+  const promote = read('tools/Promote-Validated-Stage.ps1');
+
+  const initialIdentity = validate.indexOf('"verify-identity"');
+  const sidecarSmoke = validate.indexOf('"Test-Portable.ps1"');
+  const appSmoke = validate.indexOf('"Test-Portable-App.ps1"');
+  const schemaGate = validate.indexOf('"verify_packaged_schema_upgrade.py"');
+  const postSmokeIdentity = validate.indexOf('"--candidate-identity-sha256"');
+  const validatedReceipt = validate.indexOf('status = "validated"');
+  assert.ok(initialIdentity >= 0, 'validation must begin with candidate identity');
+  assert.ok(sidecarSmoke > initialIdentity, 'sidecar smoke must follow identity');
+  assert.ok(appSmoke > sidecarSmoke, 'app smoke must follow sidecar smoke');
+  assert.ok(schemaGate > appSmoke, 'schema smoke must follow app smoke');
+  assert.ok(postSmokeIdentity > schemaGate, 'identity must be rechecked after smoke');
+  assert.ok(validatedReceipt > postSmokeIdentity, 'Validated receipt must be last');
+
+  const receiptGate = promote.indexOf('Only a Validated stage may be promoted');
+  const identityGate = promote.indexOf('"verify-identity"');
+  const begin = promote.indexOf('"begin"');
+  const formalSidecarSmoke = promote.indexOf('"Test-Portable.ps1"');
+  const formalAppSmoke = promote.indexOf('"Test-Portable-App.ps1"');
+  const rollback = promote.indexOf('rollback');
+  const finalize = promote.indexOf('"finalize"');
+  const shortcut = promote.indexOf('CreateShortcut($temporaryShortcut)');
+  assert.ok(receiptGate >= 0, 'promotion must require a Validated receipt');
+  assert.ok(identityGate > receiptGate, 'candidate identity must follow receipt verification');
+  assert.ok(begin > identityGate, 'promotion begin must follow validation gates');
+  assert.ok(formalSidecarSmoke > begin, 'formal sidecar smoke must follow begin');
+  assert.ok(formalAppSmoke > formalSidecarSmoke, 'formal app smoke must follow sidecar smoke');
+  assert.ok(rollback > begin && rollback < finalize, 'pre-finalize failure must roll back');
+  assert.ok(finalize > formalAppSmoke, 'finalize must follow formal smoke');
+  assert.ok(shortcut > finalize, 'desktop shortcut must follow finalization');
+  assert.match(promote, /ValidatedReceiptSha256/);
+  assert.match(promote, /candidate_identity_sha256/);
+  assert.match(promote, /File\]::Replace\(\$temporaryShortcut, \$desktopShortcut, \$shortcutBackup, \$true\)/);
+  assert.match(promote, /previous desktop shortcut|Copy-Item -LiteralPath \$shortcutBackup/);
+  assert.doesNotMatch(promote, /tauri build|Build-Sidecar|npm\.cmd run build/);
+});
+
 test('release evidence captures the finalized app by process identity', () => {
   const screenshot = read('tools/screenshot.py');
 

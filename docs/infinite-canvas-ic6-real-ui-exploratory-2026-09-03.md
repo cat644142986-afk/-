@@ -1,8 +1,16 @@
 # 无限画布 IC6 Windows 探索性实机记录（2026-09-03）
 
+## IC6 PROMOTED / FORMAL STABLE（2026-09-08，用户明确授权后的正式提升）
+
+在 Engineering Hygiene 清理完成后，用户明确授权把已封板 IC6 阶段同步为正式桌面版本。本次没有从工作区、Cargo target 或临时 worktree 重建，而是用新增的两段式门禁复验既有精确候选：`tools\Validate-Portable-Stage.ps1` 先完成候选 identity、打包 sidecar、打包 App、v5/v7→v8 schema/local-edit/video 与 smoke 后 identity 复核，生成 `Validated` 收据 SHA-256 `9A25BF57BB5B35838FD27CD619DB8D17F041E365C7A829EE79E6C470275E234A`；`tools\Promote-Validated-Stage.ps1` 随后只凭该收据与 candidate identity `5051F6BB4FDF65386DA2B30132CD108CE4D579742A2B6C12497A951AF28A9CBC` 执行事务式提升。伪造收据哈希的失败保护预演在任何正式目录变更前被拒绝。
+
+正式提升事务 `1e046f24e54e448197dfcad93b347ac0` 已 finalize。正式目录为 `D:\ProductAtelier-Desktop\release\ProductAtelier-Portable`，artifact 绑定 `146e198a2a90a68d425f6252d0f800e96faede0a`、contract `2026-09-02.4`、schema v8；正式目录 sidecar/App 双 smoke 通过。上一正式版 `93539f0 / contract .3 / schema v7` 完整备份在 `D:\ProductAtelier-Backups\release-before-20260908-135147-146e198a2a90`，promotion evidence SHA-256 为 `5DB4807B197728142942D5A3A184D6ACDB405ED6B8DCFC6FB3E292AB1EA9F9F5`。
+
+桌面最终只保留 `C:\Users\64414\Desktop\Product Atelier.lnk`，Target 为正式目录中的 `Product Atelier.exe`，Arguments 为空，WorkingDirectory 为正式目录，Icon 为同一 EXE 的资源 0。入口经 Windows Shell 的 `.lnk` 解析路径启动后，实际运行 App/sidecar 路径、健康接口 commit、contract 与 schema 均命中上述正式 artifact；由于本机原生 Computer Use RPC 未配置，本轮不能声称完成了字面鼠标双击注入。旧 `Product Atelier.lnk` 已在 finalize 后原子替换，指向 `D:\rust-target\release` 的 `Product Atelier 候选版.lnk` 在再次核对原字段后删除。
+
 ## IC6 CLOSED / VALIDATED STAGE（2026-09-08，最终阶段结论）
 
-IC6 已按“只保留候选、不提升正式版”的边界封板。最终实现 artifact 为 `codex/excalidraw-infinite-canvas` @ `146e198a2a90a68d425f6252d0f800e96faede0a`；该提交已推送且源码工作树干净。前序 `730366b` 的三窗口 WebView、100%/150% DPI 与 DWM、启动无黑帧、空间编辑、自动保存两轮自然重启、Fabric 实际子版本回填、视频完成/取消/播放/seek 证据继续有效；`146e198` 只修复此前遗漏的 Explorer 视频文件导入链，没有触及这些已验证实现。
+IC6 最初按“只保留候选、不提升正式版”的边界封板，随后才依据上方用户新增授权独立提升。最终实现 artifact 为 `codex/excalidraw-infinite-canvas` @ `146e198a2a90a68d425f6252d0f800e96faede0a`；该提交已推送且源码工作树干净。前序 `730366b` 的三窗口 WebView、100%/150% DPI 与 DWM、启动无黑帧、空间编辑、自动保存两轮自然重启、Fabric 实际子版本回填、视频完成/取消/播放/seek 证据继续有效；`146e198` 只修复此前遗漏的 Explorer 视频文件导入链，没有触及这些已验证实现。
 
 最终便携候选位于 `build/portable-candidate-current`，contract `2026-09-02.4`、schema v8、`378,364,549 bytes`（约 360.84 MiB）。App / sidecar / manifest / tree / identity receipt SHA-256 分别为 `FC8C0158D6CE9BBB6F3A5F93B94D3A866E66F004FBC801A76EF0B006A70F2B1A`、`F68A15A2DC18D926ECF2E4527018ECCCBDC100D14605725DAD8D80192AA41C49`、`CDDBA28C1A529E08A1B4536B3B4F31B045C79CE55D02613FB319D205A332680E`、`E3489C03FF7CAAFBFBFF6F18828B689E00471E91C6540ED9A58A391A69E208EA`、`5051F6BB4FDF65386DA2B30132CD108CE4D579742A2B6C12497A951AF28A9CBC`。候选身份校验、打包 sidecar smoke 和打包 Tauri App smoke 均通过。
 

@@ -396,3 +396,19 @@ v4 新增不可变画布版本、素材/结果来源引用，以及任务快照�
 schema v8 新增的空间 scene、视频任务、视频/封面资产和血缘不能交给 schema v7 sidecar 继续写。候选降级时：先退出候选 EXE 与对应 sidecar，保存当前 v8 账本副本，再从首次升级生成且已验证的 `.backup-v7-*.sqlite3` 在隔离目录恢复；确认 `integrity_check`、外键和正式 v7 smoke 后，才可按发布事务恢复。不要把 v7 程序直接指向 v8 文件，也不要覆盖运行中的正式目录。
 
 回到 IC5 实施前源码时，可从标签新建恢复分支。该回退会移除图生视频任务、视频节点、原始二进制导出和关闭保存握手，不会删除已生成的视频文件；旧 UI 无法解释这些新任务和 scene 引用，因此回退前必须完成或取消排队/运行中的视频任务并保留账本。离线 WebM 夹具不是用户资产或模型，可随源码回退移除。
+
+## 2026-09-08 无限画布 IC6 正式便携检查点
+
+- 正式 artifact 绑定提交：`146e198a2a90a68d425f6252d0f800e96faede0a`
+- sidecar contract：`2026-09-02.4`；数据库 schema：v8
+- 正式目录：`D:\ProductAtelier-Desktop\release\ProductAtelier-Portable`
+- 正式 EXE / sidecar / manifest SHA-256：`FC8C0158D6CE9BBB6F3A5F93B94D3A866E66F004FBC801A76EF0B006A70F2B1A` / `F68A15A2DC18D926ECF2E4527018ECCCBDC100D14605725DAD8D80192AA41C49` / `CDDBA28C1A529E08A1B4536B3B4F31B045C79CE55D02613FB319D205A332680E`
+- source fingerprint：`C1195FFE88CCA5CD36D2EAB99C3E8167B740FB38870069787A38AC8164A76A85`
+- 正式目录 tree SHA-256：`E3489C03FF7CAAFBFBFF6F18828B689E00471E91C6540ED9A58A391A69E208EA`
+- Validated 收据 SHA-256：`9A25BF57BB5B35838FD27CD619DB8D17F041E365C7A829EE79E6C470275E234A`
+- finalized 事务：`1e046f24e54e448197dfcad93b347ac0`
+- 上一 `.3 / schema v7` 正式目录完整备份：`D:\ProductAtelier-Backups\release-before-20260908-135147-146e198a2a90`
+- promotion evidence SHA-256：`5DB4807B197728142942D5A3A184D6ACDB405ED6B8DCFC6FB3E292AB1EA9F9F5`
+- 桌面入口：`C:\Users\64414\Desktop\Product Atelier.lnk`，Target/WorkingDirectory/Icon 均绑定上述固定正式目录
+
+本事务已经 finalize，活动 transaction 文件不存在，不能再调用 transaction rollback。需要降级到 `.3 / schema v7` 时，先完成或取消 v8 视频/画布任务，退出正式 App 与 sidecar，为当前正式目录和 `%APPDATA%\ProductAtelier` 各留新副本；再从 `93539f0c9ec857d22d3751bb836ff722579cd8db` 重新生成并验证候选，并只在隔离目录验证现存 `.backup-v7-*` 账本后执行新的事务式提升。不得直接把上方应用备份覆盖到运行中的正式目录，也不得让 v7 sidecar 直接写 v8 账本。

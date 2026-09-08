@@ -160,6 +160,14 @@ ProductAtelier-Desktop/
 | NSIS安装包候选 | `D:\rust-target\release\bundle\nsis\Product Atelier_1.0.0_x64-setup.exe` | 构建后仍需安装态 smoke |
 | 正式便携版文件夹 | `D:\ProductAtelier-Desktop\release\ProductAtelier-Portable\` | 以 promotion evidence 为准 |
 
+已封板阶段的构建与正式提升严格分离：
+
+```text
+Build -> Test -> Package -> Smoke -> Validated -> Promote -> Product Atelier.lnk
+```
+
+`tools\Validate-Portable-Stage.ps1` 只复验 `build\portable-candidate-current`，全部打包门禁通过后原子写入带 SHA-256 的 `build\portable-validated-stage.json`。`tools\Promote-Validated-Stage.ps1` 不执行构建，只接受完整 commit 和这份 Validated 收据的精确 SHA-256；它使用既有事务工具备份旧正式目录，提升后再次执行正式目录双 smoke，失败时回滚，finalize 后才原子更新桌面的 `Product Atelier.lnk`。候选目录、Cargo target、临时 worktree 和不存在的 EXE 均不得作为正式入口。
+
 ## 数据存储
 
 | 数据 | 位置 |
