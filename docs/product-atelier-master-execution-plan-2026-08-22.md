@@ -1,7 +1,7 @@
 # Product Atelier 完整产品与开发执行总计划
 
-> 首次制定：2026-08-22；最近校准：2026-09-02<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `93539f0c9ec857d22d3751bb836ff722579cd8db`，contract `2026-09-02.3`、SQLite schema v7、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo 和 outpaint 只写新增区域均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。同一 artifact 的 NSIS 已完成重建、隔离安装、安装态应用/sidecar/schema-outpaint 门禁、静默卸载和快捷方式恢复，形成未签名内部候选；代码签名的一键构建、先签后记 manifest、验签、隔离安装与失败保护也已固化，但由于没有外部代码签名证书，仍不能生成公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0–G3 已完成并正式发布，`app.js` 低耦合拆分与生产视觉 token 已在 G0 关闭。G4 情境式创作副驾继续等待用户重新确认预算；用户于 2026-09-02 把独立无限画布提升为当前优先级，G1C 的 ADR、隔离 PoC、IC2 生产一级入口/懒加载/画布列表、IC3 schema v8/不可变 scene 版本、IC4 业务内容/Fabric 精修桥、“描述修改→确认一次调用→AI 候选→严格合成”的局部编辑生成链和 IC5 视频第一阶段均已完成源码检查点，下一游标为 IC6 候选构建与真实 Windows 验收；G5 确定性质检基础顺延。正式便携版仍保持 `93539f0 / contract .3 / schema v7`，尚未提升本分支。<br>
+> 首次制定：2026-08-22；最近校准：2026-09-08<br>
+> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。正式 artifact 已按 candidate-first 事务链提升到 `93539f0c9ec857d22d3751bb836ff722579cd8db`，contract `2026-09-02.3`、SQLite schema v7、Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo 和 outpaint 只写新增区域均已通过正式目录复验；`959c2358c705fa5c2ebceeea3b7a4a30fba567ed` 的三档正式 WebView 189/189 终验继续作为未改动界面行为的基线证据。智能选物的名称/数量确认、人工候选修正、蒙版预览与画笔恢复可用；实验自动定位模型因最高安全召回仅 69.39% 继续外置。生图保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，材质证据与可回退 v3 路由已进入正式版；v3 因透明商品阻断失败不做全局默认。同一 artifact 的 NSIS 已完成重建、隔离安装、安装态应用/sidecar/schema-outpaint 门禁、静默卸载和快捷方式恢复，形成未签名内部候选；代码签名的一键构建、先签后记 manifest、验签、隔离安装与失败保护也已固化，但由于没有外部代码签名证书，仍不能生成公开安装包。正式版后的产品增长路线已纳入本文 G0–G8；G0–G3 已完成并正式发布，`app.js` 低耦合拆分与生产视觉 token 已在 G0 关闭。G4 情境式创作副驾继续等待用户重新确认预算；独立无限画布 G1C 的 ADR、隔离 PoC 与 IC2–IC6 已完成，IC6 已达到 **CLOSED / VALIDATED STAGE**。稳定候选绑定 `146e198a2a90a68d425f6252d0f800e96faede0a`，同身份未签名 NSIS 已通过隔离安装生命周期；下一产品阶段只有在用户另行指定后才开始。正式便携版仍保持 `93539f0 / contract .3 / schema v7`，本分支未提升。<br>
 > 当前开发分支：`codex/excalidraw-infinite-canvas`（基于 `codex/master-roadmap-phase-0-1` 的 `9faf87e`）<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
@@ -2012,3 +2012,9 @@ IC6 预构建门禁完成。下一步从干净且已推送的检查点依次构�
 - 源码复核确认 Explorer 视频 drop 原先只进入图片过滤器，实际不能导入视频，故该项不能沿用“FileList 已接线”的旧结论。现已建立无限画布专用 MP4/WebM 导入、浏览器本机元数据/代理封面、sidecar 内容寻址存储、视频流/下载/缩略图、重启恢复、回滚清理和图片任务输入隔离；快捷处理仍只接受 JPG/PNG/WebP，scene 仍不写原视频或 Base64。
 - 当前源码门禁：前端 `259/259`；Python `541` 项（`537` 通过、`4` 项平台条件跳过）；Vite production build、lazy bundle、Ruff、语法和 Git whitespace 全绿。dist `10,732,566 bytes`，静态预计目录 `368.8 MiB`，contract `.4`、schema v8 不变；未读取 API Key、调用付费接口或写入正式账本。
 - 下一步固定为：提交并推送当前源码检查点 → 从该唯一身份 clean build 一次候选并完成 packaged 双 smoke/迁移 → 只复验本次新增的视频文件拖入、封面、播放、原视频导出和重启 → 同身份 NSIS → 正式保护哈希只读复核。`730366b` 的未改动 DWM、启动壳、空间编辑和 Fabric 像素证据保留，不做无意义重复。全部通过后仍只保留候选，未经用户再次明确授权不提升正式便携版。
+
+#### 2026-09-08 IC6 封板（替代以上执行游标）
+
+- **状态：IC6 CLOSED / VALIDATED STAGE。** 实现 artifact 为 `146e198a2a90a68d425f6252d0f800e96faede0a`；最终便携候选 `378,364,549 bytes`（约 360.84 MiB），contract `.4`、schema v8，身份校验、sidecar/App 双 smoke 和新增视频导入/封面/原文件/重启专项通过。
+- 同身份未签名 NSIS 为 `110,054,894 bytes`，SHA-256 `5BEE6D420932F900FFE8556DDCF99888C54B1C167A931EEABB85C1045854DBD4`；隔离安装、安装态应用/sidecar、v5/v7→v8、视频任务与重启、静默卸载、注册表/快捷方式恢复均通过。精确路径、artifact 哈希及非阻塞边界见 `docs/infinite-canvas-ic6-real-ui-exploratory-2026-09-03.md` 顶部最终结论。
+- 正式 App、sidecar、manifest 和桌面快捷方式未变，正式账本未被本轮隔离测试写入；正式便携版继续保持 `93539f0 / contract .3 / schema v7`，未执行提升。下一产品阶段必须由用户另行指定后再开始，不从 IC6 封板自动扩展范围。
