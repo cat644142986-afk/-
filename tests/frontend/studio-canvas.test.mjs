@@ -444,6 +444,66 @@ test('a Fabric read failure exposes a read retry and succeeds without invoking s
   assert.equal(nodes.get('#canvas-save-title').textContent, '画布已同步');
 });
 
+test('concurrent Fabric recovery reads share one hydration and cannot race the visible state', async () => {
+  class StubNode {
+    constructor() {
+      this.dataset = {};
+      this.hidden = false;
+      this.disabled = false;
+      this.textContent = '';
+      this.style = {};
+      this.classList = { toggle() {} };
+    }
+    setAttribute() {}
+    removeAttribute() {}
+    querySelectorAll() { return []; }
+  }
+  const nodes = new Map();
+  const query = (selector) => {
+    if (!nodes.has(selector)) nodes.set(selector, new StubNode());
+    return nodes.get(selector);
+  };
+  let releaseRead;
+  const readGate = new Promise((resolve) => { releaseRead = resolve; });
+  let readCalls = 0;
+  const controller = createCanvasController({
+    api: {
+      async getCommands() {
+        return {
+          contract_version: 'canvas-command-v1',
+          commands: [
+            'command:transform-layer',
+            'command:toggle-layer',
+            'command:toggle-layer-lock',
+            'command:local-edit-compose',
+          ].map((id) => ({ id })),
+        };
+      },
+      async getCanvas() {
+        readCalls += 1;
+        await readGate;
+        return { document: null, current_revision: 0, proxies: [] };
+      },
+    },
+    state: { assets: [], results: {} },
+    query,
+    queryAll: () => [],
+    escapeHtml: String,
+    assetUrl: () => '',
+    toast: () => {},
+    formatApiError: (error) => String(error?.message || error),
+  });
+
+  const first = controller.retryRead();
+  const second = controller.retryRead();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(readCalls, 1);
+  releaseRead();
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.equal(readCalls, 1);
+  assert.equal(nodes.get('#canvas-save-title').textContent, '画布已同步');
+});
+
 test('production canvas uses SQLite APIs and is wired into the Studio lifecycle', () => {
   assert.match(apiSource, /export async function getCanvas\(mode/);
   assert.match(apiSource, /export async function saveCanvas\(mode/);

@@ -123,6 +123,7 @@ function blankEntry() {
   return {
     hydrated: false,
     loading: false,
+    hydrationPromise: null,
     document: null,
     currentRevision: 0,
     currentVersionId: null,
@@ -907,8 +908,18 @@ export function createCanvasController({
     }
   }
 
+  function hasPendingWorkflowRecovery(entry, mode = currentMode) {
+    return Boolean(
+      mode === currentMode
+      && pendingFineEdit
+      && entry.blockReason === 'fine-edit-entry'
+      && entry.recoveryAction === 'retry-fine-edit'
+    );
+  }
+
   function applyCanvasResponse(mode, response, { rebuildCanvas = true } = {}) {
     const entry = entryFor(mode);
+    const preserveWorkflowRecovery = hasPendingWorkflowRecovery(entry, mode);
     entry.hydrated = true;
     entry.loading = false;
     entry.document = response?.document ? canvasDocumentClone(response.document) : null;
@@ -917,9 +928,11 @@ export function createCanvasController({
     entry.proxies = new Map((response?.proxies || []).map((proxy) => [String(proxy.layer_id), proxy]));
     entry.dirty = false;
     entry.blocked = false;
-    entry.blockReason = '';
-    entry.lastError = null;
-    entry.recoveryAction = '';
+    if (!preserveWorkflowRecovery) {
+      entry.blockReason = '';
+      entry.lastError = null;
+      entry.recoveryAction = '';
+    }
     entry.pendingSave = null;
     if (mode === currentMode) {
       selectedLayerId = entry.document?.layers?.some((layer) => layer.id === selectedLayerId)
@@ -956,38 +969,54 @@ export function createCanvasController({
 
   async function ensureHydrated(mode = currentMode) {
     const entry = entryFor(mode);
-    if (entry.hydrated || entry.loading) return;
+    if (entry.hydrated) return true;
+    if (entry.hydrationPromise) return entry.hydrationPromise;
     entry.loading = true;
     if (mode === currentMode) {
       setSaveState('loading', '正在恢复画布', '从本地 SQLite 读取当前模式的最新版本');
       renderCanvasLoading(true);
     }
-    try {
-      await ensureCommandContract();
-      const response = await api.getCanvas(mode, { timeoutMs: 12000 });
-      applyCanvasResponse(mode, response);
-      if (mode === currentMode) setSaveState('saved', '画布已同步', entry.document ? `revision ${entry.currentRevision}` : '添加素材后创建第一版');
-    } catch (error) {
-      entry.loading = false;
-      entry.blocked = true;
-      entry.blockReason = error?.code === 'CANVAS_COMMAND_CONTRACT_MISMATCH' ? 'contract-refresh' : 'fabric-read';
-      entry.lastError = error;
-      if (mode === currentMode) {
-        renderCanvasLoading(false);
-        setRecoveryState(
-          entry.blockReason,
-          error,
-          { cause: formatApiError(error, '本地画布接口暂不可用') },
-        );
-        setInteractionDisabled(true);
+    const hydration = (async () => {
+      try {
+        await ensureCommandContract();
+        const response = await api.getCanvas(mode, { timeoutMs: 12000 });
+        applyCanvasResponse(mode, response);
+        if (mode === currentMode && !hasPendingWorkflowRecovery(entry, mode)) {
+          setSaveState('saved', '画布已同步', entry.document ? `revision ${entry.currentRevision}` : '添加素材后创建第一版');
+        }
+        return true;
+      } catch (error) {
+        entry.loading = false;
+        entry.blocked = true;
+        entry.blockReason = error?.code === 'CANVAS_COMMAND_CONTRACT_MISMATCH' ? 'contract-refresh' : 'fabric-read';
+        entry.lastError = error;
+        if (mode === currentMode) {
+          renderCanvasLoading(false);
+          setRecoveryState(
+            entry.blockReason,
+            error,
+            { cause: formatApiError(error, '本地画布接口暂不可用') },
+          );
+          setInteractionDisabled(true);
+        }
+        return false;
       }
+    })();
+    entry.hydrationPromise = hydration;
+    try {
+      return await hydration;
+    } finally {
+      if (entry.hydrationPromise === hydration) entry.hydrationPromise = null;
     }
   }
 
   function hydrate(mode, response) {
     if (!mode || response === undefined) return;
     applyCanvasResponse(mode, response || {});
-    if (mode === currentMode) setSaveState('saved', '画布已同步', response?.document ? `revision ${response.current_revision}` : '添加素材后创建第一版');
+    const entry = entryFor(mode);
+    if (mode === currentMode && !hasPendingWorkflowRecovery(entry, mode)) {
+      setSaveState('saved', '画布已同步', response?.document ? `revision ${response.current_revision}` : '添加素材后创建第一版');
+    }
   }
 
   function documentForSave(entry) {
@@ -1122,6 +1151,7 @@ export function createCanvasController({
 
   async function retryCanvasRead() {
     const entry = entryFor();
+    if (entry.hydrationPromise) return entry.hydrationPromise;
     entry.hydrated = false;
     entry.loading = false;
     entry.blocked = false;
@@ -2382,6 +2412,11 @@ export function createCanvasController({
       setLocalEditMode(request.localMode);
       setActivePanel('local-edit');
       pendingFineEdit = null;
+      if (entry.blockReason === 'fine-edit-entry') {
+        entry.blockReason = '';
+        entry.lastError = null;
+        entry.recoveryAction = '';
+      }
       requestAnimationFrame(() => query('#canvas-stage')?.focus({ preventScroll: true }));
       return layer;
     } catch (error) {
