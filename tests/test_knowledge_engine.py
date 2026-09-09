@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -169,6 +170,49 @@ class KnowledgeMemoryContractTests(unittest.TestCase):
             self.assertTrue(
                 any(s["relative_path"] == "记忆反馈/已批准" for s in bundle["sources"])
             )
+
+    def test_bound_product_profile_becomes_prompt_rules_before_governed_memory(self) -> None:
+        fixture_path = (
+            Path(__file__).resolve().parent
+            / "fixtures" / "growth_foundation" / "minimal-contract.json"
+        )
+        profile = json.loads(fixture_path.read_text(encoding="utf-8"))["product_profiles"][0]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vault = Path(temp_dir) / "vault"
+            (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+            compiler = KnowledgeCompiler(vault)
+            context = {
+                "product_profile": profile,
+                "product_profile_version_id": "profile-version:synthetic-v1",
+                "approved_memory_rules": [{
+                    "id": "memory:soft-light",
+                    "label": "柔光",
+                    "text": "使用柔和商业光线",
+                }],
+            }
+            bundle = compiler.compile(context)
+            compact = compiler.enrich_prompt(
+                "base", "", {**context, "prompt_version": "prompt_v3"}
+            )
+
+        self.assertIn("SYNTHETIC-SKU-001", bundle["positive_rules"][0]["text"])
+        self.assertTrue(any(
+            "PET" in item["text"] and "SYNTHETIC BRAND" in item["text"]
+            for item in bundle["positive_rules"]
+        ))
+        self.assertTrue(any(
+            item["text"] == "已批准记忆反馈：使用柔和商业光线"
+            for item in bundle["positive_rules"]
+        ))
+        self.assertEqual(
+            bundle["sources"][0]["id"], "profile-version:synthetic-v1"
+        )
+        self.assertIn("PET", compact["prompt"])
+        self.assertIn("使用柔和商业光线", compact["prompt"])
+        self.assertEqual(
+            {item["id"] for item in compact["sources"]},
+            {"profile-version:synthetic-v1", "memory:soft-light"},
+        )
 
     def test_malformed_memory_rules_are_ignored_without_breaking_compile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

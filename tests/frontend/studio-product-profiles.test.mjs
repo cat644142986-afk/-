@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   createEmptyProductProfile,
@@ -7,6 +10,12 @@ import {
   uiStateWithProductProfileSelection,
   validateProductProfile,
 } from '../../src/js/studio-product-profiles.js';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const controllerSource = fs.readFileSync(
+  path.join(root, 'src/js/studio-product-profiles.js'),
+  'utf8',
+);
 
 test('product profile selection survives draft ui state without replacing unrelated state', () => {
   const uiState = uiStateWithProductProfileSelection({
@@ -79,4 +88,11 @@ test('product profile validation blocks dangling protection facts and unsafe pla
   assert.ok(errors.some((item) => item.path === 'brand_colors.0.value'));
   assert.ok(errors.some((item) => item.path === 'logos.0.component_id'));
   assert.ok(errors.some((item) => item.path === 'platform_specs.0.safe_area_percent'));
+});
+
+test('profile and version read failures stay visible and expose matching retries', () => {
+  assert.match(controllerSource, /商品档案读取失败[\s\S]*data-profile-retry-list/);
+  assert.match(controllerSource, /版本历史读取失败[\s\S]*data-profile-history-retry/);
+  assert.match(controllerSource, /现有档案没有被当作空状态/);
+  assert.match(controllerSource, /if \(!loaded && !profiles\(\)\.length\)/);
 });

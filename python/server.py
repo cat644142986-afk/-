@@ -6,7 +6,7 @@ FastAPI backend wrapping the existing AI image processing logic.
 Runs as a sidecar process alongside the Tauri desktop app.
 All business logic preserved 100% from ecom_workbench.py.
 """
-import base64, json, time, io, os, sys, re, mimetypes, threading, traceback, uuid, shutil, hashlib, math, sqlite3
+import base64, copy, json, time, io, os, sys, re, mimetypes, threading, traceback, uuid, shutil, hashlib, math, sqlite3
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from datetime import datetime
@@ -3922,6 +3922,7 @@ def _planned_paid_call_count(
     parameters: dict[str, Any],
     *,
     command_id: str = "",
+    product_profile_bound: bool = False,
 ) -> int:
     """Return the frozen upper bound for new billable provider submissions."""
     if command_id == LOCAL_EDIT_GENERATE_COMMAND_ID:
@@ -3936,7 +3937,13 @@ def _planned_paid_call_count(
         return 1 + MAX_GROUP_PRODUCTS * passes
     variations = max(1, int(parameters.get("variations" if mode == "multi-file" else "batch", 1)))
     image_calls = len(source_asset_ids) * variations * passes
-    detection_calls = 1 if mode == "single" and not str(parameters.get("product_name") or "").strip() else 0
+    detection_calls = (
+        1
+        if mode == "single"
+        and not product_profile_bound
+        and not str(parameters.get("product_name") or "").strip()
+        else 0
+    )
     return image_calls + detection_calls
 
 
@@ -3976,6 +3983,55 @@ def _attach_paid_call_authorization(
         "automatic_paid_retry": False,
     }
     return parameters
+
+
+def _freeze_job_memory_rules(
+    parameters: dict[str, Any],
+    *,
+    idempotency_key: str,
+    product_profile_id: str | None = None,
+    expected_product_profile_revision: int | None = None,
+    frozen_product_profile_version_id: str | None = None,
+) -> dict[str, Any]:
+    """Freeze governed rules once while keeping an idempotent replay byte-stable."""
+    frozen = dict(parameters or {})
+    existing = LEDGER.get_job_by_idempotency_key(
+        idempotency_key, include_attempts=False
+    )
+    if existing is not None:
+        existing_parameters = dict(existing.get("parameters") or {})
+        if "approved_memory_rules" in existing_parameters:
+            frozen["approved_memory_rules"] = copy.deepcopy(
+                existing_parameters.get("approved_memory_rules") or []
+            )
+        else:
+            frozen.pop("approved_memory_rules", None)
+        return frozen
+
+    scope = dict(frozen.get("brief") or {})
+    for key in (
+        "category", "brand_profile", "project_name", "designer_profile",
+        "intent_locks", "model", "prompt_version",
+    ):
+        if key in frozen:
+            scope[key] = frozen[key]
+
+    profile = None
+    if frozen_product_profile_version_id:
+        profile = LEDGER.get_product_profile_version(
+            frozen_product_profile_version_id
+        ).get("profile")
+    elif product_profile_id:
+        current = LEDGER.get_product_profile(product_profile_id)
+        if int(current.get("current_revision") or 0) == int(
+            expected_product_profile_revision or 0
+        ):
+            profile = current.get("profile")
+    if isinstance(profile, dict):
+        scope["category"] = str(profile.get("category") or scope.get("category") or "general")
+
+    frozen["approved_memory_rules"] = _approved_memory_rules(scope)
+    return frozen
 
 
 def _normalize_folder_delivery(value: Any) -> dict[str, Any] | None:
@@ -4300,6 +4356,13 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
         _validate_job_request(mode, source_asset_ids, parameters)
         if str(command["id"]) == LOCAL_EDIT_GENERATE_COMMAND_ID:
             _validate_local_edit_generate_request(request, parameters)
+        if str(command["id"]) != IMAGE_TO_VIDEO_COMMAND_ID:
+            parameters = _freeze_job_memory_rules(
+                parameters,
+                idempotency_key=str(request.client_request_id or "").strip(),
+                product_profile_id=request.product_profile_id,
+                expected_product_profile_revision=request.expected_product_profile_revision,
+            )
         planned_paid_calls = _planned_paid_call_count(
             mode,
             source_asset_ids,
@@ -4403,7 +4466,18 @@ async def create_durable_job(request: JobCreateRequest):
         refresh_runtime_config()
         parameters = _normalize_job_parameters(mode, request.parameters or {})
         _validate_job_request(mode, source_asset_ids, parameters)
-        planned_paid_calls = _planned_paid_call_count(mode, source_asset_ids, parameters)
+        parameters = _freeze_job_memory_rules(
+            parameters,
+            idempotency_key=str(request.client_request_id or "").strip(),
+            product_profile_id=request.product_profile_id,
+            expected_product_profile_revision=request.expected_product_profile_revision,
+        )
+        planned_paid_calls = _planned_paid_call_count(
+            mode,
+            source_asset_ids,
+            parameters,
+            product_profile_bound=bool(request.product_profile_id),
+        )
         parameters = _attach_paid_call_authorization(
             parameters,
             client_request_id=request.client_request_id,
@@ -4727,6 +4801,14 @@ async def create_result_adjustment(job_id: str, request: ResultAdjustmentRequest
         parameters = _normalize_job_parameters(mode, parameters)
         source_asset_ids = [str(owner.get("source_asset_id") or "")]
         _validate_job_request(mode, source_asset_ids, parameters)
+        parent_profile_version_id = str(
+            (parent_job.get("snapshot") or {}).get("product_profile_version_id") or ""
+        ).strip() or None
+        parameters = _freeze_job_memory_rules(
+            parameters,
+            idempotency_key=f"adjustment:{request_id}",
+            frozen_product_profile_version_id=parent_profile_version_id,
+        )
         parameters = _attach_paid_call_authorization(
             parameters,
             client_request_id=request_id,
@@ -4743,6 +4825,7 @@ async def create_result_adjustment(job_id: str, request: ResultAdjustmentRequest
             requested_concurrency=1,
             max_attempts=1,
             title=f"结果调整 · V{version}",
+            frozen_product_profile_version_id=parent_profile_version_id,
         )
         _wake_job_engine()
         enriched_review = _enrich_result_reviews([review])[0]
@@ -5682,6 +5765,14 @@ def _job_trace_context(ctx):
     session = LEDGER.get_session(str(ctx.job["session_id"]), include_timeline=False)
     snapshot = dict(ctx.job.get("snapshot") or {})
     parameters = dict(ctx.job.get("parameters") or {})
+    product_profile_version_id = str(
+        snapshot.get("product_profile_version_id") or ""
+    ).strip()
+    product_profile = None
+    if product_profile_version_id:
+        product_profile = LEDGER.get_product_profile_version(
+            product_profile_version_id
+        ).get("profile")
     brief = snapshot.get("brief") if isinstance(snapshot.get("brief"), dict) else {}
     if not brief and isinstance(parameters.get("brief"), dict):
         brief = dict(parameters["brief"])
@@ -5703,6 +5794,8 @@ def _job_trace_context(ctx):
         "brand_profile": session.get("brand_profile", ""),
         "model": str(parameters.get("model") or ""),
         "prompt_version": str(parameters.get("prompt_version") or PROMPT_COMPILER_VERSION),
+        "product_profile_version_id": product_profile_version_id,
+        "product_profile": product_profile if isinstance(product_profile, dict) else None,
         "parameters": parameters,
     }
 
@@ -6796,7 +6889,40 @@ def _job_knowledge_context(trace, **values):
     }
     if isinstance(trace.get("brief"), dict):
         context = {**trace["brief"], **context}
-    context["approved_memory_rules"] = _approved_memory_rules(context)
+    product_profile = trace.get("product_profile")
+    if isinstance(product_profile, dict):
+        context["product_profile"] = product_profile
+        context["product_profile_version_id"] = str(
+            trace.get("product_profile_version_id") or ""
+        )
+        if not str(context.get("product_name") or "").strip():
+            context["product_name"] = str(product_profile.get("name") or "")
+        locks = dict(context.get("intent_locks") or {})
+        locks.setdefault("subject_shape", True)
+        locks.setdefault("product_count", True)
+        if product_profile.get("brand_colors"):
+            locks.setdefault("brand_color", True)
+        if any(
+            str(item.get("policy") or "") != "allow_modify"
+            for item in product_profile.get("packaging_texts") or []
+            if isinstance(item, dict)
+        ):
+            locks.setdefault("packaging_text", True)
+        if any(
+            str(item.get("policy") or "") != "allow_modify"
+            for item in product_profile.get("logos") or []
+            if isinstance(item, dict)
+        ):
+            locks.setdefault("logo", True)
+        context["intent_locks"] = locks
+    parameters = dict(trace.get("parameters") or {})
+    if "approved_memory_rules" in parameters:
+        context["approved_memory_rules"] = copy.deepcopy(
+            parameters.get("approved_memory_rules") or []
+        )
+    else:
+        # Compatibility for jobs created before governed-rule snapshots existed.
+        context["approved_memory_rules"] = _approved_memory_rules(context)
     return context
 
 
@@ -6943,8 +7069,15 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             "provider_params": output_spec["provider_params"],
         },
     )
-    product_name = str(params.get("product_name") or "").strip()
-    product_type = "food"
+    bound_profile = (
+        trace.get("product_profile")
+        if isinstance(trace.get("product_profile"), dict)
+        else {}
+    )
+    product_name = str(
+        params.get("product_name") or bound_profile.get("name") or ""
+    ).strip()
+    product_type = str(bound_profile.get("category") or "food").strip() or "food"
     brief = params.get("brief") if isinstance(params.get("brief"), dict) else {}
     raw_product_count = (
         params.get("product_count")

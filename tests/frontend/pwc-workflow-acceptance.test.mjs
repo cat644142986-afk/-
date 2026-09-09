@@ -91,6 +91,12 @@ test('P1 multi-source recovery separates local retry from new paid authorization
   assert.match(rule, /never reuse the original authorization/);
 });
 
+test('P1 profile and governed learning freeze real execution inputs', () => {
+  const workflow = contract.workflows.find((item) => item.id === 'profile-and-governed-learning');
+  assert.ok(workflow.acceptance.some((item) => /SKU facts and protection constraints/.test(item)));
+  assert.ok(workflow.acceptance.some((item) => /frozen when the task is created/.test(item)));
+});
+
 test('PWC-1 implementation follows the dependency-ordered recovery plan', () => {
   const plan = contract.pwc1_plan;
   assert.equal(plan.implementation_started, true);

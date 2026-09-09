@@ -262,6 +262,7 @@ export function createProductProfileController({
   let editingRecord = null;
   let draft = null;
   let history = [];
+  let historyLoadError = '';
   let historyReadOnly = false;
   let referenceAssets = [];
   let modalError = '';
@@ -384,6 +385,10 @@ export function createProductProfileController({
   function renderList() {
     const host = query('#product-profile-list');
     if (!host) return;
+    if (!state.productProfilesAvailable) {
+      host.innerHTML = '<div class="product-profile-empty"><strong>商品档案读取失败</strong><p>当前选择和已保存版本没有被清空。</p><button type="button" data-profile-retry-list>重试读取</button></div>';
+      return;
+    }
     if (!profiles().length) {
       host.innerHTML = '<div class="product-profile-empty"><strong>还没有商品档案</strong><p>建立后可在不同任务中复用同一套 SKU、材质和品牌保护。</p></div>';
       return;
@@ -400,6 +405,10 @@ export function createProductProfileController({
   function renderHistory() {
     const host = query('#product-profile-history');
     if (!host) return;
+    if (historyLoadError) {
+      host.innerHTML = `<div class="product-profile-empty"><strong>版本历史读取失败</strong><p>${escapeHtml(historyLoadError)}</p><button type="button" data-profile-history-retry>重试版本历史</button></div>`;
+      return;
+    }
     if (!editingRecord || !history.length) {
       host.innerHTML = '<p>保存后会在这里保留不可变版本。</p>';
       return;
@@ -664,11 +673,12 @@ export function createProductProfileController({
   }
 
   async function loadHistory(profileId) {
+    historyLoadError = '';
     try {
       const response = await api.getProductProfileVersions(profileId, 100, { timeoutMs: 12000 });
       history = Array.isArray(response?.versions) ? response.versions : [];
-    } catch (_) {
-      history = [];
+    } catch (error) {
+      historyLoadError = formatApiError(error, '版本历史接口不可用');
     }
     renderHistory();
   }
@@ -678,6 +688,8 @@ export function createProductProfileController({
     busy = true;
     modalError = '';
     conflictCurrent = null;
+    if (String(editingRecord?.id || '') !== String(profileId)) history = [];
+    historyLoadError = '';
     try {
       editingRecord = await api.getProductProfile(profileId, { timeoutMs: 12000 });
       draft = cloneJson(editingRecord.profile);
@@ -697,6 +709,7 @@ export function createProductProfileController({
     editingRecord = null;
     draft = createEmptyProductProfile();
     history = [];
+    historyLoadError = '';
     historyReadOnly = false;
     modalError = '';
     conflictCurrent = null;
@@ -785,7 +798,15 @@ export function createProductProfileController({
     returnFocus = document.activeElement;
     query('#product-profile-modal').hidden = false;
     query('#product-profile-modal-close').focus();
-    await Promise.all([load({ silent: true }), loadReferenceAssets()]);
+    const [loaded] = await Promise.all([load({ silent: true }), loadReferenceAssets()]);
+    if (!loaded && !profiles().length) {
+      editingRecord = null;
+      draft = null;
+      renderList();
+      query('#product-profile-history').innerHTML = '<p>档案恢复后才能读取版本历史。</p>';
+      query('#product-profile-form-body').innerHTML = '<div class="product-profile-empty product-profile-empty--wide"><strong>商品档案暂不可读取</strong><p>现有档案没有被当作空状态；请先重试读取。</p></div>';
+      return;
+    }
     const current = selection();
     if (current?.id && profileById(current.id)) await openProfile(current.id);
     else if (profiles().length) await openProfile(profiles()[0].id);
@@ -836,10 +857,24 @@ export function createProductProfileController({
     query('#btn-product-profile-reload').addEventListener('click', reloadConflictCurrent);
     query('#btn-product-profile-save').addEventListener('click', save);
     query('#product-profile-list').addEventListener('click', (event) => {
+      if (event.target.closest('[data-profile-retry-list]')) {
+        load().then((loaded) => {
+          if (!loaded) return;
+          const current = selection();
+          if (current?.id && profileById(current.id)) openProfile(current.id);
+          else if (profiles().length) openProfile(profiles()[0].id);
+          else newProfile();
+        });
+        return;
+      }
       const button = event.target.closest('[data-profile-open]');
       if (button) openProfile(button.dataset.profileOpen);
     });
     query('#product-profile-history').addEventListener('click', (event) => {
+      if (event.target.closest('[data-profile-history-retry]')) {
+        if (editingRecord?.id) loadHistory(editingRecord.id);
+        return;
+      }
       const button = event.target.closest('[data-profile-version]');
       if (button) viewVersion(button.dataset.profileVersion);
     });

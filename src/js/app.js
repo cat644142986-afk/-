@@ -2191,11 +2191,15 @@ function updateCtaState() {
     && !cutoutReadiness.ready
     && !semanticCanConfirm;
   const passes = getGenerationStrategy(state.currentMode) === 'single_pass' ? 1 : 2;
+  const productProfileBound = Boolean(
+    productProfiles.selectionForSubmission().productProfileId
+  );
   const paidCallLimit = state.currentMode === 'cutout-batch'
     ? 0
     : state.currentMode === 'group-split'
       ? 1 + (12 * passes)
-      : (count * Math.max(1, batch) * passes) + (state.currentMode === 'single' ? 1 : 0);
+      : (count * Math.max(1, batch) * passes)
+        + (state.currentMode === 'single' && !productProfileBound ? 1 : 0);
   const productProfileConflict = productProfiles.hasConflict();
   button.disabled = !hasFiles || state.submitting || !state.assetsAvailable || !capacityOkay || semanticBlocked || productProfileConflict;
   $('#param-batch').setAttribute('aria-invalid', String(!capacityOkay));

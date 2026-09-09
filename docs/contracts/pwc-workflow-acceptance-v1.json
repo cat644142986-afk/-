@@ -190,8 +190,9 @@
       "exit": "Version binding and governed knowledge application are visible in the next task trace without rewriting history.",
       "acceptance": [
         "Profile version updates never rebind historical tasks silently.",
+        "The bound profile version contributes its SKU facts and protection constraints to the task's applied-rule trace.",
         "Pending suggestions do not affect task compilation.",
-        "Approved suggestions appear in applied-rule trace and disabled suggestions do not.",
+        "Suggestion status is frozen when the task is created: approved suggestions appear in applied-rule trace and pending or disabled suggestions do not.",
         "Historical review and knowledge evidence remains immutable."
       ],
       "evidence": [

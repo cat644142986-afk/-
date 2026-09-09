@@ -6982,6 +6982,7 @@ class AtelierLedger:
         canvas_operation_id: str | None = None,
         product_profile_id: str | None = None,
         expected_product_profile_revision: int | None = None,
+        frozen_product_profile_version_id: str | None = None,
         local_edit_spec_id: str | None = None,
     ) -> tuple[dict[str, Any], bool]:
         source_asset_ids = [str(asset_id) for asset_id in source_asset_ids]
@@ -7017,6 +7018,18 @@ class AtelierLedger:
             if canvas_operation_id is not None:
                 _canvas_id(canvas_operation_id, "canvas_operation_id")
         product_profile_id = str(product_profile_id or "").strip() or None
+        frozen_product_profile_version_id = (
+            str(frozen_product_profile_version_id or "").strip() or None
+        )
+        if product_profile_id is not None and frozen_product_profile_version_id is not None:
+            raise ValueError(
+                "product_profile_id and frozen_product_profile_version_id are mutually exclusive"
+            )
+        if frozen_product_profile_version_id is not None:
+            _canvas_id(
+                frozen_product_profile_version_id,
+                "frozen_product_profile_version_id",
+            )
         if product_profile_id is None:
             if expected_product_profile_revision is not None:
                 raise ValueError(
@@ -7131,6 +7144,17 @@ class AtelierLedger:
                                 },
                             )
                         product_profile_version_id = str(requested_profile_version["id"])
+                    elif frozen_product_profile_version_id is not None:
+                        requested_profile_version = connection.execute(
+                            "SELECT id FROM product_profile_versions WHERE id = ?",
+                            (frozen_product_profile_version_id,),
+                        ).fetchone()
+                        if requested_profile_version is None:
+                            raise KeyError(
+                                "unknown frozen product profile version: "
+                                f"{frozen_product_profile_version_id}"
+                            )
+                        product_profile_version_id = str(requested_profile_version["id"])
                     if local_edit_spec_id is not None:
                         self._validate_local_edit_job_binding(
                             connection,
@@ -7224,6 +7248,17 @@ class AtelierLedger:
                             },
                         )
                     product_profile_version_id = str(profile["current_version_id"])
+                elif frozen_product_profile_version_id is not None:
+                    frozen_profile = connection.execute(
+                        "SELECT id FROM product_profile_versions WHERE id = ?",
+                        (frozen_product_profile_version_id,),
+                    ).fetchone()
+                    if frozen_profile is None:
+                        raise KeyError(
+                            "unknown frozen product profile version: "
+                            f"{frozen_product_profile_version_id}"
+                        )
+                    product_profile_version_id = str(frozen_profile["id"])
                 if local_edit_spec_id is not None:
                     self._validate_local_edit_job_binding(
                         connection,
@@ -7482,6 +7517,20 @@ class AtelierLedger:
                 if items else 0.0
             )
             return job
+
+    def get_job_by_idempotency_key(
+        self, idempotency_key: str, *, include_attempts: bool = True
+    ) -> dict[str, Any] | None:
+        key = str(idempotency_key or "").strip()
+        if not key:
+            return None
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT id FROM jobs WHERE idempotency_key = ?", (key,)
+            ).fetchone()
+        if row is None:
+            return None
+        return self.get_job(str(row["id"]), include_attempts=include_attempts)
 
     def get_job_item(self, item_id: str) -> dict[str, Any]:
         with self._connection() as connection:

@@ -32,6 +32,7 @@ from python.asset_store import AssetStore  # noqa: E402
 from python.atelier_ledger import AtelierLedger  # noqa: E402
 from python.job_engine import JobExecutionError  # noqa: E402
 from python.local_edit_contract import image_fingerprint  # noqa: E402
+from tests.test_product_profile_ledger import product_profile as product_profile_payload  # noqa: E402
 
 
 TERMINAL_STATUSES = {"completed", "partial", "failed", "canceled"}
@@ -2126,6 +2127,173 @@ class DurableJobApiTests(unittest.TestCase):
                 {fail_source["id"]: 2},
             )
             self.network_request.assert_not_called()
+
+    def test_bound_profile_version_drives_prompt_and_survives_derived_adjustment(self) -> None:
+        vault = self.root / "knowledge-vault"
+        (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+        server.KNOWLEDGE = server.KnowledgeCompiler(vault)
+        with self.live_client() as client:
+            source = self.import_asset(client, "profile-source.png", (70, 120, 180))
+            first = self.ledger.save_product_profile(
+                expected_revision=0,
+                client_request_id="pwc4-profile-v1",
+                profile=product_profile_payload(source["id"]),
+            )
+            profile_version_id = first["version"]["id"]
+            server.JOB_ENGINE.stop()
+            with mock.patch.object(server, "_wake_job_engine"):
+                created = self.create_job(client, {
+                    "mode": "single",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "batch": 1,
+                        "generation_strategy": "single_pass",
+                        "generation_strategy_source": "user",
+                        "prompt_version": "prompt_v1",
+                        "prompt_version_source": "user",
+                    },
+                    "product_profile_id": first["id"],
+                    "expected_product_profile_revision": 1,
+                })
+            self.assertEqual(created["job"]["paid_call_authorization"]["max_calls"], 1)
+            changed = copy.deepcopy(first["profile"])
+            changed["name"] = "不应影响历史任务的新名称"
+            second = self.ledger.save_product_profile(
+                expected_revision=1,
+                client_request_id="pwc4-profile-v2",
+                profile=changed,
+            )
+            server.JOB_ENGINE.start()
+            parent = self.wait_for_job(created["job"]["id"])
+
+            self.assertEqual(parent["status"], "completed")
+            self.assertEqual(
+                parent["snapshot"]["product_profile_version_id"], profile_version_id
+            )
+            self.vlm_mock.assert_not_called()
+            traces = client.get(f"/api/jobs/{parent['id']}/traces").json()["traces"]
+            primary = next(item for item in traces if item["stage"] == "prompt.primary")
+            self.assertIn("测试透明瓶", primary["compiled_prompt"])
+            self.assertIn("PET", primary["compiled_prompt"])
+            self.assertNotIn(second["profile"]["name"], primary["compiled_prompt"])
+            self.assertTrue(any(
+                item.get("kind") == "source"
+                and item.get("source", {}).get("id") == profile_version_id
+                for item in primary["applied_knowledge"]
+            ))
+
+            parent_item = parent["items"][0]
+            adjustment = client.post(
+                f"/api/jobs/{parent['id']}/adjustments",
+                json={
+                    "client_request_id": "pwc4-profile-adjustment",
+                    "result_asset_id": parent_item["result_asset_ids"][0],
+                    "generation_id": parent_item["generation_id"],
+                    "reason_codes": ["包装文字"],
+                    "note": "只修复包装文字边缘",
+                },
+            )
+            self.assertEqual(adjustment.status_code, 200, adjustment.text)
+            derived = self.wait_for_job(adjustment.json()["job"]["id"])
+            self.assertEqual(
+                derived["snapshot"]["product_profile_version_id"], profile_version_id
+            )
+
+    def test_governed_memory_is_frozen_at_job_creation(self) -> None:
+        vault = self.root / "knowledge-vault"
+        (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+        server.KNOWLEDGE = server.KnowledgeCompiler(vault)
+        suggestion = self.ledger.add_memory_suggestion(
+            "designer",
+            "lighting.pwc4",
+            {
+                "value": "soft",
+                "label": "PWC4 柔光规则",
+                "directive": "PWC4 后续任务使用柔和均匀的商业光线",
+            },
+            scope_id="default",
+        )
+        with self.live_client() as client:
+            source = self.import_asset(client, "memory-source.png", (120, 80, 180))
+            server.JOB_ENGINE.stop()
+            with mock.patch.object(server, "_wake_job_engine"):
+                pending_job = self.create_job(client, {
+                    "mode": "single",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "batch": 1,
+                        "product_name": "记忆测试商品",
+                        "generation_strategy": "single_pass",
+                        "generation_strategy_source": "user",
+                    },
+                })["job"]
+                approved = self.ledger.govern_memory_suggestion(
+                    suggestion["id"], action="approve", expected_revision=1
+                )
+                approved_job = self.create_job(client, {
+                    "mode": "single",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "batch": 1,
+                        "product_name": "记忆测试商品",
+                        "generation_strategy": "single_pass",
+                        "generation_strategy_source": "user",
+                    },
+                })["job"]
+                self.ledger.govern_memory_suggestion(
+                    suggestion["id"],
+                    action="disable",
+                    expected_revision=approved["governance"]["revision"],
+                )
+                disabled_job = self.create_job(client, {
+                    "mode": "single",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": {
+                        "batch": 1,
+                        "product_name": "记忆测试商品",
+                        "generation_strategy": "single_pass",
+                        "generation_strategy_source": "user",
+                    },
+                })["job"]
+            server.JOB_ENGINE.start()
+
+            completed = {
+                key: self.wait_for_job(job["id"])
+                for key, job in (
+                    ("pending", pending_job),
+                    ("approved", approved_job),
+                    ("disabled", disabled_job),
+                )
+            }
+            directive = "PWC4 后续任务使用柔和均匀的商业光线"
+            for key, job in completed.items():
+                self.assertEqual(job["status"], "completed")
+                traces = client.get(f"/api/jobs/{job['id']}/traces").json()["traces"]
+                prompt = next(item for item in traces if item["stage"] == "prompt.primary")
+                if key == "approved":
+                    self.assertIn(directive, prompt["compiled_prompt"])
+                    self.assertTrue(any(
+                        item.get("text") == f"已批准记忆反馈：{directive}"
+                        for item in prompt["applied_knowledge"]
+                    ))
+                else:
+                    self.assertNotIn(directive, prompt["compiled_prompt"])
+
+            replay_payload = {
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "client_request_id": approved_job["idempotency_key"],
+                "parameters": {
+                    "batch": 1,
+                    "product_name": "记忆测试商品",
+                    "generation_strategy": "single_pass",
+                    "generation_strategy_source": "user",
+                },
+            }
+            replay = client.post("/api/jobs", json=replay_payload)
+            self.assertEqual(replay.status_code, 200, replay.text)
+            self.assertFalse(replay.json()["created"])
+            self.assertEqual(replay.json()["job"]["id"], approved_job["id"])
 
     def test_cancel_endpoint_cancels_running_adapter_without_publishing_results(self) -> None:
         self.ai_started = threading.Event()

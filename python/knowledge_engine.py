@@ -504,10 +504,105 @@ class KnowledgeCompiler:
             conflicts.append({"field": "background", "winner": "task", "message": "纯白输出规格高于知识库的风格背景建议。"})
         return conflicts
 
+    @staticmethod
+    def _product_profile_rules(
+        context: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """Compile the already-bound immutable Product Profile into two compact rules."""
+        profile = context.get("product_profile")
+        if not isinstance(profile, dict):
+            return [], None
+        version_id = str(context.get("product_profile_version_id") or "").strip()
+        name = str(profile.get("name") or "").strip()
+        sku = str(profile.get("sku") or "").strip()
+        revision = int(profile.get("revision") or 0)
+        source = {
+            "id": version_id or f"product-profile:{profile.get('id') or sku}",
+            "title": f"商品档案 {name or sku} · v{revision}",
+            "path": "",
+            "relative_path": "商品档案/已绑定",
+        }
+
+        def clip(value: str, maximum: int = 78) -> str:
+            compact = re.sub(r"\s+", " ", str(value)).strip(" ；,")
+            return compact if len(compact) <= maximum else compact[:maximum - 1].rstrip() + "…"
+
+        specification = profile.get("specification")
+        specification = specification if isinstance(specification, dict) else {}
+        material_names = [
+            str(item.get("material") or "").strip()
+            for item in profile.get("materials") or []
+            if isinstance(item, dict) and str(item.get("material") or "").strip()
+        ]
+        color_values = [
+            f"{str(item.get('name') or '').strip()} {str(item.get('value') or '').strip()}"
+            for item in profile.get("brand_colors") or []
+            if isinstance(item, dict) and str(item.get("value") or "").strip()
+        ]
+        identity_bits = [name, f"SKU {sku}" if sku else ""]
+        if str(specification.get("display") or "").strip():
+            identity_bits.append(f"规格 {str(specification['display']).strip()}")
+        if material_names:
+            identity_bits.append(f"材质 {'、'.join(material_names)}")
+        if color_values:
+            identity_bits.append(f"品牌色 {'、'.join(color_values)}")
+        identity = clip("；".join(bit for bit in identity_bits if bit))
+        rules = ([{
+            "text": f"已绑定商品档案事实：{identity}",
+            "source": source,
+        }] if identity else [])
+
+        component_names = {
+            str(item.get("id") or ""): str(item.get("name") or "组件").strip()
+            for item in profile.get("components") or []
+            if isinstance(item, dict)
+        }
+        materials = [
+            f"{component_names.get(str(item.get('component_id') or ''), '组件')}={str(item.get('material') or '').strip()}"
+            for item in profile.get("materials") or []
+            if isinstance(item, dict) and str(item.get("material") or "").strip()
+        ]
+        colors = [
+            f"{str(item.get('name') or '').strip()} {str(item.get('value') or '').strip()}"
+            for item in profile.get("brand_colors") or []
+            if isinstance(item, dict) and str(item.get("value") or "").strip()
+        ]
+        packaging = [
+            str(item.get("content") or "").strip()
+            for item in profile.get("packaging_texts") or []
+            if isinstance(item, dict)
+            and str(item.get("policy") or "") != "allow_modify"
+            and str(item.get("content") or "").strip()
+        ]
+        logos = [
+            str(item.get("name") or "").strip()
+            for item in profile.get("logos") or []
+            if isinstance(item, dict)
+            and str(item.get("policy") or "") != "allow_modify"
+            and str(item.get("name") or "").strip()
+        ]
+        protection_bits = []
+        if materials:
+            protection_bits.append(f"材质 {'、'.join(materials)}")
+        if colors:
+            protection_bits.append(f"品牌色 {'、'.join(colors)}")
+        if packaging:
+            protection_bits.append(f"包装文字 {'、'.join(packaging)}")
+        if logos:
+            protection_bits.append(f"Logo {'、'.join(logos)}")
+        protection = clip("；".join(protection_bits))
+        if protection:
+            rules.append({
+                "text": f"商品档案保护约束：{protection}",
+                "source": source,
+            })
+        return rules[:2], source
+
     def compile(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         context = dict(context or {})
         brief = self.build_creative_brief(context)
         approved_memory = self._approved_memory_rules(context)
+        profile_rules, profile_source = self._product_profile_rules(context)
         with self._lock:
             selected = self._select_documents(context)
         positives: list[dict[str, Any]] = []
@@ -549,7 +644,7 @@ class KnowledgeCompiler:
                 "source": source,
             })
             memory_sources.append(source)
-        positives = (memory_rules + positives)[:10]
+        positives = self._dedupe(profile_rules + memory_rules + positives, 10)
         all_rules = positives + negatives
         sources = []
         seen_paths: set[str] = set()
@@ -563,6 +658,10 @@ class KnowledgeCompiler:
                 "path": doc["path"],
                 "relative_path": doc["relative_path"],
             })
+        if profile_source is not None and not any(
+            existing.get("id") == profile_source["id"] for existing in sources
+        ):
+            sources.append(profile_source)
         for source in memory_sources:
             if not any(existing.get("id") == source["id"] for existing in sources):
                 sources.append(source)
