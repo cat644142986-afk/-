@@ -163,6 +163,7 @@ class DurableJobApiTests(unittest.TestCase):
         self.ai_lock = threading.Lock()
         self.fail_prompt_once = ""
         self.failed_prompt = False
+        self.fail_remove_rgb = None
         self.force_square_output = False
         self.local_edit_color: tuple[int, int, int] | None = None
         self.ai_started: threading.Event | None = None
@@ -281,6 +282,10 @@ class DurableJobApiTests(unittest.TestCase):
 
     def _fake_remove_bg(self, image: Image.Image) -> Image.Image:
         self.remove_calls += 1
+        if self.fail_remove_rgb is not None:
+            rgb = image.convert("RGB").getpixel((0, 0))
+            if tuple(rgb) == tuple(self.fail_remove_rgb):
+                raise JobExecutionError("CUTOUT_FAILED", "injected cutout failure")
         return image.convert("RGBA")
 
     @contextmanager
@@ -1579,6 +1584,8 @@ class DurableJobApiTests(unittest.TestCase):
         second_path = source_folder / "商品乙.png"
         first_path.write_bytes(png_bytes((210, 70, 40)))
         second_path.write_bytes(png_bytes((40, 130, 210)))
+        first_before = first_path.read_bytes()
+        second_before = second_path.read_bytes()
 
         with self.live_client() as client:
             imported = client.post(
@@ -1620,6 +1627,8 @@ class DurableJobApiTests(unittest.TestCase):
         self.assertEqual(len(manifest["items"]), 2)
         self.assertTrue(first_path.exists())
         self.assertTrue(second_path.exists())
+        self.assertEqual(first_path.read_bytes(), first_before)
+        self.assertEqual(second_path.read_bytes(), second_before)
         self.network_request.assert_not_called()
 
     def test_cutout_batch_has_one_item_and_one_output_per_source(self) -> None:
@@ -1670,6 +1679,51 @@ class DurableJobApiTests(unittest.TestCase):
                 and item["model"] == "local-rembg/birefnet-general"
                 for item in cutout_traces
             ))
+            self.network_request.assert_not_called()
+
+    def test_cutout_batch_partial_failure_preserves_completed_outputs_and_retries(self) -> None:
+        with self.live_client() as client:
+            good = self.import_asset(client, "good-cutout.png", (40, 120, 200))
+            bad = self.import_asset(client, "bad-cutout.png", (222, 33, 44))
+            bad_url = client.get(f"/api/assets/{bad['id']}").json()["content_url"]
+            before_bad = client.get(bad_url).content
+
+            self.fail_remove_rgb = (222, 33, 44)
+            created = self.create_job(
+                client,
+                {
+                    "mode": "cutout-batch",
+                    "source_asset_ids": [good["id"], bad["id"]],
+                    "parameters": {"brief": {"goal": "只保留前景"}},
+                    "requested_concurrency": 2,
+                },
+            )
+            partial = self.wait_for_job(created["job"]["id"])
+
+            self.assertEqual(partial["status"], "partial")
+            good_item = next(item for item in partial["items"] if item["source_asset_id"] == good["id"])
+            bad_item = next(item for item in partial["items"] if item["source_asset_id"] == bad["id"])
+            self.assertEqual(good_item["status"], "completed")
+            self.assertEqual(len(good_item["result_asset_ids"]), 1)
+            self.assertEqual(bad_item["status"], "failed")
+            self.assertEqual(bad_item["error_code"], "CUTOUT_FAILED")
+            self.assertEqual(bad_item["result_asset_ids"], [])
+            self.assertEqual(client.get(bad_url).content, before_bad)
+            self.assertIsNone(partial["paid_call_authorization"])
+            self.network_request.assert_not_called()
+
+            self.fail_remove_rgb = None
+            retried = client.post(
+                f"/api/jobs/{partial['id']}/retry",
+                json={"item_ids": [bad_item["id"]]},
+            )
+            self.assertEqual(retried.status_code, 200, retried.text)
+            final = self.wait_for_job(partial["id"])
+
+            self.assertEqual(final["status"], "completed")
+            self.assertEqual(final["completed_items"], 2)
+            self.assertEqual(final["failed_items"], 0)
+            self.assertEqual(client.get(bad_url).content, before_bad)
             self.network_request.assert_not_called()
 
     def test_semantic_cutout_requires_confirmation_then_executes_manual_regions(self) -> None:
