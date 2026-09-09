@@ -305,6 +305,8 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(app, /prepareSpatialEditHandoff/);
   assert.match(app, /getPendingSpatialEditHandoffs/);
   assert.match(app, /markSpatialEditHandoffApplied/);
+  assert.match(app, /addBusinessItemsOnce\(\[item\]\)[\s\S]{0,240}flush\(originCanvasId\)/);
+  assert.doesNotMatch(app, /if \(!added \|\| added\.skipped\)/);
   assert.match(app, /canvasController\.retrySpatialReturn\(\)/);
 });
 

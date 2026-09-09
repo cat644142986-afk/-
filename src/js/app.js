@@ -1183,11 +1183,9 @@ async function handleSpatialFineEditResult({ origin, resultAsset, replayed }) {
     if (!opened) throw new Error('来源无限画布尚未恢复，精修结果未回填');
   }
   const added = await infiniteCanvasWorkspace.addBusinessItemsOnce([item]);
-  if (!added || added.skipped) throw new Error(
-    added?.reason === 'canvas-switched'
-      ? '回填期间画布已切换，精修结果尚未加入'
-      : '精修结果未能回填无限画布',
-  );
+  if (!added) throw new Error('精修结果未能回填无限画布');
+  const flushed = await infiniteCanvasWorkspace.flush(originCanvasId);
+  if (!flushed) throw new Error('精修结果已加入画布，但回填版本尚未保存');
   const targetSceneVersionId = String(
     infiniteCanvasWorkspace.currentRecord?.current_version_id || '',
   );
