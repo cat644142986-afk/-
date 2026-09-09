@@ -173,7 +173,7 @@
       "exit": "The batch or derived results are individually traceable, partially recoverable, and delivered to the declared output location.",
       "acceptance": [
         "A multi-file run proves more than one independent item.",
-        "Partial failure, cancel, resume, and item-level retry preserve completed outputs.",
+        "Partial failure, cancel, and resume preserve completed outputs. Local-only failed items may retry in place; paid failed items require a new explicitly authorized task and never reuse the original authorization.",
         "Semantic grounding failure offers manual selection without a hidden provider call.",
         "Outpaint writes only its authorized output region and transition band."
       ],

@@ -1518,9 +1518,8 @@ def vlm_detect_products(image_path, tid_ref="?"):
         response_content = resp["choices"][0]["message"]["content"]
         return parse_vlm_detection_content(response_content)
     except Exception as exc:
-        # Keep one stable failure code and safe diagnostics. Group-shot callers
-        # fail closed before paid generation; the durable single-product caller
-        # may explicitly record a neutral, no-extra-recognition fallback.
+        # Keep one stable failure code and safe diagnostics. Paid callers wrap
+        # this as billing-unknown and stop before any later image generation.
         log_msg(tid_ref, f"VLM检测失败: {type(exc).__name__}")
         metadata = {"cause_type": type(exc).__name__}
         if response_content is not None:
@@ -6983,27 +6982,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
                 error_code=str(getattr(exc, "code", "VLM_DETECTION_FAILED")),
                 error_message=str(exc) or type(exc).__name__,
             )
-            can_fallback = (
-                mode == "single"
-                and str(getattr(exc, "code", "")) == "PRODUCT_DETECTION_FAILED"
-            )
-            if not can_fallback:
-                raise
-            product_name = "参考图中的主要产品"
-            product_type = "unknown"
-            fallback_evidence = {
-                "reason": "product-detection-unavailable",
-                "scope": "single-product-only",
-                "product_name": product_name,
-                "extra_provider_call": False,
-            }
-            ctx.record_metadata({"recognition_fallback": fallback_evidence})
-            _record_execution_trace_safe(
-                trace,
-                "vlm.fallback",
-                "completed",
-                output=fallback_evidence,
-            )
+            raise
         else:
             _record_execution_trace_safe(
                 trace,

@@ -2609,6 +2609,7 @@ function renderJobRuntime() {
 
 const PERMANENT_JOB_ERRORS = new Set([
   'INVALID_SOURCE_IMAGE', 'UNSUPPORTED_JOB_MODE', 'INVALID_VARIATION_COUNT',
+  'PRODUCT_DETECTION_FAILED',
   'INVALID_PRODUCT_DETECTION', 'NO_PRODUCTS_DETECTED', 'TOO_MANY_PRODUCTS_DETECTED',
   'INVALID_DELIVERY_PATH', 'INVALID_ADJUSTMENT_REFERENCE',
   'VIDEO_FIXTURE_UNAVAILABLE', 'VIDEO_FIXTURE_INTEGRITY_FAILED',
@@ -2631,7 +2632,7 @@ function jobFailureCopy(item, job = null) {
     INVALID_SOURCE_IMAGE: '源文件已经损坏或不是可读取的图片，重复执行不会修复该文件。',
     UNSUPPORTED_JOB_MODE: '这条历史任务使用了当前版本不支持的工作流，无法继续执行。',
     INVALID_VARIATION_COUNT: '历史任务的方案数量不符合当前规则，需要回到现场重新设置。',
-    PRODUCT_DETECTION_FAILED: '商品识别返回格式异常，尚未开始生图；单独重试后会按参考图主体安全继续。',
+    PRODUCT_DETECTION_FAILED: '商品识别未能返回可用结果，已停止后续生图；系统不会自动重试，确需再次调用时请回到现场明确新建任务。',
     INVALID_PRODUCT_DETECTION: '合照识别结果结构无效，请更换清晰素材后重新建立任务。',
     NO_PRODUCTS_DETECTED: '图片中没有识别到可拆分产品，请更换更清晰的合照。',
     TOO_MANY_PRODUCTS_DETECTED: '图片中的产品数量超过当前安全拆分上限，请分组后重新导入。',
@@ -2640,7 +2641,9 @@ function jobFailureCopy(item, job = null) {
     VIDEO_FIXTURE_UNAVAILABLE: '离线视频预览资源缺失，请重新安装当前候选包；重复创建任务不会修复。',
     VIDEO_FIXTURE_INTEGRITY_FAILED: '离线视频预览资源校验失败，请重新安装当前候选包；不要继续重试。',
     USER_CANCELED: '该项目已由你取消。',
-    PROCESSOR_ERROR: '处理器未能完成该项目；可以单独重试，若再次失败请查看原始详情。',
+    PROCESSOR_ERROR: job?.paid_call_authorization
+      ? '供应商处理未能完成该项目；系统不会复用本次授权，请核对回执后回到现场明确新建任务。'
+      : '本地处理器未能完成该项目；可以单独重试，若再次失败请查看原始详情。',
     PAID_CALL_AUTHORIZATION_MISSING: '本次调用没有可追溯授权，未向供应商提交新请求；请回到工作流明确提交新任务。',
     PAID_CALL_AUTHORIZATION_EXHAUSTED: '本次授权额度已经用完，不会自动追加调用；请核对现有结果后明确提交新任务。',
     PAID_CALL_AUTHORIZATION_INVALID: '本次调用授权与冻结参数不一致，未向供应商提交新请求。',
@@ -2651,7 +2654,11 @@ function jobFailureCopy(item, job = null) {
   return {
     code,
     permanent: PERMANENT_JOB_ERRORS.has(code),
-    message: known[code] || (hasChinese ? raw : '处理过程中发生未分类错误；可以单独重试，原始详情已保留。'),
+    message: known[code] || (hasChinese
+      ? raw
+      : (job?.paid_call_authorization
+        ? '付费处理发生未分类错误；系统不会复用本次授权，请核对原始详情后回到现场明确新建任务。'
+        : '本地处理发生未分类错误；可以单独重试，原始详情已保留。')),
     raw,
   };
 }
@@ -2807,6 +2814,7 @@ function renderJobs(force = false) {
         </li>`;
       }).join('');
       const issueCount = (job.items || []).filter((item) => ['failed', 'interrupted'].includes(item.status)).length;
+      const needsPaidResubmission = Boolean(paidAuthorization && issueCount);
       const progressCopy = ['failed', 'partial', 'interrupted', 'canceled'].includes(job.status)
         ? '已结束'
         : `${progress}%`;
@@ -2818,8 +2826,8 @@ function renderJobs(force = false) {
             : '视频原件和封面已写入素材账本，结果会回填创建它的画布。'))
         : status.tone === 'completed'
           ? '成功项目已经锁定，不会因其他项目失败而重复执行。'
-        : (paidAuthorization && issueCount
-          ? `已完成成果保持不变；本次授权已用 ${Number(paidAuthorization.consumed_calls || 0)}/${Number(paidAuthorization.max_calls || 0)} 次，系统未自动重试。${unknownReceiptCount ? '请先核对待确认回执；' : ''}确需再次调用时回到现场明确新建任务。`
+        : (needsPaidResubmission
+          ? `已完成成果保持不变；本次授权已用 ${Number(paidAuthorization.consumed_calls || 0)}/${Number(paidAuthorization.max_calls || 0)} 次，系统未自动重试。${unknownReceiptCount ? '请先核对待确认回执；' : ''}确需再次调用时回到现场，只保留失败素材并明确新建任务。`
           : issueCount
           ? `${counts.completed} 个成功项目保持不变；${retryable.length} 个可重试，${issueCount - retryable.length} 个需要更换素材或设置。`
           : (['running', 'queued', 'canceling'].includes(status.tone)
@@ -2840,8 +2848,9 @@ function renderJobs(force = false) {
         ${(job.items || []).length > Math.max(5, visibleItems.length) || itemsExpanded ? `<button class="job-items-toggle" type="button" data-job-action="toggle-items" data-job-id="${escapeHtml(job.id)}" aria-expanded="${itemsExpanded}">${itemsExpanded ? '收起项目' : `查看全部 ${(job.items || []).length} 项`}</button>` : ''}
         <footer>
           ${videoJob ? `<button class="primary-job-action" type="button" data-job-action="open-video-canvas" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-video-canvas', job.id) ? 'disabled aria-busy="true"' : ''}>${['failed', 'interrupted', 'canceled'].includes(job.status) ? '返回画布重新确认' : '打开画布'}</button>` : `<button type="button" data-job-action="send-canvas" data-job-id="${escapeHtml(job.id)}">发送到画布</button>`}
-          ${!videoJob && hasResults ? `<button class="${retryable.length ? '' : 'primary-job-action'}" type="button" data-job-action="open-results" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-results', job.id) ? 'disabled aria-busy="true"' : ''}>打开结果</button>` : ''}
+          ${!videoJob && hasResults ? `<button class="${retryable.length || needsPaidResubmission ? '' : 'primary-job-action'}" type="button" data-job-action="open-results" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-results', job.id) ? 'disabled aria-busy="true"' : ''}>打开结果</button>` : ''}
           ${!videoJob && !hasResults ? `<button class="${retryable.length || canResume ? '' : 'primary-job-action'}" type="button" data-job-action="open-workspace" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-workspace', job.id) ? 'disabled aria-busy="true"' : ''}>回到现场</button>` : ''}
+          ${!videoJob && needsPaidResubmission && hasResults ? `<button class="primary-job-action" type="button" data-job-action="open-workspace" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('open-workspace', job.id) ? 'disabled aria-busy="true"' : ''}>回到现场重新选择</button>` : ''}
           ${!videoJob && retryable.length ? `<button class="primary-job-action" type="button" data-job-action="retry-failed" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('retry-failed', job.id) ? 'disabled aria-busy="true"' : ''}>只重试失败项</button>` : ''}
           ${canPause ? `<button type="button" data-job-action="pause" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('pause', job.id) ? 'disabled aria-busy="true"' : ''}>暂停任务</button>` : ''}
           ${canResume ? `<button class="primary-job-action" type="button" data-job-action="resume" data-job-id="${escapeHtml(job.id)}" ${jobActionDisabled('resume', job.id) ? 'disabled aria-busy="true"' : ''}>继续任务</button>` : ''}

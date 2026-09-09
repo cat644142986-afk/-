@@ -83,6 +83,14 @@ test('workflow coverage follows product boundaries instead of an arbitrary journ
   }
 });
 
+test('P1 multi-source recovery separates local retry from new paid authorization', () => {
+  const workflow = contract.workflows.find((item) => item.id === 'exposed-multi-source-workflows');
+  const rule = workflow.acceptance.find((item) => /Local-only failed items/.test(item));
+  assert.match(rule, /retry in place/);
+  assert.match(rule, /new explicitly authorized task/);
+  assert.match(rule, /never reuse the original authorization/);
+});
+
 test('PWC-1 implementation follows the dependency-ordered recovery plan', () => {
   const plan = contract.pwc1_plan;
   assert.equal(plan.implementation_started, true);
