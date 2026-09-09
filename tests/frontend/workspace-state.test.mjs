@@ -157,6 +157,16 @@ test('Dock render signature ignores object key order and changes for real state 
     jobsRenderSignature(jobs, true),
     jobsRenderSignature(jobs, true, ['cancel:job-1:']),
   );
+  const paid = [{
+    ...jobs[0],
+    paid_call_authorization: { id: 'auth-1', consumed_calls: 1, max_calls: 2, status: 'active' },
+    provider_call_receipts: [{ id: 'receipt-1', stage: 'provider.image.1-1', status: 'submitted' }],
+  }];
+  const reconciled = [{
+    ...paid[0],
+    provider_call_receipts: [{ id: 'receipt-1', stage: 'provider.image.1-1', status: 'completed' }],
+  }];
+  assert.notEqual(jobsRenderSignature(paid, true), jobsRenderSignature(reconciled, true));
 });
 
 test('partial result export collects both roles and continues after an individual failure', async () => {

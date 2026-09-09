@@ -1677,6 +1677,7 @@ export function createInfiniteCanvasWorkspaceController({
     get active() { return active; },
     get videoRecoveryPending() { return videoRecoveryPending; },
     get currentId() { return currentId; },
+    get currentRecord() { return currentId ? adapter.get(currentId) : null; },
     get runtimeLoaded() { return Boolean(runtimePromise); },
   };
 }

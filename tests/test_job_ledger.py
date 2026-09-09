@@ -246,6 +246,88 @@ class JobLedgerTests(unittest.TestCase):
         self.assertEqual(claimed["items"][0]["attempts"][0]["status"], "running")
         self.assertEqual(claimed["items"][0]["attempts"][0]["model"], "offline-mock-v1")
 
+    def test_paid_provider_restart_consumes_one_authorization_and_never_requeues(self) -> None:
+        job, created = self.ledger.create_job(
+            "single",
+            self.asset_ids[:1],
+            engine_key="cloud-workflow",
+            parameters={
+                "batch": 1,
+                "model": "paid-mock-v1",
+                "paid_call_authorization": {
+                    "client_request_id": "paid-restart-auth-1",
+                    "user_action": "generate",
+                    "operation": "single-image-generation",
+                    "scope": {"source_asset_ids": self.asset_ids[:1], "batch": 1},
+                    "max_calls": 1,
+                    "automatic_paid_retry": False,
+                },
+            },
+            idempotency_key="paid-restart-job-1",
+            requested_concurrency=1,
+            max_attempts=1,
+        )
+        self.assertTrue(created)
+        item = job["items"][0]
+        claim = self.ledger.claim_job_item(item["id"])
+        self.assertIsNotNone(claim)
+        attempt_id = claim["attempt_id"]
+
+        receipt = self.ledger.reserve_provider_call(
+            job_id=job["id"],
+            job_item_id=item["id"],
+            task_attempt_id=attempt_id,
+            stage="provider.image.generate",
+            provider="mock-provider",
+            model="paid-mock-v1",
+        )
+        replayed = self.ledger.reserve_provider_call(
+            job_id=job["id"],
+            job_item_id=item["id"],
+            task_attempt_id=attempt_id,
+            stage="provider.image.generate",
+            provider="mock-provider",
+            model="paid-mock-v1",
+        )
+        self.assertEqual(replayed["id"], receipt["id"])
+        self.assertFalse(receipt["replayed"])
+        self.assertTrue(replayed["replayed"])
+        self.assertEqual(
+            self.ledger.get_paid_call_authorization(job["id"])["consumed_calls"],
+            1,
+        )
+        with self.assertRaisesRegex(ValueError, "PAID_CALL_AUTHORIZATION_EXHAUSTED"):
+            self.ledger.reserve_provider_call(
+                job_id=job["id"],
+                job_item_id=item["id"],
+                task_attempt_id=attempt_id,
+                stage="provider.image.second-submit",
+                provider="mock-provider",
+                model="paid-mock-v1",
+            )
+        self.ledger.update_provider_call_receipt(
+            receipt["id"],
+            "submitted",
+            remote_task_id="remote-paid-1",
+            evidence={"submission": "accepted"},
+        )
+
+        reopened = AtelierLedger(self.db_path)
+        self.assertEqual(
+            reopened.recover_interrupted_jobs(),
+            {"interrupted": 1, "requeued": 0, "failed": 1},
+        )
+        recovered = reopened.get_job(job["id"])
+        self.assertEqual(recovered["status"], "failed")
+        self.assertEqual(recovered["items"][0]["error_code"], "PROCESS_RESTARTED")
+        self.assertEqual(recovered["provider_call_receipts"][0]["status"], "billing_unknown")
+        self.assertEqual(
+            recovered["provider_call_receipts"][0]["remote_task_id"],
+            "remote-paid-1",
+        )
+        with self.assertRaisesRegex(ValueError, "new explicitly authorized job"):
+            reopened.retry_job_items(job["id"], [item["id"]])
+
     def test_claim_enforces_requested_concurrency_inside_database_transaction(self) -> None:
         job, _ = self.ledger.create_job(
             "multi-file",

@@ -177,11 +177,13 @@ async function fetchBinary(url, options) {
     blob: await resp.blob(),
     filename: filenameMatch?.[1] || 'ProductAtelier-canvas.png',
     revision: Number(resp.headers.get('X-Canvas-Revision') || 0),
+    versionId: resp.headers.get('X-Canvas-Version') || '',
     artboardId: resp.headers.get('X-Canvas-Artboard') || '',
     pixelWidth: Number(resp.headers.get('X-Canvas-Pixel-Width') || 0),
     pixelHeight: Number(resp.headers.get('X-Canvas-Pixel-Height') || 0),
     renderedLayerCount: Number(resp.headers.get('X-Canvas-Rendered-Layers') || 0),
     source: resp.headers.get('X-Canvas-Source') || '',
+    sha256: resp.headers.get('X-Content-SHA256') || '',
   };
 }
 export async function verifyGroundingPack() {
@@ -405,8 +407,42 @@ export async function getSpatialSceneVersion(versionId, options = {}) {
   return fetchJSON('/api/spatial-scene-versions/' + encodeURIComponent(versionId), options);
 }
 
+export async function prepareSpatialEditHandoff(payload, options = {}) {
+  return fetchJSON('/api/spatial-edit-handoffs', {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function getPendingSpatialEditHandoffs(limit = 100, options = {}) {
+  return fetchJSON(
+    '/api/spatial-edit-handoffs/pending?limit=' + encodeURIComponent(Math.max(1, Number(limit) || 100)),
+    options,
+  );
+}
+
+export async function markSpatialEditHandoffApplied(handoffId, targetSceneVersionId, options = {}) {
+  return fetchJSON('/api/spatial-edit-handoffs/' + encodeURIComponent(handoffId) + '/applied', {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify({ target_scene_version_id: String(targetSceneVersionId || '') }),
+  });
+}
+
 export async function exportCanvas(mode, payload, options = {}) {
   return fetchBinary('/api/workspaces/' + encodeURIComponent(mode) + '/canvas/export', {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+export async function recordExportReceipt(payload, options = {}) {
+  return fetchJSON('/api/export-receipts', {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -752,8 +788,11 @@ export async function downloadAsset(assetId, suggestedName = '') {
     '/api/assets/' + encodeURIComponent(assetId) + '/content?download=true',
     { timeoutMs: 120000 },
   );
-  await saveBinary(suggestedName || response.filename, response.blob);
-  return { filename: suggestedName || response.filename, size: response.blob.size };
+  await saveBinary(filename, response.blob);
+  return {
+    path: `browser-download:${filename}`,
+    size_bytes: response.blob.size,
+  };
 }
 
 export async function saveImage(suggestedName, dataB64) {
@@ -764,7 +803,10 @@ export async function saveImage(suggestedName, dataB64) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  return true;
+  return {
+    path: `browser-download:${suggestedName}`,
+    size_bytes: Math.floor((String(dataB64 || '').replace(/=+$/, '').length * 3) / 4),
+  };
 }
 export async function openInFolder(path) { return invoke('open_in_folder', { path: path }); }
 

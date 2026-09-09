@@ -1366,6 +1366,12 @@ fn get_app_config(state: State<AppState>) -> AppConfig {
     state.config.lock().unwrap().clone()
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct ExportSaveResult {
+    path: String,
+    size_bytes: u64,
+}
+
 #[tauri::command]
 fn set_app_config(state: State<AppState>, config: AppConfig) -> Result<AppConfig, String> {
     save_config(&config)?;
@@ -1378,8 +1384,9 @@ fn save_base64_image(
     app: tauri::AppHandle,
     suggested_name: String,
     data_b64: String,
-) -> Result<String, String> {
+) -> Result<ExportSaveResult, String> {
     use tauri_plugin_dialog::DialogExt;
+    validate_suggested_name(&suggested_name)?;
     let bytes = base64_decode(&data_b64).map_err(|e| e.to_string())?;
     let ext = if suggested_name.ends_with(".png") {
         "png"
@@ -1404,8 +1411,21 @@ fn save_base64_image(
         .recv()
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "保存已取消".to_string())?;
-    std::fs::write(&path_str, &bytes).map_err(|e| e.to_string())?;
-    Ok(path_str)
+    let target = PathBuf::from(&path_str);
+    if target.is_dir() {
+        return Err("ASSET_EXPORT_PATH: selected destination is a directory".to_string());
+    }
+    if target
+        .symlink_metadata()
+        .is_ok_and(|metadata| !metadata.file_type().is_file())
+    {
+        return Err("ASSET_EXPORT_PATH: existing destination must be a regular file".to_string());
+    }
+    write_export_bytes_to_path(&target, &bytes)?;
+    Ok(ExportSaveResult {
+        path: target.to_string_lossy().into_owned(),
+        size_bytes: bytes.len() as u64,
+    })
 }
 
 fn validate_asset_id(asset_id: &str) -> Result<(), String> {
@@ -1641,6 +1661,34 @@ fn create_export_temp_file(target: &Path) -> Result<(PathBuf, File), String> {
     Err("ASSET_EXPORT_WRITE: could not allocate a unique temporary file".to_string())
 }
 
+fn write_export_bytes_to_path(target: &Path, bytes: &[u8]) -> Result<(), String> {
+    if target.is_dir() {
+        return Err("ASSET_EXPORT_PATH: selected destination is a directory".to_string());
+    }
+    if target
+        .symlink_metadata()
+        .is_ok_and(|metadata| !metadata.file_type().is_file())
+    {
+        return Err("ASSET_EXPORT_PATH: existing destination must be a regular file".to_string());
+    }
+    let (temp_path, mut temp_file) = create_export_temp_file(target)?;
+    let write_result = temp_file
+        .write_all(bytes)
+        .and_then(|_| temp_file.flush())
+        .and_then(|_| temp_file.sync_all())
+        .map_err(|error| format!("ASSET_EXPORT_WRITE: could not write temporary file: {error}"));
+    drop(temp_file);
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    if let Err(error) = replace_export_file(&temp_path, target) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 fn replace_export_file(temp_path: &Path, target: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
@@ -1712,7 +1760,7 @@ async fn save_binary_asset(
     state: State<'_, AppState>,
     asset_id: String,
     suggested_name: String,
-) -> Result<String, String> {
+) -> Result<ExportSaveResult, String> {
     use tauri_plugin_dialog::DialogExt;
 
     validate_asset_id(&asset_id)?;
@@ -1756,11 +1804,16 @@ async fn save_binary_asset(
         .map_err(|error| format!("ASSET_EXPORT_PATH: selected path is invalid: {error}"))?;
     let result_path = target.clone();
 
-    tauri::async_runtime::spawn_blocking(move || download_asset_to_path(port, &asset_id, &target))
-        .await
-        .map_err(|error| format!("ASSET_EXPORT_TASK: export task failed: {error}"))??;
+    let size_bytes = tauri::async_runtime::spawn_blocking(move || {
+        download_asset_to_path(port, &asset_id, &target)
+    })
+    .await
+    .map_err(|error| format!("ASSET_EXPORT_TASK: export task failed: {error}"))??;
 
-    Ok(result_path.to_string_lossy().into_owned())
+    Ok(ExportSaveResult {
+        path: result_path.to_string_lossy().into_owned(),
+        size_bytes,
+    })
 }
 
 #[tauri::command]

@@ -662,6 +662,7 @@ export function createCanvasController({
           output_ratio: 'original',
           output_resolution: outputResolution,
           local_edit_prompt: description,
+          spatial_handoff_id: spatialOrigin?.handoffId || null,
           provider_call_confirmed: true,
           automatic_paid_retry: false,
           batch: 1,
@@ -1096,7 +1097,18 @@ export function createCanvasController({
       }, { timeoutMs: 120000 });
       if (exported.source !== 'original-assets') throw new Error('导出来源合同不一致');
       const dataB64 = await blobToBase64(exported.blob);
-      await api.saveImage(exported.filename, dataB64);
+      const saved = await api.saveImage(exported.filename, dataB64);
+      await api.recordExportReceipt({
+        client_request_id: createRequestId('canvas-export'),
+        source_kind: 'canvas',
+        source_id: entry.document.id,
+        source_version_id: exported.versionId || entry.currentVersionId,
+        artboard_id: exported.artboardId,
+        destination_path: String(saved?.path || `browser-download:${exported.filename}`),
+        mime: 'image/png',
+        size_bytes: Number(saved?.size_bytes || exported.blob.size || 0),
+        sha256: exported.sha256,
+      }, { timeoutMs: 12000 });
       setSaveState(
         'saved',
         '画板已导出',
@@ -1961,6 +1973,7 @@ export function createCanvasController({
       candidate_asset_id: candidate.id,
       expected_canvas_revision: entry.currentRevision,
       client_request_id: createRequestId('local-edit-compose'),
+      spatial_handoff_id: spatialOrigin?.handoffId || null,
     };
     local.composeRequest = request;
     local.saving = true;

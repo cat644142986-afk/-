@@ -288,7 +288,7 @@ export function createApiSpatialCanvasAdapter({ api } = {}) {
     open,
     rename,
     updateScene,
-    kind: 'sqlite-v8',
+    kind: 'sqlite-v9',
   };
 }
 

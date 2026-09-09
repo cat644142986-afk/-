@@ -61,7 +61,7 @@ except ImportError:
     from .storage_paths import native_io_path
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 CANVAS_DOCUMENT_SCHEMA_VERSION = 1
 PRODUCT_PROFILE_SCHEMA_VERSION = 1
 CANVAS_COORDINATE_SYSTEM = {
@@ -89,6 +89,8 @@ WORKFLOW_DRAFT_IDS = {
     "group-split": "draft_group_split",
     "cutout-batch": "draft_cutout_batch",
 }
+
+PAID_JOB_ENGINES = frozenset({"cloud-workflow", "group-workflow", "cloud-local-edit"})
 
 GENERATION_RESULT_KINDS = {
     "result_main": "image",
@@ -461,6 +463,46 @@ V8_REQUIRED_TRIGGERS = frozenset({
     "trg_spatial_scene_references_no_delete",
 })
 
+V9_TABLE_COLUMNS = {
+    "paid_call_authorizations": frozenset({
+        "id", "job_id", "client_request_id", "request_fingerprint",
+        "user_action", "operation", "scope_json", "max_calls",
+        "consumed_calls", "status", "created_at", "updated_at",
+    }),
+    "provider_call_receipts": frozenset({
+        "id", "authorization_id", "job_id", "job_item_id",
+        "task_attempt_id", "stage", "provider", "model",
+        "request_fingerprint", "status", "remote_task_id",
+        "evidence_json", "created_at", "updated_at", "completed_at",
+    }),
+    "spatial_edit_handoffs": frozenset({
+        "id", "client_request_id", "request_fingerprint",
+        "origin_canvas_id", "origin_scene_version_id", "origin_element_id",
+        "source_asset_id", "local_edit_spec_id", "composition_id",
+        "result_asset_id", "status", "target_scene_version_id",
+        "created_at", "updated_at", "applied_at",
+    }),
+    "export_receipts": frozenset({
+        "id", "client_request_id", "request_fingerprint", "source_kind",
+        "source_id", "source_version_id", "artboard_id", "destination_path",
+        "mime", "size_bytes", "sha256", "status", "created_at",
+    }),
+}
+
+V9_REQUIRED_INDEXES = frozenset({
+    "idx_paid_authorizations_job",
+    "idx_provider_receipts_job",
+    "idx_provider_receipts_attempt",
+    "idx_spatial_handoffs_status",
+    "idx_spatial_handoffs_origin",
+    "idx_export_receipts_source",
+})
+
+V9_REQUIRED_TRIGGERS = frozenset({
+    "trg_export_receipts_no_update",
+    "trg_export_receipts_no_delete",
+})
+
 V1_SCHEMA_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS ledger_meta (
@@ -627,6 +669,41 @@ def decode_json(value: str | None, fallback: Any) -> Any:
         return json.loads(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def normalize_paid_call_authorization(value: Mapping[str, Any]) -> tuple[dict[str, Any], str]:
+    if not isinstance(value, Mapping):
+        raise ValueError("paid_call_authorization must be an object")
+    request_id = str(value.get("client_request_id") or "").strip()
+    authorization_id = idempotent_id("auth", request_id)
+    user_action = str(value.get("user_action") or "").strip()
+    operation = str(value.get("operation") or "").strip()
+    if not user_action or len(user_action) > 80:
+        raise ValueError("paid authorization user_action must contain 1 to 80 characters")
+    if not operation or len(operation) > 80:
+        raise ValueError("paid authorization operation must contain 1 to 80 characters")
+    scope = value.get("scope")
+    if not isinstance(scope, Mapping):
+        raise ValueError("paid authorization scope must be an object")
+    try:
+        max_calls = int(value.get("max_calls"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("paid authorization max_calls must be an integer") from exc
+    if max_calls < 1 or max_calls > 256:
+        raise ValueError("paid authorization max_calls must be between 1 and 256")
+    if value.get("automatic_paid_retry", False) is not False:
+        raise ValueError("paid authorization cannot allow automatic paid retry")
+    normalized = {
+        "id": authorization_id,
+        "client_request_id": request_id,
+        "user_action": user_action,
+        "operation": operation,
+        "scope": json.loads(canonical_json(scope)),
+        "max_calls": max_calls,
+        "automatic_paid_retry": False,
+    }
+    fingerprint = hashlib.sha256(canonical_json(normalized).encode("utf-8")).hexdigest()
+    return normalized, fingerprint
 
 
 def _require_pixel_editable_image_asset(asset: Any, label: str) -> None:
@@ -1818,6 +1895,59 @@ class AtelierLedger:
             issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
         return issues
 
+    @classmethod
+    def _v9_objects_present(cls, connection: sqlite3.Connection) -> bool:
+        tables = cls._table_names(connection)
+        if tables.intersection(V9_TABLE_COLUMNS):
+            return True
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        return bool(triggers.intersection(V9_REQUIRED_TRIGGERS))
+
+    @classmethod
+    def _v9_contract_issues(cls, connection: sqlite3.Connection) -> list[str]:
+        issues: list[str] = []
+        tables = cls._table_names(connection)
+        for table, required_columns in V9_TABLE_COLUMNS.items():
+            if table not in tables:
+                issues.append(f"missing table {table}")
+                continue
+            actual_columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing_columns = sorted(required_columns - actual_columns)
+            if missing_columns:
+                issues.append(f"{table} missing columns: {', '.join(missing_columns)}")
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        missing_indexes = sorted(V9_REQUIRED_INDEXES - indexes)
+        if missing_indexes:
+            issues.append(f"missing indexes: {', '.join(missing_indexes)}")
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+        missing_triggers = sorted(V9_REQUIRED_TRIGGERS - triggers)
+        if missing_triggers:
+            issues.append(f"missing triggers: {', '.join(missing_triggers)}")
+        integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
+        if integrity_rows != ["ok"]:
+            issues.append(f"integrity_check failed: {'; '.join(integrity_rows[:3])}")
+        foreign_key_rows = list(connection.execute("PRAGMA foreign_key_check"))
+        if foreign_key_rows:
+            issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
+        return issues
+
     def _migration_backup_path(self, version: int) -> Path:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         return self.db_path.with_name(
@@ -2758,6 +2888,133 @@ class AtelierLedger:
                 """
             )
 
+    @staticmethod
+    def _migrate_v8_to_v9(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE paid_call_authorizations (
+                id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL UNIQUE,
+                client_request_id TEXT NOT NULL UNIQUE,
+                request_fingerprint TEXT NOT NULL,
+                user_action TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                scope_json TEXT NOT NULL,
+                max_calls INTEGER NOT NULL CHECK(max_calls >= 1),
+                consumed_calls INTEGER NOT NULL DEFAULT 0
+                    CHECK(consumed_calls >= 0 AND consumed_calls <= max_calls),
+                status TEXT NOT NULL DEFAULT 'active'
+                    CHECK(status IN ('active','exhausted','revoked')),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE provider_call_receipts (
+                id TEXT PRIMARY KEY,
+                authorization_id TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                job_item_id TEXT NOT NULL,
+                task_attempt_id TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                request_fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL
+                    CHECK(status IN ('reserved','submitted','completed','failed','billing_unknown')),
+                remote_task_id TEXT NOT NULL DEFAULT '',
+                evidence_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY(authorization_id)
+                    REFERENCES paid_call_authorizations(id) ON DELETE RESTRICT,
+                FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE RESTRICT,
+                FOREIGN KEY(job_item_id) REFERENCES job_items(id) ON DELETE RESTRICT,
+                FOREIGN KEY(task_attempt_id) REFERENCES task_attempts(id) ON DELETE RESTRICT,
+                UNIQUE(task_attempt_id, stage)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE spatial_edit_handoffs (
+                id TEXT PRIMARY KEY,
+                client_request_id TEXT NOT NULL UNIQUE,
+                request_fingerprint TEXT NOT NULL,
+                origin_canvas_id TEXT NOT NULL,
+                origin_scene_version_id TEXT NOT NULL,
+                origin_element_id TEXT NOT NULL,
+                source_asset_id TEXT NOT NULL,
+                local_edit_spec_id TEXT,
+                composition_id TEXT,
+                result_asset_id TEXT,
+                status TEXT NOT NULL DEFAULT 'prepared'
+                    CHECK(status IN ('prepared','ready','applied','canceled')),
+                target_scene_version_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                applied_at TEXT,
+                FOREIGN KEY(origin_canvas_id)
+                    REFERENCES spatial_canvas_documents(id) ON DELETE RESTRICT,
+                FOREIGN KEY(origin_scene_version_id)
+                    REFERENCES spatial_canvas_scene_versions(id) ON DELETE RESTRICT,
+                FOREIGN KEY(source_asset_id) REFERENCES assets(id) ON DELETE RESTRICT,
+                FOREIGN KEY(local_edit_spec_id) REFERENCES local_edit_specs(id) ON DELETE RESTRICT,
+                FOREIGN KEY(composition_id)
+                    REFERENCES local_edit_compositions(id) ON DELETE RESTRICT,
+                FOREIGN KEY(result_asset_id) REFERENCES assets(id) ON DELETE RESTRICT,
+                FOREIGN KEY(target_scene_version_id)
+                    REFERENCES spatial_canvas_scene_versions(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE export_receipts (
+                id TEXT PRIMARY KEY,
+                client_request_id TEXT NOT NULL UNIQUE,
+                request_fingerprint TEXT NOT NULL,
+                source_kind TEXT NOT NULL CHECK(source_kind IN ('asset','canvas')),
+                source_id TEXT NOT NULL,
+                source_version_id TEXT,
+                artboard_id TEXT,
+                destination_path TEXT NOT NULL,
+                mime TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+                sha256 TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'completed'
+                    CHECK(status = 'completed'),
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        for statement in (
+            "CREATE INDEX idx_paid_authorizations_job ON paid_call_authorizations(job_id)",
+            "CREATE INDEX idx_provider_receipts_job ON provider_call_receipts(job_id, created_at)",
+            "CREATE INDEX idx_provider_receipts_attempt ON provider_call_receipts(task_attempt_id, stage)",
+            "CREATE INDEX idx_spatial_handoffs_status ON spatial_edit_handoffs(status, updated_at)",
+            "CREATE INDEX idx_spatial_handoffs_origin ON spatial_edit_handoffs(origin_canvas_id, created_at)",
+            "CREATE INDEX idx_export_receipts_source ON export_receipts(source_kind, source_id, created_at)",
+        ):
+            connection.execute(statement)
+        for trigger_name, action in (
+            ("trg_export_receipts_no_update", "UPDATE"),
+            ("trg_export_receipts_no_delete", "DELETE"),
+        ):
+            connection.execute(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {action} ON export_receipts
+                BEGIN
+                    SELECT RAISE(ABORT, 'export receipts are immutable');
+                END
+                """
+            )
+
     def _ensure_schema(self) -> None:
         with self._schema_lock:
             # Probe the version without changing journal mode. An older app must
@@ -2913,6 +3170,23 @@ class AtelierLedger:
                                     else:
                                         self._migrate_v7_to_v8(connection)
                                     current_version = 8
+                                elif current_version == 8:
+                                    if self._v9_objects_present(connection):
+                                        issues = self._v9_contract_issues(connection)
+                                        if issues:
+                                            raise PartialSchemaError(
+                                                "Detected an incomplete v9 ledger while schema metadata says v8; "
+                                                "the database was not changed. Restore the automatic backup or "
+                                                f"repair these objects first: {' | '.join(issues)}"
+                                            )
+                                        repair = "recovered complete v9 schema with stale v8 metadata"
+                                        self.last_schema_repair = (
+                                            f"{self.last_schema_repair}; {repair}"
+                                            if self.last_schema_repair else repair
+                                        )
+                                    else:
+                                        self._migrate_v8_to_v9(connection)
+                                    current_version = 9
                                 else:
                                     raise LedgerSchemaError(
                                         f"No migration path from schema v{current_version}"
@@ -3535,6 +3809,20 @@ class AtelierLedger:
                 for row in connection.execute(
                     "SELECT DISTINCT version_id FROM product_profile_version_assets "
                     "WHERE asset_id = ?",
+                    (asset_id,),
+                )
+            ],
+            "spatial_edit_handoffs": [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM spatial_edit_handoffs WHERE source_asset_id = ?",
+                    (asset_id,),
+                )
+            ],
+            "export_receipts": [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM export_receipts WHERE source_kind = 'asset' AND source_id = ?",
                     (asset_id,),
                 )
             ],
@@ -4498,6 +4786,284 @@ class AtelierLedger:
         return self._spatial_scene_version_row(row)
 
     @staticmethod
+    def _spatial_handoff_row(
+        row: sqlite3.Row | Mapping[str, Any], *, replayed: bool = False
+    ) -> dict[str, Any]:
+        item = dict(row)
+        item.pop("request_fingerprint", None)
+        item["replayed"] = replayed
+        return item
+
+    def prepare_spatial_edit_handoff(
+        self,
+        *,
+        client_request_id: str,
+        origin_canvas_id: str,
+        origin_scene_version_id: str,
+        origin_element_id: str,
+        source_asset_id: str,
+    ) -> dict[str, Any]:
+        request_id = str(client_request_id or "").strip()
+        handoff_id = idempotent_id("handoff", request_id)
+        canvas_id = _canvas_id(origin_canvas_id, "origin_canvas_id")
+        version_id = _canvas_id(origin_scene_version_id, "origin_scene_version_id")
+        element_id = str(origin_element_id or "").strip()
+        asset_id = str(source_asset_id or "").strip()
+        if not element_id or len(element_id) > 200:
+            raise ValueError("origin_element_id must contain 1 to 200 characters")
+        if not asset_id:
+            raise ValueError("source_asset_id is required")
+        request_payload = {
+            "origin_canvas_id": canvas_id,
+            "origin_scene_version_id": version_id,
+            "origin_element_id": element_id,
+            "source_asset_id": asset_id,
+        }
+        fingerprint = hashlib.sha256(
+            canonical_json(request_payload).encode("utf-8")
+        ).hexdigest()
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            prior = connection.execute(
+                "SELECT * FROM spatial_edit_handoffs WHERE client_request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if prior is not None:
+                if str(prior["request_fingerprint"]) != fingerprint:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different spatial edit handoff"
+                    )
+                return self._spatial_handoff_row(prior, replayed=True)
+            version = connection.execute(
+                "SELECT document_id FROM spatial_canvas_scene_versions WHERE id = ?",
+                (version_id,),
+            ).fetchone()
+            if version is None or str(version["document_id"]) != canvas_id:
+                raise ValueError("origin scene version does not belong to the spatial canvas")
+            asset = connection.execute(
+                "SELECT id FROM assets WHERE id = ?", (asset_id,)
+            ).fetchone()
+            if asset is None:
+                raise KeyError(f"unknown spatial edit source asset: {asset_id}")
+            reference = connection.execute(
+                """
+                SELECT 1 FROM spatial_scene_references
+                WHERE version_id = ? AND element_id = ?
+                  AND ref_kind IN ('asset','result') AND ref_id = ?
+                """,
+                (version_id, element_id, asset_id),
+            ).fetchone()
+            if reference is None:
+                raise ValueError("origin element does not reference the selected source asset")
+            connection.execute(
+                """
+                INSERT INTO spatial_edit_handoffs(
+                    id, client_request_id, request_fingerprint, origin_canvas_id,
+                    origin_scene_version_id, origin_element_id, source_asset_id,
+                    status, created_at, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
+                """,
+                (
+                    handoff_id, request_id, fingerprint, canvas_id, version_id,
+                    element_id, asset_id, now, now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM spatial_edit_handoffs WHERE id = ?", (handoff_id,)
+            ).fetchone()
+        assert row is not None
+        return self._spatial_handoff_row(row)
+
+    def get_spatial_edit_handoff(self, handoff_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM spatial_edit_handoffs WHERE id = ?", (str(handoff_id),)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown spatial edit handoff: {handoff_id}")
+        return self._spatial_handoff_row(row)
+
+    def list_pending_spatial_edit_handoffs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM spatial_edit_handoffs
+                WHERE status IN ('prepared','ready')
+                ORDER BY updated_at, id LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._spatial_handoff_row(row) for row in rows]
+
+    def mark_spatial_edit_handoff_applied(
+        self, handoff_id: str, *, target_scene_version_id: str
+    ) -> dict[str, Any]:
+        target_version_id = _canvas_id(
+            target_scene_version_id, "target_scene_version_id"
+        )
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM spatial_edit_handoffs WHERE id = ?", (str(handoff_id),)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown spatial edit handoff: {handoff_id}")
+            if str(row["status"]) == "applied":
+                if str(row["target_scene_version_id"] or "") != target_version_id:
+                    raise IdempotencyConflictError(
+                        "spatial edit handoff was already applied to another scene version"
+                    )
+                return self._spatial_handoff_row(row, replayed=True)
+            if str(row["status"]) != "ready" or not row["result_asset_id"]:
+                raise ValueError("spatial edit handoff has no committed result to apply")
+            version = connection.execute(
+                "SELECT document_id FROM spatial_canvas_scene_versions WHERE id = ?",
+                (target_version_id,),
+            ).fetchone()
+            if version is None or str(version["document_id"]) != str(row["origin_canvas_id"]):
+                raise ValueError("target scene version does not belong to the origin canvas")
+            reference = connection.execute(
+                """
+                SELECT 1 FROM spatial_scene_references
+                WHERE version_id = ? AND ref_kind = 'result' AND ref_id = ?
+                """,
+                (target_version_id, str(row["result_asset_id"])),
+            ).fetchone()
+            if reference is None:
+                raise ValueError("target scene version does not contain the handoff result")
+            connection.execute(
+                """
+                UPDATE spatial_edit_handoffs
+                SET status = 'applied', target_scene_version_id = ?,
+                    updated_at = ?, applied_at = ?
+                WHERE id = ?
+                """,
+                (target_version_id, now, now, str(handoff_id)),
+            )
+            updated = connection.execute(
+                "SELECT * FROM spatial_edit_handoffs WHERE id = ?", (str(handoff_id),)
+            ).fetchone()
+        assert updated is not None
+        return self._spatial_handoff_row(updated)
+
+    @staticmethod
+    def _export_receipt_row(
+        row: sqlite3.Row | Mapping[str, Any], *, replayed: bool = False
+    ) -> dict[str, Any]:
+        item = dict(row)
+        item.pop("request_fingerprint", None)
+        item["replayed"] = replayed
+        return item
+
+    def record_export_receipt(
+        self,
+        *,
+        client_request_id: str,
+        source_kind: str,
+        source_id: str,
+        destination_path: str,
+        mime: str,
+        size_bytes: int,
+        sha256: str,
+        source_version_id: str | None = None,
+        artboard_id: str | None = None,
+    ) -> dict[str, Any]:
+        request_id = str(client_request_id or "").strip()
+        receipt_id = idempotent_id("export", request_id)
+        source_kind = str(source_kind or "").strip()
+        source_id = str(source_id or "").strip()
+        source_version_id = str(source_version_id or "").strip() or None
+        artboard_id = str(artboard_id or "").strip() or None
+        destination_path = str(destination_path or "").strip()
+        mime = str(mime or "").strip().lower()
+        digest = str(sha256 or "").strip().lower()
+        size = int(size_bytes)
+        if source_kind not in {"asset", "canvas"}:
+            raise ValueError("export source_kind must be asset or canvas")
+        if not source_id or not destination_path:
+            raise ValueError("export source and destination are required")
+        if not mime or size < 0:
+            raise ValueError("export mime and non-negative size are required")
+        if re.fullmatch(r"[a-f0-9]{64}", digest) is None:
+            raise ValueError("export SHA-256 is invalid")
+        payload = {
+            "source_kind": source_kind,
+            "source_id": source_id,
+            "source_version_id": source_version_id,
+            "artboard_id": artboard_id,
+            "destination_path": destination_path,
+            "mime": mime,
+            "size_bytes": size,
+            "sha256": digest,
+        }
+        fingerprint = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            prior = connection.execute(
+                "SELECT * FROM export_receipts WHERE client_request_id = ?", (request_id,)
+            ).fetchone()
+            if prior is not None:
+                if str(prior["request_fingerprint"]) != fingerprint:
+                    raise IdempotencyConflictError(
+                        "client_request_id already belongs to a different export receipt"
+                    )
+                return self._export_receipt_row(prior, replayed=True)
+            if source_kind == "asset":
+                asset = connection.execute(
+                    "SELECT sha256 FROM assets WHERE id = ?", (source_id,)
+                ).fetchone()
+                if asset is None:
+                    raise KeyError(f"unknown export asset: {source_id}")
+                if str(asset["sha256"] or "").lower() != digest:
+                    raise ValueError("export digest does not match the immutable asset")
+                if source_version_id is not None or artboard_id is not None:
+                    raise ValueError("asset exports cannot claim a canvas version or artboard")
+            else:
+                if source_version_id is None or artboard_id is None:
+                    raise ValueError("canvas exports require source_version_id and artboard_id")
+                version = connection.execute(
+                    "SELECT document_id FROM canvas_document_versions WHERE id = ?",
+                    (source_version_id,),
+                ).fetchone()
+                if version is None or str(version["document_id"]) != source_id:
+                    raise ValueError("export canvas version does not belong to its document")
+            connection.execute(
+                """
+                INSERT INTO export_receipts(
+                    id, client_request_id, request_fingerprint, source_kind,
+                    source_id, source_version_id, artboard_id, destination_path,
+                    mime, size_bytes, sha256, status, created_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)
+                """,
+                (
+                    receipt_id, request_id, fingerprint, source_kind, source_id,
+                    source_version_id, artboard_id, destination_path, mime, size,
+                    digest, now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM export_receipts WHERE id = ?", (receipt_id,)
+            ).fetchone()
+        assert row is not None
+        return self._export_receipt_row(row)
+
+    def list_export_receipts(
+        self, *, source_kind: str, source_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM export_receipts
+                WHERE source_kind = ? AND source_id = ?
+                ORDER BY created_at DESC, id DESC LIMIT ?
+                """,
+                (str(source_kind), str(source_id), limit),
+            ).fetchall()
+        return [self._export_receipt_row(row) for row in rows]
+
+    @staticmethod
     def _canvas_roi_row(
         row: sqlite3.Row | Mapping[str, Any], *, replayed: bool = False
     ) -> dict[str, Any]:
@@ -5289,6 +5855,7 @@ class AtelierLedger:
         client_request_id: str,
         result: Mapping[str, Any],
         receipt: Mapping[str, Any],
+        spatial_handoff_id: str | None = None,
     ) -> dict[str, Any]:
         """Atomically publish local-edit lineage, its result asset and canvas version."""
         if mode not in WORKFLOW_DRAFT_IDS:
@@ -5301,12 +5868,14 @@ class AtelierLedger:
             expected_canvas_revision, "expected_canvas_revision", minimum=0
         )
         request_id = str(client_request_id or "").strip()
+        handoff_id = str(spatial_handoff_id or "").strip() or None
         composition_id = idempotent_id("composition", request_id)
         request_payload = {
             "mode": mode,
             "local_edit_spec_id": spec_id,
             "candidate_asset_id": candidate_id,
             "expected_canvas_revision": expected_revision,
+            "spatial_handoff_id": handoff_id,
         }
         fingerprint = hashlib.sha256(
             canonical_json(request_payload).encode("utf-8")
@@ -5442,6 +6011,24 @@ class AtelierLedger:
                 ).fetchone()
                 if source_asset is None:
                     raise KeyError(f"unknown local edit source asset: {source_asset_id}")
+                handoff_row = None
+                if handoff_id is not None:
+                    handoff_row = connection.execute(
+                        "SELECT * FROM spatial_edit_handoffs WHERE id = ?", (handoff_id,)
+                    ).fetchone()
+                    if handoff_row is None:
+                        raise KeyError(f"unknown spatial edit handoff: {handoff_id}")
+                    if str(handoff_row["source_asset_id"]) != source_asset_id:
+                        raise ValueError("spatial edit handoff source does not match the local edit")
+                    if str(handoff_row["status"]) not in {"prepared", "ready"}:
+                        raise ValueError("spatial edit handoff is no longer pending")
+                    if (
+                        handoff_row["composition_id"] is not None
+                        and str(handoff_row["composition_id"]) != composition_id
+                    ):
+                        raise IdempotencyConflictError(
+                            "spatial edit handoff already belongs to another composition"
+                        )
 
                 now = utc_now()
                 next_document = json.loads(canonical_json(source_document))
@@ -5516,6 +6103,7 @@ class AtelierLedger:
                     "candidate_asset_id": candidate_id,
                     "result_asset_id": result_id,
                     "canvas_document_version_id": version_id,
+                    "spatial_handoff_id": handoff_id,
                 }
                 receipt_json = canonical_json(receipt_value)
                 receipt_sha256 = hashlib.sha256(receipt_json.encode("utf-8")).hexdigest()
@@ -5594,6 +6182,16 @@ class AtelierLedger:
                         request_id, fingerprint, receipt_json, receipt_sha256, now,
                     ),
                 )
+                if handoff_id is not None:
+                    connection.execute(
+                        """
+                        UPDATE spatial_edit_handoffs
+                        SET local_edit_spec_id = ?, composition_id = ?,
+                            result_asset_id = ?, status = 'ready', updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (spec_id, composition_id, result_id, now, handoff_id),
+                    )
                 self._before_local_edit_composition_commit(connection)
                 composition_row = connection.execute(
                     "SELECT * FROM local_edit_compositions WHERE id = ?",
@@ -5606,6 +6204,9 @@ class AtelierLedger:
         )
         item["result_asset"] = self.get_asset(item["result_asset_id"])
         item["canvas"] = self.get_canvas_document(mode)
+        item["spatial_handoff"] = (
+            self.get_spatial_edit_handoff(handoff_id) if handoff_id is not None else None
+        )
         return item
 
     @staticmethod
@@ -6184,6 +6785,186 @@ class AtelierLedger:
         if source_asset_id not in {str(asset_id) for asset_id in source_asset_ids}:
             raise ValueError("local edit source asset must be included in the job sources")
 
+    @staticmethod
+    def _paid_authorization_row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        item["scope"] = decode_json(item.pop("scope_json", "{}"), {})
+        return item
+
+    @staticmethod
+    def _provider_call_receipt_row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        item["evidence"] = decode_json(item.pop("evidence_json", "{}"), {})
+        return item
+
+    def get_paid_call_authorization(self, job_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM paid_call_authorizations WHERE job_id = ?",
+                (str(job_id),),
+            ).fetchone()
+        return self._paid_authorization_row(row) if row is not None else None
+
+    def reserve_provider_call(
+        self,
+        *,
+        job_id: str,
+        job_item_id: str,
+        task_attempt_id: str,
+        stage: str,
+        provider: str,
+        model: str,
+    ) -> dict[str, Any]:
+        """Consume one bounded authorization slot before external submission."""
+        stage = str(stage or "").strip()
+        provider = str(provider or "").strip()
+        model = str(model or "").strip()
+        if not stage or len(stage) > 120:
+            raise ValueError("provider call stage must contain 1 to 120 characters")
+        if not provider or len(provider) > 80:
+            raise ValueError("provider call provider must contain 1 to 80 characters")
+        if not model or len(model) > 160:
+            raise ValueError("provider call model must contain 1 to 160 characters")
+        payload = {
+            "job_id": str(job_id),
+            "job_item_id": str(job_item_id),
+            "task_attempt_id": str(task_attempt_id),
+            "stage": stage,
+            "provider": provider,
+            "model": model,
+        }
+        fingerprint = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+        receipt_id = idempotent_id("pcall", f"{task_attempt_id}:{stage}")
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            attempt = connection.execute(
+                """
+                SELECT ta.id, ji.id AS item_id, ji.job_id
+                FROM task_attempts ta
+                JOIN job_items ji ON ji.id = ta.job_item_id
+                WHERE ta.id = ?
+                """,
+                (str(task_attempt_id),),
+            ).fetchone()
+            if attempt is None:
+                raise KeyError(f"unknown task attempt: {task_attempt_id}")
+            if (
+                str(attempt["item_id"]) != str(job_item_id)
+                or str(attempt["job_id"]) != str(job_id)
+            ):
+                raise ValueError("provider call attempt does not belong to its job item")
+            existing = connection.execute(
+                "SELECT * FROM provider_call_receipts WHERE task_attempt_id = ? AND stage = ?",
+                (str(task_attempt_id), stage),
+            ).fetchone()
+            if existing is not None:
+                if str(existing["request_fingerprint"]) != fingerprint:
+                    raise IdempotencyConflictError(
+                        "provider stage already belongs to a different call request"
+                    )
+                replayed = self._provider_call_receipt_row(existing)
+                replayed["replayed"] = True
+                return replayed
+            authorization = connection.execute(
+                "SELECT * FROM paid_call_authorizations WHERE job_id = ?",
+                (str(job_id),),
+            ).fetchone()
+            if authorization is None:
+                raise ValueError("PAID_CALL_AUTHORIZATION_MISSING")
+            if (
+                str(authorization["status"]) != "active"
+                or int(authorization["consumed_calls"]) >= int(authorization["max_calls"])
+            ):
+                raise ValueError("PAID_CALL_AUTHORIZATION_EXHAUSTED")
+            consumed = int(authorization["consumed_calls"]) + 1
+            next_status = "exhausted" if consumed >= int(authorization["max_calls"]) else "active"
+            connection.execute(
+                """
+                UPDATE paid_call_authorizations
+                SET consumed_calls = ?, status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (consumed, next_status, now, authorization["id"]),
+            )
+            connection.execute(
+                """
+                INSERT INTO provider_call_receipts(
+                    id, authorization_id, job_id, job_item_id, task_attempt_id,
+                    stage, provider, model, request_fingerprint, status,
+                    remote_task_id, evidence_json, created_at, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'reserved', '', '{}', ?, ?)
+                """,
+                (
+                    receipt_id, authorization["id"], str(job_id), str(job_item_id),
+                    str(task_attempt_id), stage, provider, model, fingerprint, now, now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM provider_call_receipts WHERE id = ?", (receipt_id,)
+            ).fetchone()
+        assert row is not None
+        reserved = self._provider_call_receipt_row(row)
+        reserved["replayed"] = False
+        return reserved
+
+    def update_provider_call_receipt(
+        self,
+        receipt_id: str,
+        status: str,
+        *,
+        remote_task_id: str = "",
+        evidence: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        transitions = {
+            "reserved": {"submitted", "completed", "failed", "billing_unknown"},
+            "submitted": {"completed", "failed", "billing_unknown"},
+            "completed": set(),
+            "failed": set(),
+            "billing_unknown": set(),
+        }
+        status = str(status or "").strip()
+        if status not in transitions:
+            raise ValueError(f"unsupported provider receipt status: {status}")
+        now = utc_now()
+        with self._immediate_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM provider_call_receipts WHERE id = ?", (str(receipt_id),)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown provider call receipt: {receipt_id}")
+            current = str(row["status"])
+            if current == status:
+                return self._provider_call_receipt_row(row)
+            if status not in transitions[current]:
+                raise ValueError(f"illegal provider receipt transition: {current} -> {status}")
+            merged_evidence = decode_json(row["evidence_json"], {})
+            if evidence:
+                merged_evidence.update(dict(evidence))
+            remote = str(remote_task_id or row["remote_task_id"] or "")
+            completed_at = now if status in {"completed", "failed", "billing_unknown"} else None
+            connection.execute(
+                """
+                UPDATE provider_call_receipts
+                SET status = ?, remote_task_id = ?, evidence_json = ?,
+                    updated_at = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (status, remote, encode_json(merged_evidence), now, completed_at, receipt_id),
+            )
+            updated = connection.execute(
+                "SELECT * FROM provider_call_receipts WHERE id = ?", (str(receipt_id),)
+            ).fetchone()
+        assert updated is not None
+        return self._provider_call_receipt_row(updated)
+
+    def list_provider_call_receipts(self, job_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM provider_call_receipts WHERE job_id = ? ORDER BY created_at, id",
+                (str(job_id),),
+            ).fetchall()
+        return [self._provider_call_receipt_row(row) for row in rows]
+
     def create_job(
         self,
         mode: str,
@@ -6266,6 +7047,17 @@ class AtelierLedger:
         requested_concurrency = max(1, min(int(requested_concurrency), 24))
         max_attempts = max(1, min(int(max_attempts), 10))
         parameters = dict(parameters or {})
+        paid_authorization: dict[str, Any] | None = None
+        paid_authorization_fingerprint = ""
+        if isinstance(parameters.get("paid_call_authorization"), Mapping):
+            paid_authorization, paid_authorization_fingerprint = (
+                normalize_paid_call_authorization(parameters["paid_call_authorization"])
+            )
+            parameters["paid_call_authorization"] = paid_authorization
+            if engine_key not in PAID_JOB_ENGINES:
+                raise ValueError("a paid authorization cannot be attached to a local-only job")
+            if max_attempts != 1:
+                raise ValueError("paid provider jobs forbid automatic attempt retries")
         job_id = new_id("job")
         session_id = new_id("ses")
         now = utc_now()
@@ -6508,6 +7300,25 @@ class AtelierLedger:
                         encode_json(parameters), now, now, now,
                     ),
                 )
+                if paid_authorization is not None:
+                    connection.execute(
+                        """
+                        INSERT INTO paid_call_authorizations(
+                            id, job_id, client_request_id, request_fingerprint,
+                            user_action, operation, scope_json, max_calls,
+                            consumed_calls, status, created_at, updated_at
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?)
+                        """,
+                        (
+                            paid_authorization["id"], job_id,
+                            paid_authorization["client_request_id"],
+                            paid_authorization_fingerprint,
+                            paid_authorization["user_action"],
+                            paid_authorization["operation"],
+                            encode_json(paid_authorization["scope"]),
+                            paid_authorization["max_calls"], now, now,
+                        ),
+                    )
                 draft = connection.execute(
                     "SELECT id, revision, ui_state_json FROM workflow_drafts WHERE mode = ?",
                     (mode,),
@@ -6652,6 +7463,20 @@ class AtelierLedger:
                 "SELECT * FROM job_snapshots WHERE job_id = ?", (job_id,)
             ).fetchone()
             job["snapshot"] = self._job_snapshot_row(snapshot_row) if snapshot_row else None
+            authorization_row = connection.execute(
+                "SELECT * FROM paid_call_authorizations WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            job["paid_call_authorization"] = (
+                self._paid_authorization_row(authorization_row)
+                if authorization_row is not None else None
+            )
+            receipt_rows = connection.execute(
+                "SELECT * FROM provider_call_receipts WHERE job_id = ? ORDER BY created_at, id",
+                (job_id,),
+            ).fetchall()
+            job["provider_call_receipts"] = [
+                self._provider_call_receipt_row(receipt) for receipt in receipt_rows
+            ]
             job["progress"] = (
                 sum(float(item["progress"]) for item in items) / len(items)
                 if items else 0.0
@@ -7547,6 +8372,18 @@ class AtelierLedger:
             known = {str(row["id"]) for row in rows}
             if requested - known:
                 raise KeyError(f"unknown job items: {', '.join(sorted(requested - known))}")
+            paid_retry_items = [
+                str(row["id"])
+                for row in rows
+                if (not requested or str(row["id"]) in requested)
+                and str(row["status"]) in {"failed", "interrupted"}
+                and str(row["engine_key"]) in PAID_JOB_ENGINES
+            ]
+            if paid_retry_items:
+                raise ValueError(
+                    "paid provider jobs cannot retry the original authorization; "
+                    "create a new explicitly authorized job"
+                )
             for row in rows:
                 item_id = str(row["id"])
                 if requested and item_id not in requested:
@@ -7624,6 +8461,7 @@ class AtelierLedger:
             was_canceling = current == "canceling"
             can_retry = (
                 not was_canceling
+                and str(row["engine_key"]) not in PAID_JOB_ENGINES
                 and int(row["attempt_count"]) < int(row["max_attempts"])
             )
             next_status = "canceled" if was_canceling else ("queued" if can_retry else "failed")
@@ -7649,6 +8487,14 @@ class AtelierLedger:
                 WHERE job_item_id = ? AND attempt_number = ? AND status = 'running'
                 """,
                 (final_code, final_message, now, item_id, row["attempt_count"]),
+            )
+            connection.execute(
+                """
+                UPDATE provider_call_receipts
+                SET status = 'billing_unknown', updated_at = ?, completed_at = ?
+                WHERE job_item_id = ? AND status IN ('reserved','submitted')
+                """,
+                (now, now, item_id),
             )
             if not was_canceling:
                 connection.execute(
@@ -7752,9 +8598,18 @@ class AtelierLedger:
                     """,
                     (now, row["id"], row["attempt_count"]),
                 )
+                connection.execute(
+                    """
+                    UPDATE provider_call_receipts
+                    SET status = 'billing_unknown', updated_at = ?, completed_at = ?
+                    WHERE job_item_id = ? AND status IN ('reserved','submitted')
+                    """,
+                    (now, now, row["id"]),
+                )
                 was_canceling = str(row["status"]) == "canceling"
                 can_retry = (
                     not was_canceling
+                    and str(row["engine_key"]) not in PAID_JOB_ENGINES
                     and int(row["attempt_count"]) < int(row["max_attempts"])
                 )
                 next_status = "canceled" if was_canceling else ("queued" if can_retry else "failed")
@@ -8680,7 +9535,11 @@ class AtelierLedger:
                     "product_profiles", "product_profile_versions",
                     "product_profile_version_assets",
                     "canvas_rois", "canvas_masks", "canvas_mask_versions",
-                    "local_edit_specs",
+                    "local_edit_specs", "local_edit_compositions",
+                    "spatial_canvas_documents", "spatial_canvas_scene_versions",
+                    "spatial_scene_requests", "spatial_scene_references",
+                    "paid_call_authorizations", "provider_call_receipts",
+                    "spatial_edit_handoffs", "export_receipts",
                 )
             }
             counts["sessions"] = connection.execute(

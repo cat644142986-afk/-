@@ -9,6 +9,7 @@ from pathlib import Path
 from python.atelier_ledger import (
     AtelierLedger,
     IdempotencyConflictError,
+    LedgerSchemaError,
     PartialSchemaError,
     SCHEMA_VERSION,
     SpatialCanvasRevisionConflictError,
@@ -102,7 +103,7 @@ class SpatialCanvasLedgerTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_schema_v8_has_immutable_spatial_scene_objects(self) -> None:
-        self.assertEqual(SCHEMA_VERSION, 8)
+        self.assertEqual(SCHEMA_VERSION, 9)
         connection = sqlite3.connect(self.db_path)
         try:
             tables = {
@@ -421,7 +422,7 @@ class SpatialCanvasMigrationTests(unittest.TestCase):
     def test_v7_upgrade_is_recoverable_and_restart_does_not_duplicate_backup(self) -> None:
         create_v7_database(self.db_path)
         ledger = AtelierLedger(self.db_path)
-        self.assertEqual(ledger.stats()["schema_version"], 8)
+        self.assertEqual(ledger.stats()["schema_version"], 9)
         backup = ledger.last_migration_backup
         self.assertIsNotNone(backup)
         assert backup is not None
@@ -449,8 +450,8 @@ class SpatialCanvasMigrationTests(unittest.TestCase):
         finally:
             connection.close()
         repaired = AtelierLedger(self.db_path)
-        self.assertEqual(repaired.stats()["schema_version"], 8)
-        self.assertIn("recovered complete v8 schema", repaired.last_schema_repair)
+        self.assertEqual(repaired.stats()["schema_version"], 9)
+        self.assertIn("recovered complete v9 schema", repaired.last_schema_repair)
 
     def test_partial_v8_with_v7_marker_is_refused_without_mutation(self) -> None:
         AtelierLedger(self.db_path)
@@ -483,8 +484,11 @@ class SpatialCanvasMigrationTests(unittest.TestCase):
                 connection.execute("CREATE TABLE should_rollback_v8(id TEXT PRIMARY KEY)")
                 raise RuntimeError("injected v8 migration failure")
 
-        with self.assertRaisesRegex(Exception, "schema v8"):
+        with self.assertRaisesRegex(
+            LedgerSchemaError, "Failed to migrate ledger to schema v9"
+        ) as caught:
             FailingV8Ledger(self.db_path)
+        self.assertIsInstance(caught.exception.__cause__, RuntimeError)
         connection = sqlite3.connect(self.db_path)
         try:
             tables = {

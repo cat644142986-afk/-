@@ -11,6 +11,7 @@ const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import
 const packageLock = JSON.parse(readFileSync(new URL('../../package-lock.json', import.meta.url), 'utf8'));
 const html = readFileSync(new URL('../../src/index.html', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../../src/js/app.js', import.meta.url), 'utf8');
+const studioCanvasSource = readFileSync(new URL('../../src/js/studio-canvas.js', import.meta.url), 'utf8');
 const workspace = readFileSync(new URL('../../src/js/infinite-canvas-workspace.js', import.meta.url), 'utf8');
 const island = readFileSync(new URL('../../src/js/infinite-canvas-island.jsx', import.meta.url), 'utf8');
 const fineEditGesture = readFileSync(new URL('../../src/js/spatial-fine-edit-gesture.js', import.meta.url), 'utf8');
@@ -38,7 +39,7 @@ test('spatial workspace is a primary route and the old Studio switch is gone', (
   assert.match(html, /id="btn-spatial-new"/);
   assert.match(html, /id="btn-spatial-rename"[^>]*aria-label="重命名当前画布"/);
   assert.match(html, /id="spatial-inspector"[^>]*hidden/);
-  assert.match(html, /class="spatial-workspace" data-adapter="sqlite-v8"/);
+  assert.match(html, /class="spatial-workspace" data-adapter="sqlite-v9"/);
   assert.doesNotMatch(html, /data-studio-view=/);
   assert.doesNotMatch(html, />自由画布</);
   assert.match(app, /infiniteCanvasWorkspace\.setPage\(page === 'canvas'\)/);
@@ -95,7 +96,7 @@ test('IC2 memory adapter provides list, recent, rename and scene continuity with
   assert.doesNotMatch(adapterSource, /localStorage|sessionStorage|fetch\(|\.saveCanvas\(/);
 });
 
-test('IC3 production adapter uses schema v8 APIs and strips scene file bytes', async () => {
+test('IC3 production adapter uses current ledger APIs and strips scene file bytes', async () => {
   const calls = [];
   const base = {
     id: 'spatial:api',
@@ -134,7 +135,7 @@ test('IC3 production adapter uses schema v8 APIs and strips scene file bytes', a
   };
   const adapter = createApiSpatialCanvasAdapter({ api });
   await adapter.load();
-  assert.equal(adapter.kind, 'sqlite-v8');
+  assert.equal(adapter.kind, 'sqlite-v9');
   assert.equal(adapter.list()[0].id, base.id);
   const opened = await adapter.open(base.id);
   assert.equal(opened.scene.appState.zoom.value, 0.8);
@@ -300,7 +301,10 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(workspace, /recordsFailure = error;[\s\S]{0,220}renderLibrary\(\);[\s\S]{0,120}throw error/);
   assert.match(workspace, /retry-conflict-copy[\s\S]{0,260}preserveSceneConflict/);
   assert.match(app, /originCanvasId[\s\S]{0,360}infiniteCanvasWorkspace\.openCanvas\(originCanvasId\)/);
-  assert.match(app, /recoveryId: 'spatial-return'/);
+  assert.match(studioCanvasSource, /setRecoveryState\('spatial-return', error/);
+  assert.match(app, /prepareSpatialEditHandoff/);
+  assert.match(app, /getPendingSpatialEditHandoffs/);
+  assert.match(app, /markSpatialEditHandoffApplied/);
   assert.match(app, /canvasController\.retrySpatialReturn\(\)/);
 });
 
@@ -367,7 +371,7 @@ test('IC5 video jobs use the durable queue, idempotent result backfill and canva
   assert.doesNotMatch(workspace, /startPolling\(/);
   assert.match(island, /addBusinessItemsOnce: \(items\) => insertBusinessItems\(items, \{ once: true \}\)/);
   assert.match(island, /element\?\.type === 'image' && spatialBusinessKey\(element\)/);
-  assert.match(app, /if \(isSpatialVideoJob\(job\)\) return \[\];/);
+  assert.match(app, /if \(isSpatialVideoJob\(job\) \|\| job\?\.paid_call_authorization\) return \[\];/);
   assert.match(app, /isSpatialVideoJob\(job\) && \['retry-item', 'retry-failed'\]\.includes\(action\)/);
   assert.match(app, /if \(isSpatialVideoJob\(job\)\) return openVideoJobCanvas\(job\);/);
   assert.match(app, /onVideoJobSubmitted: \(\) => loadJobs\(true\)/);
@@ -381,7 +385,10 @@ test('IC5 video export keeps original binary bytes out of the base64 image path'
   const downloadFunction = apiSource.slice(downloadStart, downloadEnd);
   assert.match(exportFunction, /asset\?\.kind === 'video'/);
   assert.match(exportFunction, /API\.downloadAsset\(assetId, suggestedName\)/);
+  assert.match(exportFunction, /API\.recordExportReceipt/);
+  assert.match(exportFunction, /source_kind: 'asset'/);
   assert.match(downloadFunction, /content\?download=true/);
   assert.match(downloadFunction, /invoke\('save_binary_asset'/);
+  assert.match(downloadFunction, /size_bytes: response\.blob\.size/);
   assert.doesNotMatch(downloadFunction, /saveImage|save_base64_image|btoa|base64/i);
 });

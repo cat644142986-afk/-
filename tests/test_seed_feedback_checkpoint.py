@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from python.atelier_ledger import AtelierLedger
+from python.atelier_ledger import AtelierLedger, SCHEMA_VERSION
 
 _TOP_LEVEL_SEMANTIC_MODULES = {
     "semantic_cutout",
@@ -58,7 +58,7 @@ class SeedFeedbackCheckpointTests(unittest.TestCase):
 
         self.assertEqual(manifest["fixture"], "formal-webview-result-review")
         self.assertEqual(len(manifest["jobs"]), 2)
-        self.assertEqual(manifest["ledger_schema_version"], 8)
+        self.assertEqual(manifest["ledger_schema_version"], SCHEMA_VERSION)
         self.assertFalse((self.data_dir / "config.json").exists())
         self.assertFalse((self.data_dir / seed.SEED_CLAIM_NAME).exists())
         self.assertEqual(
@@ -79,7 +79,7 @@ class SeedFeedbackCheckpointTests(unittest.TestCase):
 
         ledger = AtelierLedger(database)
         stats = ledger.stats()
-        self.assertEqual(stats["schema_version"], 8)
+        self.assertEqual(stats["schema_version"], SCHEMA_VERSION)
         self.assertEqual(stats["counts"]["jobs"], 2)
         self.assertEqual(stats["counts"]["assets"], 6)
         for fixture_job in manifest["jobs"]:
@@ -327,7 +327,7 @@ class SeedFeedbackCheckpointTests(unittest.TestCase):
             manifest = seed.seed_feedback_checkpoint(self.data_dir)
 
         self.assertTrue(attack_checked)
-        self.assertEqual(manifest["ledger_schema_version"], 8)
+        self.assertEqual(manifest["ledger_schema_version"], SCHEMA_VERSION)
         self.assertFalse((self.data_dir / "assets-moved-by-attacker").exists())
 
 

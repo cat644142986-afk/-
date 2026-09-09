@@ -1132,6 +1132,20 @@ async function handleSpatialFineEdit(context, localMode = 'inpaint') {
   try {
     const refs = context?.element?.customData || {};
     if (!refs.asset_id) throw new Error('当前对象没有可编辑的素材引用');
+    const originCanvasId = String(context.canvasId || infiniteCanvasWorkspace.currentId || '');
+    if (!originCanvasId) throw new Error('当前对象缺少来源无限画布');
+    await infiniteCanvasWorkspace.flush(originCanvasId);
+    const originRecord = infiniteCanvasWorkspace.currentRecord;
+    const originSceneVersionId = String(originRecord?.current_version_id || '');
+    if (!originSceneVersionId) throw new Error('来源无限画布尚未完成保存');
+    const originElementId = String(context.element?.id || '');
+    const handoff = await API.prepareSpatialEditHandoff({
+      client_request_id: `spatial-edit:${originCanvasId}:${originSceneVersionId}:${originElementId}`,
+      origin_canvas_id: originCanvasId,
+      origin_scene_version_id: originSceneVersionId,
+      origin_element_id: originElementId,
+      source_asset_id: String(refs.asset_id),
+    }, { timeoutMs: 12000 });
     const job = await spatialJob(context).catch(() => null);
     if (job?.mode && MODE_CONFIG[job.mode] && state.currentMode !== job.mode) {
       switchMode(job.mode, true, false);
@@ -1141,8 +1155,10 @@ async function handleSpatialFineEdit(context, localMode = 'inpaint') {
       mode: job?.mode || state.currentMode,
       localMode,
       origin: {
-        canvasId: context.canvasId,
-        elementId: context.element?.id || '',
+        canvasId: originCanvasId,
+        elementId: originElementId,
+        originSceneVersionId,
+        handoffId: handoff.id,
         references: { ...refs },
       },
     });
@@ -1166,17 +1182,45 @@ async function handleSpatialFineEditResult({ origin, resultAsset, replayed }) {
     const opened = await infiniteCanvasWorkspace.openCanvas(originCanvasId);
     if (!opened) throw new Error('来源无限画布尚未恢复，精修结果未回填');
   }
-  const added = await infiniteCanvasWorkspace.addBusinessItems([item], null, {
-    recoveryId: 'spatial-return',
-    external: true,
-    action: { label: '重试回填', value: 'retry-spatial-return' },
-  });
+  const added = await infiniteCanvasWorkspace.addBusinessItemsOnce([item]);
   if (!added || added.skipped) throw new Error(
     added?.reason === 'canvas-switched'
       ? '回填期间画布已切换，精修结果尚未加入'
       : '精修结果未能回填无限画布',
   );
+  const targetSceneVersionId = String(
+    infiniteCanvasWorkspace.currentRecord?.current_version_id || '',
+  );
+  if (!targetSceneVersionId) throw new Error('精修结果已加入画布，但回填版本回执尚未建立');
+  if (origin?.handoffId) {
+    await API.markSpatialEditHandoffApplied(
+      origin.handoffId,
+      targetSceneVersionId,
+      { timeoutMs: 12000 },
+    );
+  }
   toast(replayed ? '精修结果已从账本恢复并回填画布' : '精修结果已作为新版本回填画布', 'success', 4200);
+}
+
+async function recoverPendingSpatialEditHandoffs() {
+  const response = await API.getPendingSpatialEditHandoffs(20, { timeoutMs: 12000 });
+  const ready = Array.from(response?.handoffs || []).filter((item) => (
+    item.status === 'ready' && item.result_asset_id
+  ));
+  for (const handoff of ready) {
+    const assetResponse = await API.getAsset(handoff.result_asset_id, { timeoutMs: 12000 });
+    await handleSpatialFineEditResult({
+      origin: {
+        canvasId: handoff.origin_canvas_id,
+        elementId: handoff.origin_element_id,
+        originSceneVersionId: handoff.origin_scene_version_id,
+        handoffId: handoff.id,
+        references: { asset_id: handoff.source_asset_id },
+      },
+      resultAsset: assetResponse?.asset || assetResponse,
+      replayed: true,
+    });
+  }
 }
 
 async function openSpatialCompare(context) {
@@ -2148,6 +2192,12 @@ function updateCtaState() {
     && cutoutSelectionState().strategy === 'semantic'
     && !cutoutReadiness.ready
     && !semanticCanConfirm;
+  const passes = getGenerationStrategy(state.currentMode) === 'single_pass' ? 1 : 2;
+  const paidCallLimit = state.currentMode === 'cutout-batch'
+    ? 0
+    : state.currentMode === 'group-split'
+      ? 1 + (12 * passes)
+      : (count * Math.max(1, batch) * passes) + (state.currentMode === 'single' ? 1 : 0);
   const productProfileConflict = productProfiles.hasConflict();
   button.disabled = !hasFiles || state.submitting || !state.assetsAvailable || !capacityOkay || semanticBlocked || productProfileConflict;
   $('#param-batch').setAttribute('aria-invalid', String(!capacityOkay));
@@ -2165,12 +2215,14 @@ function updateCtaState() {
     : '从当前素材区选择后可入队';
   else if (!capacityOkay) $('#cta-hint').textContent = `${count} 张 × ${batch} 方案 = ${plan.total} 个输出；单批最多 ${plan.maxOutputs}，请改为每图 ${plan.maxVariations} 个`;
   else if (state.currentMode === 'cutout-batch' && cutoutReadiness) $('#cta-hint').textContent = cutoutReadiness.message;
-  else if (state.stage === 'success') $('#cta-hint').textContent = '调整创作要求后可继续生成；当前结果不会被覆盖';
+  else if (state.stage === 'success') $('#cta-hint').textContent = `调整后可继续生成；本次最多 ${paidCallLimit} 次云端调用，失败不会自动付费重试`;
   else if (folderBatch) {
     const chunkSize = Math.max(1, Math.min(20, Math.floor(24 / Math.max(1, batch))));
     const partCount = Math.ceil(count / chunkSize);
-    $('#cta-hint').textContent = `${count} 张整夹素材 · 自动拆为 ${partCount} 批并发任务`;
-  } else $('#cta-hint').textContent = `${count} 张素材 · ${Object.values(getIntentLocks()).filter(Boolean).length} 项锁定`;
+    $('#cta-hint').textContent = `${count} 张整夹素材 · 自动拆为 ${partCount} 批 · 总计最多 ${paidCallLimit} 次云端调用 · 失败不自动付费重试`;
+  } else $('#cta-hint').textContent = paidCallLimit
+    ? `${count} 张素材 · 最多 ${paidCallLimit} 次云端调用 · 失败不自动付费重试`
+    : `${count} 张素材 · 本地处理，不发起云端付费调用`;
 }
 
 function updateQuickControls() {
@@ -2562,14 +2614,19 @@ const PERMANENT_JOB_ERRORS = new Set([
   'INVALID_PRODUCT_DETECTION', 'NO_PRODUCTS_DETECTED', 'TOO_MANY_PRODUCTS_DETECTED',
   'INVALID_DELIVERY_PATH', 'INVALID_ADJUSTMENT_REFERENCE',
   'VIDEO_FIXTURE_UNAVAILABLE', 'VIDEO_FIXTURE_INTEGRITY_FAILED',
+  'PAID_CALL_AUTHORIZATION_MISSING', 'PAID_CALL_AUTHORIZATION_EXHAUSTED',
+  'PAID_CALL_AUTHORIZATION_INVALID', 'PAID_CALL_BILLING_UNKNOWN',
+  'PAID_CALL_DUPLICATE_SUBMISSION_BLOCKED',
 ]);
 
-function jobFailureCopy(item) {
+function jobFailureCopy(item, job = null) {
   const code = String(item?.error_code || '').trim();
   const raw = String(item?.error_message || item?.error || '').trim();
   if (!code && !raw) return { code: '', permanent: false, message: '', raw: '' };
   const known = {
-    PROCESS_RESTARTED: '应用曾在处理中断；该项目可以从安全检查点重新执行。',
+    PROCESS_RESTARTED: job?.paid_call_authorization
+      ? '应用在付费处理期间中断；已停止自动重试，请先核对供应商回执，确需再次调用时明确新建任务。'
+      : '应用曾在处理中断；该项目可以从安全检查点重新执行。',
     WORKER_INFRASTRUCTURE_FAILURE: '后台工作进程意外停止；素材和已成功结果仍然保留。',
     OUTPUT_ROOT_WRITE_FAILED: '交付目录当前无法写入，请恢复磁盘连接或在设置中重新选择目录。',
     INVALID_OUTPUT_ROOT: '交付目录无效，请在设置中重新选择可写入的位置。',
@@ -2586,6 +2643,11 @@ function jobFailureCopy(item) {
     VIDEO_FIXTURE_INTEGRITY_FAILED: '离线视频预览资源校验失败，请重新安装当前候选包；不要继续重试。',
     USER_CANCELED: '该项目已由你取消。',
     PROCESSOR_ERROR: '处理器未能完成该项目；可以单独重试，若再次失败请查看原始详情。',
+    PAID_CALL_AUTHORIZATION_MISSING: '本次调用没有可追溯授权，未向供应商提交新请求；请回到工作流明确提交新任务。',
+    PAID_CALL_AUTHORIZATION_EXHAUSTED: '本次授权额度已经用完，不会自动追加调用；请核对现有结果后明确提交新任务。',
+    PAID_CALL_AUTHORIZATION_INVALID: '本次调用授权与冻结参数不一致，未向供应商提交新请求。',
+    PAID_CALL_BILLING_UNKNOWN: '供应商调用未完成且计费状态未知；已停止后续调用，请先核对原任务，确需再次调用时明确新建任务。',
+    PAID_CALL_DUPLICATE_SUBMISSION_BLOCKED: '该处理阶段已有供应商调用回执，已阻止重复付费提交；请核对原任务，确需再次调用时明确新建任务。',
   };
   const hasChinese = /[\u3400-\u9fff]/.test(raw);
   return {
@@ -2597,9 +2659,9 @@ function jobFailureCopy(item) {
 }
 
 function retryableJobItems(job) {
-  if (isSpatialVideoJob(job)) return [];
+  if (isSpatialVideoJob(job) || job?.paid_call_authorization) return [];
   return (job?.items || []).filter((item) => (
-    ['failed', 'interrupted'].includes(item.status) && !jobFailureCopy(item).permanent
+    ['failed', 'interrupted'].includes(item.status) && !jobFailureCopy(item, job).permanent
   ));
 }
 
@@ -2692,7 +2754,9 @@ function renderJobs(force = false) {
   } else if (!filteredJobs.length) {
     list.innerHTML = statusPanelHtml('empty', { title: '这个工作流还没有任务', detail: '切换上方筛选，或回到工作台发起新任务。', fill: true });
   } else {
-    const partialJobs = visibleJobs.filter((job) => job.status === 'partial' && !isSpatialVideoJob(job));
+    const partialJobs = visibleJobs.filter((job) => (
+      job.status === 'partial' && !isSpatialVideoJob(job) && !job?.paid_call_authorization
+    ));
     const renderedJobIds = new Set(visibleJobs.map((job) => String(job.id)));
     const hiddenJobCount = filteredJobs.filter((job) => !renderedJobIds.has(String(job.id))).length;
     const partialSummary = partialJobs.length ? statusPanelHtml('partial', {
@@ -2705,6 +2769,20 @@ function renderJobs(force = false) {
       const status = taskStatusPresentation(job.status);
       const progress = Math.round(jobProgress(job) * 100);
       const counts = jobCounts(job);
+      const paidAuthorization = job?.paid_call_authorization || null;
+      const providerReceipts = Array.from(job?.provider_call_receipts || []);
+      const unknownReceiptCount = providerReceipts.filter((receipt) => (
+        ['reserved', 'submitted', 'billing_unknown'].includes(receipt?.status)
+      )).length;
+      const paidActionLabel = {
+        'generate-submit': '生成提交',
+        'command-execute': '画布生成提交',
+        'local-edit-generate': '精细修改提交',
+        'result-adjustment': '结果调整提交',
+      }[paidAuthorization?.user_action] || paidAuthorization?.user_action || '';
+      const paidTrace = paidAuthorization
+        ? `<p class="job-provider-trace" title="${escapeHtml(providerReceipts.map((receipt) => `${receipt.stage || 'provider'} · ${receipt.status || 'unknown'}${receipt.remote_task_id ? ` · ${receipt.remote_task_id}` : ''}`).join('\n') || '尚未产生供应商调用回执')}"><strong>付费授权</strong><span>${escapeHtml(paidActionLabel)} · 已用 ${Number(paidAuthorization.consumed_calls || 0)}/${Number(paidAuthorization.max_calls || 0)} 次 · 回执 ${providerReceipts.length}${unknownReceiptCount ? ` · ${unknownReceiptCount} 条待核对` : ''} · 不自动重试</span></p>`
+        : '';
       const retryable = retryableJobItems(job);
       const hasResults = resultIdsForJob(job).length > 0;
       const lifecycleActions = jobLifecycleActions(job.status);
@@ -2718,8 +2796,8 @@ function renderJobs(force = false) {
         const sourceIndex = Math.max(0, (job.items || []).findIndex((candidate) => candidate.id === item.id));
         const itemStatus = taskStatusPresentation(item.status);
         const itemProgress = Math.round(itemCompletionProgress(item) * 100);
-        const failure = jobFailureCopy(item);
-        const canRetryItem = !videoJob && ['failed', 'interrupted'].includes(item.status) && !failure.permanent;
+        const failure = jobFailureCopy(item, job);
+        const canRetryItem = !videoJob && !paidAuthorization && ['failed', 'interrupted'].includes(item.status) && !failure.permanent;
         const itemProgressCopy = ['failed', 'interrupted', 'canceled'].includes(item.status)
           ? '已结束'
           : `完成度 ${itemProgress}%`;
@@ -2742,7 +2820,9 @@ function renderJobs(force = false) {
             : '视频原件和封面已写入素材账本，结果会回填创建它的画布。'))
         : status.tone === 'completed'
           ? '成功项目已经锁定，不会因其他项目失败而重复执行。'
-        : (issueCount
+        : (paidAuthorization && issueCount
+          ? `已完成成果保持不变；本次授权已用 ${Number(paidAuthorization.consumed_calls || 0)}/${Number(paidAuthorization.max_calls || 0)} 次，系统未自动重试。${unknownReceiptCount ? '请先核对待确认回执；' : ''}确需再次调用时回到现场明确新建任务。`
+          : issueCount
           ? `${counts.completed} 个成功项目保持不变；${retryable.length} 个可重试，${issueCount - retryable.length} 个需要更换素材或设置。`
           : (['running', 'queued', 'canceling'].includes(status.tone)
             ? '任务在后台继续推进，切换页面不会中断当前工作。'
@@ -2756,6 +2836,7 @@ function renderJobs(force = false) {
         <header><span><i class="job-card__icon" data-lucide="${escapeHtml(status.icon)}" aria-hidden="true"></i><small>${escapeHtml(videoJob ? '视频' : MODE_CONFIG[job.mode]?.badge || '创作任务')} · ${escapeHtml(status.label)}</small><strong>${escapeHtml(job.title || MODE_CONFIG[job.mode]?.label || '创作任务')}</strong></span><span class="job-status job-status--${escapeHtml(status.tone)}">${counts.completed}/${counts.total}</span></header>
         <div class="job-progress"><span><i style="width:${progress}%"></i></span><strong>${progressCopy}</strong></div>
         <div class="job-counts"><span>${counts.total} 项</span><span>${counts.completed} 成功</span><span>${counts.failed} 失败</span><span>${counts.canceled} 取消</span><span>成功率 ${counts.successRate === null ? '—' : `${counts.successRate}%`}</span><time>${escapeHtml(formatStudioTime(job.updated_at || job.created_at))}</time></div>
+        ${paidTrace}
         <p class="job-outcome"><i></i><span><strong>下一步：${escapeHtml(nextAction)}</strong><small>${escapeHtml(outcome || status.recovery)}</small></span></p>
         ${items ? `<ul class="job-items ${itemsExpanded ? 'is-expanded' : ''}">${items}</ul>` : ''}
         ${(job.items || []).length > Math.max(5, visibleItems.length) || itemsExpanded ? `<button class="job-items-toggle" type="button" data-job-action="toggle-items" data-job-id="${escapeHtml(job.id)}" aria-expanded="${itemsExpanded}">${itemsExpanded ? '收起项目' : `查看全部 ${(job.items || []).length} 项`}</button>` : ''}
@@ -3136,9 +3217,15 @@ function renderResults() {
 }
 
 async function saveResultItem(item, index = 0) {
+  const assetId = String(item.asset_id || item.id || '');
+  if (!assetId) throw new Error('结果缺少可追溯的素材编号');
+  let durableAsset = item;
+  if (!durableAsset.sha256 || !durableAsset.mime) {
+    const response = await API.getAsset(assetId, { timeoutMs: 12000 });
+    durableAsset = response?.asset || response;
+  }
   let data = item.data ? item.data.replace(/^data:[^,]+,/, '') : '';
   if (!data && (item.url || item.content_url || item.asset_id || item.id)) {
-    const assetId = item.asset_id || item.id;
     const response = await fetch(item.url || item.content_url || await API.getAssetContentUrl(assetId));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const bytes = new Uint8Array(await response.arrayBuffer());
@@ -3150,7 +3237,17 @@ async function saveResultItem(item, index = 0) {
   }
   if (!data) throw new Error('结果内容为空');
   const isCutout = item.role === 'result_cutout';
-  await API.saveImage(item.name || `product-atelier-${index + 1}.${isCutout ? 'png' : 'jpg'}`, data);
+  const suggestedName = item.name || `product-atelier-${index + 1}.${isCutout ? 'png' : 'jpg'}`;
+  const saved = await API.saveImage(suggestedName, data);
+  await API.recordExportReceipt({
+    client_request_id: createClientRequestId('result-export'),
+    source_kind: 'asset',
+    source_id: assetId,
+    destination_path: String(saved?.path || `browser-download:${suggestedName}`),
+    mime: String(durableAsset.mime || (isCutout ? 'image/png' : 'image/jpeg')),
+    size_bytes: Number(saved?.size_bytes || 0),
+    sha256: String(durableAsset.sha256 || ''),
+  }, { timeoutMs: 12000 });
 }
 
 async function exportSpatialResult(context) {
@@ -3164,7 +3261,16 @@ async function exportSpatialResult(context) {
     const suggestedName = /\.[A-Za-z0-9]{2,5}$/.test(String(asset.name || ''))
       ? asset.name
       : `${asset.name || 'ProductAtelier-video'}.${extension}`;
-    await API.downloadAsset(assetId, suggestedName);
+    const saved = await API.downloadAsset(assetId, suggestedName);
+    await API.recordExportReceipt({
+      client_request_id: createClientRequestId('video-export'),
+      source_kind: 'asset',
+      source_id: assetId,
+      destination_path: String(saved?.path || `browser-download:${suggestedName}`),
+      mime: String(asset.mime || 'video/webm'),
+      size_bytes: Number(saved?.size_bytes || 0),
+      sha256: String(asset.sha256 || ''),
+    }, { timeoutMs: 12000 });
     toast(`${asset.name || '视频结果'} 已导出`, 'success');
     return;
   }
@@ -4429,6 +4535,11 @@ async function connectBackend() {
         setBackendStatus('connected', '已连接');
         API.reportStartupMilestone('backend-ready');
         startJobPolling();
+        try {
+          await recoverPendingSpatialEditHandoffs();
+        } catch (error) {
+          toast(`有精修结果等待回填：${formatApiError(error)}`, 'error', 6500);
+        }
         API.reportStartupMilestone('workspace-ready');
         setBootStatus('工作台已就绪', '可以继续上次任务或开始新的创作。', 'ready');
         dismissBootShell();

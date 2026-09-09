@@ -305,6 +305,8 @@ class DurableJobApiTests(unittest.TestCase):
 
     @staticmethod
     def create_job(client: TestClient, payload: dict) -> dict:
+        payload = copy.deepcopy(payload)
+        payload.setdefault("client_request_id", f"test-job-{os.urandom(12).hex()}")
         response = client.post("/api/jobs", json=payload)
         if response.status_code != 200:
             raise AssertionError(response.text)
@@ -385,6 +387,69 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertEqual(runtime["in_flight"], 0)
             self.assertEqual(runtime["resource_in_use"], {})
             self.assertEqual(runtime["unreconciled_workers"], [])
+
+    def test_replayed_provider_stage_is_blocked_before_a_second_network_call(self) -> None:
+        source = self.store.import_bytes(
+            png_bytes((90, 120, 150)),
+            "provider-replay-source.png",
+        )
+        job, created = self.ledger.create_job(
+            "single",
+            [source["id"]],
+            engine_key="cloud-workflow",
+            parameters={
+                "batch": 1,
+                "model": "offline-model",
+                "paid_call_authorization": {
+                    "client_request_id": "provider-replay-auth-1",
+                    "user_action": "generate",
+                    "operation": "single-image-generation",
+                    "scope": {"source_asset_ids": [source["id"]]},
+                    "max_calls": 1,
+                    "automatic_paid_retry": False,
+                },
+            },
+            idempotency_key="provider-replay-job-1",
+            max_attempts=1,
+        )
+        self.assertTrue(created)
+        item = job["items"][0]
+        claim = self.ledger.claim_job_item(item["id"])
+        self.assertIsNotNone(claim)
+        self.ledger.reserve_provider_call(
+            job_id=job["id"],
+            job_item_id=item["id"],
+            task_attempt_id=claim["attempt_id"],
+            stage="provider.image.1-1",
+            provider="image-provider",
+            model="offline-model",
+        )
+
+        class ReplayContext:
+            job_id = job["id"]
+            item_id = item["id"]
+            attempt_id = claim["attempt_id"]
+            metadata = {}
+
+        with self.assertRaisesRegex(
+            JobExecutionError, "已经存在供应商调用回执"
+        ) as caught:
+            server._cloud_job_call(
+                ReplayContext(),
+                "must-not-submit",
+                Image.new("RGB", (28, 20), (1, 2, 3)),
+                "offline-model",
+                negative_prompt="",
+                stage="1-1",
+                output_spec={},
+                trace={},
+            )
+        self.assertEqual(caught.exception.code, "PAID_CALL_DUPLICATE_SUBMISSION_BLOCKED")
+        self.ai_mock.assert_not_called()
+        self.assertEqual(
+            self.ledger.list_provider_call_receipts(job["id"])[0]["status"],
+            "billing_unknown",
+        )
 
     def test_local_edit_command_generates_one_confirmed_candidate_then_composes_strictly(self) -> None:
         source_color = (220, 100, 40)
@@ -837,6 +902,19 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertEqual(final["parameters"]["generation_strategy"], "single_pass")
             self.assertEqual(final["parameters"]["generation_strategy_source"], "user")
             self.assertEqual(len(self.ai_calls), 1)
+            authorization = final["paid_call_authorization"]
+            self.assertEqual(authorization["user_action"], "generate-submit")
+            self.assertEqual(authorization["max_calls"], 1)
+            self.assertEqual(authorization["consumed_calls"], 1)
+            self.assertEqual(authorization["status"], "exhausted")
+            self.assertFalse(final["parameters"]["automatic_paid_retry"])
+            self.assertEqual(
+                authorization["scope"]["source_asset_ids"],
+                [source["id"]],
+            )
+            self.assertEqual(len(final["provider_call_receipts"]), 1)
+            self.assertEqual(final["provider_call_receipts"][0]["status"], "completed")
+            self.assertTrue(final["provider_call_receipts"][0]["remote_task_id"])
 
             traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
             providers = [
@@ -1338,13 +1416,17 @@ class DurableJobApiTests(unittest.TestCase):
                 self.assertEqual(final["status"], "failed")
                 self.assertEqual(
                     final["items"][0]["error_code"],
-                    "PRODUCT_DETECTION_FAILED",
+                    "PAID_CALL_BILLING_UNKNOWN",
+                )
+                self.assertEqual(
+                    final["provider_call_receipts"][0]["status"],
+                    "billing_unknown",
                 )
                 self.ai_mock.assert_not_called()
                 self.remove_mock.assert_not_called()
                 self.network_request.assert_not_called()
 
-    def test_single_detection_failure_falls_back_without_another_vlm_call(self) -> None:
+    def test_single_detection_failure_stops_before_another_paid_call(self) -> None:
         self.vlm_mock.side_effect = JobExecutionError(
             "PRODUCT_DETECTION_FAILED",
             "Product detection failed before image generation",
@@ -1373,24 +1455,25 @@ class DurableJobApiTests(unittest.TestCase):
             })
             final = self.wait_for_job(created["job"]["id"])
 
-            self.assertEqual(final["status"], "completed")
+            self.assertEqual(final["status"], "failed")
             self.assertEqual(self.vlm_mock.call_count, 1)
-            self.assertEqual(self.ai_mock.call_count, 1)
-            fallback_metadata = final["items"][0]["attempts"][0]["metadata"][
-                "recognition_fallback"
-            ]
-            self.assertEqual(fallback_metadata["scope"], "single-product-only")
-            self.assertFalse(fallback_metadata["extra_provider_call"])
+            self.assertEqual(self.ai_mock.call_count, 0)
+            self.assertEqual(
+                final["items"][0]["error_code"],
+                "PAID_CALL_BILLING_UNKNOWN",
+            )
             traces = client.get(f"/api/jobs/{final['id']}/traces").json()["traces"]
             failed_detection = next(item for item in traces if item["stage"] == "vlm.detect")
-            fallback = next(item for item in traces if item["stage"] == "vlm.fallback")
             self.assertEqual(failed_detection["status"], "failed")
             self.assertEqual(
                 failed_detection["output"]["diagnostics"]["cause_type"],
                 "JSONDecodeError",
             )
-            self.assertEqual(fallback["status"], "completed")
-            self.assertFalse(fallback["output"]["extra_provider_call"])
+            self.assertFalse(any(item["stage"] == "vlm.fallback" for item in traces))
+            self.assertEqual(
+                final["provider_call_receipts"][0]["status"],
+                "billing_unknown",
+            )
             self.network_request.assert_not_called()
 
     def test_group_split_rejects_detection_count_mismatch_before_cloud(self) -> None:
@@ -1991,7 +2074,7 @@ class DurableJobApiTests(unittest.TestCase):
             ground_mock.assert_not_called()
             self.network_request.assert_not_called()
 
-    def test_multi_file_partial_failure_retry_only_failed_item_then_completes(self) -> None:
+    def test_multi_file_paid_failure_requires_a_new_authorized_job(self) -> None:
         self.fail_prompt_once = "fail-source"
         with self.live_client() as client:
             ok_source = self.import_asset(client, "ok-source.png", (40, 110, 180))
@@ -2017,7 +2100,7 @@ class DurableJobApiTests(unittest.TestCase):
                 item for item in partial["items"] if item["status"] == "completed"
             )
             self.assertEqual(failed_item["source_asset_id"], fail_source["id"])
-            self.assertEqual(failed_item["error_code"], "OFFLINE_INJECTED_FAILURE")
+            self.assertEqual(failed_item["error_code"], "PAID_CALL_BILLING_UNKNOWN")
             self.assertEqual(failed_item["result_asset_ids"], [])
             self.assertEqual(len(completed_item["result_asset_ids"]), 2)
 
@@ -2025,22 +2108,22 @@ class DurableJobApiTests(unittest.TestCase):
                 f"/api/jobs/{partial['id']}/retry",
                 json={"item_ids": [failed_item["id"]]},
             )
-            self.assertEqual(retry.status_code, 200, retry.text)
-            self.assertEqual(retry.json()["job"]["retried_item_ids"], [failed_item["id"]])
-            final = self.wait_for_job(partial["id"])
-
+            self.assertEqual(retry.status_code, 409, retry.text)
+            self.assertIn("new explicitly authorized job", retry.text)
+            unchanged = self.wait_for_job(partial["id"])
+            self.assertEqual(unchanged["status"], "partial")
+            replacement = self.create_job(client, {
+                "mode": "multi-file",
+                "source_asset_ids": [fail_source["id"]],
+                "parameters": {"variations": 1, "model": "offline-model"},
+                "max_attempts": 1,
+            })
+            final = self.wait_for_job(replacement["job"]["id"])
             self.assertEqual(final["status"], "completed")
-            retried = next(item for item in final["items"] if item["id"] == failed_item["id"])
-            untouched = next(item for item in final["items"] if item["id"] == completed_item["id"])
-            self.assertEqual(retried["attempt_count"], 2)
-            self.assertEqual(len(retried["attempts"]), 2)
-            self.assertEqual([attempt["status"] for attempt in retried["attempts"]], ["failed", "completed"])
-            self.assertEqual(untouched["attempt_count"], 1)
-            self.assertEqual(len(untouched["attempts"]), 1)
             self.assert_result_lineage(
                 client,
                 final,
-                {ok_source["id"]: 2, fail_source["id"]: 2},
+                {fail_source["id"]: 2},
             )
             self.network_request.assert_not_called()
 

@@ -1248,6 +1248,8 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .job-progress strong { min-width: 30px; color: var(--coral-deep); font-size: 9px; text-align: right; }
 .job-counts { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 9px; color: var(--ink-3); font-size: var(--type-caption); }
 .job-counts time { margin-left: auto; }
+.job-provider-trace { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 0; padding: 7px 9px; border-radius: 9px; background: color-mix(in srgb,var(--yellow) 15%,var(--paper)); color: var(--ink-2); font-size: var(--type-caption); line-height: 1.45; }
+.job-provider-trace strong { color: var(--ink); }
 .job-outcome { display: flex; align-items: flex-start; gap: 7px; margin: 0; color: var(--ink-2); font-size: var(--type-caption); line-height: 1.55; }
 .job-outcome > i { flex: 0 0 auto; width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--green); }
 .job-card--partial .job-outcome > i, .job-card--failed .job-outcome > i, .job-card--interrupted .job-outcome > i { background: #e4a62d; }

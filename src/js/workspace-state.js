@@ -126,6 +126,19 @@ export function jobsRenderSignature(jobs, available, inFlightActions = []) {
     canceled_items: job?.canceled_items,
     created_at: job?.created_at,
     updated_at: job?.updated_at,
+    paid_call_authorization: job?.paid_call_authorization ? {
+      id: job.paid_call_authorization.id,
+      user_action: job.paid_call_authorization.user_action,
+      status: job.paid_call_authorization.status,
+      max_calls: job.paid_call_authorization.max_calls,
+      consumed_calls: job.paid_call_authorization.consumed_calls,
+    } : null,
+    provider_call_receipts: Array.from(job?.provider_call_receipts || []).map((receipt) => ({
+      id: receipt?.id,
+      stage: receipt?.stage,
+      status: receipt?.status,
+      remote_task_id: receipt?.remote_task_id,
+    })),
     items: Array.from(job?.items || []).map((item) => ({
       id: item?.id,
       source_asset_id: item?.source_asset_id,

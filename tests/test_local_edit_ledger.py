@@ -16,6 +16,7 @@ from python.atelier_ledger import (
 )
 from python.local_edit_contract import canvas_mask_fingerprint
 from tests.test_canvas_ledger import canvas_document
+from tests.test_spatial_canvas_ledger import spatial_scene
 
 
 def create_v5_database(path: Path) -> None:
@@ -202,7 +203,7 @@ class LocalEditLedgerTests(unittest.TestCase):
         }
 
     def test_current_schema_has_immutable_local_edit_contracts(self) -> None:
-        self.assertEqual(SCHEMA_VERSION, 8)
+        self.assertEqual(SCHEMA_VERSION, 9)
         connection = sqlite3.connect(self.db_path)
         try:
             tables = {
@@ -694,6 +695,125 @@ class LocalEditLedgerTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_spatial_fine_edit_handoff_recovers_and_applies_exactly_once(self) -> None:
+        origin = self.ledger.create_spatial_canvas(
+            name="精修往返",
+            client_request_id="spatial-handoff-canvas-1",
+            scene=spatial_scene(self.asset["id"]),
+        )
+        handoff = self.ledger.prepare_spatial_edit_handoff(
+            client_request_id="spatial-handoff-1",
+            origin_canvas_id=origin["id"],
+            origin_scene_version_id=origin["current_version_id"],
+            origin_element_id="frame-main",
+            source_asset_id=self.asset["id"],
+        )
+        spec = self.create_spec(request_id="spatial-handoff-spec-1")
+        candidate = self.create_candidate(suffix="8")
+        composition = self.ledger.commit_local_edit_composition(
+            "single",
+            local_edit_spec_id=spec["id"],
+            candidate_asset_id=candidate["id"],
+            expected_canvas_revision=1,
+            client_request_id="spatial-handoff-compose-1",
+            result=self.compose_result("handoff"),
+            receipt=self.compose_receipt(spec["contract"]),
+            spatial_handoff_id=handoff["id"],
+        )
+        self.assertEqual(composition["spatial_handoff"]["status"], "ready")
+        self.assertEqual(
+            composition["spatial_handoff"]["result_asset_id"],
+            composition["result_asset_id"],
+        )
+
+        reopened = AtelierLedger(self.db_path)
+        pending = reopened.list_pending_spatial_edit_handoffs()
+        self.assertEqual([item["id"] for item in pending], [handoff["id"]])
+        recovered_origin = reopened.open_spatial_canvas(origin["id"])
+        target_scene = copy.deepcopy(recovered_origin["scene"])
+        result_element = copy.deepcopy(target_scene["elements"][0])
+        result_element["id"] = "result-handoff-1"
+        result_element["customData"].update({
+            "asset_id": composition["result_asset_id"],
+            "result_id": composition["result_asset_id"],
+            "lineage_parent_id": self.asset["id"],
+        })
+        target_scene["elements"].append(result_element)
+        saved = reopened.save_spatial_canvas_scene(
+            origin["id"],
+            expected_revision=1,
+            client_request_id="spatial-handoff-backfill-1",
+            scene=target_scene,
+        )
+        applied = reopened.mark_spatial_edit_handoff_applied(
+            handoff["id"],
+            target_scene_version_id=saved["current_version_id"],
+        )
+        replayed = reopened.mark_spatial_edit_handoff_applied(
+            handoff["id"],
+            target_scene_version_id=saved["current_version_id"],
+        )
+        self.assertEqual(applied["status"], "applied")
+        self.assertTrue(replayed["replayed"])
+        self.assertEqual(AtelierLedger(self.db_path).list_pending_spatial_edit_handoffs(), [])
+        connection = sqlite3.connect(self.db_path)
+        try:
+            count = connection.execute(
+                "SELECT COUNT(*) FROM spatial_scene_references "
+                "WHERE version_id = ? AND ref_kind = 'result' AND ref_id = ?",
+                (saved["current_version_id"], composition["result_asset_id"]),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(count, 1)
+
+    def test_export_receipts_are_digest_bound_idempotent_and_durable(self) -> None:
+        receipt = self.ledger.record_export_receipt(
+            client_request_id="asset-export-1",
+            source_kind="asset",
+            source_id=self.asset["id"],
+            destination_path=str(self.root / "exported-source.png"),
+            mime="image/png",
+            size_bytes=128,
+            sha256=self.asset["sha256"],
+        )
+        replayed = self.ledger.record_export_receipt(
+            client_request_id="asset-export-1",
+            source_kind="asset",
+            source_id=self.asset["id"],
+            destination_path=str(self.root / "exported-source.png"),
+            mime="image/png",
+            size_bytes=128,
+            sha256=self.asset["sha256"],
+        )
+        self.assertFalse(receipt["replayed"])
+        self.assertTrue(replayed["replayed"])
+        self.assertEqual(replayed["id"], receipt["id"])
+        with self.assertRaisesRegex(ValueError, "digest does not match"):
+            self.ledger.record_export_receipt(
+                client_request_id="asset-export-bad-digest",
+                source_kind="asset",
+                source_id=self.asset["id"],
+                destination_path=str(self.root / "bad.png"),
+                mime="image/png",
+                size_bytes=128,
+                sha256="f" * 64,
+            )
+        with self.assertRaises(IdempotencyConflictError):
+            self.ledger.record_export_receipt(
+                client_request_id="asset-export-1",
+                source_kind="asset",
+                source_id=self.asset["id"],
+                destination_path=str(self.root / "different.png"),
+                mime="image/png",
+                size_bytes=128,
+                sha256=self.asset["sha256"],
+            )
+        durable = AtelierLedger(self.db_path).list_export_receipts(
+            source_kind="asset", source_id=self.asset["id"]
+        )
+        self.assertEqual([item["id"] for item in durable], [receipt["id"]])
+
     def test_compose_rejects_idempotency_conflict_and_stale_canvas_without_residue(self) -> None:
         spec = self.create_spec()
         first_candidate = self.create_candidate(suffix="1")
@@ -808,7 +928,7 @@ class LocalEditMigrationTests(unittest.TestCase):
     def test_v5_upgrade_creates_current_schema_and_a_queryable_v5_backup(self) -> None:
         create_v5_database(self.db_path)
         ledger = AtelierLedger(self.db_path)
-        self.assertEqual(ledger.stats()["schema_version"], 8)
+        self.assertEqual(ledger.stats()["schema_version"], 9)
         self.assertIsNotNone(ledger.last_migration_backup)
         backup = ledger.last_migration_backup
         assert backup is not None
@@ -824,7 +944,7 @@ class LocalEditMigrationTests(unittest.TestCase):
     def test_v6_upgrade_creates_v7_and_a_queryable_v6_backup(self) -> None:
         create_v6_database(self.db_path)
         ledger = AtelierLedger(self.db_path)
-        self.assertEqual(ledger.stats()["schema_version"], 8)
+        self.assertEqual(ledger.stats()["schema_version"], 9)
         self.assertIsNotNone(ledger.last_migration_backup)
         backup = ledger.last_migration_backup
         assert backup is not None
@@ -880,7 +1000,7 @@ class LocalEditMigrationTests(unittest.TestCase):
             connection.close()
 
         repaired = AtelierLedger(self.db_path)
-        self.assertEqual(repaired.stats()["schema_version"], 8)
+        self.assertEqual(repaired.stats()["schema_version"], 9)
         self.assertEqual(
             repaired.last_schema_repair,
             "recovered complete v6 schema with stale v5 metadata",
@@ -926,7 +1046,7 @@ class LocalEditMigrationTests(unittest.TestCase):
             connection.close()
 
         repaired = AtelierLedger(self.db_path)
-        self.assertEqual(repaired.stats()["schema_version"], 8)
+        self.assertEqual(repaired.stats()["schema_version"], 9)
         self.assertEqual(
             repaired.last_schema_repair,
             "recovered complete v7 schema with stale v6 metadata",

@@ -396,11 +396,13 @@ test('production sessions, task center, and result review use the approved infor
   assert.doesNotMatch(app, /function (renderSessionsDashboard|openSessionFromHistory|loadSessions)/);
   assert.match(sessions, /function render\(\)/);
   assert.match(sessions, /async function open\(sessionId\)/);
-  assert.match(app, /function jobFailureCopy\(item\)/);
+  assert.match(app, /function jobFailureCopy\(item, job = null\)/);
   assert.match(app, /VIDEO_FIXTURE_UNAVAILABLE: '离线视频预览资源缺失，请重新安装当前候选包/);
   assert.match(app, /VIDEO_FIXTURE_INTEGRITY_FAILED: '离线视频预览资源校验失败，请重新安装当前候选包/);
   assert.match(app, /PRODUCT_DETECTION_FAILED: '商品识别返回格式异常，尚未开始生图/);
   assert.match(app, /PERMANENT_JOB_ERRORS/);
+  assert.match(app, /class="job-provider-trace"/);
+  assert.match(app, /!paidAuthorization && \['failed', 'interrupted'\]/);
   assert.match(app, /API\.getJobRuntime/);
   assert.match(api, /export async function getJobRuntime/);
   assert.match(css, /\.sessions-project-visual/);

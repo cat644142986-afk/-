@@ -28,8 +28,8 @@ if str(ROOT) not in sys.path:
 from python.atelier_ledger import AtelierLedger, SCHEMA_VERSION  # noqa: E402
 
 
-FORMAL_SOURCE_SCHEMA_VERSION = 7
-LEGACY_SOURCE_SCHEMA_VERSIONS = (5,)
+FORMAL_SOURCE_SCHEMA_VERSION = 8
+LEGACY_SOURCE_SCHEMA_VERSIONS = (5, 7)
 SUPPORTED_SOURCE_SCHEMA_VERSIONS = frozenset(
     (*LEGACY_SOURCE_SCHEMA_VERSIONS, FORMAL_SOURCE_SCHEMA_VERSION)
 )
@@ -172,6 +172,7 @@ def _create_source_database(path: Path, source_version: int) -> None:
             (5, AtelierLedger._migrate_v4_to_v5),
             (6, AtelierLedger._migrate_v5_to_v6),
             (7, AtelierLedger._migrate_v6_to_v7),
+            (8, AtelierLedger._migrate_v7_to_v8),
         )
         for target_version, migrate in migration_steps:
             if target_version > source_version:

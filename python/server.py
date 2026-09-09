@@ -2293,6 +2293,24 @@ class SpatialSceneSaveRequest(BaseModel):
         extra = "forbid"
 
 
+class SpatialEditHandoffPrepareRequest(BaseModel):
+    client_request_id: str
+    origin_canvas_id: str
+    origin_scene_version_id: str
+    origin_element_id: str
+    source_asset_id: str
+
+    class Config:
+        extra = "forbid"
+
+
+class SpatialEditHandoffApplyRequest(BaseModel):
+    target_scene_version_id: str
+
+    class Config:
+        extra = "forbid"
+
+
 class CanvasRoiCreateRequest(BaseModel):
     canvas_document_id: str
     expected_canvas_revision: int = Field(ge=0)
@@ -2329,6 +2347,7 @@ class LocalEditComposeRequest(BaseModel):
     candidate_asset_id: str
     expected_canvas_revision: int = Field(ge=0)
     client_request_id: str
+    spatial_handoff_id: Optional[str] = None
 
     class Config:
         extra = "forbid"
@@ -2347,6 +2366,21 @@ class CanvasExportRequest(BaseModel):
     expected_revision: int = Field(ge=0)
     artboard_id: Optional[str] = None
     format: str = "png"
+
+    class Config:
+        extra = "forbid"
+
+
+class ExportReceiptRequest(BaseModel):
+    client_request_id: str
+    source_kind: str
+    source_id: str
+    source_version_id: Optional[str] = None
+    artboard_id: Optional[str] = None
+    destination_path: str
+    mime: str
+    size_bytes: int = Field(ge=0)
+    sha256: str
 
     class Config:
         extra = "forbid"
@@ -2940,6 +2974,42 @@ async def get_spatial_scene_version(version_id: str):
         raise_spatial_canvas_http_error(exc)
 
 
+@app.post("/api/spatial-edit-handoffs")
+async def prepare_spatial_edit_handoff(request: SpatialEditHandoffPrepareRequest):
+    try:
+        return LEDGER.prepare_spatial_edit_handoff(
+            client_request_id=request.client_request_id,
+            origin_canvas_id=request.origin_canvas_id,
+            origin_scene_version_id=request.origin_scene_version_id,
+            origin_element_id=request.origin_element_id,
+            source_asset_id=request.source_asset_id,
+        )
+    except Exception as exc:
+        raise_spatial_canvas_http_error(exc)
+
+
+@app.get("/api/spatial-edit-handoffs/pending")
+async def list_pending_spatial_edit_handoffs(limit: int = 100):
+    try:
+        handoffs = LEDGER.list_pending_spatial_edit_handoffs(limit=limit)
+        return {"handoffs": handoffs, "count": len(handoffs)}
+    except Exception as exc:
+        raise_spatial_canvas_http_error(exc)
+
+
+@app.post("/api/spatial-edit-handoffs/{handoff_id}/applied")
+async def mark_spatial_edit_handoff_applied(
+    handoff_id: str, request: SpatialEditHandoffApplyRequest
+):
+    try:
+        return LEDGER.mark_spatial_edit_handoff_applied(
+            handoff_id,
+            target_scene_version_id=request.target_scene_version_id,
+        )
+    except Exception as exc:
+        raise_spatial_canvas_http_error(exc)
+
+
 def raise_local_edit_http_error(
     exc: Exception,
     *,
@@ -3180,6 +3250,8 @@ def _replay_local_edit_composition(
         or str(receipt.get("mode") or "") not in {"inpaint", "outpaint"}
         or int(receipt.get("source_canvas_revision", -1))
         != request.expected_canvas_revision
+        or str(receipt.get("spatial_handoff_id") or "")
+        != str(request.spatial_handoff_id or "")
     ):
         raise IdempotencyConflictError(
             "client_request_id already belongs to a different local edit composition"
@@ -3279,6 +3351,7 @@ def _execute_local_edit_compose(
                 "metadata": {"output_root": str(output_root)},
             },
             receipt=receipt,
+            spatial_handoff_id=request.spatial_handoff_id,
         )
         committed_path = Path(str(composition["result_asset"].get("path") or ""))
         if composition.get("replayed") and committed_path != target_path:
@@ -3476,6 +3549,7 @@ async def export_workflow_canvas(mode: str, request: CanvasExportRequest):
             f"ProductAtelier-{mode}-r{current_revision}-"
             f"{metadata['pixel_width']}x{metadata['pixel_height']}.png"
         )
+        content_sha256 = hashlib.sha256(content).hexdigest()
         return StreamingResponse(
             io.BytesIO(content),
             media_type="image/png",
@@ -3484,11 +3558,13 @@ async def export_workflow_canvas(mode: str, request: CanvasExportRequest):
                 "Content-Length": str(len(content)),
                 "Cache-Control": "no-store",
                 "X-Canvas-Revision": str(current_revision),
+                "X-Canvas-Version": str(canvas["current_version_id"]),
                 "X-Canvas-Artboard": metadata["artboard_id"],
                 "X-Canvas-Pixel-Width": str(metadata["pixel_width"]),
                 "X-Canvas-Pixel-Height": str(metadata["pixel_height"]),
                 "X-Canvas-Rendered-Layers": str(metadata["rendered_layer_count"]),
                 "X-Canvas-Source": metadata["source"],
+                "X-Content-SHA256": content_sha256,
             },
         )
     except HTTPException:
@@ -3513,6 +3589,37 @@ async def export_workflow_canvas(mode: str, request: CanvasExportRequest):
         raise HTTPException(
             status_code=status_code,
             detail={"code": exc.code, "message": str(exc)},
+        )
+
+
+@app.post("/api/export-receipts")
+async def record_export_receipt(request: ExportReceiptRequest):
+    try:
+        return LEDGER.record_export_receipt(
+            client_request_id=request.client_request_id,
+            source_kind=request.source_kind,
+            source_id=request.source_id,
+            source_version_id=request.source_version_id,
+            artboard_id=request.artboard_id,
+            destination_path=request.destination_path,
+            mime=request.mime,
+            size_bytes=request.size_bytes,
+            sha256=request.sha256,
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "EXPORT_SOURCE_NOT_FOUND", "message": str(exc)},
+        )
+    except (sqlite3.IntegrityError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_EXPORT_RECEIPT", "message": str(exc)},
         )
 
 
@@ -3808,6 +3915,68 @@ def _default_job_concurrency(mode: str, item_count: int) -> int:
     if mode in {"single", "group-split"}:
         return 1
     return max(1, min(item_count, 4))
+
+
+def _planned_paid_call_count(
+    mode: str,
+    source_asset_ids: list[str],
+    parameters: dict[str, Any],
+    *,
+    command_id: str = "",
+) -> int:
+    """Return the frozen upper bound for new billable provider submissions."""
+    if command_id == LOCAL_EDIT_GENERATE_COMMAND_ID:
+        return 1
+    if mode == "cutout-batch" or command_id == IMAGE_TO_VIDEO_COMMAND_ID:
+        return 0
+    strategy = str(parameters.get("generation_strategy") or LEGACY_DOUBLE_PASS)
+    passes = 2 if strategy == LEGACY_DOUBLE_PASS else 1
+    if isinstance(parameters.get("adjustment"), dict):
+        return 1
+    if mode == "group-split":
+        return 1 + MAX_GROUP_PRODUCTS * passes
+    variations = max(1, int(parameters.get("variations" if mode == "multi-file" else "batch", 1)))
+    image_calls = len(source_asset_ids) * variations * passes
+    detection_calls = 1 if mode == "single" and not str(parameters.get("product_name") or "").strip() else 0
+    return image_calls + detection_calls
+
+
+def _attach_paid_call_authorization(
+    parameters: dict[str, Any],
+    *,
+    client_request_id: str,
+    operation: str,
+    planned_calls: int,
+    source_asset_ids: list[str],
+) -> dict[str, Any]:
+    if planned_calls <= 0:
+        parameters.pop("paid_call_authorization", None)
+        return parameters
+    request_id = str(client_request_id or "").strip()
+    if not request_id:
+        raise ValueError("paid provider work requires a traceable client_request_id")
+    parameters["automatic_paid_retry"] = False
+    authorization_request_id = (
+        f"paid:{operation}:"
+        f"{hashlib.sha256(request_id.encode('utf-8')).hexdigest()}"
+    )
+    parameters["paid_call_authorization"] = {
+        "client_request_id": authorization_request_id,
+        "user_action": operation,
+        "operation": operation,
+        "scope": {
+            "workflow": str(parameters.get("workflow") or "image"),
+            "source_asset_ids": list(source_asset_ids),
+            "model": str(parameters.get("model") or ""),
+            "generation_strategy": str(
+                parameters.get("generation_strategy") or LEGACY_DOUBLE_PASS
+            ),
+            "planned_provider_calls": int(planned_calls),
+        },
+        "max_calls": int(planned_calls),
+        "automatic_paid_retry": False,
+    }
+    return parameters
 
 
 def _normalize_folder_delivery(value: Any) -> dict[str, Any] | None:
@@ -4132,6 +4301,23 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
         _validate_job_request(mode, source_asset_ids, parameters)
         if str(command["id"]) == LOCAL_EDIT_GENERATE_COMMAND_ID:
             _validate_local_edit_generate_request(request, parameters)
+        planned_paid_calls = _planned_paid_call_count(
+            mode,
+            source_asset_ids,
+            parameters,
+            command_id=str(command["id"]),
+        )
+        parameters = _attach_paid_call_authorization(
+            parameters,
+            client_request_id=request.client_request_id,
+            operation=(
+                "local-edit-generate"
+                if str(command["id"]) == LOCAL_EDIT_GENERATE_COMMAND_ID
+                else "command-execute"
+            ),
+            planned_calls=planned_paid_calls,
+            source_asset_ids=source_asset_ids,
+        )
         requested_concurrency = (
             request.requested_concurrency
             if request.requested_concurrency is not None
@@ -4146,7 +4332,7 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
             requested_concurrency=requested_concurrency,
             max_attempts=(
                 1
-                if str(command["id"]) == IMAGE_TO_VIDEO_COMMAND_ID
+                if planned_paid_calls > 0 or str(command["id"]) == IMAGE_TO_VIDEO_COMMAND_ID
                 else request.max_attempts
             ),
             title=str(command["label"]),
@@ -4218,6 +4404,14 @@ async def create_durable_job(request: JobCreateRequest):
         refresh_runtime_config()
         parameters = _normalize_job_parameters(mode, request.parameters or {})
         _validate_job_request(mode, source_asset_ids, parameters)
+        planned_paid_calls = _planned_paid_call_count(mode, source_asset_ids, parameters)
+        parameters = _attach_paid_call_authorization(
+            parameters,
+            client_request_id=request.client_request_id,
+            operation="generate-submit",
+            planned_calls=planned_paid_calls,
+            source_asset_ids=source_asset_ids,
+        )
         requested_concurrency = (
             request.requested_concurrency
             if request.requested_concurrency is not None
@@ -4230,7 +4424,7 @@ async def create_durable_job(request: JobCreateRequest):
             parameters=parameters,
             idempotency_key=str(request.client_request_id or "").strip(),
             requested_concurrency=requested_concurrency,
-            max_attempts=request.max_attempts,
+            max_attempts=1 if planned_paid_calls > 0 else request.max_attempts,
             title={
                 "single": "单产品任务",
                 "multi-file": f"多文件任务 · {len(source_asset_ids)} 张",
@@ -4534,6 +4728,13 @@ async def create_result_adjustment(job_id: str, request: ResultAdjustmentRequest
         parameters = _normalize_job_parameters(mode, parameters)
         source_asset_ids = [str(owner.get("source_asset_id") or "")]
         _validate_job_request(mode, source_asset_ids, parameters)
+        parameters = _attach_paid_call_authorization(
+            parameters,
+            client_request_id=request_id,
+            operation="result-adjustment",
+            planned_calls=1,
+            source_asset_ids=source_asset_ids,
+        )
         derived_job, created = LEDGER.create_job(
             mode,
             source_asset_ids,
@@ -4541,7 +4742,7 @@ async def create_result_adjustment(job_id: str, request: ResultAdjustmentRequest
             parameters=parameters,
             idempotency_key=f"adjustment:{request_id}",
             requested_concurrency=1,
-            max_attempts=2,
+            max_attempts=1,
             title=f"结果调整 · V{version}",
         )
         _wake_job_engine()
@@ -6304,6 +6505,87 @@ def _output_measurement(image: Image.Image, output_spec: dict[str, Any]) -> dict
     }
 
 
+def _paid_vlm_detect(ctx, trace, image_path: str, *, stage: str = "provider.vlm.detect"):
+    try:
+        receipt = LEDGER.reserve_provider_call(
+            job_id=str(ctx.job_id),
+            job_item_id=str(ctx.item_id),
+            task_attempt_id=str(ctx.attempt_id),
+            stage=stage,
+            provider="vision-provider",
+            model="gemini-3.5-flash",
+        )
+    except (KeyError, ValueError) as exc:
+        code = str(exc).strip("'")
+        if not code.startswith("PAID_CALL_"):
+            code = "PAID_CALL_AUTHORIZATION_INVALID"
+        raise JobExecutionError(
+            code,
+            "本次视觉理解调用没有可用的明确授权；未向供应商提交新请求",
+        ) from exc
+    _reject_replayed_provider_receipt(receipt)
+    receipt_id = str(receipt["id"])
+    try:
+        with ctx.resource("vlm"):
+            result = vlm_detect_products(image_path, str(ctx.job_id))
+    except Exception as exc:
+        provider_metadata = dict(getattr(exc, "metadata", {}) or {})
+        LEDGER.update_provider_call_receipt(
+            receipt_id,
+            "billing_unknown",
+            evidence={
+                "failure_phase": "provider.vlm.detect",
+                "error_type": type(exc).__name__,
+                "error_code": str(getattr(exc, "code", "VLM_DETECTION_FAILED")),
+                "provider_error": provider_metadata,
+                "billing": unavailable_billing_evidence(),
+            },
+        )
+        raise JobExecutionError(
+            "PAID_CALL_BILLING_UNKNOWN",
+            "视觉理解调用未完成且计费状态未知；已停止后续云端调用",
+            metadata={
+                "provider_error_code": str(getattr(exc, "code", "VLM_DETECTION_FAILED")),
+                "provider_error_message": str(exc) or type(exc).__name__,
+                "provider_call_receipt_id": receipt_id,
+                **provider_metadata,
+            },
+        ) from exc
+    LEDGER.update_provider_call_receipt(
+        receipt_id,
+        "completed",
+        evidence={
+            "detected_products": len(result.get("products") or []),
+            "billing": unavailable_billing_evidence(),
+        },
+    )
+    return result
+
+
+def _reject_replayed_provider_receipt(receipt: dict[str, Any]) -> None:
+    if not receipt.get("replayed"):
+        return
+    receipt_id = str(receipt.get("id") or "")
+    prior_status = str(receipt.get("status") or "unknown")
+    if prior_status in {"reserved", "submitted"}:
+        try:
+            LEDGER.update_provider_call_receipt(
+                receipt_id,
+                "billing_unknown",
+                evidence={"failure_phase": "duplicate-submission-guard"},
+            )
+        except Exception:
+            pass
+    raise JobExecutionError(
+        "PAID_CALL_DUPLICATE_SUBMISSION_BLOCKED",
+        "同一处理阶段已经存在供应商调用回执；已阻止重复付费提交，请先核对原任务",
+        metadata={
+            "provider_call_receipt_id": receipt_id,
+            "provider_call_receipt_status": prior_status,
+        },
+    )
+
+
 def _cloud_job_call(
     ctx,
     prompt,
@@ -6319,6 +6601,26 @@ def _cloud_job_call(
     trace_stage = f"provider.image.{stage}"
     provider_evidence = {}
     outer_started = time.perf_counter()
+    provider_name = str(output_spec.get("provider_family") or "image-provider")
+    try:
+        call_receipt = LEDGER.reserve_provider_call(
+            job_id=str(ctx.job_id),
+            job_item_id=str(ctx.item_id),
+            task_attempt_id=str(ctx.attempt_id),
+            stage=trace_stage,
+            provider=provider_name,
+            model=str(model),
+        )
+    except (KeyError, ValueError) as exc:
+        code = str(exc).strip("'")
+        if not code.startswith("PAID_CALL_"):
+            code = "PAID_CALL_AUTHORIZATION_INVALID"
+        raise JobExecutionError(
+            code,
+            "本次云端调用没有可用的明确授权；未向供应商提交新请求",
+        ) from exc
+    _reject_replayed_provider_receipt(call_receipt)
+    receipt_id = str(call_receipt["id"])
     provider_parameters = {
         "model": model,
         "requested_ratio": output_spec.get("requested_ratio"),
@@ -6331,8 +6633,20 @@ def _cloud_job_call(
     }
 
     def remember_remote(task_id):
+        LEDGER.update_provider_call_receipt(
+            receipt_id,
+            "submitted",
+            remote_task_id=str(task_id),
+            evidence={"provider_submission_confirmed": True},
+        )
         remote_tasks.append({"stage": stage, "task_id": str(task_id)})
-        payload = {"remote_tasks": list(remote_tasks)}
+        payload = {
+            "remote_tasks": list(remote_tasks),
+            "provider_call_receipt_ids": list(dict.fromkeys([
+                *dict(ctx.metadata).get("provider_call_receipt_ids", []),
+                receipt_id,
+            ])),
+        }
         try:
             ctx.record_metadata(payload)
         except Exception:
@@ -6382,7 +6696,32 @@ def _cloud_job_call(
             error_code=str(getattr(exc, "code", "PROVIDER_IMAGE_FAILED")),
             error_message=str(exc) or type(exc).__name__,
         )
-        raise
+        try:
+            LEDGER.update_provider_call_receipt(
+                receipt_id,
+                "billing_unknown",
+                evidence={
+                    "failure_phase": "provider.call",
+                    "error_type": type(exc).__name__,
+                    "error_code": str(getattr(exc, "code", "PROVIDER_IMAGE_FAILED")),
+                    "billing": unavailable_billing_evidence(),
+                },
+            )
+        except Exception as receipt_error:
+            print(
+                f"[ledger] provider receipt reconciliation failed: {receipt_error}",
+                file=sys.stderr,
+                flush=True,
+            )
+        raise JobExecutionError(
+            "PAID_CALL_BILLING_UNKNOWN",
+            "供应商调用失败且计费状态未知；已停止后续云端调用，不会自动重试",
+            metadata={
+                "provider_error_code": str(getattr(exc, "code", "PROVIDER_IMAGE_FAILED")),
+                "provider_error_message": str(exc) or type(exc).__name__,
+                "provider_call_receipt_id": receipt_id,
+            },
+        ) from exc
     measurement = _output_measurement(generated, output_spec)
     timings = dict(provider_evidence.get("timings_ms") or {})
     elapsed_ms = timings.get("total")
@@ -6394,6 +6733,14 @@ def _cloud_job_call(
         "reference": provider_evidence.get("reference") or {},
         "billing": unavailable_billing_evidence(),
     })
+    LEDGER.update_provider_call_receipt(
+        receipt_id,
+        "completed",
+        evidence={
+            "measurement": measurement,
+            "billing": unavailable_billing_evidence(),
+        },
+    )
     if output_spec.get("strict_aspect") and not measurement["aspect_matches"]:
         _record_execution_trace_safe(
             trace,
@@ -6618,8 +6965,9 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
         ctx.progress(0.03, {"phase": "vlm"})
         vlm_started = time.perf_counter()
         try:
-            with ctx.resource("vlm"):
-                detection = vlm_detect_products(str(source_asset["path"]), str(ctx.job_id))
+            detection = _paid_vlm_detect(
+                ctx, trace, str(source_asset["path"]), stage="provider.vlm.detect"
+            )
         except Exception as exc:
             detection_diagnostics = dict(getattr(exc, "metadata", {}) or {})
             _record_execution_trace_safe(
@@ -7063,8 +7411,9 @@ def _execute_group_job(ctx, source_asset, image, stage_dir, trace):
     ctx.progress(0.03, {"phase": "vlm"})
     vlm_started = time.perf_counter()
     try:
-        with ctx.resource("vlm"):
-            detection = vlm_detect_products(str(source_asset["path"]), str(ctx.job_id))
+        detection = _paid_vlm_detect(
+            ctx, trace, str(source_asset["path"]), stage="provider.vlm.detect"
+        )
         # Validate the complete untrusted VLM response before the first paid
         # image call. A late malformed product must not waste earlier calls.
         products = _validated_group_products(detection)

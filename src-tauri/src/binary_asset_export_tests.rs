@@ -149,3 +149,16 @@ fn successful_export_atomically_replaces_existing_binary() {
     assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 1);
     server.join().unwrap();
 }
+
+#[test]
+fn base64_export_writer_atomically_replaces_existing_image_bytes() {
+    let directory = TestDirectory::create("successful-image-export");
+    let target = directory.0.join("result.png");
+    std::fs::write(&target, b"old-image").unwrap();
+    let image = b"\x89PNG\r\n\x1a\nProduct Atelier image";
+
+    write_export_bytes_to_path(&target, image).unwrap();
+
+    assert_eq!(std::fs::read(&target).unwrap(), image);
+    assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 1);
+}
