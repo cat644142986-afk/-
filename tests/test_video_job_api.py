@@ -212,6 +212,17 @@ class OfflineVideoJobApiTests(unittest.TestCase):
 
             self.assertEqual(final["status"], "completed")
             self.assertEqual(final["snapshot"]["command_id"], "command:image-to-video")
+            execution_context = final["snapshot"]["parameters"]["execution_context"]
+            self.assertEqual(
+                execution_context["provider_adapter"]["model"], "offline-preview-v1"
+            )
+            self.assertEqual(
+                execution_context["provider_adapter"]["adapter_version"],
+                "image-to-video-v1",
+            )
+            self.assertEqual(
+                execution_context["provider_adapter"]["effective_prompt_version"], ""
+            )
             self.assertEqual(
                 final["parameters"]["spatial_canvas_id"],
                 final["snapshot"]["parameters"]["spatial_canvas_id"],

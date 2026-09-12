@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://product-atelier.local/contracts/execution-context-v1.schema.json",
+  "title": "Product Atelier Execution Context v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "policy_version",
+    "binding",
+    "priority_order",
+    "workflow",
+    "user_intent",
+    "canvas_context",
+    "product_profile",
+    "approved_context",
+    "provider_adapter",
+    "conflicts",
+    "ignored",
+    "extensions",
+    "summary",
+    "prompt_inputs",
+    "context_sha256"
+  ],
+  "properties": {
+    "contract_version": { "const": "execution-context-v1" },
+    "policy_version": { "const": "priority-and-provenance-v1" },
+    "binding": { "enum": ["preview", "job-snapshot"] },
+    "priority_order": {
+      "const": [
+        "user-intent",
+        "canvas-context",
+        "product-profile",
+        "approved-knowledge",
+        "skill",
+        "case",
+        "provider-adapter"
+      ]
+    },
+    "workflow": { "$ref": "#/$defs/workflow" },
+    "user_intent": { "$ref": "#/$defs/userIntent" },
+    "canvas_context": { "$ref": "#/$defs/canvasContext" },
+    "product_profile": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/productProfileReference" }
+      ]
+    },
+    "approved_context": { "$ref": "#/$defs/approvedContext" },
+    "provider_adapter": { "$ref": "#/$defs/providerAdapter" },
+    "conflicts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/conflict" }
+    },
+    "ignored": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ignoredRule" }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skills", "cases", "status"],
+      "properties": {
+        "skills": { "type": "array", "maxItems": 0 },
+        "cases": { "type": "array", "maxItems": 0 },
+        "status": { "const": "reserved-not-active" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intent_lock_count",
+        "positive_rule_count",
+        "negative_rule_count",
+        "source_count",
+        "conflict_count",
+        "ignored_count"
+      ],
+      "properties": {
+        "intent_lock_count": { "type": "integer", "minimum": 0 },
+        "positive_rule_count": { "type": "integer", "minimum": 0 },
+        "negative_rule_count": { "type": "integer", "minimum": 0 },
+        "source_count": { "type": "integer", "minimum": 0 },
+        "conflict_count": { "type": "integer", "minimum": 0 },
+        "ignored_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "prompt_inputs": { "$ref": "#/$defs/promptInputs" },
+    "context_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "$defs": {
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "command_id"],
+      "properties": {
+        "mode": { "type": "string", "maxLength": 80 },
+        "command_id": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "userIntent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective", "user_request", "output_kind", "output_spec"],
+      "properties": {
+        "objective": { "type": "string", "maxLength": 600 },
+        "user_request": { "type": "string", "maxLength": 1200 },
+        "output_kind": { "type": "string", "maxLength": 120 },
+        "output_spec": { "type": "object" }
+      }
+    },
+    "canvasContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_id", "expected_revision", "operation_id", "source_asset_ids"],
+      "properties": {
+        "document_id": { "type": "string", "maxLength": 200 },
+        "expected_revision": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "operation_id": { "type": "string", "maxLength": 200 },
+        "source_asset_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "productProfileReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile_id", "version_id", "revision", "sku", "name"],
+      "properties": {
+        "profile_id": { "type": "string", "maxLength": 200 },
+        "version_id": { "type": "string", "maxLength": 200 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "sku": { "type": "string", "maxLength": 120 },
+        "name": { "type": "string", "maxLength": 160 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "relative_path"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "title": { "type": "string", "maxLength": 180 },
+        "relative_path": {
+          "type": "string",
+          "maxLength": 240,
+          "not": { "pattern": "^(?:[A-Za-z]:[/\\\\]|/|\\\\\\\\|(?:data|file|https?):)" }
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "text"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["intent-lock", "positive-rule", "negative-rule"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 600 },
+        "source": { "$ref": "#/$defs/source" }
+      }
+    },
+    "approvedContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intent_locks", "positive_rules", "negative_rules", "sources"],
+      "properties": {
+        "intent_locks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rule" }
+        },
+        "positive_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rule" }
+        },
+        "negative_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rule" }
+        },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/source" }
+        }
+      }
+    },
+    "providerAdapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "family",
+        "adapter_version",
+        "requested_prompt_version",
+        "effective_prompt_version",
+        "route_reason",
+        "generation_strategy",
+        "material_profile"
+      ],
+      "properties": {
+        "model": { "type": "string", "maxLength": 160 },
+        "family": { "type": "string", "maxLength": 120 },
+        "adapter_version": { "type": "string", "maxLength": 120 },
+        "requested_prompt_version": { "type": "string", "maxLength": 80 },
+        "effective_prompt_version": { "type": "string", "maxLength": 80 },
+        "route_reason": { "type": "string", "maxLength": 160 },
+        "generation_strategy": { "type": "string", "maxLength": 80 },
+        "material_profile": { "type": "string", "maxLength": 80 }
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "winner", "message"],
+      "properties": {
+        "field": { "type": "string", "maxLength": 80 },
+        "winner": { "type": "string", "maxLength": 80 },
+        "message": { "type": "string", "maxLength": 300 }
+      }
+    },
+    "ignoredRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "reason", "text"],
+      "properties": {
+        "id": { "type": "string", "maxLength": 200 },
+        "reason": { "type": "string", "maxLength": 120 },
+        "text": { "type": "string", "maxLength": 300 }
+      }
+    },
+    "promptRule": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "source"],
+          "properties": {
+            "text": { "type": "string" },
+            "source": { "$ref": "#/$defs/source" }
+          }
+        }
+      ]
+    },
+    "promptInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "creative_brief",
+        "intent_lock_rules",
+        "positive_rules",
+        "negative_rules",
+        "sources",
+        "conflicts",
+        "ignored_rules",
+        "fallback"
+      ],
+      "properties": {
+        "creative_brief": { "type": "object" },
+        "intent_lock_rules": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "positive_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/promptRule" }
+        },
+        "negative_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/promptRule" }
+        },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/source" }
+        },
+        "conflicts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/conflict" }
+        },
+        "ignored_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ignoredRule" }
+        },
+        "fallback": { "type": "boolean" }
+      }
+    }
+  }
+}

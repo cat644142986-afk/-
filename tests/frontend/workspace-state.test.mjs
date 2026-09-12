@@ -195,8 +195,14 @@ test('result review decisions normalize to backend-supported feedback signals', 
 });
 
 test('completed jobs restore exact task-bound rules instead of recompiling live knowledge', () => {
+  const executionContext = {
+    contract_version: 'execution-context-v1',
+    binding: 'job-snapshot',
+    context_sha256: 'a'.repeat(64),
+  };
   const bundle = knowledgeBundleFromEvidence({
     brief: { objective: '做一张白底主图' },
+    executionContext,
     traces: [{
       stage: 'prompt.primary',
       compiled_prompt: '基础提示。不可破坏约束（最高优先级）：保持包装文字；保持产品数量。知识库设计约束：阴影克制；已批准记忆反馈：保留杯身',
@@ -215,6 +221,24 @@ test('completed jobs restore exact task-bound rules instead of recompiling live 
   assert.deepEqual(bundle.positive_rules.map((rule) => rule.text), ['阴影克制', '已批准记忆反馈：保留杯身']);
   assert.deepEqual(bundle.negative_rules.map((rule) => rule.text), ['不要改变品牌色']);
   assert.equal(bundle.sources[0].id, 'K-1');
+  assert.deepEqual(bundle.execution_context, executionContext);
+});
+
+test('historical workspace recovers execution context from prompt trace evidence', () => {
+  const executionContext = {
+    contract_version: 'execution-context-v1',
+    binding: 'job-snapshot',
+    context_sha256: 'b'.repeat(64),
+  };
+  const bundle = knowledgeBundleFromEvidence({
+    traces: [{
+      stage: 'prompt.primary',
+      compiled_prompt: '已编译提示',
+      parameters: { execution_context: executionContext },
+    }],
+  });
+
+  assert.deepEqual(bundle.execution_context, executionContext);
 });
 
 test('image comparison switches to honest side-by-side mode when aspect ratios differ', () => {

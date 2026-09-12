@@ -39,9 +39,15 @@ try:
     )
     from command_registry import (
         COMMAND_REGISTRY_VERSION,
+        command_for_mode,
         get_command,
         list_commands,
         validate_command_sources,
+    )
+    from execution_context import (
+        ExecutionContextConflictError,
+        build_execution_context,
+        validate_execution_context,
     )
     from job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from generation_baseline import (
@@ -132,9 +138,15 @@ except ImportError:  # Allows importing as python.server during local tests.
     )
     from python.command_registry import (
         COMMAND_REGISTRY_VERSION,
+        command_for_mode,
         get_command,
         list_commands,
         validate_command_sources,
+    )
+    from python.execution_context import (
+        ExecutionContextConflictError,
+        build_execution_context,
+        validate_execution_context,
     )
     from python.job_engine import JobEngine, JobExecutionError, JobProcessorResult
     from python.generation_baseline import (
@@ -4034,6 +4046,275 @@ def _freeze_job_memory_rules(
     return frozen
 
 
+def _execution_context_product_profile(
+    *,
+    product_profile_id: str | None = None,
+    expected_product_profile_revision: int | None = None,
+    frozen_product_profile_version_id: str | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    version_id = str(frozen_product_profile_version_id or "").strip()
+    if version_id:
+        version = LEDGER.get_product_profile_version(version_id)
+        profile = version.get("profile") if isinstance(version, dict) else None
+        if not isinstance(profile, dict):
+            raise KeyError(f"unknown frozen product profile version: {version_id}")
+        return profile, {
+            "profile_id": str(version.get("profile_id") or profile.get("id") or ""),
+            "version_id": str(version.get("id") or version_id),
+            "revision": int(version.get("revision") or profile.get("revision") or 0),
+            "sku": str(profile.get("sku") or ""),
+            "name": str(profile.get("name") or ""),
+        }
+
+    profile_id = str(product_profile_id or "").strip()
+    if not profile_id:
+        return None, None
+    current = LEDGER.get_product_profile(profile_id)
+    current_revision = int(current.get("current_revision") or 0)
+    requested_revision = int(expected_product_profile_revision or 0)
+    if current_revision != requested_revision:
+        raise ProductProfileRevisionConflictError(
+            f"product profile {profile_id} is revision {current_revision}, not {requested_revision}",
+            {
+                "id": profile_id,
+                "revision": current_revision,
+                "version_id": current.get("current_version_id"),
+            },
+        )
+    profile = current.get("profile")
+    if not isinstance(profile, dict):
+        raise KeyError(f"unknown product profile: {profile_id}")
+    return profile, {
+        "profile_id": profile_id,
+        "version_id": str(current.get("current_version_id") or ""),
+        "revision": current_revision,
+        "sku": str(profile.get("sku") or ""),
+        "name": str(profile.get("name") or ""),
+    }
+
+
+def _execution_context_scope(
+    parameters: dict[str, Any],
+    *,
+    mode: str,
+    product_profile: dict[str, Any] | None,
+    product_profile_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    scope = dict(parameters.get("brief") or {})
+    for key in (
+        "category", "brand_profile", "project_name", "designer_profile",
+        "intent_locks", "model", "prompt_version", "material_profile",
+        "generation_strategy", "output_ratio", "output_resolution",
+    ):
+        if key in parameters:
+            scope[key] = copy.deepcopy(parameters[key])
+    scope["mode"] = mode
+    if isinstance(product_profile, dict):
+        scope["product_profile"] = copy.deepcopy(product_profile)
+        scope["product_profile_version_id"] = str(
+            (product_profile_context or {}).get("version_id") or ""
+        )
+        scope["category"] = str(
+            product_profile.get("category") or scope.get("category") or "general"
+        )
+        if not str(scope.get("product_name") or "").strip():
+            scope["product_name"] = str(product_profile.get("name") or "")
+    scope["approved_memory_rules"] = copy.deepcopy(
+        parameters.get("approved_memory_rules") or []
+    )
+    adjustment = parameters.get("adjustment")
+    if isinstance(adjustment, dict):
+        instruction = str(adjustment.get("instruction") or "").strip()
+        if instruction:
+            scope["user_request"] = instruction
+    return scope
+
+
+def _live_knowledge_bundle(context: dict[str, Any], *, applies_to_prompt: bool) -> dict[str, Any]:
+    if applies_to_prompt and callable(getattr(KNOWLEDGE, "compile", None)):
+        return dict(KNOWLEDGE.compile(context))
+    brief = (
+        KNOWLEDGE.build_creative_brief(context)
+        if callable(getattr(KNOWLEDGE, "build_creative_brief", None))
+        else dict(context)
+    )
+    return {
+        "creative_brief": brief,
+        "intent_lock_rules": [],
+        "positive_rules": [],
+        "negative_rules": [],
+        "sources": [],
+        "conflicts": [],
+        "ignored_rules": [],
+        "fallback": True,
+    }
+
+
+def _build_job_execution_context(
+    parameters: dict[str, Any],
+    *,
+    mode: str,
+    source_asset_ids: list[str],
+    command_id: str,
+    binding: str,
+    canvas_document_id: str | None = None,
+    expected_canvas_revision: int | None = None,
+    canvas_operation_id: str | None = None,
+    product_profile_id: str | None = None,
+    expected_product_profile_revision: int | None = None,
+    frozen_product_profile_version_id: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    product_profile, profile_context = _execution_context_product_profile(
+        product_profile_id=product_profile_id,
+        expected_product_profile_revision=expected_product_profile_revision,
+        frozen_product_profile_version_id=frozen_product_profile_version_id,
+    )
+    scope = _execution_context_scope(
+        parameters,
+        mode=mode,
+        product_profile=product_profile,
+        product_profile_context=profile_context,
+    )
+    requested_prompt_version = str(
+        parameters.get("prompt_version") or PROMPT_COMPILER_VERSION
+    )
+    route = resolve_material_prompt_route(requested_prompt_version, scope)
+    model_contract = capability_contract(str(parameters.get("model") or ""))
+    applies_to_prompt = (
+        mode in {"single", "multi-file", "group-split"}
+        and command_id not in {LOCAL_EDIT_GENERATE_COMMAND_ID, IMAGE_TO_VIDEO_COMMAND_ID}
+    )
+    bundle = _live_knowledge_bundle(scope, applies_to_prompt=applies_to_prompt)
+    govern_bundle = getattr(KNOWLEDGE, "govern_execution_bundle", None)
+    if applies_to_prompt and callable(govern_bundle):
+        bundle = dict(govern_bundle(
+            bundle,
+            {
+                **scope,
+                "prompt_version": str(
+                    route.get("effective_prompt_version") or requested_prompt_version
+                ),
+            },
+        ))
+    provider_details = {
+        "model": str(parameters.get("model") or ""),
+        "family": str(model_contract.get("family") or ""),
+        "adapter_version": str(model_contract.get("adapter_version") or ""),
+        "requested_prompt_version": requested_prompt_version,
+        "effective_prompt_version": str(
+            route.get("effective_prompt_version") or requested_prompt_version
+        ),
+        "route_reason": str(route.get("reason") or ""),
+        "generation_strategy": str(parameters.get("generation_strategy") or ""),
+        "material_profile": str(
+            parameters.get("material_profile")
+            or scope.get("material_profile")
+            or "unknown"
+        ),
+    }
+    if command_id == IMAGE_TO_VIDEO_COMMAND_ID:
+        provider_details.update({
+            "model": str(parameters.get("provider") or ""),
+            "family": "image-to-video",
+            "adapter_version": str(parameters.get("contract_version") or ""),
+            "requested_prompt_version": "",
+            "effective_prompt_version": "",
+            "route_reason": "command-owned-provider-contract",
+        })
+    elif mode == "cutout-batch":
+        provider_details.update({
+            "family": "local-cutout",
+            "adapter_version": "local-rembg-v1",
+            "requested_prompt_version": "",
+            "effective_prompt_version": "",
+            "route_reason": "local-command-no-prompt",
+        })
+    elif command_id == LOCAL_EDIT_GENERATE_COMMAND_ID:
+        provider_details.update({
+            "requested_prompt_version": "",
+            "effective_prompt_version": "",
+            "route_reason": "canvas-local-edit-contract",
+        })
+    manifest = build_execution_context(
+        context=scope,
+        knowledge_bundle=bundle,
+        mode=mode,
+        source_asset_ids=source_asset_ids,
+        command_id=command_id,
+        canvas_context={
+            "document_id": canvas_document_id,
+            "expected_revision": expected_canvas_revision,
+            "operation_id": canvas_operation_id,
+        },
+        product_profile_context=profile_context,
+        provider_context=provider_details,
+        binding=binding,
+    )
+    return manifest, bundle
+
+
+def _freeze_job_execution_context(
+    parameters: dict[str, Any],
+    *,
+    idempotency_key: str,
+    mode: str,
+    source_asset_ids: list[str],
+    command_id: str,
+    canvas_document_id: str | None = None,
+    expected_canvas_revision: int | None = None,
+    canvas_operation_id: str | None = None,
+    product_profile_id: str | None = None,
+    expected_product_profile_revision: int | None = None,
+    frozen_product_profile_version_id: str | None = None,
+) -> dict[str, Any]:
+    frozen = dict(parameters or {})
+    submitted_context = frozen.get("execution_context")
+    existing = LEDGER.get_job_by_idempotency_key(
+        idempotency_key, include_attempts=False
+    )
+    if existing is not None:
+        existing_parameters = dict(existing.get("parameters") or {})
+        if "execution_context" in existing_parameters:
+            frozen["execution_context"] = copy.deepcopy(
+                existing_parameters["execution_context"]
+            )
+            frozen["knowledge_refs"] = copy.deepcopy(
+                existing_parameters.get("knowledge_refs") or []
+            )
+        else:
+            frozen.pop("execution_context", None)
+        return frozen
+
+    frozen.pop("execution_context", None)
+    manifest, _bundle = _build_job_execution_context(
+        frozen,
+        mode=mode,
+        source_asset_ids=source_asset_ids,
+        command_id=command_id,
+        binding="job-snapshot",
+        canvas_document_id=canvas_document_id,
+        expected_canvas_revision=expected_canvas_revision,
+        canvas_operation_id=canvas_operation_id,
+        product_profile_id=product_profile_id,
+        expected_product_profile_revision=expected_product_profile_revision,
+        frozen_product_profile_version_id=frozen_product_profile_version_id,
+    )
+    if isinstance(submitted_context, dict):
+        submitted = validate_execution_context(submitted_context)
+        if submitted.get("binding") == "preview" and (
+            submitted.get("context_sha256") != manifest.get("context_sha256")
+        ):
+            raise ExecutionContextConflictError(
+                str(submitted.get("context_sha256") or ""),
+                str(manifest.get("context_sha256") or ""),
+            )
+    frozen["execution_context"] = manifest
+    frozen["knowledge_refs"] = copy.deepcopy(
+        manifest["approved_context"]["sources"]
+    )
+    return frozen
+
+
 def _normalize_folder_delivery(value: Any) -> dict[str, Any] | None:
     if value in (None, "", {}):
         return None
@@ -4363,6 +4644,18 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
                 product_profile_id=request.product_profile_id,
                 expected_product_profile_revision=request.expected_product_profile_revision,
             )
+        parameters = _freeze_job_execution_context(
+            parameters,
+            idempotency_key=str(request.client_request_id or "").strip(),
+            mode=mode,
+            source_asset_ids=source_asset_ids,
+            command_id=str(command["id"]),
+            canvas_document_id=request.canvas_document_id,
+            expected_canvas_revision=request.expected_canvas_revision,
+            canvas_operation_id=request.canvas_operation_id,
+            product_profile_id=request.product_profile_id,
+            expected_product_profile_revision=request.expected_product_profile_revision,
+        )
         planned_paid_calls = _planned_paid_call_count(
             mode,
             source_asset_ids,
@@ -4426,6 +4719,16 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
                 "current": exc.current,
             },
         )
+    except ExecutionContextConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "EXECUTION_CONTEXT_STALE",
+                "message": str(exc),
+                "submitted_sha256": exc.submitted_sha256,
+                "current_sha256": exc.current_sha256,
+            },
+        )
     except IdempotencyConflictError as exc:
         raise HTTPException(
             status_code=409,
@@ -4469,6 +4772,16 @@ async def create_durable_job(request: JobCreateRequest):
         parameters = _freeze_job_memory_rules(
             parameters,
             idempotency_key=str(request.client_request_id or "").strip(),
+            product_profile_id=request.product_profile_id,
+            expected_product_profile_revision=request.expected_product_profile_revision,
+        )
+        command = command_for_mode(mode)
+        parameters = _freeze_job_execution_context(
+            parameters,
+            idempotency_key=str(request.client_request_id or "").strip(),
+            mode=mode,
+            source_asset_ids=source_asset_ids,
+            command_id=str(command["id"]),
             product_profile_id=request.product_profile_id,
             expected_product_profile_revision=request.expected_product_profile_revision,
         )
@@ -4516,6 +4829,16 @@ async def create_durable_job(request: JobCreateRequest):
                 "code": "PRODUCT_PROFILE_REVISION_CONFLICT",
                 "message": str(exc),
                 "current": exc.current,
+            },
+        )
+    except ExecutionContextConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "EXECUTION_CONTEXT_STALE",
+                "message": str(exc),
+                "submitted_sha256": exc.submitted_sha256,
+                "current_sha256": exc.current_sha256,
             },
         )
     except IdempotencyConflictError as exc:
@@ -4809,6 +5132,15 @@ async def create_result_adjustment(job_id: str, request: ResultAdjustmentRequest
             idempotency_key=f"adjustment:{request_id}",
             frozen_product_profile_version_id=parent_profile_version_id,
         )
+        command = command_for_mode(mode)
+        parameters = _freeze_job_execution_context(
+            parameters,
+            idempotency_key=f"adjustment:{request_id}",
+            mode=mode,
+            source_asset_ids=source_asset_ids,
+            command_id=str(command["id"]),
+            frozen_product_profile_version_id=parent_profile_version_id,
+        )
         parameters = _attach_paid_call_authorization(
             parameters,
             client_request_id=request_id,
@@ -4988,7 +5320,30 @@ async def compile_knowledge(data: dict):
         refresh_runtime_config()
         context = dict(data if isinstance(data, dict) else {})
         context["approved_memory_rules"] = _approved_memory_rules(context)
-        return KNOWLEDGE.compile(context)
+        mode = str(context.get("mode") or "single").strip()
+        command_id = str(context.get("command_id") or "").strip()
+        if not command_id and mode in {"single", "multi-file", "group-split", "cutout-batch"}:
+            command_id = str(command_for_mode(mode)["id"])
+        source_asset_ids = [
+            str(item).strip()
+            for item in context.get("source_asset_ids") or []
+            if str(item).strip()
+        ]
+        parameters = dict(context)
+        parameters["brief"] = dict(context)
+        manifest, bundle = _build_job_execution_context(
+            parameters,
+            mode=mode,
+            source_asset_ids=source_asset_ids,
+            command_id=command_id,
+            binding="preview",
+            canvas_document_id=str(context.get("canvas_document_id") or "").strip() or None,
+            expected_canvas_revision=context.get("expected_canvas_revision"),
+            canvas_operation_id=str(context.get("canvas_operation_id") or "").strip() or None,
+            product_profile_id=str(context.get("product_profile_id") or "").strip() or None,
+            expected_product_profile_revision=context.get("expected_product_profile_revision"),
+        )
+        return {**bundle, "execution_context": manifest}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -5865,6 +6220,12 @@ def _record_job_prompt(
     prompt_version = str(
         prompt_route.get("effective_prompt_version") or requested_prompt_version
     )
+    execution_context = dict(
+        (trace.get("parameters") or {}).get("execution_context") or {}
+    )
+    execution_context_sha256 = str(
+        execution_context.get("context_sha256") or ""
+    )
     snapshot = prompt_snapshot(
         template_prompt=template_prompt,
         base_prompt=base_prompt,
@@ -5873,6 +6234,11 @@ def _record_job_prompt(
         knowledge_evidence=applied_evidence,
         prompt_version=prompt_version,
     )
+    if execution_context_sha256:
+        snapshot["execution_context_contract_version"] = str(
+            execution_context.get("contract_version") or ""
+        )
+        snapshot["execution_context_sha256"] = execution_context_sha256
     generation_id = trace["generation_id"]
     changes = {"status": "running", "prompt_version": prompt_version}
     if stage in {"primary", "local-edit-candidate"}:
@@ -5893,6 +6259,10 @@ def _record_job_prompt(
             "prompt_version": prompt_version,
             "prompt_version_requested": requested_prompt_version,
             "prompt_route": prompt_route,
+            "execution_context_contract_version": str(
+                execution_context.get("contract_version") or ""
+            ),
+            "execution_context_sha256": execution_context_sha256,
         },
         generation_id=generation_id,
     )
@@ -5912,6 +6282,10 @@ def _record_job_prompt(
                 prompt_route.get("contract_version") or MATERIAL_PROMPT_ROUTE_VERSION
             ),
             "prompt_route": prompt_route,
+            "execution_context_contract_version": str(
+                execution_context.get("contract_version") or ""
+            ),
+            "execution_context_sha256": execution_context_sha256,
             "prompt_adapter_profile": (
                 prompt_adapter_profile(str(trace.get("model") or ""))["id"]
                 if prompt_version == "prompt_v3"
@@ -6024,6 +6398,10 @@ def _execute_image_to_video_preview(ctx, source_asset, image, stage_dir, trace):
     raw_parameters = dict(ctx.job.get("parameters") or {})
     frozen_contract_version = str(raw_parameters.pop("contract_version", ""))
     spatial_canvas_id = str(raw_parameters.pop("spatial_canvas_id", ""))
+    # Execution-context provenance belongs to the durable task envelope, not the
+    # provider's frozen image-to-video parameter contract.
+    raw_parameters.pop("execution_context", None)
+    raw_parameters.pop("knowledge_refs", None)
     try:
         parameters = normalize_image_to_video_parameters(
             raw_parameters,
@@ -6916,6 +7294,10 @@ def _job_knowledge_context(trace, **values):
             locks.setdefault("logo", True)
         context["intent_locks"] = locks
     parameters = dict(trace.get("parameters") or {})
+    if isinstance(parameters.get("execution_context"), dict):
+        context["execution_context"] = validate_execution_context(
+            parameters["execution_context"]
+        )
     if "approved_memory_rules" in parameters:
         context["approved_memory_rules"] = copy.deepcopy(
             parameters.get("approved_memory_rules") or []

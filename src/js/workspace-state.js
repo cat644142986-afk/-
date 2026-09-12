@@ -212,7 +212,12 @@ function promptRules(prompt, marker, stopMarker = '') {
     .map((rule) => ({ text: rule, recovered_from_prompt: true }));
 }
 
-export function knowledgeBundleFromEvidence({ brief = {}, traces = [], generation = null } = {}) {
+export function knowledgeBundleFromEvidence({
+  brief = {},
+  traces = [],
+  generation = null,
+  executionContext = null,
+} = {}) {
   const sources = [];
   const positiveRules = [];
   const negativeRules = [];
@@ -261,6 +266,9 @@ export function knowledgeBundleFromEvidence({ brief = {}, traces = [], generatio
   const compiledPrompt = [...promptTraces].reverse()
     .map((trace) => String(trace?.compiled_prompt || '').trim())
     .find(Boolean) || String(generation?.prompt || '').trim();
+  const frozenExecutionContext = executionContext || [...promptTraces].reverse()
+    .map((trace) => trace?.parameters?.execution_context)
+    .find((item) => item && typeof item === 'object') || null;
 
   return {
     creative_brief: traceBrief || brief || {},
@@ -273,6 +281,7 @@ export function knowledgeBundleFromEvidence({ brief = {}, traces = [], generatio
     compiled_negative_prompt: compiledNegativePrompt,
     trace_bound: Boolean(promptTraces.length || generation?.id || generation?.prompt),
     trace_count: promptTraces.length,
+    execution_context: frozenExecutionContext,
   };
 }
 

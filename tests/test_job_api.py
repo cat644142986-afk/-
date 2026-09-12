@@ -2182,6 +2182,67 @@ class DurableJobApiTests(unittest.TestCase):
             )
             self.network_request.assert_not_called()
 
+    def test_preview_execution_context_promotes_exactly_and_rejects_stale_source_binding(self) -> None:
+        vault = self.root / "knowledge-vault"
+        (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+        server.KNOWLEDGE = server.KnowledgeCompiler(vault)
+        with self.live_client() as client:
+            source = self.import_asset(client, "context-source.png", (70, 120, 180))
+            other = self.import_asset(client, "context-other.png", (180, 120, 70))
+            brief = {
+                "objective": "生成白底商品主图",
+                "user_request": "保留包装文字并使用克制阴影",
+                "output_kind": "ecommerce-main-image",
+                "output_spec": {"ratio": "1:1", "resolution": "2k"},
+                "intent_locks": {"packaging_text": True},
+                "material_profile": "transparent",
+            }
+            parameters = {
+                "batch": 1,
+                "model": "gpt-image-2",
+                "brief": brief,
+                "material_profile": "transparent",
+                "generation_strategy": "single_pass",
+                "generation_strategy_source": "user",
+                "prompt_version": "prompt_v1",
+                "prompt_version_source": "user",
+            }
+            preview_response = client.post("/api/knowledge/compile", json={
+                **brief,
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "model": parameters["model"],
+                "material_profile": parameters["material_profile"],
+                "generation_strategy": parameters["generation_strategy"],
+                "prompt_version": parameters["prompt_version"],
+            })
+            self.assertEqual(preview_response.status_code, 200, preview_response.text)
+            preview = preview_response.json()["execution_context"]
+            parameters["execution_context"] = preview
+
+            server.JOB_ENGINE.stop()
+            with mock.patch.object(server, "_wake_job_engine"):
+                created = self.create_job(client, {
+                    "mode": "single",
+                    "source_asset_ids": [source["id"]],
+                    "parameters": parameters,
+                })["job"]
+                stale = client.post("/api/jobs", json={
+                    "mode": "single",
+                    "source_asset_ids": [other["id"]],
+                    "client_request_id": "g4a-stale-context",
+                    "parameters": parameters,
+                })
+
+            frozen = created["snapshot"]["parameters"]["execution_context"]
+            self.assertEqual("preview", preview["binding"])
+            self.assertEqual("job-snapshot", frozen["binding"])
+            self.assertEqual(preview["context_sha256"], frozen["context_sha256"])
+            self.assertEqual(stale.status_code, 409, stale.text)
+            self.assertEqual(
+                stale.json()["detail"]["code"], "EXECUTION_CONTEXT_STALE"
+            )
+
     def test_bound_profile_version_drives_prompt_and_survives_derived_adjustment(self) -> None:
         vault = self.root / "knowledge-vault"
         (vault / "20 知识库" / "设计知识").mkdir(parents=True)
@@ -2227,6 +2288,12 @@ class DurableJobApiTests(unittest.TestCase):
             self.vlm_mock.assert_not_called()
             traces = client.get(f"/api/jobs/{parent['id']}/traces").json()["traces"]
             primary = next(item for item in traces if item["stage"] == "prompt.primary")
+            parent_context = parent["snapshot"]["parameters"]["execution_context"]
+            self.assertEqual(parent_context["binding"], "job-snapshot")
+            self.assertEqual(
+                primary["parameters"]["execution_context_sha256"],
+                parent_context["context_sha256"],
+            )
             self.assertIn("测试透明瓶", primary["compiled_prompt"])
             self.assertIn("PET", primary["compiled_prompt"])
             self.assertNotIn(second["profile"]["name"], primary["compiled_prompt"])
@@ -2251,6 +2318,11 @@ class DurableJobApiTests(unittest.TestCase):
             derived = self.wait_for_job(adjustment.json()["job"]["id"])
             self.assertEqual(
                 derived["snapshot"]["product_profile_version_id"], profile_version_id
+            )
+            derived_context = derived["snapshot"]["parameters"]["execution_context"]
+            self.assertEqual(
+                derived_context["user_intent"]["user_request"],
+                "只修复包装文字边缘",
             )
 
     def test_governed_memory_is_frozen_at_job_creation(self) -> None:
@@ -2324,14 +2396,25 @@ class DurableJobApiTests(unittest.TestCase):
                 self.assertEqual(job["status"], "completed")
                 traces = client.get(f"/api/jobs/{job['id']}/traces").json()["traces"]
                 prompt = next(item for item in traces if item["stage"] == "prompt.primary")
+                execution_context = job["snapshot"]["parameters"]["execution_context"]
+                governed_texts = [
+                    item["text"]
+                    for item in execution_context["approved_context"]["positive_rules"]
+                ]
+                self.assertEqual(
+                    prompt["parameters"]["execution_context_sha256"],
+                    execution_context["context_sha256"],
+                )
                 if key == "approved":
                     self.assertIn(directive, prompt["compiled_prompt"])
+                    self.assertIn(f"已批准记忆反馈：{directive}", governed_texts)
                     self.assertTrue(any(
                         item.get("text") == f"已批准记忆反馈：{directive}"
                         for item in prompt["applied_knowledge"]
                     ))
                 else:
                     self.assertNotIn(directive, prompt["compiled_prompt"])
+                    self.assertNotIn(f"已批准记忆反馈：{directive}", governed_texts)
 
             replay_payload = {
                 "mode": "single",

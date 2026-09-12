@@ -8,12 +8,18 @@ never writes back to the user's vault.
 
 from __future__ import annotations
 
+import copy
 import os
 import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    from execution_context import knowledge_bundle_from_execution_context
+except ImportError:  # Allows importing as python.knowledge_engine during tests.
+    from python.execution_context import knowledge_bundle_from_execution_context
 
 
 PREFERRED_WINDOWS_VAULT = Path("D:/知识库")
@@ -600,6 +606,11 @@ class KnowledgeCompiler:
 
     def compile(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         context = dict(context or {})
+        frozen_bundle = knowledge_bundle_from_execution_context(
+            context.get("execution_context")
+        )
+        if frozen_bundle is not None:
+            return frozen_bundle
         brief = self.build_creative_brief(context)
         approved_memory = self._approved_memory_rules(context)
         profile_rules, profile_source = self._product_profile_rules(context)
@@ -677,6 +688,65 @@ class KnowledgeCompiler:
             "fallback": not bool(sources),
         }
 
+    @classmethod
+    def govern_execution_bundle(
+        cls,
+        bundle: dict[str, Any] | None,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Select exactly the rules the current prompt route can consume.
+
+        This keeps the stable prompt templates unchanged. It moves their existing
+        selection behavior in front of the immutable execution-context snapshot so
+        omitted rules are explicit and the frozen inputs equal the executed inputs.
+        """
+        payload = copy.deepcopy(dict(bundle or {}))
+        scope = dict(context or {})
+        if str(scope.get("prompt_version") or "").lower() == "prompt_v3":
+            return cls._compact_v3_bundle(payload, scope)
+
+        selected_positive = list(payload.get("positive_rules") or [])[:10]
+        selected_negative = list(payload.get("negative_rules") or [])[:10]
+        ignored = list(payload.get("ignored_rules") or [])
+        for item in list(payload.get("positive_rules") or [])[10:]:
+            ignored.append({
+                "kind": "positive_rule",
+                "reason": "prompt-rule-limit",
+                "text": str(item.get("text") if isinstance(item, dict) else item).strip(),
+            })
+        for item in list(payload.get("negative_rules") or [])[10:]:
+            ignored.append({
+                "kind": "negative_rule",
+                "reason": "prompt-rule-limit",
+                "text": str(item.get("text") if isinstance(item, dict) else item).strip(),
+            })
+
+        selected_source_ids = {
+            str(source.get("id") or source.get("path") or source.get("title") or "")
+            for rule in selected_positive + selected_negative
+            if isinstance(rule, dict) and isinstance(rule.get("source"), dict)
+            for source in [rule["source"]]
+        }
+        selected_sources = [
+            source
+            for source in payload.get("sources") or []
+            if isinstance(source, dict)
+            and str(source.get("id") or source.get("path") or source.get("title") or "")
+            in selected_source_ids
+        ]
+        return {
+            **payload,
+            "positive_rules": selected_positive,
+            "negative_rules": selected_negative,
+            "sources": selected_sources,
+            "ignored_rules": ignored,
+            "rule_budget": {
+                "intent_locks": "all-task-locks",
+                "positive_rules": 10,
+                "negative_rules": 10,
+            },
+        }
+
     @staticmethod
     def _approved_memory_rules(context: dict[str, Any]) -> list[dict[str, str]]:
         """Normalize approved memory rules passed in by the generation/preview layer.
@@ -709,7 +779,7 @@ class KnowledgeCompiler:
         context = dict(context or {})
         bundle = self.compile(context)
         compact_v3 = str(context.get("prompt_version") or "").lower() == "prompt_v3"
-        if compact_v3:
+        if compact_v3 and not isinstance(context.get("execution_context"), dict):
             bundle = self._compact_v3_bundle(bundle, context)
         positive_addition = "；".join(rule["text"] for rule in bundle["positive_rules"][:10])
         negative_addition = "，".join(rule["text"] for rule in bundle["negative_rules"][:10])

@@ -862,11 +862,13 @@ async function restoreWorkspaceResult(mode, payload) {
       brief: job.snapshot?.brief || {},
       traces: traceResponse?.traces || [],
       generation: { knowledge_refs: job.snapshot?.knowledge_refs || [] },
+      executionContext: job.snapshot?.parameters?.execution_context || null,
     }));
   } catch (_) {
     applyTaskKnowledgeBundle(knowledgeBundleFromEvidence({
       brief: job.snapshot?.brief || {},
       generation: { knowledge_refs: job.snapshot?.knowledge_refs || [] },
+      executionContext: job.snapshot?.parameters?.execution_context || null,
     }));
   }
   renderResults();
@@ -2023,16 +2025,45 @@ async function compileKnowledgePreview(context = null) {
   const brief = context?.brief || buildBrief(mode);
   const hasInput = Boolean(selectedAssetIds(mode).length || brief.user_request || context?.force);
   if (!hasInput) return null;
+  const live = mode === state.currentMode;
+  const snapshot = state.modeSnapshots[mode] || {};
+  const parameters = context?.parameters || {};
+  const profileSelection = context?.productProfileSelection
+    || productProfiles.selectionForSubmission(mode);
+  const sourceAssetIds = context?.sourceAssetIds || selectedAssetIds(mode);
+  const promptVersion = parameters.prompt_version || (
+    live && mode !== 'cutout-batch'
+      ? (getCompactPromptEnabled(mode) ? 'prompt_v3' : 'prompt_v1')
+      : snapshot.compact_prompt_enabled ? 'prompt_v3' : 'prompt_v1'
+  );
   const requestVersion = ++state.knowledgeRequestVersion;
   try {
-    const bundle = await API.compileKnowledge(brief);
-    if (requestVersion === state.knowledgeRequestVersion && mode === state.currentMode) {
+    const bundle = await API.compileKnowledge({
+      ...brief,
+      source_asset_ids: sourceAssetIds,
+      model: parameters.model || (live ? $('#param-model').value : snapshot.model || ''),
+      prompt_version: promptVersion,
+      material_profile: parameters.material_profile || (
+        live ? getMaterialProfile(mode) : snapshot.material_profile || 'unknown'
+      ),
+      generation_strategy: parameters.generation_strategy || (
+        live ? getGenerationStrategy(mode) : snapshot.generation_strategy || 'legacy_double_pass'
+      ),
+      product_profile_id: profileSelection.product_profile_id
+        || profileSelection.productProfileId
+        || null,
+      expected_product_profile_revision:
+        profileSelection.expected_product_profile_revision
+        ?? profileSelection.expectedProductProfileRevision
+        ?? null,
+    });
+    if (context?.render !== false && requestVersion === state.knowledgeRequestVersion && mode === state.currentMode) {
       state.knowledgeBundle = bundle;
       renderKnowledge(bundle);
     }
     return bundle;
   } catch (error) {
-    if (requestVersion === state.knowledgeRequestVersion && mode === state.currentMode) {
+    if (context?.render !== false && requestVersion === state.knowledgeRequestVersion && mode === state.currentMode) {
       $('#knowledge-summary').textContent = '知识编译暂不可用，使用安全默认值';
     }
     return null;
@@ -2064,12 +2095,15 @@ function renderKnowledge(bundle) {
     $('#knowledge-rule-list').innerHTML = statusPanelHtml('empty', { title: '尚未编译执行规则', detail: '选择素材或输入创作目标后开始编译。', compact: true });
     $('#knowledge-source-count').textContent = '0 条来源';
     $('#knowledge-source-list').innerHTML = statusPanelHtml('empty', { title: '尚未编译知识', detail: '本次引用会在编译后列出。', compact: true });
+    $('#execution-context-status').textContent = '等待编译';
+    $('#execution-context-layers').innerHTML = statusPanelHtml('empty', { title: '尚未建立执行上下文', detail: '输入目标后会按固定优先级组织本次任务依据。', compact: true });
     $('#knowledge-conflicts').innerHTML = '<div class="conflict-item ok"><span>✓</span><p>当前没有检测到规则冲突</p></div>';
     $('#intelligence-brief').textContent = '等待输入创作意图';
     $('#intelligence-context').textContent = '选择模式与素材后，系统会把目标编译成可检查的创作合同。';
     return;
   }
   const sources = bundle.sources || [];
+  const executionContext = bundle.execution_context || null;
   const positiveRules = bundle.positive_rules || [];
   const negativeRules = bundle.negative_rules || [];
   const intentLockRules = bundle.intent_lock_rules || [];
@@ -2088,6 +2122,24 @@ function renderKnowledge(bundle) {
     const path = typeof source === 'string' ? '' : (source.relative_path || source.path || '');
     return `<div class="source-item"><span>${String(index + 1).padStart(2, '0')}</span><div><strong>${escapeHtml(title)}</strong><small>${escapeHtml(path)}</small></div></div>`;
   }).join('') : statusPanelHtml('empty', { title: '使用安全默认规则', detail: '本次没有引用额外知识来源。', compact: true });
+  if (executionContext) {
+    const summary = executionContext.summary || {};
+    const canvas = executionContext.canvas_context || {};
+    const profile = executionContext.product_profile || null;
+    const provider = executionContext.provider_adapter || {};
+    const layers = [
+      ['01', '用户本次意图', executionContext.user_intent?.user_request || executionContext.user_intent?.objective || '使用安全任务目标'],
+      ['02', '画布上下文', canvas.document_id ? `已绑定画布 revision ${canvas.expected_revision ?? '?'}` : '当前从快速工作流发起'],
+      ['03', '商品档案', profile ? `${profile.name || profile.sku || '已绑定档案'} · v${profile.revision}` : '本次未绑定商品档案'],
+      ['04', '已批准知识', `${Number(summary.source_count || 0)} 条来源 · ${Number(summary.positive_rule_count || 0) + Number(summary.negative_rule_count || 0)} 条规则`],
+      ['05', 'Provider 适配', `${provider.model || '本地处理'} · ${provider.effective_prompt_version || '不使用 Prompt'}`],
+    ];
+    $('#execution-context-status').textContent = `${executionContext.binding === 'job-snapshot' ? '任务已冻结' : '提交前预览'} · ${String(executionContext.context_sha256 || '').slice(0, 8)}`;
+    $('#execution-context-layers').innerHTML = layers.map(([index, title, detail]) => `<div class="source-item"><span>${index}</span><div><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail)}</small></div></div>`).join('');
+  } else {
+    $('#execution-context-status').textContent = '旧任务兼容模式';
+    $('#execution-context-layers').innerHTML = statusPanelHtml('empty', { title: '此记录尚无统一上下文', detail: '旧任务继续按原 Prompt 与知识证据恢复。', compact: true });
+  }
   const brief = bundle.creative_brief || {};
   const memorySources = sources.filter((source) => source?.relative_path === '记忆反馈/已批准');
   $('#intelligence-brief').textContent = brief.objective || '本次商业图片任务';
@@ -2273,6 +2325,7 @@ function captureSubmissionDraft() {
       angle: $('#param-angle').value,
       output_ratio: $('#param-output-ratio').value,
       output_resolution: $('#param-output-resolution').value,
+      material_profile: getMaterialProfile(mode),
       refine: $('#param-refine').checked,
       ...(mode !== 'cutout-batch' ? {
         prompt_version: getCompactPromptEnabled(mode) ? 'prompt_v3' : 'prompt_v1',
@@ -2340,8 +2393,17 @@ async function compileSubmissionPayload(draft) {
   const bundle = await compileKnowledgePreview({
     mode: draft.mode,
     brief: draft.parameters.brief,
+    parameters: draft.parameters,
+    sourceAssetIds: draft.source_asset_ids,
+    productProfileSelection: {
+      product_profile_id: draft.product_profile_id,
+      expected_product_profile_revision: draft.expected_product_profile_revision,
+    },
     force: true,
   });
+  if (draft.mode !== 'cutout-batch' && !bundle?.execution_context) {
+    throw new Error('本次执行上下文未能建立，请重试');
+  }
   const requestId = createClientRequestId();
   const payload = {
     ...createSubmissionSnapshot({
@@ -2352,6 +2414,7 @@ async function compileSubmissionPayload(draft) {
       parameters: {
         ...draft.parameters,
         knowledge_refs: bundle?.sources || [],
+        ...(bundle?.execution_context ? { execution_context: bundle.execution_context } : {}),
       },
     }),
     client_request_id: requestId,
@@ -2386,7 +2449,36 @@ async function handleGenerate() {
     if (!savedDraft) savedDraft = await flushWorkspaceDraft(submissionDraft.mode, false);
     if (!savedDraft) throw new Error('当前工作草稿未能安全保存，请重试');
     payload = await compileSubmissionPayload(submissionDraft);
-    const jobPayloads = jobPayloadsForSubmission(payload);
+    let jobPayloads = jobPayloadsForSubmission(payload);
+    if (jobPayloads.length > 1) {
+      const exactPayloads = [];
+      for (const jobPayload of jobPayloads) {
+        const exactBundle = await compileKnowledgePreview({
+          mode: jobPayload.mode,
+          brief: jobPayload.parameters.brief,
+          parameters: jobPayload.parameters,
+          sourceAssetIds: jobPayload.source_asset_ids,
+          productProfileSelection: {
+            product_profile_id: jobPayload.product_profile_id,
+            expected_product_profile_revision: jobPayload.expected_product_profile_revision,
+          },
+          force: true,
+          render: false,
+        });
+        if (!exactBundle?.execution_context) {
+          throw new Error('本次执行上下文未能冻结，请重试');
+        }
+        exactPayloads.push({
+          ...jobPayload,
+          parameters: {
+            ...jobPayload.parameters,
+            knowledge_refs: exactBundle.sources || [],
+            execution_context: exactBundle.execution_context,
+          },
+        });
+      }
+      jobPayloads = exactPayloads;
+    }
     const responses = [];
     if (jobPayloads.length === 1) responses.push(await API.createJob(payload));
     else {
@@ -3112,6 +3204,7 @@ async function openJobResults(jobId) {
     brief: job.snapshot?.brief || {},
     traces: traceResponse?.traces || [],
     generation: { knowledge_refs: job.snapshot?.knowledge_refs || [] },
+    executionContext: job.snapshot?.parameters?.execution_context || null,
   }));
   state.results = {
     main: items.filter((item) => item.role !== 'result_cutout'),
