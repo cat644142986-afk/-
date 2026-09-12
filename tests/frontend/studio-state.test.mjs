@@ -28,6 +28,7 @@ test('backend draft hydrates editable controls and durable result pointers', () 
       model: 'local-birefnet', fidelity: 75, variations: 3,
       output_ratio: '4:5', output_resolution: '4k', generation_strategy: 'single_pass',
       prompt_version: 'prompt_v3', prompt_version_source: 'user',
+      design_skill_id: 'comfyui-food-product-main-image',
     },
     intent: { subject_count: true },
     active_job_id: 'job-7',
@@ -42,6 +43,7 @@ test('backend draft hydrates editable controls and durable result pointers', () 
   assert.equal(snapshot.generation_strategy, 'single_pass');
   assert.equal(snapshot.material_profile, 'opaque');
   assert.equal(snapshot.compact_prompt_enabled, true);
+  assert.equal(snapshot.design_skill_id, 'comfyui-food-product-main-image');
   assert.deepEqual(snapshot.intent_locks, { subject_count: true });
   assert.equal(snapshot.active_job_id, 'job-7');
   assert.equal(snapshot.current_result_asset_id, 'asset-result-2');
@@ -56,6 +58,7 @@ test('draft save payload preserves revision, ordered selection, intent, and work
       model: 'gpt-image-2', angle: 'front', fidelity: 80, batch: 2,
       output_ratio: 'original', output_resolution: '4k', generation_strategy: 'single_pass',
       material_profile: 'opaque', compact_prompt_enabled: true,
+      design_skill_id: 'comfyui-food-product-main-image',
       platter: 'keep', refine: false, intent_locks: { packaging_text: true },
       active_job_id: 'job-8', current_generation_id: 'gen-3',
       current_result_asset_id: 'result-9', compare_state: { zoom: 1.5 },
@@ -77,6 +80,7 @@ test('draft save payload preserves revision, ordered selection, intent, and work
   assert.equal(payload.parameters.generation_strategy_source, 'user');
   assert.equal(payload.parameters.prompt_version, 'prompt_v3');
   assert.equal(payload.parameters.prompt_version_source, 'user');
+  assert.equal(payload.parameters.design_skill_id, 'comfyui-food-product-main-image');
   assert.equal(payload.brief.material_profile, 'opaque');
   assert.deepEqual(payload.intent, { packaging_text: true });
   assert.equal(payload.active_job_id, 'job-8');
@@ -86,4 +90,13 @@ test('draft save payload preserves revision, ordered selection, intent, and work
     payload.ui_state.product_profile_selection.expected_product_profile_revision,
     3,
   );
+});
+
+test('an explicit default design method clears an older local selection', () => {
+  const snapshot = snapshotFromDraft(
+    { parameters: { design_skill_id: '' } },
+    { design_skill_id: 'comfyui-food-product-main-image' },
+  );
+
+  assert.equal(snapshot.design_skill_id, '');
 });

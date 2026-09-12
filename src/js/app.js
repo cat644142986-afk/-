@@ -99,6 +99,8 @@ import {
 const MODE_STATE_KEY = 'pa-workspace-ui-v2';
 const PENDING_SUBMISSION_KEY = 'pa-pending-job-v1';
 const PENDING_REVIEW_KEY = 'pa-pending-result-reviews-v1';
+const CONTEXT_DESIGN_METHOD_ID = 'comfyui-food-product-main-image';
+const CONTEXT_DESIGN_METHOD_MODES = new Set(['single', 'multi-file']);
 const TASK_STATUS_ICONS = {
   Ban,
   CircleAlert,
@@ -114,6 +116,59 @@ let modalReturnFocus = null;
 let drawerReturnFocus = null;
 let semanticReturnFocus = null;
 let workspaceStatusTimer = null;
+
+function selectedDesignMethodId(mode = state.currentMode) {
+  if (!CONTEXT_DESIGN_METHOD_MODES.has(mode)) return '';
+  const value = String(
+    mode === state.currentMode
+      ? $('#param-design-skill')?.value || ''
+      : state.modeSnapshots[mode]?.design_skill_id || '',
+  ).trim();
+  return value === CONTEXT_DESIGN_METHOD_ID ? value : '';
+}
+
+function renderDesignMethodControl(skillSnapshot = null, errorMessage = '') {
+  const select = $('#param-design-skill');
+  const statusNode = $('#design-skill-status');
+  if (!select || !statusNode) return;
+  const capability = state.knowledgeStatus?.design_method || null;
+  const supported = CONTEXT_DESIGN_METHOD_MODES.has(state.currentMode);
+  const available = capability?.available === true;
+  select.disabled = !supported || !available;
+  if (!supported) select.value = '';
+  const option = select.querySelector(`option[value="${CONTEXT_DESIGN_METHOD_ID}"]`);
+  if (option && capability?.title) option.textContent = capability.title;
+
+  statusNode.removeAttribute('data-tone');
+  if (errorMessage) {
+    statusNode.dataset.tone = 'warning';
+    statusNode.textContent = errorMessage;
+    return;
+  }
+  if (skillSnapshot) {
+    const applied = Array.from(skillSnapshot.applied_rule_ids || []).length;
+    const selected = Array.from(skillSnapshot.selected_rule_ids || []).length;
+    const identity = `${skillSnapshot.version || '未标版本'} · ${String(skillSnapshot.content_sha256 || '').slice(0, 8)} · ${skillSnapshot.adapter_version || '只读适配'}`;
+    statusNode.dataset.tone = applied ? 'ready' : 'warning';
+    statusNode.textContent = applied
+      ? `已冻结 ${identity} · ${applied}/${selected} 条设计规则进入本次执行`
+      : `已冻结 ${identity} · 规则受本次上下文预算约束，未进入 Prompt`;
+    return;
+  }
+  if (!supported) {
+    statusNode.textContent = '当前仅支持单产品与多文件工作流。';
+  } else if (!capability) {
+    statusNode.textContent = '正在核对只读设计方法…';
+  } else if (!available) {
+    statusNode.dataset.tone = 'warning';
+    statusNode.textContent = capability.error?.message || '本地设计方法当前不可读取。';
+  } else if (selectedDesignMethodId()) {
+    statusNode.dataset.tone = 'ready';
+    statusNode.textContent = '只采用设计规则；不会运行 ComfyUI、脚本或额外 Provider。';
+  } else {
+    statusNode.textContent = '可选；默认不额外引用设计方法。';
+  }
+}
 
 function hydrateTaskStatusIcons(root) {
   if (!root) return;
@@ -522,6 +577,7 @@ function captureModeSnapshot(mode = state.currentMode) {
     generation_strategy: getGenerationStrategy(mode),
     material_profile: getMaterialProfile(mode),
     compact_prompt_enabled: getCompactPromptEnabled(mode),
+    design_skill_id: selectedDesignMethodId(mode),
     fidelity: Number($('#param-fidelity').value),
     batch: Number($('#param-batch').value),
     platter: getPlatter(),
@@ -863,12 +919,14 @@ async function restoreWorkspaceResult(mode, payload) {
       traces: traceResponse?.traces || [],
       generation: { knowledge_refs: job.snapshot?.knowledge_refs || [] },
       executionContext: job.snapshot?.parameters?.execution_context || null,
+      skillSnapshot: job.snapshot?.parameters?.skill_snapshot || null,
     }));
   } catch (_) {
     applyTaskKnowledgeBundle(knowledgeBundleFromEvidence({
       brief: job.snapshot?.brief || {},
       generation: { knowledge_refs: job.snapshot?.knowledge_refs || [] },
       executionContext: job.snapshot?.parameters?.execution_context || null,
+      skillSnapshot: job.snapshot?.parameters?.skill_snapshot || null,
     }));
   }
   renderResults();
@@ -886,6 +944,13 @@ async function restoreWorkspaceResult(mode, payload) {
 
 function restoreModeSnapshot(mode = state.currentMode) {
   const snapshot = state.modeSnapshots[mode];
+  const designMethod = $('#param-design-skill');
+  if (designMethod) {
+    designMethod.value = CONTEXT_DESIGN_METHOD_MODES.has(mode)
+      ? String(snapshot?.design_skill_id || '')
+      : '';
+  }
+  renderDesignMethodControl();
   if (!snapshot) return;
   productProfiles.restore(mode, snapshot.ui_state || {});
   $('#brief-input').value = snapshot.brief || '';
@@ -2049,6 +2114,9 @@ async function compileKnowledgePreview(context = null) {
       generation_strategy: parameters.generation_strategy || (
         live ? getGenerationStrategy(mode) : snapshot.generation_strategy || 'legacy_double_pass'
       ),
+      design_skill_id: parameters.design_skill_id ?? (
+        live ? selectedDesignMethodId(mode) : snapshot.design_skill_id || ''
+      ),
       product_profile_id: profileSelection.product_profile_id
         || profileSelection.productProfileId
         || null,
@@ -2065,7 +2133,9 @@ async function compileKnowledgePreview(context = null) {
   } catch (error) {
     if (context?.render !== false && requestVersion === state.knowledgeRequestVersion && mode === state.currentMode) {
       $('#knowledge-summary').textContent = '知识编译暂不可用，使用安全默认值';
+      renderDesignMethodControl(null, formatApiError(error, '设计方法上下文暂不可用'));
     }
+    if (context?.force) throw error;
     return null;
   }
 }
@@ -2090,6 +2160,7 @@ function renderKnowledge(bundle) {
     return;
   }
   if (!bundle) {
+    renderDesignMethodControl();
     $('#knowledge-summary').textContent = '等待知识编译';
     $('#knowledge-rule-count').textContent = '0 条规则';
     $('#knowledge-rule-list').innerHTML = statusPanelHtml('empty', { title: '尚未编译执行规则', detail: '选择素材或输入创作目标后开始编译。', compact: true });
@@ -2104,6 +2175,8 @@ function renderKnowledge(bundle) {
   }
   const sources = bundle.sources || [];
   const executionContext = bundle.execution_context || null;
+  const skillSnapshot = bundle.skill_snapshot || null;
+  renderDesignMethodControl(skillSnapshot);
   const positiveRules = bundle.positive_rules || [];
   const negativeRules = bundle.negative_rules || [];
   const intentLockRules = bundle.intent_lock_rules || [];
@@ -2113,7 +2186,7 @@ function renderKnowledge(bundle) {
     ...negativeRules.map((item) => ({ kind: 'negative', label: '避坑', text: item?.text || item })),
   ].filter((item) => String(item.text || '').trim());
   const rules = ruleEntries.length;
-  $('#knowledge-summary').textContent = `${sources.length} 份知识 · ${rules} 条执行规则`;
+  $('#knowledge-summary').textContent = `${sources.length} 份依据 · ${rules} 条执行规则`;
   $('#knowledge-rule-count').textContent = `${rules} 条规则`;
   $('#knowledge-rule-list').innerHTML = rules ? ruleEntries.map((item) => `<div class="knowledge-rule-item is-${item.kind}"><span>${item.label}</span><p>${escapeHtml(item.text)}</p></div>`).join('') : statusPanelHtml('empty', { title: '没有额外执行规则', detail: '本次只采用基础安全约束。', compact: true });
   $('#knowledge-source-count').textContent = `${sources.length} 条来源`;
@@ -2127,12 +2200,22 @@ function renderKnowledge(bundle) {
     const canvas = executionContext.canvas_context || {};
     const profile = executionContext.product_profile || null;
     const provider = executionContext.provider_adapter || {};
+    const skillAppliedCount = Array.from(skillSnapshot?.applied_rule_ids || []).length;
+    const skillDetail = skillSnapshot
+      ? `${skillSnapshot.title || '已选设计方法'} · ${skillAppliedCount} 条规则生效 · ${String(skillSnapshot.content_sha256 || '').slice(0, 8)}`
+      : '本次未选用设计方法';
+    const approvedRuleCount = Math.max(
+      0,
+      Number(summary.positive_rule_count || 0) + Number(summary.negative_rule_count || 0) - skillAppliedCount,
+    );
+    const approvedSourceCount = Math.max(0, Number(summary.source_count || 0) - (skillSnapshot ? 1 : 0));
     const layers = [
       ['01', '用户本次意图', executionContext.user_intent?.user_request || executionContext.user_intent?.objective || '使用安全任务目标'],
       ['02', '画布上下文', canvas.document_id ? `已绑定画布 revision ${canvas.expected_revision ?? '?'}` : '当前从快速工作流发起'],
       ['03', '商品档案', profile ? `${profile.name || profile.sku || '已绑定档案'} · v${profile.revision}` : '本次未绑定商品档案'],
-      ['04', '已批准知识', `${Number(summary.source_count || 0)} 条来源 · ${Number(summary.positive_rule_count || 0) + Number(summary.negative_rule_count || 0)} 条规则`],
-      ['05', 'Provider 适配', `${provider.model || '本地处理'} · ${provider.effective_prompt_version || '不使用 Prompt'}`],
+      ['04', '已批准知识', `${approvedSourceCount} 条来源 · ${approvedRuleCount} 条规则`],
+      ['05', '设计方法', skillDetail],
+      ['06', 'Provider 适配', `${provider.model || '本地处理'} · ${provider.effective_prompt_version || '不使用 Prompt'}`],
     ];
     $('#execution-context-status').textContent = `${executionContext.binding === 'job-snapshot' ? '任务已冻结' : '提交前预览'} · ${String(executionContext.context_sha256 || '').slice(0, 8)}`;
     $('#execution-context-layers').innerHTML = layers.map(([index, title, detail]) => `<div class="source-item"><span>${index}</span><div><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail)}</small></div></div>`).join('');
@@ -2326,6 +2409,7 @@ function captureSubmissionDraft() {
       output_ratio: $('#param-output-ratio').value,
       output_resolution: $('#param-output-resolution').value,
       material_profile: getMaterialProfile(mode),
+      design_skill_id: selectedDesignMethodId(mode),
       refine: $('#param-refine').checked,
       ...(mode !== 'cutout-batch' ? {
         prompt_version: getCompactPromptEnabled(mode) ? 'prompt_v3' : 'prompt_v1',
@@ -3205,6 +3289,7 @@ async function openJobResults(jobId) {
     traces: traceResponse?.traces || [],
     generation: { knowledge_refs: job.snapshot?.knowledge_refs || [] },
     executionContext: job.snapshot?.parameters?.execution_context || null,
+    skillSnapshot: job.snapshot?.parameters?.skill_snapshot || null,
   }));
   state.results = {
     main: items.filter((item) => item.role !== 'result_cutout'),
@@ -4393,6 +4478,10 @@ function bindEvents() {
   $('#brief-input').addEventListener('input', scheduleKnowledgeCompile);
   $('#param-model').addEventListener('change', updateQuickControls);
   $('#param-generation-strategy').addEventListener('change', updateQuickControls);
+  $('#param-design-skill').addEventListener('change', () => {
+    renderDesignMethodControl();
+    scheduleKnowledgeCompile();
+  });
   $('#param-angle').addEventListener('change', updateQuickControls);
   $('#param-output-ratio').addEventListener('change', updateQuickControls);
   $('#param-output-resolution').addEventListener('change', updateQuickControls);
@@ -4624,7 +4713,12 @@ async function connectBackend() {
       const health = await API.checkHealth();
       if (health.ok) {
         setBootStatus('正在恢复工作现场', '同步素材、任务和上次保存的创作状态…');
-        try { const status = await API.getKnowledgeStatus(); settingsController.renderKnowledgeStatus(status); } catch (_) { /* keep app usable */ }
+        try {
+          const status = await API.getKnowledgeStatus();
+          state.knowledgeStatus = status;
+          settingsController.renderKnowledgeStatus(status);
+          renderDesignMethodControl();
+        } catch (_) { /* keep app usable */ }
         const [assetsLoaded, jobsLoaded] = await Promise.all([loadAssets(false), loadJobs(true)]);
         if (assetsLoaded !== true || jobsLoaded !== true) {
           setBackendStatus('connecting', '重连中');

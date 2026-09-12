@@ -217,6 +217,7 @@ export function knowledgeBundleFromEvidence({
   traces = [],
   generation = null,
   executionContext = null,
+  skillSnapshot = null,
 } = {}) {
   const sources = [];
   const positiveRules = [];
@@ -269,6 +270,9 @@ export function knowledgeBundleFromEvidence({
   const frozenExecutionContext = executionContext || [...promptTraces].reverse()
     .map((trace) => trace?.parameters?.execution_context)
     .find((item) => item && typeof item === 'object') || null;
+  const frozenSkillSnapshot = skillSnapshot || [...promptTraces].reverse()
+    .map((trace) => trace?.parameters?.skill_snapshot)
+    .find((item) => item && typeof item === 'object') || null;
 
   return {
     creative_brief: traceBrief || brief || {},
@@ -282,6 +286,7 @@ export function knowledgeBundleFromEvidence({
     trace_bound: Boolean(promptTraces.length || generation?.id || generation?.prompt),
     trace_count: promptTraces.length,
     execution_context: frozenExecutionContext,
+    skill_snapshot: frozenSkillSnapshot,
   };
 }
 

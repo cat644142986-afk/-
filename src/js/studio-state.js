@@ -106,6 +106,9 @@ export function snapshotFromDraft(draft, fallback = {}) {
     compact_prompt_enabled: Object.hasOwn(parameters, 'prompt_version')
       ? parameters.prompt_version === 'prompt_v3'
       : Boolean(fallback.compact_prompt_enabled),
+    design_skill_id: Object.hasOwn(parameters, 'design_skill_id')
+      ? String(parameters.design_skill_id || '')
+      : String(fallback.design_skill_id || ''),
     fidelity: Number(parameters.fidelity ?? fallback.fidelity ?? 40),
     batch: Number(parameters.variations ?? parameters.batch ?? fallback.batch ?? 1),
     platter: parameters.platter || fallback.platter || 'auto',
@@ -140,6 +143,7 @@ export function draftPayloadFromSnapshot({ revision, selectedAssetIds, snapshot,
       generation_strategy_source: 'user',
       prompt_version: safe.compact_prompt_enabled ? 'prompt_v3' : 'prompt_v1',
       prompt_version_source: 'user',
+      design_skill_id: safe.design_skill_id || '',
       fidelity: Number(safe.fidelity ?? 40),
       batch: Number(safe.batch ?? 1),
       variations: Number(safe.batch ?? 1),

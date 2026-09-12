@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
 import json
 import os
@@ -32,10 +33,24 @@ from python.asset_store import AssetStore  # noqa: E402
 from python.atelier_ledger import AtelierLedger  # noqa: E402
 from python.job_engine import JobExecutionError  # noqa: E402
 from python.local_edit_contract import image_fingerprint  # noqa: E402
+from python.skill_context import CONTEXT_SKILL_ADAPTER_VERSION  # noqa: E402
 from tests.test_product_profile_ledger import product_profile as product_profile_payload  # noqa: E402
 
 
 TERMINAL_STATUSES = {"completed", "partial", "failed", "canceled"}
+CONTEXT_SKILL_ID = "comfyui-food-product-main-image"
+CONTEXT_SKILL_TEXT = """---
+name: comfyui-food-product-main-image
+description: API test fixture
+---
+
+# ComfyUI 电商食品饮料主图生成技能
+
+极简纯白背景，产品居中。
+柔和柔光箱影棚光线，软阴影。
+自然真实色彩，材质清晰。
+原始模板含无文字水印说明。
+"""
 
 
 def png_bytes(color: tuple[int, int, int]) -> bytes:
@@ -135,6 +150,7 @@ class DurableJobApiTests(unittest.TestCase):
             "_RUNTIME_OUTPUT_ROOT": server._RUNTIME_OUTPUT_ROOT,
             "KNOWLEDGE": server.KNOWLEDGE,
             "JOB_ENGINE": server.JOB_ENGINE,
+            "CONTEXT_SKILL_ROOT": server.CONTEXT_SKILL_ROOT,
         }
         server.LEDGER = self.ledger
         server.ASSET_STORE = self.store
@@ -144,6 +160,7 @@ class DurableJobApiTests(unittest.TestCase):
         server._RUNTIME_OUTPUT_ROOT = self.output_dir
         server.KNOWLEDGE = OfflineKnowledge()
         server.JOB_ENGINE = None
+        server.CONTEXT_SKILL_ROOT = self.root / "skills"
         server.save_config({
             "output_root": str(self.output_dir),
             "known_output_roots": [str(self.output_dir)],
@@ -324,6 +341,12 @@ class DurableJobApiTests(unittest.TestCase):
         if engine is None:
             raise AssertionError("job engine is not running")
         return engine.wait_for_job(job_id, timeout=timeout)
+
+    def write_context_skill(self, text: str = CONTEXT_SKILL_TEXT) -> Path:
+        path = server.CONTEXT_SKILL_ROOT / CONTEXT_SKILL_ID / "SKILL.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
 
     def assert_result_lineage(
         self,
@@ -2242,6 +2265,146 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertEqual(
                 stale.json()["detail"]["code"], "EXECUTION_CONTEXT_STALE"
             )
+
+    def test_context_only_design_method_freezes_into_job_and_prompt_trace(self) -> None:
+        vault = self.root / "knowledge-vault"
+        (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+        server.KNOWLEDGE = server.KnowledgeCompiler(vault)
+        skill_path = self.write_context_skill()
+        with self.live_client() as client:
+            status = client.get("/api/knowledge/status")
+            self.assertEqual(status.status_code, 200, status.text)
+            self.assertTrue(status.json()["design_method"]["available"])
+            source = self.import_asset(client, "skill-context.png", (70, 120, 180))
+            brief = {
+                "objective": "生成食品饮料白底商品主图",
+                "user_request": "严格保留包装上的文字与数字",
+                "output_kind": "ecommerce-main-image",
+                "intent_locks": {"packaging_text": True},
+                "output_spec": {"ratio": "1:1", "resolution": "2k"},
+            }
+            preview_response = client.post("/api/knowledge/compile", json={
+                **brief,
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "model": "gpt-image-2",
+                "prompt_version": "prompt_v1",
+                "generation_strategy": "single_pass",
+                "design_skill_id": CONTEXT_SKILL_ID,
+            })
+            self.assertEqual(preview_response.status_code, 200, preview_response.text)
+            preview_bundle = preview_response.json()
+            preview_context = preview_bundle["execution_context"]
+            preview_skill = preview_bundle["skill_snapshot"]
+            expected_hash = hashlib.sha256(skill_path.read_bytes()).hexdigest()
+            self.assertEqual(expected_hash, preview_skill["content_sha256"])
+            self.assertEqual(
+                CONTEXT_SKILL_ADAPTER_VERSION, preview_skill["adapter_version"]
+            )
+            self.assertEqual("context-only", preview_skill["mode"])
+            self.assertEqual("applied", preview_skill["status"])
+            self.assertEqual(4, len(preview_skill["applied_rule_ids"]))
+            self.assertEqual([], preview_context["extensions"]["skills"])
+            self.assertTrue(any(
+                str(item.get("id") or "").startswith(f"skill:{CONTEXT_SKILL_ID}:")
+                for item in preview_bundle["sources"]
+            ))
+            skill_rule_text = "\n".join(
+                str(item.get("text") or "")
+                for item in preview_bundle["positive_rules"]
+                if isinstance(item, dict)
+                and str((item.get("source") or {}).get("id") or "").startswith("skill:")
+            )
+            self.assertNotIn("无文字", skill_rule_text)
+
+            created = self.create_job(client, {
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "parameters": {
+                    "batch": 1,
+                    "variations": 1,
+                    "model": "gpt-image-2",
+                    "brief": brief,
+                    "intent_locks": brief["intent_locks"],
+                    "prompt_version": "prompt_v1",
+                    "prompt_version_source": "user",
+                    "generation_strategy": "single_pass",
+                    "generation_strategy_source": "user",
+                    "design_skill_id": CONTEXT_SKILL_ID,
+                    "skill_snapshot": {"adapter_version": "forged-client-value"},
+                    "execution_context": preview_context,
+                },
+            })["job"]
+            completed = self.wait_for_job(created["id"])
+            frozen = completed["snapshot"]["parameters"]
+            self.assertEqual(
+                preview_context["context_sha256"],
+                frozen["execution_context"]["context_sha256"],
+            )
+            self.assertEqual(preview_skill, frozen["skill_snapshot"])
+            traces = client.get(f"/api/jobs/{completed['id']}/traces").json()["traces"]
+            primary = next(item for item in traces if item["stage"] == "prompt.primary")
+            self.assertEqual(preview_skill, primary["parameters"]["skill_snapshot"])
+            self.assertTrue(any(
+                evidence.get("kind") == "positive_rule"
+                and str((evidence.get("source") or {}).get("id") or "").startswith("skill:")
+                for evidence in primary["applied_knowledge"]
+            ))
+            self.assertIn("包装上的文字、数字、标签位置与可读性", primary["compiled_prompt"])
+            self.assertNotIn("无文字", primary["compiled_prompt"])
+            self.network_request.assert_not_called()
+
+    def test_context_only_design_method_change_rejects_stale_preview(self) -> None:
+        vault = self.root / "knowledge-vault"
+        (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+        server.KNOWLEDGE = server.KnowledgeCompiler(vault)
+        skill_path = self.write_context_skill()
+        with self.live_client() as client:
+            source = self.import_asset(client, "skill-stale.png", (70, 120, 180))
+            preview_response = client.post("/api/knowledge/compile", json={
+                "objective": "生成白底商品主图",
+                "user_request": "保留包装文字",
+                "mode": "single",
+                "output_kind": "ecommerce-main-image",
+                "source_asset_ids": [source["id"]],
+                "model": "gpt-image-2",
+                "prompt_version": "prompt_v1",
+                "generation_strategy": "single_pass",
+                "design_skill_id": CONTEXT_SKILL_ID,
+            })
+            self.assertEqual(preview_response.status_code, 200, preview_response.text)
+            preview = preview_response.json()["execution_context"]
+            skill_path.write_text(
+                CONTEXT_SKILL_TEXT + "\n附加说明：保持更克制的留白。\n",
+                encoding="utf-8",
+            )
+
+            response = client.post("/api/jobs", json={
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "client_request_id": "context-skill-stale",
+                "parameters": {
+                    "batch": 1,
+                    "model": "gpt-image-2",
+                    "brief": {
+                        "objective": "生成白底商品主图",
+                        "user_request": "保留包装文字",
+                        "output_kind": "ecommerce-main-image",
+                    },
+                    "prompt_version": "prompt_v1",
+                    "prompt_version_source": "user",
+                    "generation_strategy": "single_pass",
+                    "generation_strategy_source": "user",
+                    "design_skill_id": CONTEXT_SKILL_ID,
+                    "execution_context": preview,
+                },
+            })
+
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertEqual(
+                "EXECUTION_CONTEXT_STALE", response.json()["detail"]["code"]
+            )
+            self.network_request.assert_not_called()
 
     def test_bound_profile_version_drives_prompt_and_survives_derived_adjustment(self) -> None:
         vault = self.root / "knowledge-vault"

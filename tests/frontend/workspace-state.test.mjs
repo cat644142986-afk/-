@@ -230,15 +230,26 @@ test('historical workspace recovers execution context from prompt trace evidence
     binding: 'job-snapshot',
     context_sha256: 'b'.repeat(64),
   };
+  const skillSnapshot = {
+    skill_id: 'comfyui-food-product-main-image',
+    version: 'content-51f473282be9',
+    content_sha256: '5'.repeat(64),
+    adapter_version: 'context-skill-adapter-v1',
+    mode: 'context-only',
+  };
   const bundle = knowledgeBundleFromEvidence({
     traces: [{
       stage: 'prompt.primary',
       compiled_prompt: '已编译提示',
-      parameters: { execution_context: executionContext },
+      parameters: {
+        execution_context: executionContext,
+        skill_snapshot: skillSnapshot,
+      },
     }],
   });
 
   assert.deepEqual(bundle.execution_context, executionContext);
+  assert.deepEqual(bundle.skill_snapshot, skillSnapshot);
 });
 
 test('image comparison switches to honest side-by-side mode when aspect ratios differ', () => {

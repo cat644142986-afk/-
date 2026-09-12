@@ -75,6 +75,13 @@ try:
     )
     from knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from memory_engine import MemoryEngine, resolve_approved_memory_rules
+    from skill_context import (
+        ContextSkillError,
+        attach_context_skill,
+        context_skill_status,
+        finalize_context_skill,
+        resolve_context_skill,
+    )
     from grounding_runtime import (
         bundled_model_manifest_path,
         grounding_pack_status,
@@ -174,6 +181,13 @@ except ImportError:  # Allows importing as python.server during local tests.
     )
     from python.knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from python.memory_engine import MemoryEngine, resolve_approved_memory_rules
+    from python.skill_context import (
+        ContextSkillError,
+        attach_context_skill,
+        context_skill_status,
+        finalize_context_skill,
+        resolve_context_skill,
+    )
     from python.grounding_runtime import (
         bundled_model_manifest_path,
         grounding_pack_status,
@@ -270,6 +284,7 @@ _knowledge_path = str(_startup_config.get("knowledge_base_path", "")).strip()
 KNOWLEDGE = KnowledgeCompiler(_knowledge_path) if _knowledge_path else KnowledgeCompiler()
 MEMORY = MemoryEngine(LEDGER)
 GROUNDING_MODEL_MANIFEST_PATH = bundled_model_manifest_path()
+CONTEXT_SKILL_ROOT = Path.home() / ".codex" / "skills"
 
 # Legacy config path for migration. Keep the old location discoverable without
 # embedding one developer's Windows account in the application.
@@ -4163,7 +4178,7 @@ def _build_job_execution_context(
     product_profile_id: str | None = None,
     expected_product_profile_revision: int | None = None,
     frozen_product_profile_version_id: str | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
     product_profile, profile_context = _execution_context_product_profile(
         product_profile_id=product_profile_id,
         expected_product_profile_revision=expected_product_profile_revision,
@@ -4185,6 +4200,20 @@ def _build_job_execution_context(
         and command_id not in {LOCAL_EDIT_GENERATE_COMMAND_ID, IMAGE_TO_VIDEO_COMMAND_ID}
     )
     bundle = _live_knowledge_bundle(scope, applies_to_prompt=applies_to_prompt)
+    selected_skill = None
+    design_skill_id = str(parameters.get("design_skill_id") or "").strip()
+    if design_skill_id:
+        if not applies_to_prompt:
+            raise ContextSkillError(
+                "SKILL_CONTEXT_UNSUPPORTED_WORKFLOW",
+                "该工作流当前不接受设计方法上下文",
+            )
+        selected_skill = resolve_context_skill(
+            design_skill_id,
+            mode=mode,
+            skill_root=CONTEXT_SKILL_ROOT,
+        )
+        bundle = attach_context_skill(bundle, selected_skill)
     govern_bundle = getattr(KNOWLEDGE, "govern_execution_bundle", None)
     if applies_to_prompt and callable(govern_bundle):
         bundle = dict(govern_bundle(
@@ -4196,6 +4225,9 @@ def _build_job_execution_context(
                 ),
             },
         ))
+    skill_snapshot = None
+    if selected_skill is not None:
+        bundle, skill_snapshot = finalize_context_skill(bundle, selected_skill)
     provider_details = {
         "model": str(parameters.get("model") or ""),
         "family": str(model_contract.get("family") or ""),
@@ -4250,7 +4282,7 @@ def _build_job_execution_context(
         provider_context=provider_details,
         binding=binding,
     )
-    return manifest, bundle
+    return manifest, bundle, skill_snapshot
 
 
 def _freeze_job_execution_context(
@@ -4281,12 +4313,20 @@ def _freeze_job_execution_context(
             frozen["knowledge_refs"] = copy.deepcopy(
                 existing_parameters.get("knowledge_refs") or []
             )
+            if isinstance(existing_parameters.get("skill_snapshot"), dict):
+                frozen["skill_snapshot"] = copy.deepcopy(
+                    existing_parameters["skill_snapshot"]
+                )
+            else:
+                frozen.pop("skill_snapshot", None)
         else:
             frozen.pop("execution_context", None)
+            frozen.pop("skill_snapshot", None)
         return frozen
 
     frozen.pop("execution_context", None)
-    manifest, _bundle = _build_job_execution_context(
+    frozen.pop("skill_snapshot", None)
+    manifest, _bundle, skill_snapshot = _build_job_execution_context(
         frozen,
         mode=mode,
         source_asset_ids=source_asset_ids,
@@ -4312,6 +4352,8 @@ def _freeze_job_execution_context(
     frozen["knowledge_refs"] = copy.deepcopy(
         manifest["approved_context"]["sources"]
     )
+    if skill_snapshot is not None:
+        frozen["skill_snapshot"] = skill_snapshot
     return frozen
 
 
@@ -4754,6 +4796,11 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
             status_code=400,
             detail={"code": exc.code, "message": exc.message},
         )
+    except ContextSkillError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        )
     except (sqlite3.IntegrityError, TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=400,
@@ -4860,6 +4907,11 @@ async def create_durable_job(request: JobCreateRequest):
         raise HTTPException(
             status_code=400,
             detail={"code": exc.code, "stage": exc.stage, "message": exc.message},
+        )
+    except ContextSkillError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(
@@ -5296,7 +5348,10 @@ async def retry_durable_job(job_id: str, request: Optional[JobRetryRequest] = No
 @app.get("/api/knowledge/status")
 async def knowledge_status():
     refresh_runtime_config()
-    return KNOWLEDGE.status()
+    return {
+        **KNOWLEDGE.status(),
+        "design_method": context_skill_status(skill_root=CONTEXT_SKILL_ROOT),
+    }
 
 
 @app.post("/api/knowledge/reload")
@@ -5331,7 +5386,7 @@ async def compile_knowledge(data: dict):
         ]
         parameters = dict(context)
         parameters["brief"] = dict(context)
-        manifest, bundle = _build_job_execution_context(
+        manifest, bundle, skill_snapshot = _build_job_execution_context(
             parameters,
             mode=mode,
             source_asset_ids=source_asset_ids,
@@ -5343,7 +5398,24 @@ async def compile_knowledge(data: dict):
             product_profile_id=str(context.get("product_profile_id") or "").strip() or None,
             expected_product_profile_revision=context.get("expected_product_profile_revision"),
         )
-        return {**bundle, "execution_context": manifest}
+        return {
+            **bundle,
+            "execution_context": manifest,
+            "skill_snapshot": skill_snapshot,
+        }
+    except ContextSkillError as exc:
+        raise HTTPException(
+            status_code=(
+                400
+                if exc.code in {
+                    "SKILL_CONTEXT_NOT_ALLOWED",
+                    "SKILL_CONTEXT_UNSUPPORTED_MODE",
+                    "SKILL_CONTEXT_UNSUPPORTED_WORKFLOW",
+                }
+                else 409
+            ),
+            detail={"code": exc.code, "message": exc.message},
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

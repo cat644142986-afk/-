@@ -269,6 +269,9 @@ test('production shell uses DWM system corners without a hard-clipped resize reg
   assert.match(css, /\.traffic-light \{[^}]*width: 28px; height: 28px/);
   assert.match(css, /\.traffic-light::before \{[^}]*width: 12px; height: 12px/);
   assert.match(html, /<strong>设计依据<\/strong>/);
+  assert.match(html, /<span>设计方法<\/span>/);
+  assert.match(html, /id="param-design-skill"/);
+  assert.match(html, /只读设计方法/);
   assert.match(html, /<strong>任务中心<\/strong>/);
   assert.doesNotMatch(html, />Studio<\/span>/);
   assert.match(css, /\.canvas-empty::before \{[^}]*background-image:/);
