@@ -1,0 +1,172 @@
+{
+  "format_version": 1,
+  "kind": "product-atelier-p1-closure-validation",
+  "status": "validated",
+  "validated_at_utc": "2026-09-12T09:01:56.7901965Z",
+  "contract": {
+    "id": "product-atelier-pwc-v1",
+    "version": 1,
+    "closed_priority": "P1",
+    "required_priorities": [
+      "P0",
+      "P1"
+    ],
+    "p2_blocks_internal_follow_up_research_and_development": false
+  },
+  "product_release": {
+    "branch": "codex/excalidraw-infinite-canvas",
+    "git_commit": "ba4671b76ff3de54c1f99d5d6fa02018c83e3511",
+    "product_version": "1.0.0",
+    "runtime_contract_version": "2026-09-02.4",
+    "ledger_schema_version": 9,
+    "source_fingerprint": "4FC4EC97BA0DB8107563A22A10660C04371E0511517EEE3B3CF2B8C2682ADDA6",
+    "app_sha256": "802519ADE0D8BBEA3E3B90A3922D9B255C26BA65A17967A2A44C55A038E5C64B",
+    "sidecar_sha256": "A6CD9E5D6AB9A88201BD49C9ADD9683762526BAC5880C807768DA8ECC7F88A3E",
+    "manifest_sha256": "3602A4C91FC9AD0C47E3647D397C41E9F773C6768B89BA9C1F804621553B2486",
+    "tree_sha256": "C45F0CD027E82B933B9A2D584908EA8588C5311D767D95890DF2085E91378370",
+    "formal_path": "D:\\ProductAtelier-Desktop\\release\\ProductAtelier-Portable\\Product Atelier.exe",
+    "formal_tree_reverified": true,
+    "formal_package_changed_during_closure": false
+  },
+  "desktop_entry": {
+    "path": "C:\\Users\\64414\\Desktop\\Product Atelier.lnk",
+    "target": "D:\\ProductAtelier-Desktop\\release\\ProductAtelier-Portable\\Product Atelier.exe",
+    "working_directory": "D:\\ProductAtelier-Desktop\\release\\ProductAtelier-Portable",
+    "reverified": true,
+    "changed_during_closure": false
+  },
+  "evidence_bindings": {
+    "candidate_identity": {
+      "path": "build/portable-candidate-current.identity.json",
+      "sha256": "E1C3F86DD9D2F93D79AFDDC42D5232B0716821A524A15EF12A4089441386D5B7"
+    },
+    "base_validated_receipt": {
+      "path": "build/portable-validated-stage.json",
+      "sha256": "B0EA9CEB8990B87C4B06F22FB0C6C02114AD300AED289610311AAEA4C7AB4CDC",
+      "status": "validated",
+      "validated_at_utc": "2026-09-09T10:38:52.4823703Z",
+      "relationship": "sealed release receipt extended by this additive P1 closure receipt; the original is not mutated because promotion is bound to its hash"
+    },
+    "promotion_receipt": {
+      "path": "D:\\ProductAtelier-Backups\\release-before-20260909-183927-ba4671b76ff3-promotion-evidence.json",
+      "sha256": "8C8FDCC286C916ED3686621C595B4CE5D8322EAC2E56345CBF95A620C44B05DC",
+      "status": "finalized",
+      "transaction_id": "08b4d3105ae945bcb2b10cb7e5a41356",
+      "rollback_backup": "D:\\ProductAtelier-Backups\\release-before-20260909-183927-ba4671b76ff3"
+    },
+    "p0_packaged_recovery_evidence": {
+      "path": "build/pwc1-manual-evidence-25e361c",
+      "file_count": 7,
+      "tree_sha256": "D231DB94C9168747AA853ACC126F073DB2D88C9BCE537ECBCA633CF9734AB3E3"
+    },
+    "p0_zero_cost_restart_evidence": {
+      "path": "build/pwc2-manual-d21dab0",
+      "file_count": 3,
+      "tree_sha256": "88C7F2D2512C244EBB267A9A5688FEA78660FA6E7983E163BF9ECB03054D3175"
+    },
+    "p0_provider_roundtrip_evidence": {
+      "path": "build/pwc2-provider-canary-d21dab0",
+      "file_count": 4,
+      "tree_sha256": "D6543F4FF88D0AB364FD9944BB084E64AF46AA889ED1F387F29E43F42C3C56EC"
+    },
+    "p1_packaged_manual_receipt": {
+      "path": "build/pwc-p1-packaged-manual-ba4671b/verification-receipt.json",
+      "sha256": "B1E0147300055D1CCE9E03D7A4025A456F44732F63BCBE9C5A678B0BB690B939",
+      "status": "passed",
+      "artifact_count": 9,
+      "additional_provider_calls": 0,
+      "clean_exit": true
+    },
+    "p1_live_provider_canary": {
+      "path": "build/pwc3c-live-canary-20260909-1836/pwc3c-live-provider-canary.json",
+      "sha256": "B42EFCB93DFD3231EC1052074CE5732A9511B39D6B6D95B717E4A3C384012555",
+      "status": "passed",
+      "workflow": "outpaint",
+      "authorized_provider_calls": 1,
+      "attempt_count": 1,
+      "automatic_paid_retry": false,
+      "provider_resubmitted_after_recovery": false,
+      "protected_changed_pixels": 0,
+      "candidate_identity_match": true
+    }
+  },
+  "automated_verification": {
+    "tested_git_commit": "ba4671b76ff3de54c1f99d5d6fa02018c83e3511",
+    "completed_at_utc": "2026-09-12T09:01:56.7901965Z",
+    "suites": [
+      {
+        "command": "python -m unittest discover -s tests",
+        "status": "passed",
+        "passed": 552,
+        "skipped": 4,
+        "failed": 0
+      },
+      {
+        "command": "npm test",
+        "status": "passed",
+        "passed": 276,
+        "skipped": 0,
+        "failed": 0
+      },
+      {
+        "command": "cargo test --manifest-path src-tauri/Cargo.toml",
+        "status": "passed",
+        "passed": 43,
+        "skipped": 0,
+        "failed": 0
+      },
+      {
+        "command": "node --test tests/frontend/pwc-workflow-acceptance.test.mjs",
+        "status": "passed",
+        "scope": "post-binding contract and closure-receipt consistency",
+        "passed": 9,
+        "skipped": 0,
+        "failed": 0
+      }
+    ]
+  },
+  "workflow_closure": [
+    {
+      "id": "core-image-iteration",
+      "priority": "P0",
+      "status": "closed"
+    },
+    {
+      "id": "canvas-fine-edit-roundtrip",
+      "priority": "P0",
+      "status": "closed"
+    },
+    {
+      "id": "failure-and-recovery",
+      "priority": "P0",
+      "status": "closed"
+    },
+    {
+      "id": "exposed-multi-source-workflows",
+      "priority": "P1",
+      "status": "closed",
+      "basis": "Current automated workflow and recovery tests plus exact-candidate packaged UI acceptance and the exact-candidate bounded outpaint provider canary satisfy the combined evidence classes."
+    },
+    {
+      "id": "profile-and-governed-learning",
+      "priority": "P1",
+      "status": "closed",
+      "basis": "Current automated immutable-version and frozen-governance tests plus exact-candidate creation, history, task binding, and source-evidence UI acceptance satisfy the required evidence classes."
+    }
+  ],
+  "closure_decision": {
+    "p1": "closed",
+    "real_implementation_gap_found": false,
+    "evidence_gap_remaining": false,
+    "provider_calls_during_closure": 0,
+    "product_runtime_code_changed": false,
+    "formal_package_changed": false,
+    "p2_public_signed_distribution": "open_non_blocking"
+  },
+  "non_blocking_boundaries": [
+    "P2 public code signing and signed distribution remain separate from internal product R&D.",
+    "The provider response did not expose a billable amount; attempt count and authorization consumption are reconciled, but the monetary amount remains unavailable.",
+    "The optional semantic grounding model pack remains external to the slim formal package and manual selection remains the supported fallback.",
+    "Raw packaged-manual screenshots and historical promotion evidence remain machine-local; this tracked receipt preserves their exact paths, hashes, and closure assertions."
+  ]
+}

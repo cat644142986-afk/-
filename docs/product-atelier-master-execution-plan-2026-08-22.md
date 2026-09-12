@@ -1,11 +1,11 @@
 # Product Atelier 完整产品与开发执行总计划
 
-> 首次制定：2026-08-22；最近校准：2026-09-08<br>
-> 当前状态：R0、R0A 与 R1–R9 已关闭，Phase 0–9 的当前范围已进入正式便携版。独立无限画布 G1C 的 ADR、隔离 PoC 与 IC2–IC6 已完成；IC6 先达到 **CLOSED / VALIDATED STAGE**，并在 2026-09-08 获得用户明确授权后，通过独立的 `Validated -> Promote` 事务链正式提升。当前正式 artifact 为 `146e198a2a90a68d425f6252d0f800e96faede0a`、contract `2026-09-02.4`、SQLite schema v8，正式目录 sidecar/App 双 smoke 与桌面入口启动身份均通过；上一正式版 `93539f0 / contract .3 / schema v7` 保存在外部完整备份。Fabric.js 7.4.0 生产自由画布、分段图层、可逆编辑、逐像素原始素材 PNG 导出、`ProductProfile` 商品档案、严格 ROI / Mask / LocalEditSpec / composition、结果血缘、undo/redo、outpaint 只写新增区域、空间 scene、视频任务/封面/原文件与恢复链均已进入正式版。实验自动定位模型因最高安全召回仅 69.39% 继续外置；生图仍保留稳定的 `prompt_v1 + 完整双阶段` 默认和显式快速单次，v3 因透明商品阻断失败不做全局默认。同身份未签名 NSIS 已通过隔离安装生命周期，但没有外部代码签名证书，不能作为公开签名发布。桌面现在只保留指向固定正式目录的 `Product Atelier.lnk`；下一产品阶段仍需用户另行指定。<br>
-> 当前开发分支：`codex/excalidraw-infinite-canvas`（基于 `codex/master-roadmap-phase-0-1` 的 `9faf87e`）<br>
+> 首次制定：2026-08-22；最近校准：2026-09-12<br>
+> 当前状态：R0、R0A、R1–R9、IC2–IC6 以及当前 PWC 合同要求的 P0/P1 均已关闭。当前正式便携版产品身份为 `ba4671b76ff3de54c1f99d5d6fa02018c83e3511`、产品版本 `1.0.0`、运行时 contract `2026-09-02.4`、SQLite schema v9；正式目录与候选目录的 App、sidecar 和完整树哈希一致，桌面入口仍指向固定正式目录。P1 通过不改写原始 `Validated` 收据的补充收口凭证绑定当前自动化、精确候选交互验收与同身份实时 Provider canary；旧 `pwc1_plan` 仅保留为历史实施分解，不再代表活动阶段。P2 公开签名发行仍未完成，但只约束公开分发，不阻塞内部研发。实验自动定位模型继续外置，手动选择仍是正式回退；正式包与产品运行时代码在本次 P1 收口中没有变化。<br>
+> 当前开发分支：`codex/excalidraw-infinite-canvas`；正式产品提交：`ba4671b76ff3de54c1f99d5d6fa02018c83e3511`<br>
 > 实施前基线：`baseline-2026-08-22-before-master-roadmap`<br>
 > 专项需求：`docs/next-iteration-workspace-learning-plan-2026-08-22.md`<br>
-> 本文定位：Product Atelier 后续开发的唯一主路线图；专项文档补充细节，但不得与本文冲突。
+> 本文定位：Product Atelier 后续开发的主路线图；PWC 的当前验收与关闭状态以 `docs/contracts/pwc-workflow-acceptance-v1.json` 及其哈希绑定的 closure receipt 为准，旧阶段标签不得覆盖该事实源。
 
 ### 跨电脑与平台执行边界（2026-08-28）
 

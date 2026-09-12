@@ -1,9 +1,10 @@
 {
   "contract_id": "product-atelier-pwc-v1",
   "contract_version": 1,
-  "status": "active",
+  "status": "p1_closed",
   "scope": "Close the workflows already exposed by Product Atelier without adding new product capabilities.",
   "baseline": {
+    "role": "historical audit starting point; not the current release identity",
     "branch": "codex/excalidraw-infinite-canvas",
     "commit": "e7f8ee3c52cf410e4e698200025c1ee9e074bd1e",
     "upstream_commit": "2eb137c2eee27e975728523f485cb2d115b5fd7c"
@@ -11,12 +12,39 @@
   "formal_release": {
     "path": "D:\\ProductAtelier-Desktop\\release\\ProductAtelier-Portable\\Product Atelier.exe",
     "product_version": "1.0.0",
-    "git_commit": "146e198a2a90a68d425f6252d0f800e96faede0a",
+    "git_commit": "ba4671b76ff3de54c1f99d5d6fa02018c83e3511",
     "contract_version": "2026-09-02.4",
-    "ledger_schema_version": 8,
-    "source_fingerprint": "C1195FFE88CCA5CD36D2EAB99C3E8167B740FB38870069787A38AC8164A76A85",
-    "app_sha256": "FC8C0158D6CE9BBB6F3A5F93B94D3A866E66F004FBC801A76EF0B006A70F2B1A",
-    "sidecar_sha256": "F68A15A2DC18D926ECF2E4527018ECCCBDC100D14605725DAD8D80192AA41C49"
+    "ledger_schema_version": 9,
+    "source_fingerprint": "4FC4EC97BA0DB8107563A22A10660C04371E0511517EEE3B3CF2B8C2682ADDA6",
+    "app_sha256": "802519ADE0D8BBEA3E3B90A3922D9B255C26BA65A17967A2A44C55A038E5C64B",
+    "sidecar_sha256": "A6CD9E5D6AB9A88201BD49C9ADD9683762526BAC5880C807768DA8ECC7F88A3E",
+    "manifest_sha256": "3602A4C91FC9AD0C47E3647D397C41E9F773C6768B89BA9C1F804621553B2486",
+    "tree_sha256": "C45F0CD027E82B933B9A2D584908EA8588C5311D767D95890DF2085E91378370",
+    "candidate_identity_sha256": "E1C3F86DD9D2F93D79AFDDC42D5232B0716821A524A15EF12A4089441386D5B7"
+  },
+  "p1_closure": {
+    "status": "closed",
+    "validated_at_utc": "2026-09-12T09:01:56.7901965Z",
+    "product_release_git_commit": "ba4671b76ff3de54c1f99d5d6fa02018c83e3511",
+    "closure_receipt": {
+      "path": "docs/reports/product-atelier-p1-closure-ba4671b.json",
+      "sha256": "9CEC51FE6A7DC797D005AABDECAF59CB732F88B185E5ACAA0A280CE4E9E2D62A",
+      "status": "validated"
+    },
+    "base_validated_receipt": {
+      "path": "build/portable-validated-stage.json",
+      "sha256": "B0EA9CEB8990B87C4B06F22FB0C6C02114AD300AED289610311AAEA4C7AB4CDC"
+    },
+    "promotion_receipt": {
+      "path": "D:\\ProductAtelier-Backups\\release-before-20260909-183927-ba4671b76ff3-promotion-evidence.json",
+      "sha256": "8C8FDCC286C916ED3686621C595B4CE5D8322EAC2E56345CBF95A620C44B05DC"
+    },
+    "closure_method": "Evidence-only additive closure against an unchanged formal tree. The sealed base Validated receipt remains immutable because promotion is bound to its exact hash.",
+    "implementation_gap_found": false,
+    "product_runtime_changed_during_closure": false,
+    "formal_package_changed_during_closure": false,
+    "provider_calls_during_closure": 0,
+    "p2_public_signed_distribution": "open_non_blocking"
   },
   "gates": {
     "feature_freeze_release_requires": [
@@ -36,7 +64,8 @@
       "Validated",
       "Promote",
       "Update Desktop Entry"
-    ]
+    ],
+    "evidence_only_post_promotion_closure": "Allowed only when the formal tree still exactly matches the sealed candidate, no implementation gap exists, and an additive closure receipt binds the later acceptance evidence without mutating the promoted Validated receipt."
   },
   "state_policy": {
     "pwc2_entry_requirement": "Before PWC-2 implementation, classify every state used by the two P0 production workflows as durable or ephemeral and approve its recovery owner.",
@@ -98,6 +127,7 @@
     {
       "id": "core-image-iteration",
       "priority": "P0",
+      "status": "closed",
       "entry": "A durable imported product asset is selected in the single-product workflow.",
       "exit": "The original result and its reviewed adjustment are traceable, exportable, and recoverable after restart.",
       "steps": [
@@ -122,6 +152,7 @@
     {
       "id": "canvas-fine-edit-roundtrip",
       "priority": "P0",
+      "status": "closed",
       "entry": "A durable image or result node with a valid asset reference is selected in the spatial canvas.",
       "exit": "A fine-edit child result is committed, returned to the originating spatial canvas, exported, and recoverable after restart.",
       "steps": [
@@ -147,6 +178,7 @@
     {
       "id": "failure-and-recovery",
       "priority": "P0",
+      "status": "closed",
       "entry": "A workspace, canvas, task, asset, or provider dependency fails or becomes stale.",
       "exit": "The user can understand the failure, choose a valid next action, and recover or stop without data loss or hidden paid work.",
       "steps": [
@@ -169,6 +201,7 @@
     {
       "id": "exposed-multi-source-workflows",
       "priority": "P1",
+      "status": "closed",
       "entry": "The user starts an already-exposed multi-file, group-split, batch-cutout, semantic-selection, or outpaint workflow.",
       "exit": "The batch or derived results are individually traceable, partially recoverable, and delivered to the declared output location.",
       "acceptance": [
@@ -186,6 +219,7 @@
     {
       "id": "profile-and-governed-learning",
       "priority": "P1",
+      "status": "closed",
       "entry": "A product profile or result review is committed.",
       "exit": "Version binding and governed knowledge application are visible in the next task trace without rewriting history.",
       "acceptance": [
@@ -202,7 +236,11 @@
     }
   ],
   "pwc1_plan": {
+    "status": "completed",
+    "historical": true,
     "implementation_started": true,
+    "implementation_completed": true,
+    "superseded_for_status_tracking_by": "p1_closure",
     "estimated_engineering_days": "3-4",
     "tasks": [
       {
