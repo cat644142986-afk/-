@@ -2595,6 +2595,221 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertEqual(stale_response.json()["detail"]["code"], "EXECUTION_CONTEXT_STALE")
             self.assertEqual(len(self.ai_calls), 1)
 
+    def test_spatial_result_variation_reuses_governed_image_task_with_exact_result_lineage(self) -> None:
+        vault = self.root / "knowledge-vault"
+        (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+        server.KNOWLEDGE = server.KnowledgeCompiler(vault)
+        self.write_context_skill()
+        with self.live_client() as client:
+            source = self.import_asset(client, "result-variation-source.png", (70, 120, 180))
+            stored_source = self.ledger.get_asset(source["id"])
+            result_path = self.output_dir / "existing-result-with-logo.png"
+            result_bytes = png_bytes((75, 125, 185))
+            result_path.write_bytes(result_bytes)
+            selected_result = self.ledger.add_asset(
+                stored_source["session_id"],
+                "result_main",
+                parent_asset_id=source["id"],
+                path=str(result_path),
+                name=result_path.name,
+                mime="image/png",
+                width=24,
+                height=18,
+                sha256=hashlib.sha256(result_bytes).hexdigest(),
+            )
+            with self.assertRaisesRegex(KeyError, "unknown workspace assets"):
+                self.ledger.create_job(
+                    "single",
+                    [selected_result["id"]],
+                    engine_key="cloud-workflow",
+                    parameters={"batch": 1, "spatial_action": "generate-image"},
+                    idempotency_key="result-variation-without-canvas-binding",
+                    max_attempts=1,
+                    command_id=server.SPATIAL_IMAGE_AI_COMMAND_ID,
+                )
+            profile = self.ledger.save_product_profile(
+                expected_revision=0,
+                client_request_id="result-variation-profile-v1",
+                profile=product_profile_payload(source["id"]),
+            )
+            profile_version_id = profile["version"]["id"]
+            result_element = {
+                "id": "selected-result-element",
+                "type": "image",
+                "x": 120,
+                "y": 80,
+                "width": 420,
+                "height": 300,
+                "isDeleted": False,
+                "customData": {
+                    "asset_id": selected_result["id"],
+                    "result_id": selected_result["id"],
+                    "task_id": None,
+                    "product_profile_version_id": profile_version_id,
+                    "lineage_parent_id": source["id"],
+                },
+            }
+            scene = {
+                "schema_version": 1,
+                "elements": [result_element],
+                "app_state": copy.deepcopy(server.DEFAULT_SPATIAL_APP_STATE)
+                if hasattr(server, "DEFAULT_SPATIAL_APP_STATE") else {
+                    "viewBackgroundColor": "#d4d0cb",
+                    "currentItemRoughness": 0,
+                    "currentItemStrokeStyle": "solid",
+                    "currentItemFillStyle": "solid",
+                    "gridSize": 20,
+                    "gridStep": 5,
+                    "gridModeEnabled": False,
+                    "zoom": {"value": 1},
+                    "scrollX": 0,
+                    "scrollY": 0,
+                },
+                "files": {},
+            }
+            canvas = self.ledger.create_spatial_canvas(
+                name="Result 生图变体",
+                client_request_id="result-variation-spatial-canvas",
+                scene=scene,
+            )
+            brief = {
+                "objective": "基于当前结果生成同系列高质量电商主图变体",
+                "user_request": "保持包装文字和 Logo，生成同系列构图变体",
+                "output_kind": "ecommerce-main-image",
+                "output_spec": {"ratio": "1:1", "resolution": "2k"},
+                "intent_locks": {
+                    "subject_shape": True,
+                    "product_count": True,
+                    "packaging_text": True,
+                    "logo": True,
+                },
+            }
+            preview_request = {
+                **brief,
+                "mode": "single",
+                "command_id": server.SPATIAL_IMAGE_AI_COMMAND_ID,
+                "source_asset_ids": [selected_result["id"]],
+                "model": "gpt-image-2",
+                "prompt_version": "prompt_v1",
+                "generation_strategy": "single_pass",
+                "design_skill_id": CONTEXT_SKILL_ID,
+                "spatial_action": server.SPATIAL_RESULT_VARIATION_ACTION,
+                "spatial_canvas_id": canvas["id"],
+                "spatial_source_element_id": result_element["id"],
+            }
+            preview_response = client.post("/api/knowledge/compile", json=preview_request)
+            self.assertEqual(preview_response.status_code, 200, preview_response.text)
+            preview_bundle = preview_response.json()
+            preview = preview_bundle["execution_context"]
+            spatial = preview_bundle["spatial_context"]
+            self.assertEqual(spatial["source_asset_id"], selected_result["id"])
+            self.assertEqual(spatial["lineage_parent_id"], selected_result["id"])
+            self.assertEqual(
+                preview["canvas_context"]["operation_id"],
+                f"spatial-result-variation:{spatial['fingerprint']}",
+            )
+
+            # Geometry, viewport and unrelated objects do not affect this execution.
+            unrelated_scene = copy.deepcopy(scene)
+            unrelated_scene["app_state"]["zoom"] = {"value": 0.6}
+            unrelated_scene["app_state"]["scrollY"] = -240
+            unrelated_scene["elements"][0]["x"] = 760
+            unrelated_scene["elements"].append({
+                "id": "unrelated-result-note",
+                "type": "rectangle",
+                "x": 20,
+                "y": 20,
+                "width": 180,
+                "height": 80,
+                "isDeleted": False,
+            })
+            self.ledger.save_spatial_canvas_scene(
+                canvas["id"],
+                expected_revision=1,
+                client_request_id="result-variation-unrelated-scene-change",
+                scene=unrelated_scene,
+            )
+            command_response = client.post(
+                f"/api/commands/{server.SPATIAL_IMAGE_AI_COMMAND_ID}/execute",
+                json={
+                    "client_request_id": "spatial-result-variation-job",
+                    "source_asset_ids": [selected_result["id"]],
+                    "max_attempts": 1,
+                    "spatial_canvas_id": canvas["id"],
+                    "spatial_source_element_id": result_element["id"],
+                    "parameters": {
+                        "batch": 1,
+                        "variations": 1,
+                        "model": "gpt-image-2",
+                        "brief": brief,
+                        "intent_locks": brief["intent_locks"],
+                        "prompt_version": "prompt_v1",
+                        "prompt_version_source": "user",
+                        "generation_strategy": "single_pass",
+                        "generation_strategy_source": "user",
+                        "design_skill_id": CONTEXT_SKILL_ID,
+                        "spatial_action": server.SPATIAL_RESULT_VARIATION_ACTION,
+                        "provider_call_confirmed": True,
+                        "automatic_paid_retry": False,
+                        "execution_context": preview,
+                    },
+                },
+            )
+            self.assertEqual(command_response.status_code, 200, command_response.text)
+            completed = self.wait_for_job(command_response.json()["job"]["id"])
+            self.assertIn(completed["status"], {"completed", "partial"}, completed)
+            self.assertEqual(completed["snapshot"]["source_asset_ids"], [selected_result["id"]])
+            self.assertEqual(completed["paid_call_authorization"]["max_calls"], 1)
+            frozen = completed["snapshot"]["parameters"]
+            self.assertEqual(frozen["spatial_action"], server.SPATIAL_RESULT_VARIATION_ACTION)
+            self.assertEqual(frozen["spatial_context_fingerprint"], spatial["fingerprint"])
+            self.assertEqual(frozen["skill_snapshot"], preview_bundle["skill_snapshot"])
+            self.assert_result_lineage(client, completed, {selected_result["id"]: 2})
+            traces = client.get(f"/api/jobs/{completed['id']}/traces").json()["traces"]
+            primary = next(item for item in traces if item["stage"] == "prompt.primary")
+            self.assertIn("包装上的文字、数字、标签位置与可读性", primary["compiled_prompt"])
+            self.assertIn("TEST BRAND", primary["compiled_prompt"])
+            self.assertIn("主 Logo", primary["compiled_prompt"])
+            self.network_request.assert_not_called()
+
+            changed_scene = copy.deepcopy(unrelated_scene)
+            changed_scene["elements"][0]["customData"]["result_id"] = source["id"]
+            self.ledger.save_spatial_canvas_scene(
+                canvas["id"],
+                expected_revision=2,
+                client_request_id="result-variation-source-rebound",
+                scene=changed_scene,
+            )
+            stale_response = client.post(
+                f"/api/commands/{server.SPATIAL_IMAGE_AI_COMMAND_ID}/execute",
+                json={
+                    "client_request_id": "spatial-result-variation-stale",
+                    "source_asset_ids": [selected_result["id"]],
+                    "max_attempts": 1,
+                    "spatial_canvas_id": canvas["id"],
+                    "spatial_source_element_id": result_element["id"],
+                    "parameters": {
+                        "batch": 1,
+                        "model": "gpt-image-2",
+                        "brief": brief,
+                        "intent_locks": brief["intent_locks"],
+                        "prompt_version": "prompt_v1",
+                        "prompt_version_source": "user",
+                        "generation_strategy": "single_pass",
+                        "generation_strategy_source": "user",
+                        "design_skill_id": CONTEXT_SKILL_ID,
+                        "spatial_action": server.SPATIAL_RESULT_VARIATION_ACTION,
+                        "execution_context": preview,
+                    },
+                },
+            )
+            self.assertEqual(stale_response.status_code, 409, stale_response.text)
+            self.assertEqual(
+                stale_response.json()["detail"]["code"],
+                "SPATIAL_EXECUTION_CONTEXT_STALE",
+            )
+            self.assertEqual(len(self.ai_calls), 1)
+
     def test_bound_profile_version_drives_prompt_and_survives_derived_adjustment(self) -> None:
         vault = self.root / "knowledge-vault"
         (vault / "20 知识库" / "设计知识").mkdir(parents=True)

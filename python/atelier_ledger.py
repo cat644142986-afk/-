@@ -6984,6 +6984,7 @@ class AtelierLedger:
         expected_product_profile_revision: int | None = None,
         frozen_product_profile_version_id: str | None = None,
         local_edit_spec_id: str | None = None,
+        allow_result_sources: bool = False,
     ) -> tuple[dict[str, Any], bool]:
         source_asset_ids = [str(asset_id) for asset_id in source_asset_ids]
         if mode not in {"single", "multi-file", "group-split", "cutout-batch"}:
@@ -6999,10 +7000,13 @@ class AtelierLedger:
         if command["execution_kind"] != "durable-job" or command["mode"] != mode:
             raise ValueError(f"command {command['id']} does not execute workflow mode {mode}")
         command_id = str(command["id"])
-        allow_result_sources = command_id in {
+        result_sources_allowed = command_id in {
             "command:local-edit-generate",
             "command:image-to-video",
-        }
+        } or (
+            bool(allow_result_sources)
+            and command_id == "command:existing-generate-single"
+        )
         canvas_document_id = str(canvas_document_id or "").strip() or None
         canvas_operation_id = str(canvas_operation_id or "").strip() or None
         if canvas_document_id is None:
@@ -7268,7 +7272,7 @@ class AtelierLedger:
                         source_asset_ids=source_asset_ids,
                     )
                 placeholders = ",".join("?" for _ in source_asset_ids)
-                if allow_result_sources:
+                if result_sources_allowed:
                     rows = connection.execute(
                         f"""
                         SELECT a.id, a.role, a.kind, a.mime, a.metadata_json
@@ -7291,7 +7295,7 @@ class AtelierLedger:
                 missing = [asset_id for asset_id in source_asset_ids if asset_id not in found]
                 if missing:
                     raise KeyError(f"unknown workspace assets: {', '.join(missing)}")
-                if allow_result_sources:
+                if result_sources_allowed:
                     for row in rows:
                         _require_pixel_editable_image_asset(
                             row,

@@ -4526,8 +4526,14 @@ def _validate_job_request(mode: str, source_asset_ids: list[str], parameters: di
 
 LOCAL_EDIT_GENERATE_COMMAND_ID = "command:local-edit-generate"
 IMAGE_TO_VIDEO_COMMAND_ID = "command:image-to-video"
-SPATIAL_WHITE_BACKGROUND_COMMAND_ID = "command:existing-generate-single"
+SPATIAL_IMAGE_AI_COMMAND_ID = "command:existing-generate-single"
+SPATIAL_WHITE_BACKGROUND_COMMAND_ID = SPATIAL_IMAGE_AI_COMMAND_ID
 SPATIAL_WHITE_BACKGROUND_ACTION = "white-background"
+SPATIAL_RESULT_VARIATION_ACTION = "generate-image"
+SPATIAL_IMAGE_AI_ACTIONS = {
+    SPATIAL_WHITE_BACKGROUND_ACTION,
+    SPATIAL_RESULT_VARIATION_ACTION,
+}
 VIDEO_OUTPUT_DIMENSIONS = {
     "1:1": (320, 320),
     "16:9": (320, 180),
@@ -4546,19 +4552,28 @@ class SpatialExecutionContextError(ValueError):
         self.message = str(message)
 
 
-def _spatial_white_background_binding(
+def _spatial_image_ai_binding(
     *,
+    action: Any,
     spatial_canvas_id: Any,
     spatial_source_element_id: Any,
     source_asset_ids: list[str],
 ) -> dict[str, Any]:
     """Resolve task-affecting canvas facts without binding unrelated scene edits."""
+    action_id = str(action or "").strip()
+    if action_id not in SPATIAL_IMAGE_AI_ACTIONS:
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_INVALID",
+            "当前 Canvas Native AI 动作不受支持",
+        )
+    title = "白底图" if action_id == SPATIAL_WHITE_BACKGROUND_ACTION else "生图变体"
+    source_label = "原始素材" if action_id == SPATIAL_WHITE_BACKGROUND_ACTION else "Result"
     canvas_id = str(spatial_canvas_id or "").strip()
     element_id = str(spatial_source_element_id or "").strip()
     if not canvas_id or not element_id or len(source_asset_ids) != 1:
         raise SpatialExecutionContextError(
             "SPATIAL_EXECUTION_CONTEXT_INVALID",
-            "白底图需要一张已保存到当前无限画布的原始素材",
+            f"{title}需要一个已保存到当前无限画布的{source_label}",
         )
     try:
         canvas = LEDGER.get_spatial_canvas(canvas_id)
@@ -4578,30 +4593,38 @@ def _spatial_white_background_binding(
         )
     refs = element.get("customData") if isinstance(element.get("customData"), dict) else {}
     source_asset_id = str(source_asset_ids[0] or "").strip()
-    if (
-        str(element.get("type") or "") != "image"
-        or str(refs.get("asset_id") or "") != source_asset_id
-        or bool(refs.get("result_id"))
-    ):
+    element_is_image = str(element.get("type") or "") == "image"
+    element_asset_matches = str(refs.get("asset_id") or "") == source_asset_id
+    element_result_id = str(refs.get("result_id") or "").strip()
+    source_semantics_match = (
+        not element_result_id
+        if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
+        else element_result_id == source_asset_id
+    )
+    if not element_is_image or not element_asset_matches or not source_semantics_match:
         raise SpatialExecutionContextError(
             "SPATIAL_EXECUTION_CONTEXT_STALE",
-            "所选对象已不再是本次白底图的原始素材，请重新预览",
+            f"所选对象已不再是本次{title}的{source_label}，请重新预览",
         )
     try:
         asset = LEDGER.get_asset(source_asset_id)
     except KeyError as exc:
         raise SpatialExecutionContextError(
             "SPATIAL_EXECUTION_CONTEXT_STALE",
-            "所选原始素材已不可用，请重新选择",
+            f"所选{source_label}已不可用，请重新选择",
         ) from exc
-    if (
-        str(asset.get("role") or "") != "workspace_source"
-        or str(asset.get("kind") or "image") != "image"
-        or not str(asset.get("mime") or "").startswith("image/")
-    ):
+    asset_role = str(asset.get("role") or "")
+    role_matches = (
+        asset_role == "workspace_source"
+        if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
+        else asset_role.startswith("result_")
+    )
+    if not role_matches or str(asset.get("kind") or "image") != "image" or not str(
+        asset.get("mime") or ""
+    ).startswith("image/"):
         raise SpatialExecutionContextError(
             "SPATIAL_EXECUTION_CONTEXT_INVALID",
-            "白底图当前只接受无限画布中的原始图片素材",
+            f"{title}当前只接受无限画布中的图片{source_label}",
         )
 
     profile_version_id = str(refs.get("product_profile_version_id") or "").strip()
@@ -4618,12 +4641,16 @@ def _spatial_white_background_binding(
     # excluded because they do not alter this source-driven execution.
     semantic_anchor = {
         "contract_version": "spatial-execution-anchor-v1",
-        "action": SPATIAL_WHITE_BACKGROUND_ACTION,
+        "action": action_id,
         "spatial_canvas_id": str(canvas["id"]),
         "source_element_id": element_id,
         "source_asset_id": source_asset_id,
         "product_profile_version_id": profile_version_id,
-        "lineage_parent_id": str(refs.get("lineage_parent_id") or ""),
+        "lineage_parent_id": (
+            str(refs.get("lineage_parent_id") or "")
+            if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
+            else source_asset_id
+        ),
     }
     fingerprint = hashlib.sha256(json.dumps(
         semantic_anchor,
@@ -4634,7 +4661,11 @@ def _spatial_white_background_binding(
     return {
         **semantic_anchor,
         "fingerprint": fingerprint,
-        "operation_id": f"spatial-white-background:{fingerprint}",
+        "operation_id": (
+            f"spatial-white-background:{fingerprint}"
+            if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
+            else f"spatial-result-variation:{fingerprint}"
+        ),
         "scene_revision_observed": int(canvas.get("current_revision") or 0),
         "scene_version_id_observed": str(canvas.get("current_version_id") or ""),
     }
@@ -4774,24 +4805,20 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
         validate_command_sources(command, source_asset_ids)
         refresh_runtime_config()
         spatial_binding = None
-        spatial_white_background_requested = (
-            str(command["id"]) == SPATIAL_WHITE_BACKGROUND_COMMAND_ID
+        spatial_image_ai_requested = (
+            str(command["id"]) == SPATIAL_IMAGE_AI_COMMAND_ID
             and (
                 str(request.spatial_canvas_id or "").strip()
                 or str(request.spatial_source_element_id or "").strip()
                 or str((request.parameters or {}).get("spatial_action") or "").strip()
             )
         )
-        if spatial_white_background_requested:
-            if (
-                str((request.parameters or {}).get("spatial_action") or "").strip()
-                != SPATIAL_WHITE_BACKGROUND_ACTION
-            ):
-                raise SpatialExecutionContextError(
-                    "SPATIAL_EXECUTION_CONTEXT_INVALID",
-                    "当前无限画布命令只支持白底图最小闭环",
-                )
-            spatial_binding = _spatial_white_background_binding(
+        if spatial_image_ai_requested:
+            spatial_action = str(
+                (request.parameters or {}).get("spatial_action") or ""
+            ).strip()
+            spatial_binding = _spatial_image_ai_binding(
+                action=spatial_action,
                 spatial_canvas_id=request.spatial_canvas_id,
                 spatial_source_element_id=request.spatial_source_element_id,
                 source_asset_ids=source_asset_ids,
@@ -4809,7 +4836,7 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
             parameters = _normalize_job_parameters(mode, request.parameters or {})
         if spatial_binding is not None:
             parameters.update({
-                "spatial_action": SPATIAL_WHITE_BACKGROUND_ACTION,
+                "spatial_action": spatial_binding["action"],
                 "spatial_canvas_id": spatial_binding["spatial_canvas_id"],
                 "spatial_source_element_id": spatial_binding["source_element_id"],
                 "spatial_context_fingerprint": spatial_binding["fingerprint"],
@@ -4905,6 +4932,10 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
                 if spatial_binding is not None else None
             ),
             local_edit_spec_id=request.local_edit_spec_id,
+            allow_result_sources=bool(
+                spatial_binding is not None
+                and spatial_binding["action"] == SPATIAL_RESULT_VARIATION_ACTION
+            ),
         )
         _wake_job_engine()
         return {"job": job, "created": created, "command": command}
@@ -5563,16 +5594,13 @@ async def compile_knowledge(data: dict):
             or str(context.get("spatial_action") or "").strip()
         )
         if spatial_requested:
-            if (
-                command_id != SPATIAL_WHITE_BACKGROUND_COMMAND_ID
-                or str(context.get("spatial_action") or "").strip()
-                != SPATIAL_WHITE_BACKGROUND_ACTION
-            ):
+            if command_id != SPATIAL_IMAGE_AI_COMMAND_ID:
                 raise SpatialExecutionContextError(
                     "SPATIAL_EXECUTION_CONTEXT_INVALID",
-                    "当前无限画布预览只支持白底图最小闭环",
+                    "当前命令不支持 Canvas Native AI 执行上下文",
                 )
-            spatial_binding = _spatial_white_background_binding(
+            spatial_binding = _spatial_image_ai_binding(
+                action=context.get("spatial_action"),
                 spatial_canvas_id=context.get("spatial_canvas_id"),
                 spatial_source_element_id=context.get("spatial_source_element_id"),
                 source_asset_ids=source_asset_ids,

@@ -4,6 +4,8 @@ import test from 'node:test';
 import { createInfiniteCanvasWorkspaceController } from '../../src/js/infinite-canvas-workspace.js';
 
 const SOURCE_ASSET_ID = 'ast_0123456789abcdef0123456789abcdef';
+const RESULT_ASSET_ID = 'ast_11111111111111111111111111111111';
+const VARIATION_ASSET_ID = 'ast_22222222222222222222222222222222';
 
 function deferred() {
   let resolve;
@@ -98,13 +100,13 @@ function createFakeDocument() {
   form.children.set('[data-spatial-video-confirm]', confirmation);
   form.children.set('button[type="submit"]', submit);
   form.children.set('[data-spatial-video-status]', status);
-  const whiteForm = node('[data-spatial-white-form]');
-  const whiteSubmit = node('[data-spatial-white-form] button[type="submit"]');
-  const whiteStatus = node('[data-spatial-white-status]');
-  const whitePreview = node('[data-spatial-white-preview]');
-  whiteForm.children.set('button[type="submit"]', whiteSubmit);
-  whiteForm.children.set('[data-spatial-white-status]', whiteStatus);
-  whiteForm.children.set('[data-spatial-white-preview]', whitePreview);
+  const imageAiForm = node('[data-spatial-image-ai-form]');
+  const imageAiSubmit = node('[data-spatial-image-ai-form] button[type="submit"]');
+  const imageAiStatus = node('[data-spatial-image-ai-status]');
+  const imageAiPreview = node('[data-spatial-image-ai-preview]');
+  imageAiForm.children.set('button[type="submit"]', imageAiSubmit);
+  imageAiForm.children.set('[data-spatial-image-ai-status]', imageAiStatus);
+  imageAiForm.children.set('[data-spatial-image-ai-preview]', imageAiPreview);
 
   const listeners = new Map();
   return {
@@ -200,6 +202,25 @@ function sourceElement(canvasId) {
     height: 240,
     isDeleted: false,
     customData: { asset_id: SOURCE_ASSET_ID },
+  };
+}
+
+function resultElement(canvasId) {
+  return {
+    id: `result-${canvasId}`,
+    type: 'image',
+    x: 360,
+    y: 0,
+    width: 320,
+    height: 240,
+    isDeleted: false,
+    customData: {
+      asset_id: RESULT_ASSET_ID,
+      result_id: RESULT_ASSET_ID,
+      task_id: null,
+      product_profile_version_id: 'profilever:result-v1',
+      lineage_parent_id: SOURCE_ASSET_ID,
+    },
   };
 }
 
@@ -405,9 +426,31 @@ function completedWhiteBackgroundJob(canvasId = 'canvas:a', status = 'completed'
   };
 }
 
+function completedResultVariationJob(canvasId = 'canvas:a', status = 'completed') {
+  const parameters = {
+    spatial_action: 'generate-image',
+    spatial_canvas_id: canvasId,
+    spatial_source_element_id: `result-${canvasId}`,
+  };
+  return {
+    id: 'job_result_variation_a',
+    mode: 'single',
+    status,
+    parameters,
+    snapshot: {
+      command_id: 'command:existing-generate-single',
+      parameters,
+      source_asset_ids: [RESULT_ASSET_ID],
+      product_profile_version_id: 'profilever:result-v1',
+    },
+    items: [{ result_asset_ids: status === 'completed' ? [VARIATION_ASSET_ID] : [] }],
+  };
+}
+
 function createHarness({
   api: apiOverrides = {},
   createCanvas,
+  getImageAiDefaults,
   getWhiteBackgroundDefaults,
   mutateBusinessItems = false,
   onImportFiles,
@@ -426,6 +469,7 @@ function createHarness({
           name: '测试商品',
           kind: assetId === SOURCE_ASSET_ID ? 'image' : 'video',
           role: assetId === SOURCE_ASSET_ID ? 'workspace_source' : 'result_video',
+          mime: assetId === SOURCE_ASSET_ID ? 'image/png' : 'video/webm',
           width: 320,
           height: 240,
         },
@@ -443,6 +487,7 @@ function createHarness({
     windowRef: clock.windowRef,
     api,
     adapter: adapterState.adapter,
+    getImageAiDefaults,
     getWhiteBackgroundDefaults,
     onImportFiles,
     runtimeLoader: runtimeLoader || (async () => runtimeState.runtime),
@@ -708,7 +753,7 @@ test('a white-background submission resolved after switching from A to B never m
   assert.equal(previewCalls[0].spatial_source_element_id, source.id);
 
   await harness.documentRef.node('#page-canvas').emit('submit', {
-    target: harness.documentRef.node('[data-spatial-white-form]'),
+    target: harness.documentRef.node('[data-spatial-image-ai-form]'),
   });
   await waitFor(() => executeCalls.length === 1, 'white-background command was not submitted');
   assert.equal(executeCalls[0].payload.spatial_canvas_id, 'canvas:a');
@@ -719,6 +764,99 @@ test('a white-background submission resolved after switching from A to B never m
   await settle();
   const mountB = harness.mounts.get('canvas:b');
   execution.resolve({ job: completedWhiteBackgroundJob('canvas:a', 'running') });
+  await settle(20);
+
+  assert.equal(harness.controller.currentId, 'canvas:b');
+  assert.equal(mountA.calls.addBusinessItemsOnce.length, 0);
+  assert.equal(mountB.calls.addBusinessItemsOnce.length, 0);
+  assert.equal(mountB.calls.updateTask.length, 0);
+  harness.controller.destroy();
+});
+
+test('Result variation submits the exact selected Result through the shared Canvas AI preview', async () => {
+  const execution = deferred();
+  const executeCalls = [];
+  const previewCalls = [];
+  const harness = createHarness({
+    getImageAiDefaults: () => ({
+      designSkillId: 'comfyui-food-product-main-image',
+    }),
+    api: {
+      async getAsset(assetId) {
+        return {
+          asset: {
+            id: assetId,
+            name: assetId === RESULT_ASSET_ID ? '带包装文字的现有结果' : '生图变体',
+            kind: 'image',
+            role: 'result_main',
+            mime: 'image/png',
+            width: 320,
+            height: 240,
+            lineage_parent_id: assetId === RESULT_ASSET_ID ? SOURCE_ASSET_ID : RESULT_ASSET_ID,
+          },
+        };
+      },
+      async compileKnowledge(payload) {
+        previewCalls.push(payload);
+        return {
+          execution_context: {
+            binding: 'preview',
+            context_sha256: 'e'.repeat(64),
+            summary: { source_count: 2, positive_rule_count: 6 },
+            user_intent: { user_request: payload.user_request },
+            provider_adapter: { model: payload.model },
+          },
+          spatial_context: {
+            action: 'generate-image',
+            spatial_canvas_id: payload.spatial_canvas_id,
+            source_element_id: payload.spatial_source_element_id,
+            source_asset_id: payload.source_asset_ids[0],
+            lineage_parent_id: payload.source_asset_ids[0],
+            fingerprint: 'f'.repeat(64),
+          },
+          skill_snapshot: {
+            title: '食品饮料白底主图',
+            version: 'content-test',
+            content_sha256: 'a'.repeat(64),
+            adapter_version: 'context-skill-adapter-v1',
+          },
+        };
+      },
+      async executeCommand(commandId, payload) {
+        executeCalls.push({ commandId, payload });
+        return execution.promise;
+      },
+    },
+  });
+  harness.records.get('canvas:a').scene = scene('result-canvas-a', [resultElement('canvas:a')]);
+  harness.controller.bind();
+  const mountA = await activateAndOpen(harness, 'canvas:a');
+  const result = resultElement('canvas:a');
+  mountA.options.onSelectionChange(result);
+  await settle();
+  const action = new FakeElement('[data-spatial-action]');
+  action.dataset.spatialAction = 'generate-image';
+  await harness.documentRef.node('#page-canvas').emit('click', { target: action });
+
+  assert.equal(previewCalls.length, 1);
+  assert.deepEqual(previewCalls[0].source_asset_ids, [RESULT_ASSET_ID]);
+  assert.equal(previewCalls[0].spatial_action, 'generate-image');
+  assert.equal(previewCalls[0].spatial_source_element_id, result.id);
+
+  await harness.documentRef.node('#page-canvas').emit('submit', {
+    target: harness.documentRef.node('[data-spatial-image-ai-form]'),
+  });
+  await waitFor(() => executeCalls.length === 1, 'Result variation command was not submitted');
+  assert.equal(executeCalls[0].commandId, 'command:existing-generate-single');
+  assert.deepEqual(executeCalls[0].payload.source_asset_ids, [RESULT_ASSET_ID]);
+  assert.equal(executeCalls[0].payload.parameters.spatial_action, 'generate-image');
+  assert.equal(executeCalls[0].payload.parameters.automatic_paid_retry, false);
+  assert.equal(executeCalls[0].payload.max_attempts, 1);
+
+  await harness.controller.openCanvas('canvas:b');
+  await settle();
+  const mountB = harness.mounts.get('canvas:b');
+  execution.resolve({ job: completedResultVariationJob('canvas:a', 'running') });
   await settle(20);
 
   assert.equal(harness.controller.currentId, 'canvas:b');
@@ -760,6 +898,53 @@ test('reopening a canvas restores its white-background task and result exactly o
   const durable = harness.adapter.get('canvas:a').scene.elements;
   assert.equal(durable.filter((element) => element.customData?.task_id === job.id && !element.customData?.result_id).length, 1);
   assert.equal(durable.filter((element) => element.customData?.result_id === 'ast_white_background_result').length, 1);
+  harness.controller.destroy();
+});
+
+test('reopening a canvas restores Result variation with the selected Result as lineage parent', async () => {
+  const job = completedResultVariationJob('canvas:a');
+  const harness = createHarness({
+    mutateBusinessItems: true,
+    api: {
+      async getJobs() { return { jobs: [job] }; },
+      async getAsset(assetId) {
+        return {
+          asset: {
+            id: assetId,
+            name: assetId === RESULT_ASSET_ID ? '现有结果' : '生图变体',
+            kind: 'image',
+            role: 'result_main',
+            mime: 'image/png',
+            width: 320,
+            height: 240,
+            lineage_parent_id: assetId === RESULT_ASSET_ID ? SOURCE_ASSET_ID : RESULT_ASSET_ID,
+          },
+        };
+      },
+    },
+  });
+  harness.records.get('canvas:a').scene = scene('result-canvas-a', [resultElement('canvas:a')]);
+  const mountA = await activateAndOpen(harness, 'canvas:a');
+  await waitFor(() => (
+    harness.adapter.get('canvas:a').scene.elements.some((element) => (
+      element.customData?.result_id === VARIATION_ASSET_ID
+    ))
+  ), 'Result variation was not recovered');
+
+  assert.equal(mountA.calls.addBusinessItemsOnce.length, 2);
+  const resultCall = mountA.calls.addBusinessItemsOnce.find((items) => (
+    items.some((item) => item.references?.result_id === VARIATION_ASSET_ID)
+  ));
+  assert.ok(resultCall);
+  assert.equal(resultCall[0].references.lineage_parent_id, RESULT_ASSET_ID);
+  const durable = harness.adapter.get('canvas:a').scene.elements;
+  assert.equal(durable.filter((element) => element.customData?.task_id === job.id && !element.customData?.result_id).length, 1);
+  assert.equal(durable.filter((element) => element.customData?.result_id === VARIATION_ASSET_ID).length, 1);
+  assert.equal(
+    durable.find((element) => element.customData?.result_id === VARIATION_ASSET_ID)
+      ?.customData?.lineage_parent_id,
+    RESULT_ASSET_ID,
+  );
   harness.controller.destroy();
 });
 

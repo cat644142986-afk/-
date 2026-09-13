@@ -23,20 +23,24 @@ import {
   updateSpatialVideoDraft,
 } from './spatial-video.js';
 import {
-  SPATIAL_WHITE_BACKGROUND_COMMAND_ID,
-  SPATIAL_WHITE_BACKGROUND_SKILL_ID,
-  applySpatialWhiteBackgroundPreview,
-  createSpatialWhiteBackgroundDraft,
-  isSpatialWhiteBackgroundJob,
-  spatialWhiteBackgroundCanvasId,
-  spatialWhiteBackgroundCommandPayload,
-  spatialWhiteBackgroundJobIsActive,
-  spatialWhiteBackgroundJobIsSettled,
-  spatialWhiteBackgroundPreviewPayload,
-  spatialWhiteBackgroundResultAssetIds,
-  spatialWhiteBackgroundSourceElementId,
-  updateSpatialWhiteBackgroundDraft,
-} from './spatial-white-background.js';
+  SPATIAL_IMAGE_AI_COMMAND_ID,
+  SPATIAL_IMAGE_AI_SKILL_ID,
+  SPATIAL_RESULT_VARIATION_ACTION,
+  SPATIAL_WHITE_BACKGROUND_ACTION,
+  applySpatialImageAiPreview,
+  createSpatialImageAiDraft,
+  isSpatialImageAiJob,
+  spatialImageAiAction,
+  spatialImageAiCanvasId,
+  spatialImageAiCommandPayload,
+  spatialImageAiDefinition,
+  spatialImageAiJobIsActive,
+  spatialImageAiJobIsSettled,
+  spatialImageAiPreviewPayload,
+  spatialImageAiResultAssetIds,
+  spatialImageAiSourceElementId,
+  updateSpatialImageAiDraft,
+} from './spatial-native-image-ai.js';
 
 const ACTION_COPY = Object.freeze({
   cutout: '抠图',
@@ -148,7 +152,7 @@ function shortHash(value) {
   return hash ? hash.slice(0, 12) : '—';
 }
 
-function whiteBackgroundDraftHtml(draft, asset, {
+function imageAiDraftHtml(draft, asset, {
   previewing = false,
   submitting = false,
   error = '',
@@ -158,6 +162,7 @@ function whiteBackgroundDraftHtml(draft, asset, {
   const context = preview?.executionContext || null;
   const skill = preview?.skillSnapshot || null;
   const summary = context?.summary || {};
+  const definition = spatialImageAiDefinition(draft.action);
   const providerCalls = draft.productProfileVersionId ? 1 : 2;
   const busy = previewing || submitting;
   const primaryLabel = submitting
@@ -169,18 +174,18 @@ function whiteBackgroundDraftHtml(draft, asset, {
         : '重新核对执行上下文';
   const skillOptions = `
     <option value=""${draft.designSkillId ? '' : ' selected'}>默认方法 · 不额外引用</option>
-    <option value="${SPATIAL_WHITE_BACKGROUND_SKILL_ID}"${draft.designSkillId === SPATIAL_WHITE_BACKGROUND_SKILL_ID ? ' selected' : ''}>食品饮料白底主图</option>
+    <option value="${SPATIAL_IMAGE_AI_SKILL_ID}"${draft.designSkillId === SPATIAL_IMAGE_AI_SKILL_ID ? ' selected' : ''}>食品饮料白底主图</option>
   `;
   return `
-    <form class="spatial-white-form" data-spatial-white-form novalidate>
-      <div class="spatial-white-form__heading"><span>CANVAS NATIVE AI</span><strong>白底图</strong><small>提交前核对本次真正生效的上下文</small></div>
-      <label class="spatial-white-form__wide"><span>本次要求</span><textarea data-spatial-white-field="userRequest" maxlength="1200" rows="4" ${busy ? 'disabled' : ''}>${escapeHtml(draft.userRequest)}</textarea><small>主体结构、数量、包装文字与 Logo 始终锁定。</small></label>
-      <label class="spatial-white-form__wide"><span>设计方法</span><select data-spatial-white-field="designSkillId" ${busy ? 'disabled' : ''}>${skillOptions}</select><small>只读贡献设计规则，不执行脚本或 Provider。</small></label>
-      <section class="spatial-context-preview" data-spatial-white-preview aria-live="polite">
+    <form class="spatial-white-form" data-spatial-image-ai-form novalidate>
+      <div class="spatial-white-form__heading"><span>CANVAS NATIVE AI</span><strong>${escapeHtml(definition.title)}</strong><small>提交前核对本次真正生效的上下文</small></div>
+      <label class="spatial-white-form__wide"><span>本次要求</span><textarea data-spatial-image-ai-field="userRequest" maxlength="1200" rows="4" ${busy ? 'disabled' : ''}>${escapeHtml(draft.userRequest)}</textarea><small>主体结构、数量、包装文字与 Logo 始终锁定。</small></label>
+      <label class="spatial-white-form__wide"><span>设计方法</span><select data-spatial-image-ai-field="designSkillId" ${busy ? 'disabled' : ''}>${skillOptions}</select><small>只读贡献设计规则，不执行脚本或 Provider。</small></label>
+      <section class="spatial-context-preview" data-spatial-image-ai-preview aria-live="polite">
         ${preview ? `
           <dl>
             <div><dt>用户意图</dt><dd>${escapeHtml(context?.user_intent?.user_request || draft.userRequest)}</dd></div>
-            <div><dt>Canvas Context</dt><dd>所选原始素材 · ${escapeHtml(shortHash(preview.spatialContext?.fingerprint))}</dd></div>
+            <div><dt>Canvas Context</dt><dd>${escapeHtml(definition.sourceLabel)} · ${escapeHtml(shortHash(preview.spatialContext?.fingerprint))}</dd></div>
             <div><dt>Product Profile</dt><dd>${draft.productProfileVersionId ? `已冻结 · ${escapeHtml(shortHash(draft.productProfileVersionId))}` : '未绑定 · 将先识别素材'}</dd></div>
             <div><dt>Approved Knowledge</dt><dd>${Number(summary.source_count || 0)} 条来源 · ${Number(summary.positive_rule_count || 0) + Number(summary.negative_rule_count || 0)} 条规则</dd></div>
             <div><dt>设计方法</dt><dd>${skill ? `${escapeHtml(skill.title || '食品饮料白底主图')} · ${escapeHtml(skill.version || '')}<br><small>hash ${escapeHtml(shortHash(skill.content_sha256))} · ${escapeHtml(skill.adapter_version || '')}</small>` : '默认方法'}</dd></div>
@@ -188,10 +193,10 @@ function whiteBackgroundDraftHtml(draft, asset, {
           </dl>
         ` : `<p>${previewing ? '正在从账本编译执行上下文…' : '要求已变化，请重新核对后再提交。'}</p>`}
       </section>
-      <p class="spatial-white-form__status" data-spatial-white-status${error ? ' data-error="true" tabindex="-1"' : ''}>${escapeHtml(error || (preview ? '上下文已冻结；点击确认后才会创建正式任务。' : '尚未发起 Provider 调用。'))}</p>
+      <p class="spatial-white-form__status" data-spatial-image-ai-status aria-live="polite"${error ? ' data-error="true" tabindex="-1"' : ''}>${escapeHtml(error || (preview ? '上下文已冻结；点击确认后才会创建正式任务。' : '尚未发起 Provider 调用。'))}</p>
       <div class="spatial-white-form__actions">
-        <button type="button" data-spatial-white-classic ${busy ? 'disabled' : ''}>到经典页调整</button>
-        <button type="button" data-spatial-white-cancel ${busy ? 'disabled' : ''}>取消</button>
+        <button type="button" data-spatial-image-ai-classic ${busy ? 'disabled' : ''}>到经典页调整</button>
+        <button type="button" data-spatial-image-ai-cancel ${busy ? 'disabled' : ''}>取消</button>
         <button type="submit" class="is-primary" ${busy ? 'disabled' : ''}>${primaryLabel}</button>
       </div>
       <p class="spatial-white-form__source">来源：${escapeHtml(asset?.name || draft.sourceAssetId)} · 失败后不自动付费重试</p>
@@ -241,6 +246,14 @@ export function createInfiniteCanvasWorkspaceController({
   onWhiteBackgroundJobSettled = () => {},
   onWhiteBackgroundClassic = () => {},
   getWhiteBackgroundDefaults = () => ({}),
+  onImageAiJobSubmitted = onWhiteBackgroundJobSubmitted,
+  onImageAiJobSettled = onWhiteBackgroundJobSettled,
+  onImageAiClassic = (action, context) => (
+    action === SPATIAL_WHITE_BACKGROUND_ACTION
+      ? onWhiteBackgroundClassic(context)
+      : onAction(action, context)
+  ),
+  getImageAiDefaults = getWhiteBackgroundDefaults,
   onRecoveryAction = () => {},
   resolveProxyUrl = (assetId) => api.getAssetThumbnailUrl(assetId, 960),
   resolveVideoAsset = (assetId, options) => defaultVideoAssetResolver(api, assetId, options),
@@ -278,15 +291,15 @@ export function createInfiniteCanvasWorkspaceController({
   let videoPollEpoch = 0;
   let videoRecoveryAttempt = 0;
   let videoRecoveryPending = false;
-  let whiteBackgroundDraft = null;
-  let whiteBackgroundPreviewing = false;
-  let whiteBackgroundSubmitting = false;
-  let whiteBackgroundDraftError = '';
+  let imageAiDraft = null;
+  let imageAiPreviewing = false;
+  let imageAiSubmitting = false;
+  let imageAiDraftError = '';
   let emptySceneRecoveryPromise = null;
   const activeVideoJobIds = new Set();
   const notifiedVideoJobs = new Set();
-  const activeWhiteBackgroundJobIds = new Set();
-  const notifiedWhiteBackgroundJobs = new Set();
+  const activeImageAiJobIds = new Set();
+  const notifiedImageAiJobs = new Set();
 
   function setSpatialStatus(text, { kind = '', action = '', actionLabel = '' } = {}) {
     const status = query('#spatial-save-state');
@@ -400,8 +413,8 @@ export function createInfiniteCanvasWorkspaceController({
     if (selectionChanged) {
       videoDraft = null;
       videoDraftError = '';
-      whiteBackgroundDraft = null;
-      whiteBackgroundDraftError = '';
+      imageAiDraft = null;
+      imageAiDraftError = '';
       selectedAsset = null;
     }
     selectedElement = element || null;
@@ -434,10 +447,10 @@ export function createInfiniteCanvasWorkspaceController({
       <div class="spatial-inspector__copy"><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></div>
       <div class="spatial-inspector__actions">${actions.map((action) => `<button type="button" data-spatial-action="${action}"${action === 'fine-edit' ? ' class="is-primary"' : ''}>${ACTION_COPY[action]}</button>`).join('')}</div>
       ${videoDraft?.sourceAssetId === refs.asset_id ? videoDraftHtml(videoDraft, selectedAsset, { submitting: videoSubmitting, error: videoDraftError }) : ''}
-      ${whiteBackgroundDraft?.sourceAssetId === refs.asset_id ? whiteBackgroundDraftHtml(whiteBackgroundDraft, selectedAsset, {
-        previewing: whiteBackgroundPreviewing,
-        submitting: whiteBackgroundSubmitting,
-        error: whiteBackgroundDraftError,
+      ${imageAiDraft?.sourceAssetId === refs.asset_id ? imageAiDraftHtml(imageAiDraft, selectedAsset, {
+        previewing: imageAiPreviewing,
+        submitting: imageAiSubmitting,
+        error: imageAiDraftError,
       }) : ''}
     `;
     inspector.hidden = false;
@@ -449,7 +462,7 @@ export function createInfiniteCanvasWorkspaceController({
     videoPollTimer = null;
     if (clearJobs) {
       activeVideoJobIds.clear();
-      activeWhiteBackgroundJobIds.clear();
+      activeImageAiJobIds.clear();
     }
     if (resetRecovery) {
       videoRecoveryAttempt = 0;
@@ -617,7 +630,7 @@ export function createInfiniteCanvasWorkspaceController({
       !active
       || !session
       || !canvasSessionIsCurrent(session)
-      || (!activeVideoJobIds.size && !activeWhiteBackgroundJobIds.size)
+      || (!activeVideoJobIds.size && !activeImageAiJobIds.size)
     ) return;
     videoRecoveryAttempt = 0;
     videoRecoveryPending = false;
@@ -642,18 +655,18 @@ export function createInfiniteCanvasWorkspaceController({
           }
         }
       }
-      for (const jobId of [...activeWhiteBackgroundJobIds]) {
+      for (const jobId of [...activeImageAiJobIds]) {
         let job = null;
         try {
           const response = await api.getJob(jobId);
           job = response?.job || response;
-          await reconcileWhiteBackgroundJob(job, { schedule: false, session });
+          await reconcileImageAiJob(job, { schedule: false, session });
         } catch (error) {
           if (permanentVideoRecoveryError(error)) {
-            activeWhiteBackgroundJobIds.delete(String(jobId));
+            activeImageAiJobIds.delete(String(jobId));
             permanentError ||= error;
-            if (job && spatialWhiteBackgroundJobIsSettled(job)) {
-              await notifyWhiteBackgroundJobSettled(job);
+            if (job && spatialImageAiJobIsSettled(job)) {
+              await notifyImageAiJobSettled(job);
             }
           } else {
             recoveryNeeded = true;
@@ -717,10 +730,10 @@ export function createInfiniteCanvasWorkspaceController({
     await Promise.resolve(onVideoJobSettled(job)).catch(() => {});
   }
 
-  function whiteBackgroundTaskItem(job, session = captureCanvasSession()) {
+  function imageAiTaskItem(job, session = captureCanvasSession()) {
     const parameters = job?.parameters || job?.snapshot?.parameters || {};
     const sourceAssetId = String(job?.snapshot?.source_asset_ids?.[0] || '');
-    const sourceElementId = spatialWhiteBackgroundSourceElementId(job);
+    const sourceElementId = spatialImageAiSourceElementId(job);
     const sourceElement = currentCanvasElements(session).find((element) => (
       !element?.isDeleted
       && (
@@ -735,10 +748,10 @@ export function createInfiniteCanvasWorkspaceController({
     });
   }
 
-  async function persistWhiteBackgroundJobAssociation(job, session = captureCanvasSession()) {
-    const ownerId = spatialWhiteBackgroundCanvasId(job);
+  async function persistImageAiJobAssociation(job, session = captureCanvasSession()) {
+    const ownerId = spatialImageAiCanvasId(job);
     if (!session || !ownerId || ownerId !== session.canvasId) {
-      throw new Error('白底图任务与当前画布的持久关联不一致');
+      throw new Error('Canvas Native AI 任务与当前画布的持久关联不一致');
     }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (!canvasSessionIsCurrent(session)) return { persisted: false, deferred: true };
@@ -746,7 +759,7 @@ export function createInfiniteCanvasWorkspaceController({
       if (sceneHasVideoTask(durableScene, job.id) && sceneHasVideoTask(session.island.getScene?.(), job.id)) {
         return { persisted: true, replayed: attempt > 0 };
       }
-      await session.island.addBusinessItemsOnce([whiteBackgroundTaskItem(job, session)]);
+      await session.island.addBusinessItemsOnce([imageAiTaskItem(job, session)]);
       if (!canvasSessionIsCurrent(session)) return { persisted: false, deferred: true };
       if (!pendingScenes.has(ownerId) && !sceneHasVideoTask(durableScene, job.id)) {
         queueScene(session.island.getScene?.(), session);
@@ -758,15 +771,15 @@ export function createInfiniteCanvasWorkspaceController({
         return { persisted: true, replayed: attempt > 0 };
       }
     }
-    throw new Error('白底图任务已创建，但画布关联保存失败；返回画布会自动恢复且不会重复调用');
+    throw new Error('Canvas Native AI 任务已创建，但画布关联保存失败；返回画布会自动恢复且不会重复调用');
   }
 
-  async function whiteBackgroundResultItems(job, session = captureCanvasSession()) {
+  async function imageAiResultItems(job, session = captureCanvasSession()) {
     if (!session || !canvasSessionIsCurrent(session)) return [];
     const context = taskContext(job?.id, currentCanvasElements(session));
-    const resultAssetIds = spatialWhiteBackgroundResultAssetIds(job);
+    const resultAssetIds = spatialImageAiResultAssetIds(job);
     if (!resultAssetIds.length) {
-      throw videoRecoveryError('白底图任务缺少结果合同', {
+      throw videoRecoveryError('Canvas Native AI 任务缺少结果合同', {
         permanent: true,
         code: 'SPATIAL_IMAGE_RESULT_CONTRACT_MISSING',
       });
@@ -777,12 +790,12 @@ export function createInfiniteCanvasWorkspaceController({
         return response?.asset || response || null;
       } catch (error) {
         if (permanentVideoRecoveryError(error)) {
-          throw videoRecoveryError('白底图结果素材已不存在', {
+          throw videoRecoveryError('Canvas Native AI 结果素材已不存在', {
             permanent: true,
             code: 'SPATIAL_IMAGE_RESULT_ASSET_MISSING',
           });
         }
-        throw new Error('白底图结果暂不可用，正在自动恢复');
+        throw new Error('Canvas Native AI 结果暂不可用，正在自动恢复');
       }
     }));
     return assets.map((asset) => spatialItemFromAsset(asset, {
@@ -797,29 +810,29 @@ export function createInfiniteCanvasWorkspaceController({
     }));
   }
 
-  async function reconcileWhiteBackgroundJob(job, {
+  async function reconcileImageAiJob(job, {
     schedule = true,
     session = captureCanvasSession(),
   } = {}) {
-    if (!isSpatialWhiteBackgroundJob(job) || !job?.id) return null;
+    if (!isSpatialImageAiJob(job) || !job?.id) return null;
     if (!session || !canvasSessionIsCurrent(session)) return null;
-    const ownerId = spatialWhiteBackgroundCanvasId(job);
+    const ownerId = spatialImageAiCanvasId(job);
     if (ownerId && ownerId !== session.canvasId) return null;
-    if (spatialWhiteBackgroundJobIsActive(job)) {
-      activeWhiteBackgroundJobIds.add(String(job.id));
+    if (spatialImageAiJobIsActive(job)) {
+      activeImageAiJobIds.add(String(job.id));
     } else {
-      activeWhiteBackgroundJobIds.delete(String(job.id));
+      activeImageAiJobIds.delete(String(job.id));
     }
     const association = ownerId
-      ? await persistWhiteBackgroundJobAssociation(job, session)
+      ? await persistImageAiJobAssociation(job, session)
       : null;
     if (!canvasSessionIsCurrent(session) || association?.deferred) return null;
-    const taskUpdate = await session.island.updateTask?.(whiteBackgroundTaskItem(job, session));
+    const taskUpdate = await session.island.updateTask?.(imageAiTaskItem(job, session));
     if (!canvasSessionIsCurrent(session)) return null;
     let inserted = null;
     let resultItems = [];
     if (['completed', 'partial'].includes(String(job.status || ''))) {
-      resultItems = await whiteBackgroundResultItems(job, session);
+      resultItems = await imageAiResultItems(job, session);
       if (!canvasSessionIsCurrent(session)) return null;
       if (resultItems.length) inserted = await session.island.addBusinessItemsOnce(resultItems);
     }
@@ -831,20 +844,20 @@ export function createInfiniteCanvasWorkspaceController({
     if (resultItems.length) {
       const durableScene = adapter.get(session.canvasId)?.scene;
       if (!sceneHasVideoResults(durableScene, job.id, resultItems)) {
-        throw new Error('白底图结果画布关联尚未保存，正在自动恢复');
+        throw new Error('Canvas Native AI 结果画布关联尚未保存，正在自动恢复');
       }
     }
-    if (spatialWhiteBackgroundJobIsSettled(job)) {
-      await notifyWhiteBackgroundJobSettled(job);
+    if (spatialImageAiJobIsSettled(job)) {
+      await notifyImageAiJobSettled(job);
     }
     if (schedule) scheduleVideoPolling(session);
     return inserted;
   }
 
-  async function notifyWhiteBackgroundJobSettled(job) {
-    if (!job?.id || notifiedWhiteBackgroundJobs.has(String(job.id))) return;
-    notifiedWhiteBackgroundJobs.add(String(job.id));
-    await Promise.resolve(onWhiteBackgroundJobSettled(job)).catch(() => {});
+  async function notifyImageAiJobSettled(job) {
+    if (!job?.id || notifiedImageAiJobs.has(String(job.id))) return;
+    notifiedImageAiJobs.add(String(job.id));
+    await Promise.resolve(onImageAiJobSettled(job)).catch(() => {});
   }
 
   async function scanCurrentCanvasVideoJobs(session = captureCanvasSession()) {
@@ -867,8 +880,8 @@ export function createInfiniteCanvasWorkspaceController({
             && (!spatialVideoCanvasId(job) || spatialVideoCanvasId(job) === session.canvasId)
           )
           || (
-            isSpatialWhiteBackgroundJob(job)
-            && spatialWhiteBackgroundCanvasId(job) === session.canvasId
+            isSpatialImageAiJob(job)
+            && spatialImageAiCanvasId(job) === session.canvasId
           )
         ) jobs.set(String(job.id), job);
       } catch (error) {
@@ -884,8 +897,8 @@ export function createInfiniteCanvasWorkspaceController({
           jobs.set(String(job.id), job);
         }
         if (
-          isSpatialWhiteBackgroundJob(job)
-          && spatialWhiteBackgroundCanvasId(job) === session.canvasId
+          isSpatialImageAiJob(job)
+          && spatialImageAiCanvasId(job) === session.canvasId
         ) jobs.set(String(job.id), job);
       });
     } catch (error) {
@@ -895,16 +908,16 @@ export function createInfiniteCanvasWorkspaceController({
     for (const job of jobs.values()) {
       if (!canvasSessionIsCurrent(session)) return;
       try {
-        if (isSpatialWhiteBackgroundJob(job)) {
-          await reconcileWhiteBackgroundJob(job, { schedule: false, session });
+        if (isSpatialImageAiJob(job)) {
+          await reconcileImageAiJob(job, { schedule: false, session });
         } else {
           await reconcileVideoJob(job, { schedule: false, session });
         }
       } catch (error) {
         if (permanentVideoRecoveryError(error)) {
           permanentError ||= error;
-          if (spatialWhiteBackgroundJobIsSettled(job)) {
-            await notifyWhiteBackgroundJobSettled(job);
+          if (spatialImageAiJobIsSettled(job)) {
+            await notifyImageAiJobSettled(job);
           } else if (spatialVideoJobIsSettled(job)) {
             await notifyVideoJobSettled(job);
           }
@@ -924,47 +937,48 @@ export function createInfiniteCanvasWorkspaceController({
     }
   }
 
-  async function compileWhiteBackgroundPreview() {
-    if (!whiteBackgroundDraft || whiteBackgroundPreviewing || whiteBackgroundSubmitting) return null;
+  async function compileImageAiPreview() {
+    if (!imageAiDraft || imageAiPreviewing || imageAiSubmitting) return null;
     const sourceElement = selectedElement;
-    const submittedDraft = whiteBackgroundDraft;
+    const submittedDraft = imageAiDraft;
     const session = captureCanvasSession();
     if (!session || submittedDraft.canvasId !== session.canvasId) {
-      whiteBackgroundDraftError = '当前画布已切换，请重新选择素材';
+      imageAiDraftError = '当前画布已切换，请重新选择素材';
       await renderInspector(sourceElement);
       return null;
     }
     try {
-      whiteBackgroundPreviewing = true;
-      whiteBackgroundDraftError = '';
+      imageAiPreviewing = true;
+      imageAiDraftError = '';
       await renderInspector(sourceElement);
       const bundle = await api.compileKnowledge(
-        spatialWhiteBackgroundPreviewPayload(submittedDraft),
+        spatialImageAiPreviewPayload(submittedDraft),
       );
       if (
         !canvasSessionIsCurrent(session)
-        || whiteBackgroundDraft !== submittedDraft
+        || imageAiDraft !== submittedDraft
         || String(selectedElement?.id || '') !== submittedDraft.sourceElementId
       ) return null;
-      whiteBackgroundDraft = applySpatialWhiteBackgroundPreview(submittedDraft, bundle);
+      imageAiDraft = applySpatialImageAiPreview(submittedDraft, bundle);
       await renderInspector(sourceElement);
-      return whiteBackgroundDraft.preview;
+      return imageAiDraft.preview;
     } catch (error) {
-      if (canvasSessionIsCurrent(session) && whiteBackgroundDraft === submittedDraft) {
-        whiteBackgroundDraftError = String(error?.detail?.message || error?.message || error);
+      if (canvasSessionIsCurrent(session) && imageAiDraft === submittedDraft) {
+        imageAiDraftError = String(error?.detail?.message || error?.message || error);
         await renderInspector(sourceElement);
-        query('[data-spatial-white-status]')?.focus?.({ preventScroll: true });
+        query('[data-spatial-image-ai-status]')?.focus?.({ preventScroll: true });
       }
       return null;
     } finally {
-      whiteBackgroundPreviewing = false;
-      if (canvasSessionIsCurrent(session) && whiteBackgroundDraft) {
+      imageAiPreviewing = false;
+      if (canvasSessionIsCurrent(session) && imageAiDraft) {
         await renderInspector(selectedElement);
       }
     }
   }
 
-  async function openWhiteBackgroundComposer(context = {}) {
+  async function openCanvasAiPreview(action, context = {}) {
+    const definition = spatialImageAiDefinition(action);
     const session = captureCanvasSession();
     const requestedCanvasId = String(context?.canvasId || session?.canvasId || '');
     if (!session || requestedCanvasId !== session.canvasId) {
@@ -972,16 +986,23 @@ export function createInfiniteCanvasWorkspaceController({
     }
     const element = context?.element || selectedElement;
     const refs = element?.customData || {};
-    if (element?.type !== 'image' || !refs.asset_id || refs.result_id) {
-      throw new Error('白底图当前只接受无限画布中的原始图片素材');
+    const exactResult = String(refs.result_id || '') === String(refs.asset_id || '');
+    const sourceMatchesAction = definition.sourceKind === 'source'
+      ? !refs.result_id
+      : exactResult;
+    if (element?.type !== 'image' || !refs.asset_id || !sourceMatchesAction) {
+      throw new Error(`${definition.title}当前只接受无限画布中的${definition.sourceLabel}`);
     }
     let asset = selectedAsset;
     if (!asset || String(asset.id) !== String(refs.asset_id)) {
       const response = await api.getAsset(refs.asset_id, { timeoutMs: 10000 });
       asset = response?.asset || response || {};
     }
-    if (asset?.role !== 'workspace_source') {
-      throw new Error('白底图当前只接受原始素材；结果再创作请使用现有生图入口');
+    const roleMatches = definition.sourceKind === 'source'
+      ? asset?.role === 'workspace_source'
+      : String(asset?.role || '').startsWith('result_');
+    if (!roleMatches || asset?.kind === 'video' || !String(asset?.mime || '').startsWith('image/')) {
+      throw new Error(`${definition.title}当前只接受${definition.sourceLabel}`);
     }
     if (!canvasSessionIsCurrent(session)) throw new Error('当前画布已切换，请重新选择素材');
     await flushScene(session.canvasId);
@@ -989,122 +1010,128 @@ export function createInfiniteCanvasWorkspaceController({
     if (!durableCanvas?.current_version_id || !canvasSessionIsCurrent(session)) {
       throw new Error('请等待当前画布保存完成后再创建任务');
     }
-    const defaults = await Promise.resolve(getWhiteBackgroundDefaults({
+    const defaults = await Promise.resolve(getImageAiDefaults({
+      action: definition.action,
       canvasId: session.canvasId,
       element,
       asset,
     }));
     if (!canvasSessionIsCurrent(session)) throw new Error('当前画布已切换，请重新选择素材');
     selectedAsset = asset;
-    whiteBackgroundDraft = createSpatialWhiteBackgroundDraft({
+    imageAiDraft = createSpatialImageAiDraft(definition.action, {
       ...defaults,
       canvasId: session.canvasId,
       sourceElementId: String(element.id || ''),
       sourceAssetId: String(refs.asset_id),
+      sourceResultId: definition.sourceKind === 'result' ? String(refs.result_id) : '',
       productProfileVersionId: String(refs.product_profile_version_id || ''),
     });
-    whiteBackgroundDraftError = '';
+    imageAiDraftError = '';
     await renderInspector(element);
-    await compileWhiteBackgroundPreview();
-    query('[data-spatial-white-field="userRequest"]')?.focus?.({ preventScroll: true });
-    return whiteBackgroundDraft;
+    await compileImageAiPreview();
+    query('[data-spatial-image-ai-field="userRequest"]')?.focus?.({ preventScroll: true });
+    return imageAiDraft;
   }
 
-  function syncWhiteBackgroundControls(error = '') {
-    const form = query('[data-spatial-white-form]');
-    if (!form || !whiteBackgroundDraft) return;
+  function syncImageAiControls(error = '') {
+    const form = query('[data-spatial-image-ai-form]');
+    if (!form || !imageAiDraft) return;
     const submit = form.querySelector('button[type="submit"]');
-    const status = form.querySelector('[data-spatial-white-status]');
+    const status = form.querySelector('[data-spatial-image-ai-status]');
     if (submit) {
-      submit.disabled = whiteBackgroundPreviewing || whiteBackgroundSubmitting;
-      submit.textContent = whiteBackgroundDraft.preview
-        ? `确认并创建任务 · ${whiteBackgroundDraft.productProfileVersionId ? '1 次调用' : '最多 2 次调用'}`
+      submit.disabled = imageAiPreviewing || imageAiSubmitting;
+      submit.textContent = imageAiDraft.preview
+        ? `确认并创建任务 · ${imageAiDraft.productProfileVersionId ? '1 次调用' : '最多 2 次调用'}`
         : '重新核对执行上下文';
     }
     if (status) {
-      status.textContent = error || (whiteBackgroundDraft.preview
+      status.textContent = error || (imageAiDraft.preview
         ? '上下文已冻结；点击确认后才会创建正式任务。'
         : '要求已变化，尚未发起 Provider 调用。');
       if (error) status.dataset.error = 'true';
       else delete status.dataset.error;
     }
-    const preview = form.querySelector('[data-spatial-white-preview]');
-    if (preview && !whiteBackgroundDraft.preview) {
+    const preview = form.querySelector('[data-spatial-image-ai-preview]');
+    if (preview && !imageAiDraft.preview) {
       preview.innerHTML = '<p>要求已变化，请重新核对后再提交。</p>';
     }
   }
 
-  function updateWhiteBackgroundDraftFromField(control) {
-    if (!whiteBackgroundDraft) return;
-    const field = control?.dataset?.spatialWhiteField;
+  function updateImageAiDraftFromField(control) {
+    if (!imageAiDraft) return;
+    const field = control?.dataset?.spatialImageAiField;
     if (!field) return;
-    whiteBackgroundDraft = updateSpatialWhiteBackgroundDraft(whiteBackgroundDraft, {
+    imageAiDraft = updateSpatialImageAiDraft(imageAiDraft, {
       [field]: control.value,
     });
-    whiteBackgroundDraftError = '';
-    syncWhiteBackgroundControls();
+    imageAiDraftError = '';
+    syncImageAiControls();
   }
 
-  async function submitWhiteBackgroundDraft(event) {
+  async function submitImageAiDraft(event) {
     event.preventDefault();
-    if (!whiteBackgroundDraft || whiteBackgroundPreviewing || whiteBackgroundSubmitting) return;
-    if (!whiteBackgroundDraft.preview) {
-      await compileWhiteBackgroundPreview();
+    if (!imageAiDraft || imageAiPreviewing || imageAiSubmitting) return;
+    if (!imageAiDraft.preview) {
+      await compileImageAiPreview();
       return;
     }
     const sourceElement = selectedElement;
-    const submittedDraft = whiteBackgroundDraft;
+    const submittedDraft = imageAiDraft;
     const session = captureCanvasSession();
     if (!session || submittedDraft.canvasId !== session.canvasId) {
-      whiteBackgroundDraftError = '当前画布已切换，请重新核对执行上下文';
-      syncWhiteBackgroundControls(whiteBackgroundDraftError);
+      imageAiDraftError = '当前画布已切换，请重新核对执行上下文';
+      syncImageAiControls(imageAiDraftError);
       return;
     }
     try {
-      const submission = spatialWhiteBackgroundCommandPayload(submittedDraft);
-      whiteBackgroundDraft = submission.draft;
-      whiteBackgroundSubmitting = true;
-      whiteBackgroundDraftError = '';
+      const submission = spatialImageAiCommandPayload(submittedDraft);
+      imageAiDraft = submission.draft;
+      imageAiSubmitting = true;
+      imageAiDraftError = '';
       await renderInspector(sourceElement);
       const response = await api.executeCommand(
-        SPATIAL_WHITE_BACKGROUND_COMMAND_ID,
+        SPATIAL_IMAGE_AI_COMMAND_ID,
         submission.payload,
         { timeoutMs: 15000 },
       );
       const job = response?.job || response;
-      if (!job?.id || !isSpatialWhiteBackgroundJob(job)) {
-        throw new Error('白底图任务返回内容不完整');
+      if (
+        !job?.id
+        || !isSpatialImageAiJob(job)
+        || spatialImageAiAction(job) !== submittedDraft.action
+      ) {
+        throw new Error(`${spatialImageAiDefinition(submittedDraft.action).title}任务返回内容不完整`);
       }
-      await Promise.resolve(onWhiteBackgroundJobSubmitted(job)).catch(() => {});
+      await Promise.resolve(onImageAiJobSubmitted(job)).catch(() => {});
       if (!canvasSessionIsCurrent(session)) return job;
-      await persistWhiteBackgroundJobAssociation(job, session);
+      await persistImageAiJobAssociation(job, session);
       if (!canvasSessionIsCurrent(session)) return job;
-      whiteBackgroundDraft = null;
-      await reconcileWhiteBackgroundJob(job, { session });
+      imageAiDraft = null;
+      await reconcileImageAiJob(job, { session });
       if (!canvasSessionIsCurrent(session)) return job;
       const taskElement = await session.island.selectBusinessReference({ task_id: job.id });
       if (taskElement) await renderInspector(taskElement);
       return job;
     } catch (error) {
-      if (canvasSessionIsCurrent(session) && whiteBackgroundDraft) {
+      if (canvasSessionIsCurrent(session) && imageAiDraft) {
         const stale = ['EXECUTION_CONTEXT_STALE', 'SPATIAL_EXECUTION_CONTEXT_STALE']
           .includes(String(error?.detail?.code || ''));
         if (stale) {
-          whiteBackgroundDraft = {
-            ...whiteBackgroundDraft,
+          imageAiDraft = {
+            ...imageAiDraft,
             preview: null,
             requestId: '',
           };
         }
-        whiteBackgroundDraftError = String(error?.detail?.message || error?.message || error);
+        imageAiDraftError = String(error?.detail?.message || error?.message || error);
         await renderInspector(sourceElement);
-        query('[data-spatial-white-status]')?.focus?.({ preventScroll: true });
+        query('[data-spatial-image-ai-status]')?.focus?.({ preventScroll: true });
       }
       return null;
     } finally {
-      whiteBackgroundSubmitting = false;
-      if (canvasSessionIsCurrent(session) && whiteBackgroundDraft) {
-        syncWhiteBackgroundControls(whiteBackgroundDraftError);
+      imageAiSubmitting = false;
+      if (canvasSessionIsCurrent(session) && imageAiDraft) {
+        syncImageAiControls(imageAiDraftError);
       }
     }
   }
@@ -1998,16 +2025,17 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onClick(event) {
-    if (event.target.closest('[data-spatial-white-cancel]')) {
-      whiteBackgroundDraft = null;
-      whiteBackgroundDraftError = '';
+    if (event.target.closest('[data-spatial-image-ai-cancel]')) {
+      imageAiDraft = null;
+      imageAiDraftError = '';
       return renderInspector(selectedElement);
     }
-    if (event.target.closest('[data-spatial-white-classic]')) {
+    if (event.target.closest('[data-spatial-image-ai-classic]')) {
       const context = { canvasId: currentId, element: selectedElement };
-      whiteBackgroundDraft = null;
-      whiteBackgroundDraftError = '';
-      return onWhiteBackgroundClassic(context);
+      const action = imageAiDraft?.action || '';
+      imageAiDraft = null;
+      imageAiDraftError = '';
+      return onImageAiClassic(action, context);
     }
     if (event.target.closest('[data-spatial-video-cancel]')) {
       videoDraft = null;
@@ -2019,18 +2047,26 @@ export function createInfiniteCanvasWorkspaceController({
       if (inspectorAction.dataset.spatialAction === 'toggle-video') {
         return mountedIsland?.toggleVideo?.(selectedElement.id);
       }
-      if (inspectorAction.dataset.spatialAction === 'white-background') {
-        return openWhiteBackgroundComposer({
+      const action = String(inspectorAction.dataset.spatialAction || '');
+      const refs = selectedElement?.customData || {};
+      const nativeImageAiAction = action === SPATIAL_WHITE_BACKGROUND_ACTION
+        || (
+          action === SPATIAL_RESULT_VARIATION_ACTION
+          && refs.result_id
+          && String(refs.result_id) === String(refs.asset_id || '')
+        );
+      if (nativeImageAiAction) {
+        return openCanvasAiPreview(action, {
           canvasId: currentId,
           element: selectedElement,
         }).catch(async (error) => {
-          whiteBackgroundDraftError = String(error?.detail?.message || error?.message || error);
-          if (whiteBackgroundDraft) await renderInspector(selectedElement);
-          setSpatialStatus(`白底图上下文未建立 · ${whiteBackgroundDraftError}`, { kind: 'error' });
+          imageAiDraftError = String(error?.detail?.message || error?.message || error);
+          if (imageAiDraft) await renderInspector(selectedElement);
+          setSpatialStatus(`Canvas Native AI 上下文未建立 · ${imageAiDraftError}`, { kind: 'error' });
           return null;
         });
       }
-      return onAction(inspectorAction.dataset.spatialAction, {
+      return onAction(action, {
         canvasId: currentId,
         element: selectedElement,
       });
@@ -2048,15 +2084,15 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onInput(event) {
-    const whiteControl = event.target.closest('[data-spatial-white-field]');
-    if (whiteControl) return updateWhiteBackgroundDraftFromField(whiteControl);
+    const imageAiControl = event.target.closest('[data-spatial-image-ai-field]');
+    if (imageAiControl) return updateImageAiDraftFromField(imageAiControl);
     const control = event.target.closest('[data-spatial-video-field]');
     if (control) updateVideoDraftFromField(control);
   }
 
   function onChange(event) {
-    const whiteControl = event.target.closest('[data-spatial-white-field]');
-    if (whiteControl) return updateWhiteBackgroundDraftFromField(whiteControl);
+    const imageAiControl = event.target.closest('[data-spatial-image-ai-field]');
+    if (imageAiControl) return updateImageAiDraftFromField(imageAiControl);
     const confirmation = event.target.closest('[data-spatial-video-confirm]');
     if (confirmation) return confirmVideoDraft(confirmation);
     const control = event.target.closest('[data-spatial-video-field]');
@@ -2064,8 +2100,8 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onSubmit(event) {
-    if (event.target.matches('[data-spatial-white-form]')) {
-      submitWhiteBackgroundDraft(event);
+    if (event.target.matches('[data-spatial-image-ai-form]')) {
+      submitImageAiDraft(event);
       return;
     }
     if (event.target.matches('[data-spatial-video-form]')) submitVideoDraft(event);
@@ -2146,6 +2182,7 @@ export function createInfiniteCanvasWorkspaceController({
     destroy,
     flush: flushScene,
     openCanvas,
+    openCanvasAiPreview,
     openVideoComposer,
     openVideoJob,
     prepareForClose,

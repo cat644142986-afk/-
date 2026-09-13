@@ -127,7 +127,7 @@ function selectedDesignMethodId(mode = state.currentMode) {
   return value === CONTEXT_DESIGN_METHOD_ID ? value : '';
 }
 
-function canvasWhiteBackgroundDefaults() {
+function canvasImageAiDefaults() {
   const mode = 'single';
   const snapshot = state.modeSnapshots[mode] || {};
   const live = state.currentMode === mode && Boolean($('#param-model'));
@@ -297,10 +297,11 @@ const infiniteCanvasWorkspace = createInfiniteCanvasWorkspaceController({
   onImportFiles: importSpatialCanvasFiles,
   onVideoJobSubmitted: () => loadJobs(true),
   onVideoJobSettled: () => loadJobs(true),
-  onWhiteBackgroundJobSubmitted: () => loadJobs(true),
-  onWhiteBackgroundJobSettled: () => loadJobs(true),
+  onImageAiJobSubmitted: () => loadJobs(true),
+  onImageAiJobSettled: () => loadJobs(true),
+  onImageAiClassic: (action, context) => handleSpatialAction(action, context),
   onWhiteBackgroundClassic: (context) => handleSpatialAction('white-background', context),
-  getWhiteBackgroundDefaults: canvasWhiteBackgroundDefaults,
+  getImageAiDefaults: canvasImageAiDefaults,
   onRecoveryAction: (action) => (
     action === 'retry-spatial-return' ? canvasController.retrySpatialReturn() : false
   ),

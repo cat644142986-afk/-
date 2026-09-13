@@ -17,6 +17,7 @@ const island = readFileSync(new URL('../../src/js/infinite-canvas-island.jsx', i
 const fineEditGesture = readFileSync(new URL('../../src/js/spatial-fine-edit-gesture.js', import.meta.url), 'utf8');
 const itemsSource = readFileSync(new URL('../../src/js/spatial-canvas-items.js', import.meta.url), 'utf8');
 const whiteBackgroundSource = readFileSync(new URL('../../src/js/spatial-white-background.js', import.meta.url), 'utf8');
+const nativeImageAiSource = readFileSync(new URL('../../src/js/spatial-native-image-ai.js', import.meta.url), 'utf8');
 const adapterSource = readFileSync(new URL('../../src/js/infinite-canvas-adapter.js', import.meta.url), 'utf8');
 const apiSource = readFileSync(new URL('../../src/js/api.js', import.meta.url), 'utf8');
 const stableUiCss = readFileSync(new URL('../../src/css/stable-ui.css', import.meta.url), 'utf8');
@@ -381,21 +382,24 @@ test('IC5 video jobs use the durable queue, idempotent result backfill and canva
   assert.match(app, /onVideoJobSettled: \(\) => loadJobs\(true\)/);
 });
 
-test('G4B white-background is a governed Canvas task, not a second prompt or task system', () => {
-  assert.match(workspace, /openWhiteBackgroundComposer/);
-  assert.match(workspace, /api\.compileKnowledge\([\s\S]{0,120}spatialWhiteBackgroundPreviewPayload/);
-  assert.match(workspace, /api\.executeCommand\([\s\S]{0,120}SPATIAL_WHITE_BACKGROUND_COMMAND_ID/);
-  assert.match(workspace, /persistWhiteBackgroundJobAssociation\(job, session\)/);
+test('G4B and Result variation share one governed Canvas Native AI task path', () => {
+  assert.match(workspace, /openCanvasAiPreview/);
+  assert.match(workspace, /api\.compileKnowledge\([\s\S]{0,120}spatialImageAiPreviewPayload/);
+  assert.match(workspace, /api\.executeCommand\([\s\S]{0,120}SPATIAL_IMAGE_AI_COMMAND_ID/);
+  assert.match(workspace, /persistImageAiJobAssociation\(job, session\)/);
   assert.match(workspace, /session\.island\.addBusinessItemsOnce\(resultItems\)/);
-  assert.match(workspace, /spatialWhiteBackgroundCanvasId\(job\) === session\.canvasId/);
+  assert.match(workspace, /spatialImageAiCanvasId\(job\) === session\.canvasId/);
+  assert.match(workspace, /action === SPATIAL_RESULT_VARIATION_ACTION/);
+  assert.match(workspace, /String\(refs\.result_id\) === String\(refs\.asset_id/);
   assert.match(app, /onWhiteBackgroundClassic: \(context\) => handleSpatialAction\('white-background', context\)/);
-  assert.match(app, /getWhiteBackgroundDefaults: canvasWhiteBackgroundDefaults/);
-  assert.match(whiteBackgroundSource, /generation_strategy: 'single_pass'/);
-  assert.match(whiteBackgroundSource, /packaging_text: true/);
-  assert.match(whiteBackgroundSource, /logo: true/);
-  assert.match(whiteBackgroundSource, /execution_context: current\.preview\.executionContext/);
+  assert.match(app, /getImageAiDefaults: canvasImageAiDefaults/);
+  assert.match(nativeImageAiSource, /generation_strategy: 'single_pass'/);
+  assert.match(nativeImageAiSource, /packaging_text: true/);
+  assert.match(nativeImageAiSource, /logo: true/);
+  assert.match(nativeImageAiSource, /execution_context: current\.preview\.executionContext/);
+  assert.match(whiteBackgroundSource, /createSpatialImageAiDraft\(SPATIAL_WHITE_BACKGROUND_ACTION/);
   assert.match(stableUiCss, /\.spatial-context-preview/);
-  assert.doesNotMatch(`${workspace}\n${whiteBackgroundSource}`, /Prompt v4|prompt_v4|Ctrl\+K/);
+  assert.doesNotMatch(`${workspace}\n${nativeImageAiSource}`, /Prompt v4|prompt_v4|Ctrl\+K/);
 });
 
 test('IC5 video export keeps original binary bytes out of the base64 image path', () => {
