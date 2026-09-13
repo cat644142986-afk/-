@@ -295,6 +295,7 @@ export function createInfiniteCanvasWorkspaceController({
   let imageAiPreviewing = false;
   let imageAiSubmitting = false;
   let imageAiDraftError = '';
+  let commandMenuReturnFocus = null;
   let emptySceneRecoveryPromise = null;
   const activeVideoJobIds = new Set();
   const notifiedVideoJobs = new Set();
@@ -411,6 +412,7 @@ export function createInfiniteCanvasWorkspaceController({
     const epoch = ++inspectorEpoch;
     const selectionChanged = String(element?.id || '') !== String(selectedElement?.id || '');
     if (selectionChanged) {
+      closeNativeAiCommandMenu({ restoreFocus: false });
       videoDraft = null;
       videoDraftError = '';
       imageAiDraft = null;
@@ -454,6 +456,142 @@ export function createInfiniteCanvasWorkspaceController({
       }) : ''}
     `;
     inspector.hidden = false;
+  }
+
+  function getCurrentNativeAiActions() {
+    const session = captureCanvasSession();
+    const editor = query('#spatial-editor');
+    if (!active || !session || editor?.hidden || selectedElement?.type !== 'image') return [];
+    const refs = selectedElement.customData || {};
+    const assetId = String(refs.asset_id || '');
+    if (!assetId) return [];
+    const action = refs.result_id
+      ? (String(refs.result_id) === assetId ? SPATIAL_RESULT_VARIATION_ACTION : '')
+      : SPATIAL_WHITE_BACKGROUND_ACTION;
+    return action ? [spatialImageAiDefinition(action)] : [];
+  }
+
+  function closeNativeAiCommandMenu({ restoreFocus = true } = {}) {
+    const menu = query('#spatial-command-menu');
+    if (!menu || menu.hidden) return false;
+    menu.hidden = true;
+    menu.innerHTML = '';
+    menu.setAttribute?.('aria-hidden', 'true');
+    const returnFocus = commandMenuReturnFocus;
+    commandMenuReturnFocus = null;
+    if (restoreFocus) {
+      windowRef.requestAnimationFrame(() => {
+        if (returnFocus?.isConnected !== false) returnFocus?.focus?.({ preventScroll: true });
+      });
+    }
+    return true;
+  }
+
+  function openNativeAiCommandMenu() {
+    const actions = getCurrentNativeAiActions();
+    const menu = query('#spatial-command-menu');
+    if (!menu || !actions.length) return false;
+    commandMenuReturnFocus = documentRef.activeElement || query('#spatial-canvas-host');
+    menu.innerHTML = `
+      <div class="spatial-command-menu__scrim" data-spatial-command-close aria-hidden="true"></div>
+      <section class="spatial-command-menu__surface">
+        <header class="spatial-command-menu__header">
+          <div class="spatial-command-menu__heading"><span>CANVAS AI</span><strong id="spatial-command-menu-title">当前选区可用</strong></div>
+          <button class="spatial-command-menu__close" type="button" data-spatial-command-close aria-label="关闭 Canvas AI 命令">×</button>
+        </header>
+        <div class="spatial-command-menu__actions">${actions.map((definition) => `
+          <button class="spatial-command-menu__action" type="button" data-spatial-command-action="${escapeHtml(definition.action)}">
+            <strong>${escapeHtml(definition.title)}</strong>
+            <small>${escapeHtml(definition.sourceKind === 'result' ? '精确使用当前 Result' : '使用当前原始素材')}</small>
+            <kbd>Enter</kbd>
+          </button>
+        `).join('')}</div>
+        <footer class="spatial-command-menu__footer"><span>Esc 关闭</span></footer>
+      </section>
+    `;
+    menu.hidden = false;
+    menu.setAttribute?.('aria-hidden', 'false');
+    windowRef.requestAnimationFrame(() => {
+      query('[data-spatial-command-action]')?.focus?.({ preventScroll: true });
+    });
+    return true;
+  }
+
+  async function invokeCurrentNativeAiAction(action) {
+    try {
+      const definition = getCurrentNativeAiActions().find((item) => item.action === String(action || ''));
+      if (!definition) throw new Error('当前选区不支持这个 Canvas Native AI 动作');
+      const context = { canvasId: currentId, element: selectedElement };
+      closeNativeAiCommandMenu({ restoreFocus: false });
+      return await openCanvasAiPreview(definition.action, context);
+    } catch (error) {
+      closeNativeAiCommandMenu({ restoreFocus: false });
+      imageAiDraftError = String(error?.detail?.message || error?.message || error);
+      if (imageAiDraft) await renderInspector(selectedElement);
+      setSpatialStatus(`Canvas Native AI 上下文未建立 · ${imageAiDraftError}`, { kind: 'error' });
+      return null;
+    }
+  }
+
+  function editableShortcutTarget(target) {
+    const tagName = String(target?.tagName || '').toUpperCase();
+    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(tagName)
+      || Boolean(target?.isContentEditable)
+      || Boolean(target?.closest?.('[contenteditable="true"], [contenteditable=""], [role="textbox"]'));
+  }
+
+  function blockingShortcutLayer(target) {
+    return Boolean(target?.closest?.('[aria-modal="true"], dialog[open], .modal-card, .drawer, #settings-panel.is-open'));
+  }
+
+  function trapCommandMenuFocus(event) {
+    const menu = query('#spatial-command-menu');
+    const focusable = Array.from(menu?.querySelectorAll?.('button:not(:disabled)') || []);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && documentRef.activeElement === first) {
+      event.preventDefault();
+      last.focus?.();
+    } else if (!event.shiftKey && documentRef.activeElement === last) {
+      event.preventDefault();
+      first.focus?.();
+    }
+  }
+
+  function onWorkspaceKeyDown(event) {
+    const menu = query('#spatial-command-menu');
+    if (!menu?.hidden) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation?.();
+        closeNativeAiCommandMenu();
+      } else if (event.key === 'Tab') trapCommandMenuFocus(event);
+      else if ((event.ctrlKey || event.metaKey) && !event.altKey && String(event.key).toLowerCase() === 'k') {
+        event.preventDefault();
+        event.stopPropagation?.();
+        closeNativeAiCommandMenu();
+      }
+      return;
+    }
+    if (
+      event.defaultPrevented
+      || event.repeat
+      || !(event.ctrlKey || event.metaKey)
+      || event.altKey
+      || String(event.key).toLowerCase() !== 'k'
+      || editableShortcutTarget(event.target)
+      || editableShortcutTarget(documentRef.activeElement)
+      || blockingShortcutLayer(event.target)
+      || blockingShortcutLayer(documentRef.activeElement)
+      || imageAiDraft
+      || videoDraft
+      || !query('#spatial-rename-form')?.hidden
+    ) return;
+    if (!getCurrentNativeAiActions().length) return;
+    event.preventDefault();
+    event.stopPropagation?.();
+    openNativeAiCommandMenu();
   }
 
   function stopVideoPolling({ clearJobs = true, resetRecovery = true } = {}) {
@@ -1352,6 +1490,7 @@ export function createInfiniteCanvasWorkspaceController({
     mountedIsland = null;
     islandReadyPromise = null;
     resolveIslandReady = null;
+    closeNativeAiCommandMenu({ restoreFocus: false });
     renderInspector(null);
     query('#spatial-library').hidden = false;
     query('#spatial-editor').hidden = true;
@@ -2025,6 +2164,13 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onClick(event) {
+    if (event.target.closest('[data-spatial-command-close]')) {
+      return closeNativeAiCommandMenu();
+    }
+    const commandAction = event.target.closest('[data-spatial-command-action]');
+    if (commandAction) {
+      return invokeCurrentNativeAiAction(commandAction.dataset.spatialCommandAction);
+    }
     if (event.target.closest('[data-spatial-image-ai-cancel]')) {
       imageAiDraft = null;
       imageAiDraftError = '';
@@ -2048,23 +2194,9 @@ export function createInfiniteCanvasWorkspaceController({
         return mountedIsland?.toggleVideo?.(selectedElement.id);
       }
       const action = String(inspectorAction.dataset.spatialAction || '');
-      const refs = selectedElement?.customData || {};
-      const nativeImageAiAction = action === SPATIAL_WHITE_BACKGROUND_ACTION
-        || (
-          action === SPATIAL_RESULT_VARIATION_ACTION
-          && refs.result_id
-          && String(refs.result_id) === String(refs.asset_id || '')
-        );
+      const nativeImageAiAction = getCurrentNativeAiActions().some((item) => item.action === action);
       if (nativeImageAiAction) {
-        return openCanvasAiPreview(action, {
-          canvasId: currentId,
-          element: selectedElement,
-        }).catch(async (error) => {
-          imageAiDraftError = String(error?.detail?.message || error?.message || error);
-          if (imageAiDraft) await renderInspector(selectedElement);
-          setSpatialStatus(`Canvas Native AI 上下文未建立 · ${imageAiDraftError}`, { kind: 'error' });
-          return null;
-        });
+        return invokeCurrentNativeAiAction(action);
       }
       return onAction(action, {
         canvasId: currentId,
@@ -2130,6 +2262,7 @@ export function createInfiniteCanvasWorkspaceController({
     documentRef.addEventListener('dragover', onDragOver);
     documentRef.addEventListener('dragleave', onDragLeave);
     documentRef.addEventListener('drop', onDrop);
+    documentRef.addEventListener('keydown', onWorkspaceKeyDown, true);
     renderLibrary();
   }
 
@@ -2139,6 +2272,7 @@ export function createInfiniteCanvasWorkspaceController({
       stopVideoPolling();
       mountedIsland?.stopVideo?.();
       flushScene(currentCanvasSession?.canvasId || currentId);
+      closeNativeAiCommandMenu({ restoreFocus: false });
       closeRename(false);
       return;
     }
@@ -2168,6 +2302,8 @@ export function createInfiniteCanvasWorkspaceController({
     documentRef.removeEventListener('dragover', onDragOver);
     documentRef.removeEventListener('dragleave', onDragLeave);
     documentRef.removeEventListener('drop', onDrop);
+    documentRef.removeEventListener('keydown', onWorkspaceKeyDown, true);
+    closeNativeAiCommandMenu({ restoreFocus: false });
     currentCanvasSession = null;
     mountedIsland?.unmount?.();
     mountedIsland = null;
@@ -2181,6 +2317,8 @@ export function createInfiniteCanvasWorkspaceController({
     createCanvas,
     destroy,
     flush: flushScene,
+    getCurrentNativeAiActions,
+    invokeCurrentNativeAiAction,
     openCanvas,
     openCanvasAiPreview,
     openVideoComposer,
@@ -2189,6 +2327,7 @@ export function createInfiniteCanvasWorkspaceController({
     setPage,
     showLibrary,
     get active() { return active; },
+    get commandMenuOpen() { return !query('#spatial-command-menu')?.hidden; },
     get videoRecoveryPending() { return videoRecoveryPending; },
     get currentId() { return currentId; },
     get currentRecord() { return currentId ? adapter.get(currentId) : null; },

@@ -382,15 +382,18 @@ test('IC5 video jobs use the durable queue, idempotent result backfill and canva
   assert.match(app, /onVideoJobSettled: \(\) => loadJobs\(true\)/);
 });
 
-test('G4B and Result variation share one governed Canvas Native AI task path', () => {
+test('G4B, Result variation, Inspector, and Ctrl+K share one governed Canvas Native AI task path', () => {
   assert.match(workspace, /openCanvasAiPreview/);
   assert.match(workspace, /api\.compileKnowledge\([\s\S]{0,120}spatialImageAiPreviewPayload/);
   assert.match(workspace, /api\.executeCommand\([\s\S]{0,120}SPATIAL_IMAGE_AI_COMMAND_ID/);
   assert.match(workspace, /persistImageAiJobAssociation\(job, session\)/);
   assert.match(workspace, /session\.island\.addBusinessItemsOnce\(resultItems\)/);
   assert.match(workspace, /spatialImageAiCanvasId\(job\) === session\.canvasId/);
-  assert.match(workspace, /action === SPATIAL_RESULT_VARIATION_ACTION/);
-  assert.match(workspace, /String\(refs\.result_id\) === String\(refs\.asset_id/);
+  assert.match(workspace, /function getCurrentNativeAiActions\(\)/);
+  assert.match(workspace, /String\(refs\.result_id\) === assetId/);
+  assert.match(workspace, /function invokeCurrentNativeAiAction\(action\)/);
+  assert.match(workspace, /return invokeCurrentNativeAiAction\(action\)/);
+  assert.match(workspace, /documentRef\.addEventListener\('keydown', onWorkspaceKeyDown, true\)/);
   assert.match(app, /onWhiteBackgroundClassic: \(context\) => handleSpatialAction\('white-background', context\)/);
   assert.match(app, /getImageAiDefaults: canvasImageAiDefaults/);
   assert.match(nativeImageAiSource, /generation_strategy: 'single_pass'/);
@@ -399,7 +402,7 @@ test('G4B and Result variation share one governed Canvas Native AI task path', (
   assert.match(nativeImageAiSource, /execution_context: current\.preview\.executionContext/);
   assert.match(whiteBackgroundSource, /createSpatialImageAiDraft\(SPATIAL_WHITE_BACKGROUND_ACTION/);
   assert.match(stableUiCss, /\.spatial-context-preview/);
-  assert.doesNotMatch(`${workspace}\n${nativeImageAiSource}`, /Prompt v4|prompt_v4|Ctrl\+K/);
+  assert.doesNotMatch(`${workspace}\n${nativeImageAiSource}`, /Prompt v4|prompt_v4|getRegisteredCommands|\/api\/commands/);
 });
 
 test('IC5 video export keeps original binary bytes out of the base64 image path', () => {

@@ -41,6 +41,7 @@ class FakeElement {
     this.dataset = {};
     this.listeners = new Map();
     this.children = new Map();
+    this.focusCalls = 0;
   }
 
   addEventListener(type, listener) {
@@ -84,7 +85,7 @@ class FakeElement {
     return [];
   }
 
-  focus() {}
+  focus() { this.focusCalls += 1; }
 }
 
 function createFakeDocument() {
@@ -107,6 +108,8 @@ function createFakeDocument() {
   imageAiForm.children.set('button[type="submit"]', imageAiSubmit);
   imageAiForm.children.set('[data-spatial-image-ai-status]', imageAiStatus);
   imageAiForm.children.set('[data-spatial-image-ai-preview]', imageAiPreview);
+  node('#spatial-rename-form').hidden = true;
+  node('#spatial-command-menu').hidden = true;
 
   const listeners = new Map();
   return {
@@ -863,6 +866,157 @@ test('Result variation submits the exact selected Result through the shared Canv
   assert.equal(mountA.calls.addBusinessItemsOnce.length, 0);
   assert.equal(mountB.calls.addBusinessItemsOnce.length, 0);
   assert.equal(mountB.calls.updateTask.length, 0);
+  harness.controller.destroy();
+});
+
+test('Inspector and Ctrl+K share the current-selection Native AI action adapter', async () => {
+  const previewCalls = [];
+  const harness = createHarness({
+    api: {
+      async getAsset(assetId) {
+        return {
+          asset: {
+            id: assetId,
+            name: assetId === RESULT_ASSET_ID ? '已选 Result' : '原始素材',
+            kind: 'image',
+            role: assetId === RESULT_ASSET_ID ? 'result_main' : 'workspace_source',
+            mime: 'image/png',
+            width: 320,
+            height: 240,
+          },
+        };
+      },
+      async compileKnowledge(payload) {
+        previewCalls.push(payload);
+        return {
+          execution_context: {
+            binding: 'preview',
+            context_sha256: 'a'.repeat(64),
+            summary: { source_count: 1 },
+          },
+          spatial_context: {
+            action: payload.spatial_action,
+            spatial_canvas_id: payload.spatial_canvas_id,
+            source_element_id: payload.spatial_source_element_id,
+            source_asset_id: payload.source_asset_ids[0],
+            fingerprint: 'b'.repeat(64),
+          },
+        };
+      },
+    },
+  });
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const source = sourceElement('canvas:a');
+  mount.options.onSelectionChange(source);
+  await settle();
+
+  assert.deepEqual(
+    harness.controller.getCurrentNativeAiActions().map((item) => item.action),
+    ['white-background'],
+  );
+  const host = harness.documentRef.node('#spatial-canvas-host');
+  harness.documentRef.activeElement = host;
+  const shortcut = await harness.documentRef.emit('keydown', {
+    key: 'k',
+    ctrlKey: true,
+    target: host,
+  });
+  assert.equal(shortcut.defaultPrevented, true);
+  assert.equal(harness.controller.commandMenuOpen, true);
+  assert.match(harness.documentRef.node('#spatial-command-menu').innerHTML, /data-spatial-command-action="white-background"/);
+  assert.doesNotMatch(harness.documentRef.node('#spatial-command-menu').innerHTML, /data-spatial-command-action="generate-image"/);
+
+  const menuAction = new FakeElement('[data-spatial-command-action]');
+  menuAction.dataset.spatialCommandAction = 'white-background';
+  await harness.documentRef.node('#page-canvas').emit('click', { target: menuAction });
+  assert.equal(harness.controller.commandMenuOpen, false);
+  assert.equal(previewCalls.length, 1);
+
+  const cancel = new FakeElement('[data-spatial-image-ai-cancel]');
+  await harness.documentRef.node('#page-canvas').emit('click', { target: cancel });
+  const inspectorAction = new FakeElement('[data-spatial-action]');
+  inspectorAction.dataset.spatialAction = 'white-background';
+  await harness.documentRef.node('#page-canvas').emit('click', { target: inspectorAction });
+  assert.equal(previewCalls.length, 2);
+  assert.deepEqual(previewCalls[1], previewCalls[0]);
+
+  await harness.documentRef.node('#page-canvas').emit('click', { target: cancel });
+  const result = resultElement('canvas:a');
+  mount.options.onSelectionChange(result);
+  await settle();
+  assert.deepEqual(
+    harness.controller.getCurrentNativeAiActions().map((item) => item.action),
+    ['generate-image'],
+  );
+  harness.documentRef.activeElement = host;
+  await harness.documentRef.emit('keydown', { key: 'k', ctrlKey: true, target: host });
+  assert.match(harness.documentRef.node('#spatial-command-menu').innerHTML, /data-spatial-command-action="generate-image"/);
+  assert.doesNotMatch(harness.documentRef.node('#spatial-command-menu').innerHTML, /data-spatial-command-action="white-background"/);
+  await harness.documentRef.emit('keydown', { key: 'Escape', target: host });
+  harness.controller.destroy();
+});
+
+test('Canvas-local Ctrl+K respects editing layers and restores trapped focus on Escape', async () => {
+  const harness = createHarness();
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const source = sourceElement('canvas:a');
+  mount.options.onSelectionChange(source);
+  await settle();
+  const host = harness.documentRef.node('#spatial-canvas-host');
+  harness.documentRef.activeElement = host;
+
+  await harness.documentRef.emit('keydown', { key: 'k', ctrlKey: true, target: host });
+  const menu = harness.documentRef.node('#spatial-command-menu');
+  assert.equal(harness.controller.commandMenuOpen, true);
+  const close = new FakeElement('[data-spatial-command-close]');
+  const action = new FakeElement('[data-spatial-command-action]');
+  menu.querySelectorAll = () => [close, action];
+  harness.documentRef.activeElement = action;
+  const tab = await harness.documentRef.emit('keydown', { key: 'Tab', target: action });
+  assert.equal(tab.defaultPrevented, true);
+  assert.equal(close.focusCalls, 1);
+
+  harness.documentRef.activeElement = host;
+  const escape = await harness.documentRef.emit('keydown', { key: 'Escape', target: host });
+  assert.equal(escape.defaultPrevented, true);
+  assert.equal(harness.controller.commandMenuOpen, false);
+  assert.equal(host.focusCalls, 1);
+
+  const input = { tagName: 'INPUT', closest: () => null };
+  harness.documentRef.activeElement = input;
+  const inputShortcut = await harness.documentRef.emit('keydown', {
+    key: 'k', ctrlKey: true, target: input,
+  });
+  assert.equal(inputShortcut.defaultPrevented, false);
+  assert.equal(harness.controller.commandMenuOpen, false);
+
+  const modalControl = {
+    tagName: 'BUTTON',
+    closest(selector) { return selector.includes('[aria-modal="true"]') ? this : null; },
+  };
+  harness.documentRef.activeElement = modalControl;
+  const modalShortcut = await harness.documentRef.emit('keydown', {
+    key: 'k', ctrlKey: true, target: modalControl,
+  });
+  assert.equal(modalShortcut.defaultPrevented, false);
+
+  const editor = { tagName: 'DIV', isContentEditable: true, closest: () => null };
+  harness.documentRef.activeElement = editor;
+  const editShortcut = await harness.documentRef.emit('keydown', {
+    key: 'k', ctrlKey: true, target: editor,
+  });
+  assert.equal(editShortcut.defaultPrevented, false);
+
+  mount.options.onSelectionChange(taskElement('job:not-native'));
+  await settle();
+  harness.documentRef.activeElement = host;
+  const unavailableShortcut = await harness.documentRef.emit('keydown', {
+    key: 'k', ctrlKey: true, target: host,
+  });
+  assert.equal(unavailableShortcut.defaultPrevented, false);
+  assert.equal(harness.controller.commandMenuOpen, false);
   harness.controller.destroy();
 });
 
