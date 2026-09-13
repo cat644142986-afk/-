@@ -66,6 +66,7 @@ class FakeElement {
 
   closest(selector) {
     if (selector === '[data-spatial-recovery]' && this.dataset.spatialRecovery) return this;
+    if (selector === '[data-spatial-action]' && this.dataset.spatialAction) return this;
     return selector === this.selector ? this : null;
   }
 
@@ -97,6 +98,13 @@ function createFakeDocument() {
   form.children.set('[data-spatial-video-confirm]', confirmation);
   form.children.set('button[type="submit"]', submit);
   form.children.set('[data-spatial-video-status]', status);
+  const whiteForm = node('[data-spatial-white-form]');
+  const whiteSubmit = node('[data-spatial-white-form] button[type="submit"]');
+  const whiteStatus = node('[data-spatial-white-status]');
+  const whitePreview = node('[data-spatial-white-preview]');
+  whiteForm.children.set('button[type="submit"]', whiteSubmit);
+  whiteForm.children.set('[data-spatial-white-status]', whiteStatus);
+  whiteForm.children.set('[data-spatial-white-preview]', whitePreview);
 
   const listeners = new Map();
   return {
@@ -226,6 +234,7 @@ function createFakeAdapter({ createCanvas, updateScene } = {}) {
     id,
     name: id === 'canvas:a' ? '画布 A' : '画布 B',
     current_revision: 1,
+    current_version_id: `version-${id}`,
     last_opened_at: '2026-09-02T12:00:00.000Z',
     summary: { element_count: 1 },
     scene: scene(`initial-${id}`, [sourceElement(id)]),
@@ -267,13 +276,14 @@ function createFakeAdapter({ createCanvas, updateScene } = {}) {
       if (updateScene) return updateScene({ call, record, records, updateCalls });
       record.scene = value;
       record.current_revision += 1;
+      record.current_version_id = `version-${id}-${record.current_revision}`;
       return record;
     },
   };
   return { adapter, createCalls, createdByRequest, records, updateCalls };
 }
 
-function createFakeRuntime() {
+function createFakeRuntime({ mutateBusinessItems = false } = {}) {
   const mounts = new Map();
   return {
     mounts,
@@ -297,6 +307,23 @@ function createFakeRuntime() {
           },
           async addBusinessItemsOnce(items) {
             calls.addBusinessItemsOnce.push(items);
+            if (mutateBusinessItems) {
+              const additions = Array.from(items || []).map((item, index) => ({
+                id: `${item.kind}-${item.references?.task_id || item.references?.result_id || index}`,
+                type: item.kind === 'task' ? 'rectangle' : 'image',
+                x: 420 + (index * 40),
+                y: 0,
+                width: 320,
+                height: item.kind === 'task' ? 176 : 240,
+                isDeleted: false,
+                customData: { ...item.references },
+              }));
+              currentScene = {
+                ...currentScene,
+                elements: [...Array.from(currentScene?.elements || []), ...additions],
+              };
+              options.onChange(currentScene);
+            }
             return { skipped: false };
           },
           async updateTask(item) {
@@ -357,11 +384,40 @@ function completedVideoJob(canvasId = 'canvas:a') {
   };
 }
 
-function createHarness({ api: apiOverrides = {}, createCanvas, onImportFiles, updateScene, runtimeLoader } = {}) {
+function completedWhiteBackgroundJob(canvasId = 'canvas:a', status = 'completed') {
+  const parameters = {
+    spatial_action: 'white-background',
+    spatial_canvas_id: canvasId,
+    spatial_source_element_id: `source-${canvasId}`,
+  };
+  return {
+    id: 'job_white_background_a',
+    mode: 'single',
+    status,
+    parameters,
+    snapshot: {
+      command_id: 'command:existing-generate-single',
+      parameters,
+      source_asset_ids: [SOURCE_ASSET_ID],
+      product_profile_version_id: 'profilever:g4b-v1',
+    },
+    items: [{ result_asset_ids: status === 'completed' ? ['ast_white_background_result'] : [] }],
+  };
+}
+
+function createHarness({
+  api: apiOverrides = {},
+  createCanvas,
+  getWhiteBackgroundDefaults,
+  mutateBusinessItems = false,
+  onImportFiles,
+  updateScene,
+  runtimeLoader,
+} = {}) {
   const documentRef = createFakeDocument();
   const clock = createFakeWindow();
   const adapterState = createFakeAdapter({ createCanvas, updateScene });
-  const runtimeState = createFakeRuntime();
+  const runtimeState = createFakeRuntime({ mutateBusinessItems });
   const api = {
     async getAsset(assetId) {
       return {
@@ -369,7 +425,7 @@ function createHarness({ api: apiOverrides = {}, createCanvas, onImportFiles, up
           id: assetId,
           name: '测试商品',
           kind: assetId === SOURCE_ASSET_ID ? 'image' : 'video',
-          role: assetId === SOURCE_ASSET_ID ? 'source' : 'result_video',
+          role: assetId === SOURCE_ASSET_ID ? 'workspace_source' : 'result_video',
           width: 320,
           height: 240,
         },
@@ -387,6 +443,7 @@ function createHarness({ api: apiOverrides = {}, createCanvas, onImportFiles, up
     windowRef: clock.windowRef,
     api,
     adapter: adapterState.adapter,
+    getWhiteBackgroundDefaults,
     onImportFiles,
     runtimeLoader: runtimeLoader || (async () => runtimeState.runtime),
   });
@@ -595,6 +652,114 @@ test('a video submission resolved after switching from A to B never mutates B', 
   assert.equal(mountA.calls.addBusinessItemsOnce.length, 0);
   assert.equal(mountB.calls.addBusinessItemsOnce.length, 0);
   assert.equal(mountB.calls.updateTask.length, 0);
+  harness.controller.destroy();
+});
+
+test('a white-background submission resolved after switching from A to B never mutates B', async () => {
+  const execution = deferred();
+  const executeCalls = [];
+  const previewCalls = [];
+  const harness = createHarness({
+    getWhiteBackgroundDefaults: () => ({
+      designSkillId: 'comfyui-food-product-main-image',
+    }),
+    api: {
+      async compileKnowledge(payload) {
+        previewCalls.push(payload);
+        return {
+          execution_context: {
+            binding: 'preview',
+            context_sha256: 'a'.repeat(64),
+            summary: { source_count: 1, positive_rule_count: 4 },
+            user_intent: { user_request: payload.user_request },
+            provider_adapter: { model: payload.model },
+          },
+          spatial_context: {
+            action: 'white-background',
+            spatial_canvas_id: payload.spatial_canvas_id,
+            source_element_id: payload.spatial_source_element_id,
+            source_asset_id: payload.source_asset_ids[0],
+            fingerprint: 'b'.repeat(64),
+          },
+          skill_snapshot: {
+            title: '食品饮料白底主图',
+            version: 'content-test',
+            content_sha256: 'c'.repeat(64),
+            adapter_version: 'context-skill-adapter-v1',
+          },
+        };
+      },
+      async executeCommand(commandId, payload) {
+        executeCalls.push({ commandId, payload });
+        return execution.promise;
+      },
+    },
+  });
+  harness.controller.bind();
+  const mountA = await activateAndOpen(harness, 'canvas:a');
+  const source = sourceElement('canvas:a');
+  source.customData.product_profile_version_id = 'profilever:g4b-v1';
+  mountA.options.onSelectionChange(source);
+  await settle();
+  const action = new FakeElement('[data-spatial-action]');
+  action.dataset.spatialAction = 'white-background';
+  await harness.documentRef.node('#page-canvas').emit('click', { target: action });
+  assert.equal(previewCalls.length, 1);
+  assert.equal(previewCalls[0].spatial_source_element_id, source.id);
+
+  await harness.documentRef.node('#page-canvas').emit('submit', {
+    target: harness.documentRef.node('[data-spatial-white-form]'),
+  });
+  await waitFor(() => executeCalls.length === 1, 'white-background command was not submitted');
+  assert.equal(executeCalls[0].payload.spatial_canvas_id, 'canvas:a');
+  assert.equal(executeCalls[0].payload.max_attempts, 1);
+  assert.equal(executeCalls[0].payload.parameters.design_skill_id, 'comfyui-food-product-main-image');
+
+  await harness.controller.openCanvas('canvas:b');
+  await settle();
+  const mountB = harness.mounts.get('canvas:b');
+  execution.resolve({ job: completedWhiteBackgroundJob('canvas:a', 'running') });
+  await settle(20);
+
+  assert.equal(harness.controller.currentId, 'canvas:b');
+  assert.equal(mountA.calls.addBusinessItemsOnce.length, 0);
+  assert.equal(mountB.calls.addBusinessItemsOnce.length, 0);
+  assert.equal(mountB.calls.updateTask.length, 0);
+  harness.controller.destroy();
+});
+
+test('reopening a canvas restores its white-background task and result exactly once', async () => {
+  const job = completedWhiteBackgroundJob('canvas:a');
+  const harness = createHarness({
+    mutateBusinessItems: true,
+    api: {
+      async getJobs() { return { jobs: [job] }; },
+      async getAsset(assetId) {
+        return {
+          asset: {
+            id: assetId,
+            name: assetId === SOURCE_ASSET_ID ? '包装文字样品' : '白底图结果',
+            kind: 'image',
+            role: assetId === SOURCE_ASSET_ID ? 'workspace_source' : 'result_main',
+            width: 320,
+            height: 240,
+            lineage_parent_id: assetId === SOURCE_ASSET_ID ? null : SOURCE_ASSET_ID,
+          },
+        };
+      },
+    },
+  });
+  const mountA = await activateAndOpen(harness, 'canvas:a');
+  await waitFor(() => (
+    harness.adapter.get('canvas:a').scene.elements.some((element) => (
+      element.customData?.result_id === 'ast_white_background_result'
+    ))
+  ), 'white-background result was not recovered');
+
+  assert.equal(mountA.calls.addBusinessItemsOnce.length, 2);
+  const durable = harness.adapter.get('canvas:a').scene.elements;
+  assert.equal(durable.filter((element) => element.customData?.task_id === job.id && !element.customData?.result_id).length, 1);
+  assert.equal(durable.filter((element) => element.customData?.result_id === 'ast_white_background_result').length, 1);
   harness.controller.destroy();
 });
 

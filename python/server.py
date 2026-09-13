@@ -3916,6 +3916,7 @@ class CommandExecutionRequest(BaseModel):
     expected_product_profile_revision: Optional[int] = None
     local_edit_spec_id: Optional[str] = None
     spatial_canvas_id: Optional[str] = None
+    spatial_source_element_id: Optional[str] = None
 
     class Config:
         extra = "forbid"
@@ -4525,6 +4526,8 @@ def _validate_job_request(mode: str, source_asset_ids: list[str], parameters: di
 
 LOCAL_EDIT_GENERATE_COMMAND_ID = "command:local-edit-generate"
 IMAGE_TO_VIDEO_COMMAND_ID = "command:image-to-video"
+SPATIAL_WHITE_BACKGROUND_COMMAND_ID = "command:existing-generate-single"
+SPATIAL_WHITE_BACKGROUND_ACTION = "white-background"
 VIDEO_OUTPUT_DIMENSIONS = {
     "1:1": (320, 320),
     "16:9": (320, 180),
@@ -4532,6 +4535,111 @@ VIDEO_OUTPUT_DIMENSIONS = {
     "4:3": (320, 240),
     "3:4": (240, 320),
 }
+
+
+class SpatialExecutionContextError(ValueError):
+    """A selected spatial source no longer represents the previewed operation."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = str(code)
+        self.message = str(message)
+
+
+def _spatial_white_background_binding(
+    *,
+    spatial_canvas_id: Any,
+    spatial_source_element_id: Any,
+    source_asset_ids: list[str],
+) -> dict[str, Any]:
+    """Resolve task-affecting canvas facts without binding unrelated scene edits."""
+    canvas_id = str(spatial_canvas_id or "").strip()
+    element_id = str(spatial_source_element_id or "").strip()
+    if not canvas_id or not element_id or len(source_asset_ids) != 1:
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_INVALID",
+            "白底图需要一张已保存到当前无限画布的原始素材",
+        )
+    try:
+        canvas = LEDGER.get_spatial_canvas(canvas_id)
+    except (KeyError, ValueError, SpatialSceneCorruptedError) as exc:
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_INVALID",
+            "来源无限画布不可用，请重新打开画布",
+        ) from exc
+    element = next((
+        item for item in canvas.get("scene", {}).get("elements", [])
+        if not item.get("isDeleted") and str(item.get("id") or "") == element_id
+    ), None)
+    if not isinstance(element, dict):
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_STALE",
+            "所选素材已离开画布，请重新选择后预览",
+        )
+    refs = element.get("customData") if isinstance(element.get("customData"), dict) else {}
+    source_asset_id = str(source_asset_ids[0] or "").strip()
+    if (
+        str(element.get("type") or "") != "image"
+        or str(refs.get("asset_id") or "") != source_asset_id
+        or bool(refs.get("result_id"))
+    ):
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_STALE",
+            "所选对象已不再是本次白底图的原始素材，请重新预览",
+        )
+    try:
+        asset = LEDGER.get_asset(source_asset_id)
+    except KeyError as exc:
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_STALE",
+            "所选原始素材已不可用，请重新选择",
+        ) from exc
+    if (
+        str(asset.get("role") or "") != "workspace_source"
+        or str(asset.get("kind") or "image") != "image"
+        or not str(asset.get("mime") or "").startswith("image/")
+    ):
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_INVALID",
+            "白底图当前只接受无限画布中的原始图片素材",
+        )
+
+    profile_version_id = str(refs.get("product_profile_version_id") or "").strip()
+    if profile_version_id:
+        try:
+            LEDGER.get_product_profile_version(profile_version_id)
+        except KeyError as exc:
+            raise SpatialExecutionContextError(
+                "SPATIAL_EXECUTION_CONTEXT_STALE",
+                "所选素材绑定的 Product Profile 版本已不可用，请重新绑定",
+            ) from exc
+
+    # Scene revision, viewport, geometry and unrelated elements are intentionally
+    # excluded because they do not alter this source-driven execution.
+    semantic_anchor = {
+        "contract_version": "spatial-execution-anchor-v1",
+        "action": SPATIAL_WHITE_BACKGROUND_ACTION,
+        "spatial_canvas_id": str(canvas["id"]),
+        "source_element_id": element_id,
+        "source_asset_id": source_asset_id,
+        "product_profile_version_id": profile_version_id,
+        "lineage_parent_id": str(refs.get("lineage_parent_id") or ""),
+    }
+    fingerprint = hashlib.sha256(json.dumps(
+        semantic_anchor,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")).hexdigest()
+    return {
+        **semantic_anchor,
+        "fingerprint": fingerprint,
+        "operation_id": f"spatial-white-background:{fingerprint}",
+        "scene_revision_observed": int(canvas.get("current_revision") or 0),
+        "scene_version_id_observed": str(canvas.get("current_version_id") or ""),
+    }
+
+
 VIDEO_OUTPUT_SLUGS = {
     "1:1": "1x1",
     "16:9": "16x9",
@@ -4665,6 +4773,29 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
         source_asset_ids = [str(asset_id).strip() for asset_id in request.source_asset_ids]
         validate_command_sources(command, source_asset_ids)
         refresh_runtime_config()
+        spatial_binding = None
+        spatial_white_background_requested = (
+            str(command["id"]) == SPATIAL_WHITE_BACKGROUND_COMMAND_ID
+            and (
+                str(request.spatial_canvas_id or "").strip()
+                or str(request.spatial_source_element_id or "").strip()
+                or str((request.parameters or {}).get("spatial_action") or "").strip()
+            )
+        )
+        if spatial_white_background_requested:
+            if (
+                str((request.parameters or {}).get("spatial_action") or "").strip()
+                != SPATIAL_WHITE_BACKGROUND_ACTION
+            ):
+                raise SpatialExecutionContextError(
+                    "SPATIAL_EXECUTION_CONTEXT_INVALID",
+                    "当前无限画布命令只支持白底图最小闭环",
+                )
+            spatial_binding = _spatial_white_background_binding(
+                spatial_canvas_id=request.spatial_canvas_id,
+                spatial_source_element_id=request.spatial_source_element_id,
+                source_asset_ids=source_asset_ids,
+            )
         if str(command["id"]) == IMAGE_TO_VIDEO_COMMAND_ID:
             parameters = _normalize_image_to_video_job_parameters(
                 request.parameters or {},
@@ -4676,6 +4807,13 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
             )
         else:
             parameters = _normalize_job_parameters(mode, request.parameters or {})
+        if spatial_binding is not None:
+            parameters.update({
+                "spatial_action": SPATIAL_WHITE_BACKGROUND_ACTION,
+                "spatial_canvas_id": spatial_binding["spatial_canvas_id"],
+                "spatial_source_element_id": spatial_binding["source_element_id"],
+                "spatial_context_fingerprint": spatial_binding["fingerprint"],
+            })
         _validate_job_request(mode, source_asset_ids, parameters)
         if str(command["id"]) == LOCAL_EDIT_GENERATE_COMMAND_ID:
             _validate_local_edit_generate_request(request, parameters)
@@ -4685,6 +4823,10 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
                 idempotency_key=str(request.client_request_id or "").strip(),
                 product_profile_id=request.product_profile_id,
                 expected_product_profile_revision=request.expected_product_profile_revision,
+                frozen_product_profile_version_id=(
+                    spatial_binding["product_profile_version_id"]
+                    if spatial_binding is not None else None
+                ),
             )
         parameters = _freeze_job_execution_context(
             parameters,
@@ -4692,17 +4834,36 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
             mode=mode,
             source_asset_ids=source_asset_ids,
             command_id=str(command["id"]),
-            canvas_document_id=request.canvas_document_id,
-            expected_canvas_revision=request.expected_canvas_revision,
-            canvas_operation_id=request.canvas_operation_id,
+            canvas_document_id=(
+                spatial_binding["spatial_canvas_id"]
+                if spatial_binding is not None else request.canvas_document_id
+            ),
+            expected_canvas_revision=(
+                None if spatial_binding is not None else request.expected_canvas_revision
+            ),
+            canvas_operation_id=(
+                spatial_binding["operation_id"]
+                if spatial_binding is not None else request.canvas_operation_id
+            ),
             product_profile_id=request.product_profile_id,
             expected_product_profile_revision=request.expected_product_profile_revision,
+            frozen_product_profile_version_id=(
+                spatial_binding["product_profile_version_id"]
+                if spatial_binding is not None else None
+            ),
         )
         planned_paid_calls = _planned_paid_call_count(
             mode,
             source_asset_ids,
             parameters,
             command_id=str(command["id"]),
+            product_profile_bound=bool(
+                request.product_profile_id
+                or (
+                    spatial_binding is not None
+                    and spatial_binding["product_profile_version_id"]
+                )
+            ),
         )
         parameters = _attach_paid_call_authorization(
             parameters,
@@ -4739,6 +4900,10 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
             canvas_operation_id=request.canvas_operation_id,
             product_profile_id=request.product_profile_id,
             expected_product_profile_revision=request.expected_product_profile_revision,
+            frozen_product_profile_version_id=(
+                spatial_binding["product_profile_version_id"]
+                if spatial_binding is not None else None
+            ),
             local_edit_spec_id=request.local_edit_spec_id,
         )
         _wake_job_engine()
@@ -4770,6 +4935,11 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
                 "submitted_sha256": exc.submitted_sha256,
                 "current_sha256": exc.current_sha256,
             },
+        )
+    except SpatialExecutionContextError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
         )
     except IdempotencyConflictError as exc:
         raise HTTPException(
@@ -5386,23 +5556,65 @@ async def compile_knowledge(data: dict):
         ]
         parameters = dict(context)
         parameters["brief"] = dict(context)
+        spatial_binding = None
+        spatial_requested = bool(
+            str(context.get("spatial_canvas_id") or "").strip()
+            or str(context.get("spatial_source_element_id") or "").strip()
+            or str(context.get("spatial_action") or "").strip()
+        )
+        if spatial_requested:
+            if (
+                command_id != SPATIAL_WHITE_BACKGROUND_COMMAND_ID
+                or str(context.get("spatial_action") or "").strip()
+                != SPATIAL_WHITE_BACKGROUND_ACTION
+            ):
+                raise SpatialExecutionContextError(
+                    "SPATIAL_EXECUTION_CONTEXT_INVALID",
+                    "当前无限画布预览只支持白底图最小闭环",
+                )
+            spatial_binding = _spatial_white_background_binding(
+                spatial_canvas_id=context.get("spatial_canvas_id"),
+                spatial_source_element_id=context.get("spatial_source_element_id"),
+                source_asset_ids=source_asset_ids,
+            )
         manifest, bundle, skill_snapshot = _build_job_execution_context(
             parameters,
             mode=mode,
             source_asset_ids=source_asset_ids,
             command_id=command_id,
             binding="preview",
-            canvas_document_id=str(context.get("canvas_document_id") or "").strip() or None,
-            expected_canvas_revision=context.get("expected_canvas_revision"),
-            canvas_operation_id=str(context.get("canvas_operation_id") or "").strip() or None,
+            canvas_document_id=(
+                spatial_binding["spatial_canvas_id"]
+                if spatial_binding is not None
+                else str(context.get("canvas_document_id") or "").strip() or None
+            ),
+            expected_canvas_revision=(
+                None if spatial_binding is not None
+                else context.get("expected_canvas_revision")
+            ),
+            canvas_operation_id=(
+                spatial_binding["operation_id"]
+                if spatial_binding is not None
+                else str(context.get("canvas_operation_id") or "").strip() or None
+            ),
             product_profile_id=str(context.get("product_profile_id") or "").strip() or None,
             expected_product_profile_revision=context.get("expected_product_profile_revision"),
+            frozen_product_profile_version_id=(
+                spatial_binding["product_profile_version_id"]
+                if spatial_binding is not None else None
+            ),
         )
         return {
             **bundle,
             "execution_context": manifest,
             "skill_snapshot": skill_snapshot,
+            "spatial_context": spatial_binding,
         }
+    except SpatialExecutionContextError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        )
     except ContextSkillError as exc:
         raise HTTPException(
             status_code=(

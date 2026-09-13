@@ -127,6 +127,28 @@ function selectedDesignMethodId(mode = state.currentMode) {
   return value === CONTEXT_DESIGN_METHOD_ID ? value : '';
 }
 
+function canvasWhiteBackgroundDefaults() {
+  const mode = 'single';
+  const snapshot = state.modeSnapshots[mode] || {};
+  const live = state.currentMode === mode && Boolean($('#param-model'));
+  return {
+    model: live ? $('#param-model').value : snapshot.model || 'gpt-image-2',
+    promptVersion: live
+      ? (getCompactPromptEnabled(mode) ? 'prompt_v3' : 'prompt_v1')
+      : snapshot.compact_prompt_enabled ? 'prompt_v3' : 'prompt_v1',
+    materialProfile: live
+      ? getMaterialProfile(mode)
+      : snapshot.material_profile || 'unknown',
+    outputRatio: live
+      ? $('#param-output-ratio').value
+      : snapshot.output_ratio || '1:1',
+    outputResolution: live
+      ? $('#param-output-resolution').value
+      : snapshot.output_resolution || '2k',
+    designSkillId: selectedDesignMethodId(mode) || CONTEXT_DESIGN_METHOD_ID,
+  };
+}
+
 function renderDesignMethodControl(skillSnapshot = null, errorMessage = '') {
   const select = $('#param-design-skill');
   const statusNode = $('#design-skill-status');
@@ -275,6 +297,10 @@ const infiniteCanvasWorkspace = createInfiniteCanvasWorkspaceController({
   onImportFiles: importSpatialCanvasFiles,
   onVideoJobSubmitted: () => loadJobs(true),
   onVideoJobSettled: () => loadJobs(true),
+  onWhiteBackgroundJobSubmitted: () => loadJobs(true),
+  onWhiteBackgroundJobSettled: () => loadJobs(true),
+  onWhiteBackgroundClassic: (context) => handleSpatialAction('white-background', context),
+  getWhiteBackgroundDefaults: canvasWhiteBackgroundDefaults,
   onRecoveryAction: (action) => (
     action === 'retry-spatial-return' ? canvasController.retrySpatialReturn() : false
   ),

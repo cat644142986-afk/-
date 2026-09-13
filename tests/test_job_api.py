@@ -2406,6 +2406,195 @@ class DurableJobApiTests(unittest.TestCase):
             )
             self.network_request.assert_not_called()
 
+    def test_spatial_white_background_uses_semantic_canvas_anchor_and_exact_profile(self) -> None:
+        vault = self.root / "knowledge-vault"
+        (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+        server.KNOWLEDGE = server.KnowledgeCompiler(vault)
+        self.write_context_skill()
+        with self.live_client() as client:
+            source = self.import_asset(client, "spatial-white-background.png", (70, 120, 180))
+            profile = self.ledger.save_product_profile(
+                expected_revision=0,
+                client_request_id="g4b-profile-v1",
+                profile=product_profile_payload(source["id"]),
+            )
+            profile_version_id = profile["version"]["id"]
+            source_element = {
+                "id": "source-product",
+                "type": "image",
+                "x": 120,
+                "y": 80,
+                "width": 420,
+                "height": 300,
+                "isDeleted": False,
+                "customData": {
+                    "asset_id": source["id"],
+                    "result_id": None,
+                    "task_id": None,
+                    "product_profile_version_id": profile_version_id,
+                    "lineage_parent_id": None,
+                },
+            }
+            scene = {
+                "schema_version": 1,
+                "elements": [source_element],
+                "app_state": copy.deepcopy(server.DEFAULT_SPATIAL_APP_STATE)
+                if hasattr(server, "DEFAULT_SPATIAL_APP_STATE") else {
+                    "viewBackgroundColor": "#d4d0cb",
+                    "currentItemRoughness": 0,
+                    "currentItemStrokeStyle": "solid",
+                    "currentItemFillStyle": "solid",
+                    "gridSize": 20,
+                    "gridStep": 5,
+                    "gridModeEnabled": False,
+                    "zoom": {"value": 1},
+                    "scrollX": 0,
+                    "scrollY": 0,
+                },
+                "files": {},
+            }
+            canvas = self.ledger.create_spatial_canvas(
+                name="G4B 白底图",
+                client_request_id="g4b-spatial-canvas",
+                scene=scene,
+            )
+            brief = {
+                "objective": "生成干净纯白背景电商主图",
+                "user_request": "严格保留产品结构、数量、包装文字与 Logo",
+                "output_kind": "ecommerce-main-image",
+                "output_spec": {"ratio": "1:1", "resolution": "2k"},
+                "intent_locks": {
+                    "subject_shape": True,
+                    "product_count": True,
+                    "packaging_text": True,
+                    "logo": True,
+                },
+            }
+            preview_request = {
+                **brief,
+                "mode": "single",
+                "command_id": server.SPATIAL_WHITE_BACKGROUND_COMMAND_ID,
+                "source_asset_ids": [source["id"]],
+                "model": "gpt-image-2",
+                "prompt_version": "prompt_v1",
+                "generation_strategy": "single_pass",
+                "design_skill_id": CONTEXT_SKILL_ID,
+                "spatial_action": server.SPATIAL_WHITE_BACKGROUND_ACTION,
+                "spatial_canvas_id": canvas["id"],
+                "spatial_source_element_id": source_element["id"],
+            }
+            preview_response = client.post("/api/knowledge/compile", json=preview_request)
+            self.assertEqual(preview_response.status_code, 200, preview_response.text)
+            preview_bundle = preview_response.json()
+            preview = preview_bundle["execution_context"]
+            spatial = preview_bundle["spatial_context"]
+            self.assertEqual(preview["canvas_context"]["document_id"], canvas["id"])
+            self.assertIsNone(preview["canvas_context"]["expected_revision"])
+            self.assertEqual(
+                preview["canvas_context"]["operation_id"],
+                f"spatial-white-background:{spatial['fingerprint']}",
+            )
+            self.assertEqual(preview["product_profile"]["version_id"], profile_version_id)
+
+            # Pan/zoom, source geometry and an unrelated element change the scene
+            # revision but intentionally do not stale this source-driven context.
+            unrelated_scene = copy.deepcopy(scene)
+            unrelated_scene["app_state"]["zoom"] = {"value": 0.75}
+            unrelated_scene["app_state"]["scrollX"] = -180
+            unrelated_scene["elements"][0]["x"] = 880
+            unrelated_scene["elements"].append({
+                "id": "unrelated-note",
+                "type": "rectangle",
+                "x": 40,
+                "y": 40,
+                "width": 180,
+                "height": 90,
+                "isDeleted": False,
+            })
+            self.ledger.save_spatial_canvas_scene(
+                canvas["id"],
+                expected_revision=1,
+                client_request_id="g4b-unrelated-scene-change",
+                scene=unrelated_scene,
+            )
+            command_response = client.post(
+                f"/api/commands/{server.SPATIAL_WHITE_BACKGROUND_COMMAND_ID}/execute",
+                json={
+                    "client_request_id": "g4b-spatial-white-background-job",
+                    "source_asset_ids": [source["id"]],
+                    "max_attempts": 1,
+                    "spatial_canvas_id": canvas["id"],
+                    "spatial_source_element_id": source_element["id"],
+                    "parameters": {
+                        "batch": 1,
+                        "variations": 1,
+                        "model": "gpt-image-2",
+                        "brief": brief,
+                        "intent_locks": brief["intent_locks"],
+                        "prompt_version": "prompt_v1",
+                        "prompt_version_source": "user",
+                        "generation_strategy": "single_pass",
+                        "generation_strategy_source": "user",
+                        "design_skill_id": CONTEXT_SKILL_ID,
+                        "spatial_action": server.SPATIAL_WHITE_BACKGROUND_ACTION,
+                        "provider_call_confirmed": True,
+                        "execution_context": preview,
+                    },
+                },
+            )
+            self.assertEqual(command_response.status_code, 200, command_response.text)
+            completed = self.wait_for_job(command_response.json()["job"]["id"])
+            self.assertEqual(completed["paid_call_authorization"]["max_calls"], 1)
+            frozen = completed["snapshot"]["parameters"]
+            self.assertEqual(completed["snapshot"]["product_profile_version_id"], profile_version_id)
+            self.assertEqual(frozen["spatial_canvas_id"], canvas["id"])
+            self.assertEqual(frozen["spatial_source_element_id"], source_element["id"])
+            self.assertEqual(frozen["spatial_context_fingerprint"], spatial["fingerprint"])
+            self.assertEqual(frozen["execution_context"]["context_sha256"], preview["context_sha256"])
+            self.assertEqual(frozen["skill_snapshot"], preview_bundle["skill_snapshot"])
+            traces = client.get(f"/api/jobs/{completed['id']}/traces").json()["traces"]
+            primary = next(item for item in traces if item["stage"] == "prompt.primary")
+            self.assertIn("包装上的文字、数字、标签位置与可读性", primary["compiled_prompt"])
+            self.assertIn("TEST BRAND", primary["compiled_prompt"])
+            self.assertIn("主 Logo", primary["compiled_prompt"])
+            self.assertNotIn("无文字", primary["compiled_prompt"])
+            self.network_request.assert_not_called()
+
+            changed_scene = copy.deepcopy(unrelated_scene)
+            changed_scene["elements"][0]["customData"]["product_profile_version_id"] = None
+            self.ledger.save_spatial_canvas_scene(
+                canvas["id"],
+                expected_revision=2,
+                client_request_id="g4b-task-affecting-scene-change",
+                scene=changed_scene,
+            )
+            stale_response = client.post(
+                f"/api/commands/{server.SPATIAL_WHITE_BACKGROUND_COMMAND_ID}/execute",
+                json={
+                    "client_request_id": "g4b-spatial-white-background-stale",
+                    "source_asset_ids": [source["id"]],
+                    "max_attempts": 1,
+                    "spatial_canvas_id": canvas["id"],
+                    "spatial_source_element_id": source_element["id"],
+                    "parameters": {
+                        "batch": 1,
+                        "model": "gpt-image-2",
+                        "brief": brief,
+                        "intent_locks": brief["intent_locks"],
+                        "prompt_version": "prompt_v1",
+                        "prompt_version_source": "user",
+                        "generation_strategy": "single_pass",
+                        "generation_strategy_source": "user",
+                        "design_skill_id": CONTEXT_SKILL_ID,
+                        "spatial_action": server.SPATIAL_WHITE_BACKGROUND_ACTION,
+                        "execution_context": preview,
+                    },
+                },
+            )
+            self.assertEqual(stale_response.status_code, 409, stale_response.text)
+            self.assertEqual(stale_response.json()["detail"]["code"], "EXECUTION_CONTEXT_STALE")
+            self.assertEqual(len(self.ai_calls), 1)
+
     def test_bound_profile_version_drives_prompt_and_survives_derived_adjustment(self) -> None:
         vault = self.root / "knowledge-vault"
         (vault / "20 知识库" / "设计知识").mkdir(parents=True)

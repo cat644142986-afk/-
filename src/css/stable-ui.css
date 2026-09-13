@@ -1479,6 +1479,30 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .spatial-video-form__actions button { min-height: 34px; padding: 0 11px; border: 1px solid var(--line-2); border-radius: 7px; color: var(--ink-2); font-size: var(--type-micro); font-weight: 800; }
 .spatial-video-form__actions button.is-primary { border-color: var(--dark); background: var(--dark); color: #fff; }
 .spatial-video-form__actions button:disabled { cursor: not-allowed; opacity: .5; }
+.spatial-inspector:has(.spatial-white-form) { width: min(390px, calc(100% - 24px)); }
+.spatial-white-form { display: grid; gap: 11px; padding: 12px; border-top: 1px solid var(--line); }
+.spatial-white-form__heading { display: grid; gap: 2px; }
+.spatial-white-form__heading > span { color: var(--coral-deep); font-size: var(--type-micro); font-weight: 900; letter-spacing: .08em; }
+.spatial-white-form__heading > strong { color: var(--ink); font-size: var(--type-control); }
+.spatial-white-form__heading > small, .spatial-white-form label > small, .spatial-white-form__source { color: var(--ink-3); font-size: var(--type-micro); line-height: 1.45; }
+.spatial-white-form label { display: grid; gap: 5px; color: var(--ink-2); font-size: var(--type-micro); font-weight: 800; }
+.spatial-white-form textarea, .spatial-white-form select { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--paper); color: var(--ink); font: inherit; letter-spacing: 0; }
+.spatial-white-form textarea { min-height: 82px; resize: vertical; line-height: 1.5; }
+.spatial-white-form textarea:focus-visible, .spatial-white-form select:focus-visible, .spatial-white-form button:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px; }
+.spatial-context-preview { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-2); }
+.spatial-context-preview dl { display: grid; gap: 7px; margin: 0; }
+.spatial-context-preview dl > div { display: grid; grid-template-columns: 104px minmax(0,1fr); gap: 8px; align-items: start; }
+.spatial-context-preview dt { color: var(--ink-3); font-size: var(--type-micro); font-weight: 800; }
+.spatial-context-preview dd { min-width: 0; margin: 0; color: var(--ink-2); font-size: var(--type-micro); line-height: 1.45; overflow-wrap: anywhere; }
+.spatial-context-preview dd small { color: var(--ink-3); }
+.spatial-context-preview p { margin: 0; color: var(--ink-3); font-size: var(--type-micro); line-height: 1.5; }
+.spatial-white-form__status { min-height: 18px; margin: 0; color: var(--ink-3); font-size: var(--type-micro); line-height: 1.45; }
+.spatial-white-form__status[data-error="true"] { color: var(--red); }
+.spatial-white-form__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.spatial-white-form__actions button { min-height: 34px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 7px; color: var(--ink-2); font-size: var(--type-micro); font-weight: 800; }
+.spatial-white-form__actions button.is-primary { border-color: var(--dark); background: var(--dark); color: #fff; }
+.spatial-white-form__actions button:disabled { cursor: not-allowed; opacity: .5; }
+.spatial-white-form__source { margin: -2px 0 0; }
 .spatial-editor-loading { position: absolute; z-index: 3; inset: 0; display: grid; place-items: center; align-content: center; gap: 12px; background: var(--canvas); color: var(--ink-2); }
 .spatial-editor-loading span { width: 26px; height: 26px; border: 3px solid var(--line-2); border-top-color: var(--coral); border-radius: 50%; animation: spatialSpin .8s linear infinite; }
 .spatial-editor-loading button { min-height: 38px; padding: 0 14px; border-radius: 11px; background: var(--dark); color: #fff; font-weight: 800; }
