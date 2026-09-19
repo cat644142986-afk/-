@@ -778,13 +778,33 @@ class KnowledgeCompiler:
     def enrich_prompt(self, prompt: str, negative_prompt: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         context = dict(context or {})
         bundle = self.compile(context)
-        compact_v3 = str(context.get("prompt_version") or "").lower() == "prompt_v3"
+        prompt_version = str(context.get("prompt_version") or "").lower()
+        compact_v3 = prompt_version == "prompt_v3"
         if compact_v3 and not isinstance(context.get("execution_context"), dict):
             bundle = self._compact_v3_bundle(bundle, context)
         positive_addition = "；".join(rule["text"] for rule in bundle["positive_rules"][:10])
         negative_addition = "，".join(rule["text"] for rule in bundle["negative_rules"][:10])
         lock_addition = "；".join(bundle["intent_lock_rules"])
         enriched_prompt = prompt
+        execution_context = context.get("execution_context")
+        if prompt_version == "prompt_v1" and isinstance(execution_context, dict):
+            frozen_intent = execution_context.get("user_intent")
+            if isinstance(frozen_intent, dict):
+                objective = " ".join(
+                    str(frozen_intent.get("objective") or "").split()
+                )
+                user_request = " ".join(
+                    str(frozen_intent.get("user_request") or "").split()
+                )
+                intent_parts = []
+                if objective:
+                    intent_parts.append(f"目标：{objective}")
+                if user_request and user_request != objective:
+                    intent_parts.append(f"要求：{user_request}")
+                if intent_parts:
+                    enriched_prompt += (
+                        f"。本次用户意图（最高优先级）：{'；'.join(intent_parts)}"
+                    )
         if lock_addition:
             label = "最高优先" if compact_v3 else "不可破坏约束（最高优先级）"
             enriched_prompt += f"。{label}：{lock_addition}"

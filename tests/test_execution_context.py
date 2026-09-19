@@ -137,6 +137,77 @@ class ExecutionContextContractTests(unittest.TestCase):
             for item in actual["positive_rules"]
         ))
 
+    def test_prompt_v1_provider_prompt_uses_frozen_intent_profile_and_skill_rules(self) -> None:
+        profile_source = {
+            "id": "profile-version:tea-v3",
+            "title": "透明茶饮瓶",
+            "relative_path": "产品档案/TEA-001",
+        }
+        skill_source = {
+            "id": "skill:comfyui-food-product-main-image:soft-light",
+            "title": "食品饮料主图设计方法",
+            "relative_path": "设计方法/comfyui-food-product-main-image",
+        }
+        bundle = sample_bundle()
+        bundle["positive_rules"] = [
+            {
+                "text": "商品档案保护约束：包装文字 TEST BRAND、250 g；Logo 主 Logo",
+                "source": profile_source,
+            },
+            {
+                "text": "采用柔和漫射棚拍光，并保留自然、克制的软阴影",
+                "source": skill_source,
+            },
+        ]
+        bundle["sources"] = [profile_source, skill_source]
+        context = build_execution_context(
+            context=bundle["creative_brief"],
+            knowledge_bundle=bundle,
+            mode="single",
+            source_asset_ids=["asset:selected-result"],
+            command_id="canvas.generate.single",
+            binding="job-snapshot",
+        )
+        live_conflict = {
+            "objective": "后来修改的目标不应生效",
+            "user_request": "后来修改的要求不应生效",
+            "prompt_version": "prompt_v1",
+            "execution_context": context,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vault = Path(temp_dir) / "vault"
+            (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+            actual = KnowledgeCompiler(vault).enrich_prompt(
+                "provider-base", "", live_conflict
+            )
+
+        compiled = actual["prompt"]
+        self.assertIn("目标：生成可交付的白底商品主图", compiled)
+        self.assertIn("要求：保留包装文字，使用克制阴影", compiled)
+        self.assertIn("严格保持包装文字", compiled)
+        self.assertIn("包装文字 TEST BRAND、250 g；Logo 主 Logo", compiled)
+        self.assertIn("采用柔和漫射棚拍光，并保留自然、克制的软阴影", compiled)
+        self.assertNotIn("后来修改的目标不应生效", compiled)
+        self.assertNotIn("后来修改的要求不应生效", compiled)
+        self.assertLess(compiled.index("本次用户意图"), compiled.index("不可破坏约束"))
+        self.assertLess(compiled.index("不可破坏约束"), compiled.index("知识库设计约束"))
+
+    def test_legacy_enrichment_without_execution_context_is_unchanged(self) -> None:
+        bundle = sample_bundle()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vault = Path(temp_dir) / "vault"
+            (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+            compiler = KnowledgeCompiler(vault)
+            compiler.compile = lambda _context: copy.deepcopy(bundle)  # type: ignore[method-assign]
+            actual = compiler.enrich_prompt(
+                "provider-base", "legacy-negative", {"prompt_version": "prompt_v1"}
+            )
+
+        self.assertNotIn("本次用户意图", actual["prompt"])
+        self.assertIn("不可破坏约束（最高优先级）：严格保持包装文字", actual["prompt"])
+        self.assertIn("知识库设计约束：阴影克制", actual["prompt"])
+        self.assertEqual("legacy-negative，不要改变品牌色", actual["negative_prompt"])
+
     def test_existing_prompt_route_budget_is_frozen_before_execution(self) -> None:
         source = {"id": "knowledge:budget", "title": "预算规则", "relative_path": "规则.md"}
         raw = {

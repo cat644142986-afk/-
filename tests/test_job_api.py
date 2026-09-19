@@ -2350,7 +2350,10 @@ class DurableJobApiTests(unittest.TestCase):
                 and str((evidence.get("source") or {}).get("id") or "").startswith("skill:")
                 for evidence in primary["applied_knowledge"]
             ))
+            self.assertIn(brief["objective"], primary["compiled_prompt"])
+            self.assertIn(brief["user_request"], primary["compiled_prompt"])
             self.assertIn("包装上的文字、数字、标签位置与可读性", primary["compiled_prompt"])
+            self.assertIn("采用柔和漫射棚拍光", primary["compiled_prompt"])
             self.assertNotIn("无文字", primary["compiled_prompt"])
             self.network_request.assert_not_called()
 
@@ -2554,7 +2557,10 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertEqual(frozen["skill_snapshot"], preview_bundle["skill_snapshot"])
             traces = client.get(f"/api/jobs/{completed['id']}/traces").json()["traces"]
             primary = next(item for item in traces if item["stage"] == "prompt.primary")
+            self.assertIn(brief["objective"], primary["compiled_prompt"])
+            self.assertIn(brief["user_request"], primary["compiled_prompt"])
             self.assertIn("包装上的文字、数字、标签位置与可读性", primary["compiled_prompt"])
+            self.assertIn("采用柔和漫射棚拍光", primary["compiled_prompt"])
             self.assertIn("TEST BRAND", primary["compiled_prompt"])
             self.assertIn("主 Logo", primary["compiled_prompt"])
             self.assertNotIn("无文字", primary["compiled_prompt"])
@@ -2767,7 +2773,10 @@ class DurableJobApiTests(unittest.TestCase):
             self.assert_result_lineage(client, completed, {selected_result["id"]: 2})
             traces = client.get(f"/api/jobs/{completed['id']}/traces").json()["traces"]
             primary = next(item for item in traces if item["stage"] == "prompt.primary")
+            self.assertIn(brief["objective"], primary["compiled_prompt"])
+            self.assertIn(brief["user_request"], primary["compiled_prompt"])
             self.assertIn("包装上的文字、数字、标签位置与可读性", primary["compiled_prompt"])
+            self.assertIn("采用柔和漫射棚拍光", primary["compiled_prompt"])
             self.assertIn("TEST BRAND", primary["compiled_prompt"])
             self.assertIn("主 Logo", primary["compiled_prompt"])
             self.network_request.assert_not_called()
