@@ -195,6 +195,19 @@ def create_v8_database(path: Path) -> None:
         connection.close()
 
 
+def create_v9_database(path: Path) -> None:
+    create_v8_database(path)
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        AtelierLedger._migrate_v8_to_v9(connection)
+        AtelierLedger._write_schema_version(connection, 9)
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def snapshot_v1_data(path: Path) -> dict[str, list[dict[str, object]]]:
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
@@ -239,7 +252,7 @@ class LedgerMigrationTests(unittest.TestCase):
 
         ledger = AtelierLedger(self.db_path)
 
-        self.assertEqual(read_schema_version(self.db_path), 9)
+        self.assertEqual(read_schema_version(self.db_path), 10)
         self.assertIsNotNone(ledger.last_migration_backup)
         backup_path = ledger.last_migration_backup
         assert backup_path is not None
@@ -259,6 +272,78 @@ class LedgerMigrationTests(unittest.TestCase):
             "spatial_edit_handoffs",
             "export_receipts",
         }.issubset(tables))
+
+    def test_v9_upgrade_adds_canvas_tombstones_and_keeps_a_queryable_backup(self) -> None:
+        create_v9_database(self.db_path)
+
+        ledger = AtelierLedger(self.db_path)
+
+        self.assertEqual(read_schema_version(self.db_path), 10)
+        backup_path = ledger.last_migration_backup
+        self.assertIsNotNone(backup_path)
+        assert backup_path is not None
+        self.assertEqual(read_schema_version(backup_path), 9)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(spatial_canvas_documents)"
+                )
+            }
+            indexes = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'index'"
+                )
+            }
+        finally:
+            connection.close()
+        self.assertIn("deleted_at", columns)
+        self.assertIn("idx_spatial_documents_active_recent", indexes)
+
+    def test_incomplete_v10_with_v9_marker_is_refused_without_mutation(self) -> None:
+        create_v9_database(self.db_path)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("ALTER TABLE spatial_canvas_documents ADD COLUMN deleted_at TEXT")
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaisesRegex(
+            PartialSchemaError, "idx_spatial_documents_active_recent"
+        ):
+            AtelierLedger(self.db_path)
+        self.assertEqual(read_schema_version(self.db_path), 9)
+
+    def test_v10_migration_failure_rolls_back_canvas_tombstones(self) -> None:
+        create_v9_database(self.db_path)
+
+        class FailingV10Ledger(AtelierLedger):
+            @staticmethod
+            def _migrate_v9_to_v10(connection: sqlite3.Connection) -> None:
+                connection.execute(
+                    "ALTER TABLE spatial_canvas_documents ADD COLUMN deleted_at TEXT"
+                )
+                raise RuntimeError("injected v10 migration failure")
+
+        with self.assertRaisesRegex(
+            LedgerSchemaError, "Failed to migrate ledger to schema v10"
+        ):
+            FailingV10Ledger(self.db_path)
+        self.assertEqual(read_schema_version(self.db_path), 9)
+        connection = sqlite3.connect(self.db_path)
+        try:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(spatial_canvas_documents)"
+                )
+            }
+        finally:
+            connection.close()
+        self.assertNotIn("deleted_at", columns)
 
     def test_incomplete_v9_with_v8_marker_is_refused_without_mutation(self) -> None:
         create_v8_database(self.db_path)
@@ -290,7 +375,7 @@ class LedgerMigrationTests(unittest.TestCase):
                 raise RuntimeError("injected v9 migration failure")
 
         with self.assertRaisesRegex(
-            LedgerSchemaError, "Failed to migrate ledger to schema v9"
+            LedgerSchemaError, "Failed to migrate ledger to schema v10"
         ) as caught:
             FailingV9Ledger(self.db_path)
         self.assertIsInstance(caught.exception.__cause__, RuntimeError)
@@ -388,7 +473,8 @@ class LedgerMigrationTests(unittest.TestCase):
             "recovered complete v6 schema with stale v5 metadata; "
             "recovered complete v7 schema with stale v6 metadata; "
             "recovered complete v8 schema with stale v7 metadata; "
-            "recovered complete v9 schema with stale v8 metadata",
+            "recovered complete v9 schema with stale v8 metadata; "
+            "recovered complete v10 schema with stale v9 metadata",
         )
         self.assertIsNotNone(repaired.last_migration_backup)
         backup_path = repaired.last_migration_backup
@@ -472,7 +558,8 @@ class LedgerMigrationTests(unittest.TestCase):
             "recovered complete v6 schema with stale v5 metadata; "
             "recovered complete v7 schema with stale v6 metadata; "
             "recovered complete v8 schema with stale v7 metadata; "
-            "recovered complete v9 schema with stale v8 metadata",
+            "recovered complete v9 schema with stale v8 metadata; "
+            "recovered complete v10 schema with stale v9 metadata",
         )
         self.assertIsNotNone(repaired.last_migration_backup)
         backup_path = repaired.last_migration_backup

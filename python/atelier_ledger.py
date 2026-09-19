@@ -61,7 +61,7 @@ except ImportError:
     from .storage_paths import native_io_path
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 CANVAS_DOCUMENT_SCHEMA_VERSION = 1
 PRODUCT_PROFILE_SCHEMA_VERSION = 1
 CANVAS_COORDINATE_SYSTEM = {
@@ -502,6 +502,9 @@ V9_REQUIRED_TRIGGERS = frozenset({
     "trg_export_receipts_no_update",
     "trg_export_receipts_no_delete",
 })
+
+V10_REQUIRED_COLUMNS = frozenset({"deleted_at"})
+V10_REQUIRED_INDEXES = frozenset({"idx_spatial_documents_active_recent"})
 
 V1_SCHEMA_STATEMENTS = (
     """
@@ -1948,6 +1951,61 @@ class AtelierLedger:
             issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
         return issues
 
+    @classmethod
+    def _v10_objects_present(cls, connection: sqlite3.Connection) -> bool:
+        if "spatial_canvas_documents" in cls._table_names(connection):
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(spatial_canvas_documents)"
+                )
+            }
+            if columns.intersection(V10_REQUIRED_COLUMNS):
+                return True
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        return bool(indexes.intersection(V10_REQUIRED_INDEXES))
+
+    @classmethod
+    def _v10_contract_issues(cls, connection: sqlite3.Connection) -> list[str]:
+        issues: list[str] = []
+        tables = cls._table_names(connection)
+        if "spatial_canvas_documents" not in tables:
+            issues.append("missing table spatial_canvas_documents")
+        else:
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(spatial_canvas_documents)"
+                )
+            }
+            missing_columns = sorted(V10_REQUIRED_COLUMNS - columns)
+            if missing_columns:
+                issues.append(
+                    "spatial_canvas_documents missing columns: "
+                    + ", ".join(missing_columns)
+                )
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        missing_indexes = sorted(V10_REQUIRED_INDEXES - indexes)
+        if missing_indexes:
+            issues.append(f"missing indexes: {', '.join(missing_indexes)}")
+        integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
+        if integrity_rows != ["ok"]:
+            issues.append(f"integrity_check failed: {'; '.join(integrity_rows[:3])}")
+        foreign_key_rows = list(connection.execute("PRAGMA foreign_key_check"))
+        if foreign_key_rows:
+            issues.append(f"foreign_key_check found {len(foreign_key_rows)} violation(s)")
+        return issues
+
     def _migration_backup_path(self, version: int) -> Path:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         return self.db_path.with_name(
@@ -3015,6 +3073,20 @@ class AtelierLedger:
                 """
             )
 
+    @staticmethod
+    def _migrate_v9_to_v10(connection: sqlite3.Connection) -> None:
+        """Add a reversible active-list tombstone without mutating scene history."""
+        connection.execute(
+            "ALTER TABLE spatial_canvas_documents ADD COLUMN deleted_at TEXT"
+        )
+        connection.execute(
+            """
+            CREATE INDEX idx_spatial_documents_active_recent
+            ON spatial_canvas_documents(last_opened_at DESC, updated_at DESC)
+            WHERE deleted_at IS NULL
+            """
+        )
+
     def _ensure_schema(self) -> None:
         with self._schema_lock:
             # Probe the version without changing journal mode. An older app must
@@ -3187,6 +3259,23 @@ class AtelierLedger:
                                     else:
                                         self._migrate_v8_to_v9(connection)
                                     current_version = 9
+                                elif current_version == 9:
+                                    if self._v10_objects_present(connection):
+                                        issues = self._v10_contract_issues(connection)
+                                        if issues:
+                                            raise PartialSchemaError(
+                                                "Detected an incomplete v10 ledger while schema metadata says v9; "
+                                                "the database was not changed. Restore the automatic backup or "
+                                                f"repair these objects first: {' | '.join(issues)}"
+                                            )
+                                        repair = "recovered complete v10 schema with stale v9 metadata"
+                                        self.last_schema_repair = (
+                                            f"{self.last_schema_repair}; {repair}"
+                                            if self.last_schema_repair else repair
+                                        )
+                                    else:
+                                        self._migrate_v9_to_v10(connection)
+                                    current_version = 10
                                 else:
                                     raise LedgerSchemaError(
                                         f"No migration path from schema v{current_version}"
@@ -4378,6 +4467,7 @@ class AtelierLedger:
             rows = connection.execute(
                 """
                 SELECT * FROM spatial_canvas_documents
+                WHERE deleted_at IS NULL
                 ORDER BY last_opened_at DESC, updated_at DESC, id ASC
                 LIMIT ?
                 """,
@@ -4407,7 +4497,8 @@ class AtelierLedger:
         document_id = _canvas_id(document_id, "spatial_canvas_id")
         with self._connection() as connection:
             document = connection.execute(
-                "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+                "SELECT * FROM spatial_canvas_documents WHERE id = ? AND deleted_at IS NULL",
+                (document_id,),
             ).fetchone()
             if document is None:
                 raise KeyError(f"unknown spatial canvas: {document_id}")
@@ -4426,13 +4517,17 @@ class AtelierLedger:
         now = utc_now()
         with self._immediate_connection() as connection:
             updated = connection.execute(
-                "UPDATE spatial_canvas_documents SET last_opened_at = ? WHERE id = ?",
+                """
+                UPDATE spatial_canvas_documents SET last_opened_at = ?
+                WHERE id = ? AND deleted_at IS NULL
+                """,
                 (now, document_id),
             )
             if updated.rowcount != 1:
                 raise KeyError(f"unknown spatial canvas: {document_id}")
             document = connection.execute(
-                "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+                "SELECT * FROM spatial_canvas_documents WHERE id = ? AND deleted_at IS NULL",
+                (document_id,),
             ).fetchone()
             assert document is not None
             version = connection.execute(
@@ -4479,6 +4574,10 @@ class AtelierLedger:
                 if str(prior["create_request_fingerprint"]) != fingerprint:
                     raise IdempotencyConflictError(
                         "client_request_id already belongs to a different spatial canvas"
+                    )
+                if prior["deleted_at"] is not None:
+                    raise IdempotencyConflictError(
+                        "client_request_id belongs to a deleted spatial canvas"
                     )
                 document = prior
                 version = connection.execute(
@@ -4561,14 +4660,15 @@ class AtelierLedger:
                 """
                 UPDATE spatial_canvas_documents
                 SET name = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND deleted_at IS NULL
                 """,
                 (normalized_name, now, document_id),
             )
             if updated.rowcount != 1:
                 raise KeyError(f"unknown spatial canvas: {document_id}")
             document = connection.execute(
-                "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+                "SELECT * FROM spatial_canvas_documents WHERE id = ? AND deleted_at IS NULL",
+                (document_id,),
             ).fetchone()
             assert document is not None
             version = connection.execute(
@@ -4657,7 +4757,8 @@ class AtelierLedger:
                         "client_request_id already belongs to a different spatial scene save"
                     )
                 document = connection.execute(
-                    "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+                    "SELECT * FROM spatial_canvas_documents WHERE id = ? AND deleted_at IS NULL",
+                    (document_id,),
                 ).fetchone()
                 version = connection.execute(
                     "SELECT * FROM spatial_canvas_scene_versions WHERE id = ?",
@@ -4676,7 +4777,8 @@ class AtelierLedger:
                 )
 
             document = connection.execute(
-                "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+                "SELECT * FROM spatial_canvas_documents WHERE id = ? AND deleted_at IS NULL",
+                (document_id,),
             ).fetchone()
             if document is None:
                 raise KeyError(f"unknown spatial canvas: {document_id}")
@@ -4762,7 +4864,7 @@ class AtelierLedger:
                 """
                 UPDATE spatial_canvas_documents
                 SET current_version_id = ?, current_revision = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND deleted_at IS NULL
                 """,
                 (version_id, next_revision, now, document_id),
             )
@@ -4774,6 +4876,36 @@ class AtelierLedger:
             ).fetchone()
             assert document is not None and version is not None
         return self._spatial_canvas_result(document, version, include_scene=True)
+
+    def delete_spatial_canvas(self, document_id: str) -> dict[str, Any]:
+        """Remove a canvas from the active workspace while retaining immutable evidence."""
+        document_id = _canvas_id(document_id, "spatial_canvas_id")
+        with self._immediate_connection() as connection:
+            document = connection.execute(
+                "SELECT * FROM spatial_canvas_documents WHERE id = ?", (document_id,)
+            ).fetchone()
+            if document is None:
+                raise KeyError(f"unknown spatial canvas: {document_id}")
+            replayed = document["deleted_at"] is not None
+            deleted_at = str(document["deleted_at"] or utc_now())
+            if not replayed:
+                connection.execute(
+                    """
+                    UPDATE spatial_canvas_documents
+                    SET deleted_at = ?, updated_at = ?
+                    WHERE id = ? AND deleted_at IS NULL
+                    """,
+                    (deleted_at, deleted_at, document_id),
+                )
+            return {
+                "id": document_id,
+                "name": str(document["name"]),
+                "current_revision": int(document["current_revision"]),
+                "current_version_id": str(document["current_version_id"]),
+                "deleted_at": deleted_at,
+                "replayed": replayed,
+                "history_retained": True,
+            }
 
     def get_spatial_canvas_version(self, version_id: str) -> dict[str, Any]:
         version_id = _canvas_id(version_id, "spatial_scene_version_id")

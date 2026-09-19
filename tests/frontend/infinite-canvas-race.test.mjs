@@ -70,6 +70,9 @@ class FakeElement {
   closest(selector) {
     if (selector === '[data-spatial-recovery]' && this.dataset.spatialRecovery) return this;
     if (selector === '[data-spatial-action]' && this.dataset.spatialAction) return this;
+    if (selector === '[data-spatial-delete]' && this.dataset.spatialDelete) return this;
+    if (selector === '[data-spatial-delete-cancel]' && this.dataset.spatialDeleteCancel) return this;
+    if (selector === '[data-spatial-delete-confirm]' && this.dataset.spatialDeleteConfirm) return this;
     return selector === this.selector ? this : null;
   }
 
@@ -110,6 +113,15 @@ function createFakeDocument() {
   imageAiForm.children.set('[data-spatial-image-ai-preview]', imageAiPreview);
   node('#spatial-rename-form').hidden = true;
   node('#spatial-command-menu').hidden = true;
+  const deleteDialog = node('#spatial-delete-dialog');
+  const deleteCancel = node('#spatial-delete-cancel');
+  deleteCancel.selector = '[data-spatial-delete-cancel]';
+  const deleteConfirm = node('[data-spatial-delete-confirm]');
+  deleteCancel.dataset.spatialDeleteCancel = 'true';
+  deleteConfirm.dataset.spatialDeleteConfirm = 'true';
+  deleteDialog.children.set('[data-spatial-delete-cancel]', deleteCancel);
+  deleteDialog.querySelectorAll = () => [deleteCancel, deleteConfirm];
+  deleteDialog.hidden = true;
 
   const listeners = new Map();
   return {
@@ -253,7 +265,7 @@ function imageElement(id, assetId) {
   };
 }
 
-function createFakeAdapter({ createCanvas, updateScene } = {}) {
+function createFakeAdapter({ createCanvas, removeCanvas, updateScene } = {}) {
   const records = new Map(['canvas:a', 'canvas:b'].map((id) => [id, {
     id,
     name: id === 'canvas:a' ? '画布 A' : '画布 B',
@@ -293,6 +305,13 @@ function createFakeAdapter({ createCanvas, updateScene } = {}) {
       return record;
     },
     async rename(id) { return adapter.get(id); },
+    async remove(id) {
+      const record = adapter.get(id);
+      if (!record) return null;
+      if (removeCanvas) return removeCanvas({ id: String(id), record, records });
+      records.delete(String(id));
+      return { id: String(id), name: record.name, history_retained: true };
+    },
     async updateScene(id, value) {
       const record = adapter.get(id);
       const call = { id, revision: record?.current_revision, scene: value };
@@ -457,12 +476,13 @@ function createHarness({
   getWhiteBackgroundDefaults,
   mutateBusinessItems = false,
   onImportFiles,
+  removeCanvas,
   updateScene,
   runtimeLoader,
 } = {}) {
   const documentRef = createFakeDocument();
   const clock = createFakeWindow();
-  const adapterState = createFakeAdapter({ createCanvas, updateScene });
+  const adapterState = createFakeAdapter({ createCanvas, removeCanvas, updateScene });
   const runtimeState = createFakeRuntime({ mutateBusinessItems });
   const api = {
     async getAsset(assetId) {
@@ -1017,6 +1037,70 @@ test('Canvas-local Ctrl+K respects editing layers and restores trapped focus on 
   });
   assert.equal(unavailableShortcut.defaultPrevented, false);
   assert.equal(harness.controller.commandMenuOpen, false);
+  harness.controller.destroy();
+});
+
+test('Canvas delete requires confirmation, traps focus, cancels cleanly and removes only the selected canvas', async () => {
+  const harness = createHarness();
+  harness.controller.bind();
+  await activateAndOpen(harness, 'canvas:a');
+  const trigger = harness.documentRef.node('#btn-spatial-delete');
+  harness.documentRef.activeElement = trigger;
+
+  assert.equal(harness.controller.openDeleteDialog('canvas:a', trigger), true);
+  assert.equal(harness.controller.deleteDialogOpen, true);
+  assert.match(harness.documentRef.node('#spatial-delete-title').textContent, /画布 A/);
+
+  const cancel = harness.documentRef.node('#spatial-delete-cancel');
+  const confirm = harness.documentRef.node('[data-spatial-delete-confirm]');
+  harness.documentRef.activeElement = confirm;
+  const tab = await harness.documentRef.emit('keydown', { key: 'Tab', target: confirm });
+  assert.equal(tab.defaultPrevented, true);
+  assert.equal(cancel.focusCalls, 2);
+
+  const escape = await harness.documentRef.emit('keydown', { key: 'Escape', target: cancel });
+  assert.equal(escape.defaultPrevented, true);
+  assert.equal(harness.controller.deleteDialogOpen, false);
+  assert.equal(harness.records.has('canvas:a'), true);
+  assert.equal(trigger.focusCalls, 1);
+
+  harness.controller.openDeleteDialog('canvas:a', trigger);
+  await harness.documentRef.node('#page-canvas').emit('click', { target: confirm });
+  assert.equal(harness.controller.deleteDialogOpen, false);
+  assert.equal(harness.records.has('canvas:a'), false);
+  assert.equal(harness.records.has('canvas:b'), true);
+  assert.equal(harness.controller.currentId, '');
+  assert.equal(harness.documentRef.node('#spatial-library').hidden, false);
+  assert.equal(harness.documentRef.node('#spatial-editor').hidden, true);
+  assert.match(harness.documentRef.node('#spatial-save-state').textContent, /历史任务与结果证据已保留/);
+  harness.controller.destroy();
+});
+
+test('Canvas delete failure leaves the confirmation recoverable and succeeds on explicit retry', async () => {
+  let attempts = 0;
+  const harness = createHarness({
+    removeCanvas({ id, record, records }) {
+      attempts += 1;
+      if (attempts === 1) throw new Error('temporary delete outage');
+      records.delete(id);
+      return { id, name: record.name, history_retained: true };
+    },
+  });
+  harness.controller.bind();
+  await activateAndOpen(harness, 'canvas:a');
+  const trigger = harness.documentRef.node('#btn-spatial-delete');
+  const confirm = harness.documentRef.node('[data-spatial-delete-confirm]');
+  harness.controller.openDeleteDialog('canvas:a', trigger);
+
+  await harness.documentRef.node('#page-canvas').emit('click', { target: confirm });
+  assert.equal(harness.controller.deleteDialogOpen, true);
+  assert.equal(harness.records.has('canvas:a'), true);
+  assert.match(harness.documentRef.node('#spatial-delete-error').textContent, /temporary delete outage/);
+
+  await harness.documentRef.node('#page-canvas').emit('click', { target: confirm });
+  assert.equal(attempts, 2);
+  assert.equal(harness.controller.deleteDialogOpen, false);
+  assert.equal(harness.records.has('canvas:a'), false);
   harness.controller.destroy();
 });
 

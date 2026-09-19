@@ -2979,6 +2979,14 @@ async def rename_spatial_canvas(canvas_id: str, request: SpatialCanvasRenameRequ
         raise_spatial_canvas_http_error(exc)
 
 
+@app.delete("/api/spatial-canvases/{canvas_id}")
+async def delete_spatial_canvas(canvas_id: str):
+    try:
+        return LEDGER.delete_spatial_canvas(canvas_id)
+    except Exception as exc:
+        raise_spatial_canvas_http_error(exc)
+
+
 @app.put("/api/spatial-canvases/{canvas_id}/scene")
 async def save_spatial_canvas_scene(canvas_id: str, request: SpatialSceneSaveRequest):
     try:

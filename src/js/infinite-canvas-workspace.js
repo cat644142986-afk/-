@@ -279,6 +279,9 @@ export function createInfiniteCanvasWorkspaceController({
   let savePromise = Promise.resolve();
   let openEpoch = 0;
   let renameReturnFocus = null;
+  let deleteReturnFocus = null;
+  let deleteTargetId = '';
+  let deleteSubmitting = false;
   let islandReadyPromise = null;
   let resolveIslandReady = null;
   let selectedElement = null;
@@ -351,9 +354,14 @@ export function createInfiniteCanvasWorkspaceController({
           <span class="spatial-thumbnail" data-empty="${record.summary.element_count ? 'false' : 'true'}" aria-hidden="true">${thumbnailElements(record.thumbnail || record.scene)}</span>
           <span class="spatial-canvas-card__copy"><strong>${escapeHtml(record.name)}</strong><small>${index === 0 ? '最近打开' : '本次会话'} · ${formatRecent(record.last_opened_at)}</small></span>
         </button>
-        <button class="spatial-card-action" type="button" data-spatial-rename="${escapeHtml(record.id)}" aria-label="重命名 ${escapeHtml(record.name)}" title="重命名">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10Z"/><path d="m13.5 7.5 3 3"/></svg>
-        </button>
+        <div class="spatial-card-actions">
+          <button class="spatial-card-action" type="button" data-spatial-rename="${escapeHtml(record.id)}" aria-label="重命名 ${escapeHtml(record.name)}" title="重命名">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10Z"/><path d="m13.5 7.5 3 3"/></svg>
+          </button>
+          <button class="spatial-card-action is-destructive" type="button" data-spatial-delete="${escapeHtml(record.id)}" aria-label="删除 ${escapeHtml(record.name)}" title="删除">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"/><path d="M10 11v5M14 11v5"/></svg>
+          </button>
+        </div>
       </article>
     `).join('');
   }
@@ -404,6 +412,113 @@ export function createInfiniteCanvasWorkspaceController({
     const record = currentId ? adapter.get(currentId) : null;
     query('#spatial-current-name').textContent = record?.name || '无限画布';
     query('#btn-spatial-rename').hidden = !record;
+    query('#btn-spatial-delete').hidden = !record;
+  }
+
+  function openDeleteDialog(id, returnFocus = null) {
+    const record = adapter.get(id);
+    const dialog = query('#spatial-delete-dialog');
+    if (!record || !dialog || deleteSubmitting) return false;
+    closeNativeAiCommandMenu({ restoreFocus: false });
+    closeRename(false);
+    deleteTargetId = record.id;
+    deleteReturnFocus = returnFocus || documentRef.activeElement;
+    query('#spatial-delete-title').textContent = `删除「${record.name}」？`;
+    query('#spatial-delete-detail').textContent = '画布会从当前工作区移除；已有版本、任务、结果与来源证据仍会保留。';
+    const error = query('#spatial-delete-error');
+    error.hidden = true;
+    error.textContent = '';
+    dialog.hidden = false;
+    windowRef.requestAnimationFrame(() => query('#spatial-delete-cancel')?.focus?.());
+    return true;
+  }
+
+  function closeDeleteDialog({ restoreFocus = true } = {}) {
+    if (deleteSubmitting) return false;
+    const dialog = query('#spatial-delete-dialog');
+    if (dialog) dialog.hidden = true;
+    const target = deleteReturnFocus;
+    deleteTargetId = '';
+    deleteReturnFocus = null;
+    if (restoreFocus) windowRef.requestAnimationFrame(() => target?.focus?.());
+    return true;
+  }
+
+  function trapDeleteDialogFocus(event) {
+    const dialog = query('#spatial-delete-dialog');
+    const focusable = Array.from(dialog?.querySelectorAll?.('button:not(:disabled):not([tabindex="-1"])') || []);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && documentRef.activeElement === first) {
+      event.preventDefault();
+      last.focus?.();
+    } else if (!event.shiftKey && documentRef.activeElement === last) {
+      event.preventDefault();
+      first.focus?.();
+    }
+  }
+
+  async function confirmDeleteCanvas() {
+    const canvasId = String(deleteTargetId || '');
+    const dialog = query('#spatial-delete-dialog');
+    if (!canvasId || !dialog || deleteSubmitting) return false;
+    const buttons = Array.from(dialog.querySelectorAll?.('button') || []);
+    const error = query('#spatial-delete-error');
+    deleteSubmitting = true;
+    buttons.forEach((button) => {
+      button.disabled = true;
+      button.setAttribute?.('aria-busy', 'true');
+    });
+    error.hidden = true;
+    error.textContent = '';
+    try {
+      if (!(await flushCanvasForTransition(canvasId))) {
+        throw new Error('画布仍有未保存的修改；已停止删除，请重试');
+      }
+      const receipt = await adapter.remove(canvasId);
+      if (!receipt) throw new Error('画布已不存在；请刷新画布列表');
+      clearSceneTimer(canvasId);
+      pendingScenes.delete(canvasId);
+      savingScenes.delete(canvasId);
+      sceneConflicts.delete(canvasId);
+      if (currentId === canvasId) {
+        openEpoch += 1;
+        stopVideoPolling();
+        currentCanvasSession = null;
+        mountedIsland?.unmount?.();
+        mountedIsland = null;
+        islandReadyPromise = null;
+        resolveIslandReady = null;
+        selectedElement = null;
+        currentId = '';
+        query('#spatial-library').hidden = false;
+        query('#spatial-editor').hidden = true;
+        query('#btn-spatial-home').hidden = true;
+        query('#btn-spatial-rename').hidden = true;
+        query('#btn-spatial-delete').hidden = true;
+        query('#spatial-current-name').textContent = '画布空间';
+      }
+      renderLibrary();
+      deleteSubmitting = false;
+      closeDeleteDialog({ restoreFocus: false });
+      setSpatialStatus('画布已删除 · 历史任务与结果证据已保留');
+      windowRef.requestAnimationFrame(() => (
+        query('[data-spatial-open]') || query('#btn-spatial-new')
+      )?.focus?.());
+      return true;
+    } catch (deleteError) {
+      error.hidden = false;
+      error.textContent = `删除失败：${String(deleteError?.detail?.message || deleteError?.message || deleteError)}`;
+      setSpatialStatus('画布删除失败 · 原画布仍保留', { kind: 'error' });
+      return false;
+    } finally {
+      deleteSubmitting = false;
+      buttons.forEach((button) => {
+        button.disabled = false;
+        button.removeAttribute?.('aria-busy');
+      });
+    }
   }
 
   async function renderInspector(element) {
@@ -560,6 +675,15 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onWorkspaceKeyDown(event) {
+    const deleteDialog = query('#spatial-delete-dialog');
+    if (!deleteDialog?.hidden) {
+      if (event.key === 'Escape' && !deleteSubmitting) {
+        event.preventDefault();
+        event.stopPropagation?.();
+        closeDeleteDialog();
+      } else if (event.key === 'Tab') trapDeleteDialogFocus(event);
+      return;
+    }
     const menu = query('#spatial-command-menu');
     if (!menu?.hidden) {
       if (event.key === 'Escape') {
@@ -1496,6 +1620,7 @@ export function createInfiniteCanvasWorkspaceController({
     query('#spatial-editor').hidden = true;
     query('#btn-spatial-home').hidden = true;
     query('#btn-spatial-rename').hidden = true;
+    query('#btn-spatial-delete').hidden = true;
     query('#spatial-current-name').textContent = '画布空间';
     renderLibrary();
     if (restoreFocus) windowRef.requestAnimationFrame(() => query('#btn-spatial-new')?.focus());
@@ -2164,6 +2289,8 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onClick(event) {
+    if (event.target.closest('[data-spatial-delete-cancel]')) return closeDeleteDialog();
+    if (event.target.closest('[data-spatial-delete-confirm]')) return confirmDeleteCanvas();
     if (event.target.closest('[data-spatial-command-close]')) {
       return closeNativeAiCommandMenu();
     }
@@ -2208,6 +2335,8 @@ export function createInfiniteCanvasWorkspaceController({
     if (openButton) return openCanvas(openButton.dataset.spatialOpen);
     const renameButton = event.target.closest('[data-spatial-rename]');
     if (renameButton) return beginRename(renameButton.dataset.spatialRename, renameButton);
+    const deleteButton = event.target.closest('[data-spatial-delete]');
+    if (deleteButton) return openDeleteDialog(deleteButton.dataset.spatialDelete, deleteButton);
     if (event.target.closest('[data-spatial-conflict-discard]') && currentId) {
       return discardSceneConflict(currentId);
     }
@@ -2250,6 +2379,7 @@ export function createInfiniteCanvasWorkspaceController({
     ));
     query('#btn-spatial-home').addEventListener('click', () => showLibrary({ restoreFocus: true }));
     query('#btn-spatial-rename').addEventListener('click', (event) => beginRename(currentId, event.currentTarget));
+    query('#btn-spatial-delete').addEventListener('click', (event) => openDeleteDialog(currentId, event.currentTarget));
     query('#spatial-rename-form').addEventListener('submit', submitRename);
     query('#spatial-rename-cancel').addEventListener('click', () => closeRename());
     query('#spatial-rename-input').addEventListener('keydown', (event) => {
@@ -2273,6 +2403,7 @@ export function createInfiniteCanvasWorkspaceController({
       mountedIsland?.stopVideo?.();
       flushScene(currentCanvasSession?.canvasId || currentId);
       closeNativeAiCommandMenu({ restoreFocus: false });
+      closeDeleteDialog({ restoreFocus: false });
       closeRename(false);
       return;
     }
@@ -2304,6 +2435,7 @@ export function createInfiniteCanvasWorkspaceController({
     documentRef.removeEventListener('drop', onDrop);
     documentRef.removeEventListener('keydown', onWorkspaceKeyDown, true);
     closeNativeAiCommandMenu({ restoreFocus: false });
+    closeDeleteDialog({ restoreFocus: false });
     currentCanvasSession = null;
     mountedIsland?.unmount?.();
     mountedIsland = null;
@@ -2320,6 +2452,7 @@ export function createInfiniteCanvasWorkspaceController({
     getCurrentNativeAiActions,
     invokeCurrentNativeAiAction,
     openCanvas,
+    openDeleteDialog,
     openCanvasAiPreview,
     openVideoComposer,
     openVideoJob,
@@ -2328,6 +2461,7 @@ export function createInfiniteCanvasWorkspaceController({
     showLibrary,
     get active() { return active; },
     get commandMenuOpen() { return !query('#spatial-command-menu')?.hidden; },
+    get deleteDialogOpen() { return !query('#spatial-delete-dialog')?.hidden; },
     get videoRecoveryPending() { return videoRecoveryPending; },
     get currentId() { return currentId; },
     get currentRecord() { return currentId ? adapter.get(currentId) : null; },

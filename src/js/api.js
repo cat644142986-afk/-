@@ -394,6 +394,13 @@ export async function renameSpatialCanvas(canvasId, payload, options = {}) {
   });
 }
 
+export async function deleteSpatialCanvas(canvasId, options = {}) {
+  return fetchJSON('/api/spatial-canvases/' + encodeURIComponent(canvasId), {
+    ...options,
+    method: 'DELETE',
+  });
+}
+
 export async function saveSpatialCanvasScene(canvasId, payload, options = {}) {
   return fetchJSON('/api/spatial-canvases/' + encodeURIComponent(canvasId) + '/scene', {
     ...options,

@@ -571,11 +571,10 @@ test('result review form and feedback receipt behavior live outside the page orc
   assert.match(review, /feedbackReceiptCopy\(durable\.receipt\)/);
 });
 
-test('real workflow controls share the dark production dock without stretching empty space', () => {
+test('real workflow controls share the dark production dock and remain reachable at every height', () => {
   assert.match(html, /<aside class="task-dock"[\s\S]*?class="task-dock__body"[\s\S]*?class="mode-grid"[\s\S]*?id="folder-source"/);
   assert.match(css, /\.task-dock \{[^}]*display: grid;[^}]*grid-template-rows: auto minmax\(0,1fr\) auto/);
-  assert.match(css, /\.task-dock__body \{[^}]*overflow: hidden/);
-  assert.doesNotMatch(css, /\.task-dock__body \{[^}]*overflow: hidden auto/);
+  assert.match(css, /\.task-dock__body \{[^}]*overflow-x: hidden;[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain/);
   assert.match(css, /@media \(max-height: 760px\)[\s\S]*?\.task-dock__body \{[^}]*overflow-y: auto/);
   assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.task-dock\.is-open \.task-dock__body \{[^}]*overflow-y: auto/);
   assert.match(css, /\.task-dock \.folder-source \{[^}]*border-radius: 17px/);

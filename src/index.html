@@ -262,7 +262,7 @@
         </section>
 
         <section class="app-page spatial-page" id="page-canvas" data-page-name="canvas" hidden>
-          <div class="spatial-workspace" data-adapter="sqlite-v9">
+          <div class="spatial-workspace" data-adapter="sqlite-v10">
             <header class="spatial-toolbar">
               <div class="spatial-toolbar__identity">
                 <button class="spatial-icon-button" id="btn-spatial-home" type="button" aria-label="返回画布列表" title="返回画布列表" hidden><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
@@ -274,6 +274,7 @@
                 <button class="spatial-secondary-button" id="btn-spatial-assets" type="button" aria-label="打开素材库" title="素材库"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3Z"/><path d="M7 5h4l2 2"/></svg><span>素材</span></button>
                 <button class="spatial-secondary-button" id="btn-spatial-jobs" type="button" aria-label="打开任务中心" title="任务中心"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4Z"/><path d="M8 9h8M8 13h5"/></svg><span>任务</span></button>
                 <button class="spatial-secondary-button" id="btn-spatial-rename" type="button" aria-label="重命名当前画布" title="重命名当前画布" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10Z"/><path d="m13.5 7.5 3 3"/></svg><span>重命名</span></button>
+                <button class="spatial-secondary-button spatial-danger-button" id="btn-spatial-delete" type="button" aria-label="删除当前画布" title="删除当前画布" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"/><path d="M10 11v5M14 11v5"/></svg><span>删除</span></button>
                 <button class="spatial-primary-button" id="btn-spatial-new" type="button" aria-label="新建画布" title="新建画布"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>新建画布</span></button>
                 <div class="traffic-lights spatial-traffic-lights" aria-label="窗口控制"><button class="traffic-light traffic-light--close" id="btn-spatial-close" type="button" aria-label="关闭"></button><button class="traffic-light traffic-light--min" id="btn-spatial-min" type="button" aria-label="最小化"></button><button class="traffic-light traffic-light--max" id="btn-spatial-max" type="button" aria-label="最大化"></button></div>
               </div>
@@ -291,6 +292,17 @@
               <aside class="spatial-inspector" id="spatial-inspector" aria-label="对象操作" hidden></aside>
               <div class="spatial-command-menu" id="spatial-command-menu" role="dialog" aria-modal="true" aria-labelledby="spatial-command-menu-title" hidden></div>
             </section>
+
+            <div class="spatial-delete-dialog" id="spatial-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="spatial-delete-title" aria-describedby="spatial-delete-detail" hidden>
+              <button class="spatial-delete-dialog__scrim" type="button" data-spatial-delete-cancel tabindex="-1" aria-label="取消删除画布"></button>
+              <section class="spatial-delete-dialog__surface">
+                <span>DELETE CANVAS</span>
+                <h3 id="spatial-delete-title">删除这张画布？</h3>
+                <p id="spatial-delete-detail"></p>
+                <p class="spatial-delete-dialog__error" id="spatial-delete-error" role="alert" hidden></p>
+                <footer><button id="spatial-delete-cancel" type="button" data-spatial-delete-cancel>取消</button><button class="is-destructive" id="spatial-delete-confirm" type="button" data-spatial-delete-confirm>删除画布</button></footer>
+              </section>
+            </div>
 
             <footer class="spatial-status"><span id="spatial-save-state" role="status" aria-live="polite">本次会话 · 画布列表</span><button id="spatial-recovery-action" type="button" hidden></button><strong>Product Atelier</strong></footer>
           </div>

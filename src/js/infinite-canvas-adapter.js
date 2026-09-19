@@ -159,6 +159,22 @@ export function createMemorySpatialCanvasAdapter({
     return snapshot(record);
   }
 
+  function remove(id) {
+    const canvasId = String(id);
+    const record = records.get(canvasId);
+    if (!record) return null;
+    records.delete(canvasId);
+    return {
+      id: canvasId,
+      name: record.name,
+      current_revision: record.current_revision,
+      current_version_id: record.current_version_id,
+      deleted_at: now().toISOString(),
+      replayed: false,
+      history_retained: true,
+    };
+  }
+
   function updateScene(id, scene) {
     const record = records.get(String(id));
     if (!record) return null;
@@ -175,6 +191,7 @@ export function createMemorySpatialCanvasAdapter({
     list,
     load: async () => list(),
     open,
+    remove,
     rename,
     updateScene,
     kind: 'memory',
@@ -235,6 +252,17 @@ export function createApiSpatialCanvasAdapter({ api } = {}) {
     return remember(record);
   }
 
+  async function remove(id) {
+    const canvasId = String(id);
+    const previous = saveChains.get(canvasId);
+    if (previous) await previous.catch(() => {});
+    conflictEpochs.set(canvasId, (conflictEpochs.get(canvasId) || 0) + 1);
+    const receipt = await api.deleteSpatialCanvas(canvasId, { timeoutMs: 12000 });
+    records.delete(canvasId);
+    saveChains.delete(canvasId);
+    return clone(receipt);
+  }
+
   function updateScene(id, scene) {
     const canvasId = String(id);
     const serializedScene = apiScene(scene);
@@ -286,9 +314,10 @@ export function createApiSpatialCanvasAdapter({ api } = {}) {
     list,
     load,
     open,
+    remove,
     rename,
     updateScene,
-    kind: 'sqlite-v9',
+    kind: 'sqlite-v10',
   };
 }
 

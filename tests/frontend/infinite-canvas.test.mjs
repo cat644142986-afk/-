@@ -40,8 +40,10 @@ test('spatial workspace is a primary route and the old Studio switch is gone', (
   assert.match(html, /id="spatial-canvas-list"/);
   assert.match(html, /id="btn-spatial-new"/);
   assert.match(html, /id="btn-spatial-rename"[^>]*aria-label="重命名当前画布"/);
+  assert.match(html, /id="btn-spatial-delete"[^>]*aria-label="删除当前画布"/);
+  assert.match(html, /id="spatial-delete-dialog"[^>]*role="dialog"[^>]*aria-modal="true"/);
   assert.match(html, /id="spatial-inspector"[^>]*hidden/);
-  assert.match(html, /class="spatial-workspace" data-adapter="sqlite-v9"/);
+  assert.match(html, /class="spatial-workspace" data-adapter="sqlite-v10"/);
   assert.doesNotMatch(html, /data-studio-view=/);
   assert.doesNotMatch(html, />自由画布</);
   assert.match(app, /infiniteCanvasWorkspace\.setPage\(page === 'canvas'\)/);
@@ -95,6 +97,9 @@ test('IC2 memory adapter provides list, recent, rename and scene continuity with
   assert.equal(updated.summary.frame_count, 1);
   assert.equal(updated.scene.appState.scrollX, 42);
   assert.deepEqual(updated.scene.files, {});
+  const removed = adapter.remove(second.id);
+  assert.equal(removed.history_retained, true);
+  assert.equal(adapter.get(second.id), null);
   assert.doesNotMatch(adapterSource, /localStorage|sessionStorage|fetch\(|\.saveCanvas\(/);
 });
 
@@ -125,6 +130,10 @@ test('IC3 production adapter uses current ledger APIs and strips scene file byte
       calls.push(['rename', id, payload]);
       return { ...base, name: payload.name };
     },
+    async deleteSpatialCanvas(id) {
+      calls.push(['delete', id]);
+      return { id, deleted_at: '2026-09-14T00:00:00Z', history_retained: true };
+    },
     async saveSpatialCanvasScene(id, payload) {
       calls.push(['save', id, payload]);
       return {
@@ -137,7 +146,7 @@ test('IC3 production adapter uses current ledger APIs and strips scene file byte
   };
   const adapter = createApiSpatialCanvasAdapter({ api });
   await adapter.load();
-  assert.equal(adapter.kind, 'sqlite-v9');
+  assert.equal(adapter.kind, 'sqlite-v10');
   assert.equal(adapter.list()[0].id, base.id);
   const opened = await adapter.open(base.id);
   assert.equal(opened.scene.appState.zoom.value, 0.8);
@@ -153,7 +162,12 @@ test('IC3 production adapter uses current ledger APIs and strips scene file byte
   assert.equal(savePayload.scene.schema_version, 1);
   assert.deepEqual(savePayload.scene.files, {});
   assert.equal(savePayload.scene.app_state.zoom.value, 0.7);
+  const removed = await adapter.remove(base.id);
+  assert.equal(removed.history_retained, true);
+  assert.equal(adapter.get(base.id), null);
+  assert.deepEqual(calls.find(([kind]) => kind === 'delete'), ['delete', base.id]);
   assert.match(apiSource, /export async function listSpatialCanvases/);
+  assert.match(apiSource, /export async function deleteSpatialCanvas/);
   assert.match(apiSource, /export async function saveSpatialCanvasScene/);
   assert.match(workspace, /api = API,[\s\S]*createApiSpatialCanvasAdapter\(\{ api \}\)/);
 });

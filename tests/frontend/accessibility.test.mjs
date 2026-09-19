@@ -50,6 +50,23 @@ test('review help and preview layers expose predictable focus behavior', async (
   assert.match(app, /if \(!\$\('#review-guide'\)\.hidden\) \{ compareController\.setGuideOpen\(false, \{ restore: true \}\); return; \}/);
 });
 
+test('task control and canvas destructive flows keep every control reachable', async () => {
+  const [css, html, workspace] = await Promise.all([
+    readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8'),
+    readFile(path.join(root, 'src/index.html'), 'utf8'),
+    readFile(path.join(root, 'src/js/infinite-canvas-workspace.js'), 'utf8'),
+  ]);
+  assert.match(css, /\.task-dock__body \{[^}]*min-height: 0;[^}]*overflow-x: hidden;[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain;/);
+  assert.match(css, /\.task-dock \{[^}]*grid-template-rows: auto minmax\(0,1fr\) auto;/);
+  assert.match(html, /id="spatial-delete-dialog"[^>]*role="dialog"[^>]*aria-modal="true"[^>]*aria-labelledby="spatial-delete-title"/);
+  assert.match(html, /data-spatial-delete-cancel>取消</);
+  assert.match(html, /id="spatial-delete-confirm"[^>]*data-spatial-delete-confirm>删除画布</);
+  assert.match(css, /\.spatial-delete-dialog__surface \{[^}]*max-height: calc\(100% - 24px\);[^}]*overflow: auto;/);
+  assert.match(workspace, /if \(event\.key === 'Escape' && !deleteSubmitting\)/);
+  assert.match(workspace, /else if \(event\.key === 'Tab'\) trapDeleteDialogFocus\(event\)/);
+  assert.match(workspace, /closeDeleteDialog\(\{ restoreFocus: false \}\);[\s\S]*?历史任务与结果证据已保留/);
+});
+
 test('key interface tokens preserve readable light and dark surface contrast', async () => {
   const css = await readFile(path.join(root, 'src/css/stable-ui.css'), 'utf8');
   assert.match(css, /--ink-3: #62676d/);

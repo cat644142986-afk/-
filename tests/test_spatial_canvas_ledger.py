@@ -103,7 +103,7 @@ class SpatialCanvasLedgerTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_schema_v8_has_immutable_spatial_scene_objects(self) -> None:
-        self.assertEqual(SCHEMA_VERSION, 9)
+        self.assertEqual(SCHEMA_VERSION, 10)
         connection = sqlite3.connect(self.db_path)
         try:
             tables = {
@@ -153,6 +153,52 @@ class SpatialCanvasLedgerTests(unittest.TestCase):
         restored = restarted.get_spatial_canvas(created["id"])
         self.assertEqual(restored["name"], "白底图对比")
         self.assertEqual(restored["current_version_id"], created["current_version_id"])
+
+    def test_delete_removes_only_the_active_canvas_and_retains_immutable_history(self) -> None:
+        created = self.ledger.create_spatial_canvas(
+            name="待删除画布", client_request_id="spatial-delete-create"
+        )
+        saved = self.ledger.save_spatial_canvas_scene(
+            created["id"],
+            expected_revision=1,
+            client_request_id="spatial-delete-save",
+            scene=spatial_scene(self.asset["id"]),
+        )
+
+        deleted = self.ledger.delete_spatial_canvas(created["id"])
+        replay = self.ledger.delete_spatial_canvas(created["id"])
+
+        self.assertFalse(deleted["replayed"])
+        self.assertTrue(deleted["history_retained"])
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["deleted_at"], deleted["deleted_at"])
+        self.assertEqual(self.ledger.list_spatial_canvases(), [])
+        for operation in (
+            lambda: self.ledger.get_spatial_canvas(created["id"]),
+            lambda: self.ledger.open_spatial_canvas(created["id"]),
+            lambda: self.ledger.rename_spatial_canvas(created["id"], "不能重命名"),
+            lambda: self.ledger.save_spatial_canvas_scene(
+                created["id"],
+                expected_revision=2,
+                client_request_id="spatial-delete-save-after",
+                scene=spatial_scene(self.asset["id"]),
+            ),
+        ):
+            with self.assertRaises(KeyError):
+                operation()
+        with self.assertRaises(IdempotencyConflictError):
+            self.ledger.create_spatial_canvas(
+                name="待删除画布", client_request_id="spatial-delete-create"
+            )
+
+        retained = self.ledger.get_spatial_canvas_version(saved["current_version_id"])
+        self.assertEqual(retained["document_id"], created["id"])
+        restarted = AtelierLedger(self.db_path)
+        self.assertEqual(restarted.list_spatial_canvases(), [])
+        self.assertEqual(
+            restarted.get_spatial_canvas_version(saved["current_version_id"])["id"],
+            saved["current_version_id"],
+        )
 
     def test_create_with_initial_scene_is_atomic_idempotent_and_reference_safe(self) -> None:
         scene = spatial_scene(self.asset["id"])
@@ -422,7 +468,7 @@ class SpatialCanvasMigrationTests(unittest.TestCase):
     def test_v7_upgrade_is_recoverable_and_restart_does_not_duplicate_backup(self) -> None:
         create_v7_database(self.db_path)
         ledger = AtelierLedger(self.db_path)
-        self.assertEqual(ledger.stats()["schema_version"], 9)
+        self.assertEqual(ledger.stats()["schema_version"], 10)
         backup = ledger.last_migration_backup
         self.assertIsNotNone(backup)
         assert backup is not None
@@ -450,7 +496,7 @@ class SpatialCanvasMigrationTests(unittest.TestCase):
         finally:
             connection.close()
         repaired = AtelierLedger(self.db_path)
-        self.assertEqual(repaired.stats()["schema_version"], 9)
+        self.assertEqual(repaired.stats()["schema_version"], 10)
         self.assertIn("recovered complete v9 schema", repaired.last_schema_repair)
 
     def test_partial_v8_with_v7_marker_is_refused_without_mutation(self) -> None:
@@ -485,7 +531,7 @@ class SpatialCanvasMigrationTests(unittest.TestCase):
                 raise RuntimeError("injected v8 migration failure")
 
         with self.assertRaisesRegex(
-            LedgerSchemaError, "Failed to migrate ledger to schema v9"
+            LedgerSchemaError, "Failed to migrate ledger to schema v10"
         ) as caught:
             FailingV8Ledger(self.db_path)
         self.assertIsInstance(caught.exception.__cause__, RuntimeError)

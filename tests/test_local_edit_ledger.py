@@ -203,7 +203,7 @@ class LocalEditLedgerTests(unittest.TestCase):
         }
 
     def test_current_schema_has_immutable_local_edit_contracts(self) -> None:
-        self.assertEqual(SCHEMA_VERSION, 9)
+        self.assertEqual(SCHEMA_VERSION, 10)
         connection = sqlite3.connect(self.db_path)
         try:
             tables = {
@@ -928,7 +928,7 @@ class LocalEditMigrationTests(unittest.TestCase):
     def test_v5_upgrade_creates_current_schema_and_a_queryable_v5_backup(self) -> None:
         create_v5_database(self.db_path)
         ledger = AtelierLedger(self.db_path)
-        self.assertEqual(ledger.stats()["schema_version"], 9)
+        self.assertEqual(ledger.stats()["schema_version"], 10)
         self.assertIsNotNone(ledger.last_migration_backup)
         backup = ledger.last_migration_backup
         assert backup is not None
@@ -944,7 +944,7 @@ class LocalEditMigrationTests(unittest.TestCase):
     def test_v6_upgrade_creates_v7_and_a_queryable_v6_backup(self) -> None:
         create_v6_database(self.db_path)
         ledger = AtelierLedger(self.db_path)
-        self.assertEqual(ledger.stats()["schema_version"], 9)
+        self.assertEqual(ledger.stats()["schema_version"], 10)
         self.assertIsNotNone(ledger.last_migration_backup)
         backup = ledger.last_migration_backup
         assert backup is not None
@@ -1000,7 +1000,7 @@ class LocalEditMigrationTests(unittest.TestCase):
             connection.close()
 
         repaired = AtelierLedger(self.db_path)
-        self.assertEqual(repaired.stats()["schema_version"], 9)
+        self.assertEqual(repaired.stats()["schema_version"], 10)
         self.assertEqual(
             repaired.last_schema_repair,
             "recovered complete v6 schema with stale v5 metadata",
@@ -1046,7 +1046,7 @@ class LocalEditMigrationTests(unittest.TestCase):
             connection.close()
 
         repaired = AtelierLedger(self.db_path)
-        self.assertEqual(repaired.stats()["schema_version"], 9)
+        self.assertEqual(repaired.stats()["schema_version"], 10)
         self.assertEqual(
             repaired.last_schema_repair,
             "recovered complete v7 schema with stale v6 metadata",

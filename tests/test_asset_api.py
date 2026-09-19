@@ -1142,6 +1142,29 @@ class AssetApiTests(unittest.TestCase):
             2,
         )
 
+        deleted = self.client.delete(
+            f"/api/spatial-canvases/{created_payload['id']}"
+        )
+        replayed_delete = self.client.delete(
+            f"/api/spatial-canvases/{created_payload['id']}"
+        )
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertTrue(deleted.json()["history_retained"])
+        self.assertFalse(deleted.json()["replayed"])
+        self.assertTrue(replayed_delete.json()["replayed"])
+        self.assertEqual(
+            len(self.client.get("/api/spatial-canvases").json()["canvases"]),
+            1,
+        )
+        self.assertEqual(
+            self.client.get(f"/api/spatial-canvases/{created_payload['id']}").status_code,
+            404,
+        )
+        retained_version = self.client.get(
+            f"/api/spatial-scene-versions/{saved_payload['current_version_id']}"
+        )
+        self.assertEqual(retained_version.status_code, 200, retained_version.text)
+
     def test_canvas_api_and_command_api_share_the_durable_job_contract(self) -> None:
         source = self.client.post(
             "/api/assets/import?collection=cutout",
