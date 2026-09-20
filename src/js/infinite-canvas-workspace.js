@@ -2191,6 +2191,7 @@ export function createInfiniteCanvasWorkspaceController({
     if (!payload && !hasFileTransfer) return;
     event.preventDefault();
     event.stopPropagation();
+    event.stopImmediatePropagation?.();
     if (hasFileTransfer) {
       setFileDropActive(false);
       if (!files.length) {
@@ -2237,6 +2238,8 @@ export function createInfiniteCanvasWorkspaceController({
     const transferTypes = Array.from(event.dataTransfer?.types || []);
     if (!transferTypes.includes(SPATIAL_DRAG_MIME) && !transferTypes.includes('Files')) return;
     event.preventDefault();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
     if (transferTypes.includes('Files')) setFileDropActive(true);
   }
@@ -2491,9 +2494,9 @@ export function createInfiniteCanvasWorkspaceController({
     query('#page-canvas').addEventListener('input', onInput);
     query('#page-canvas').addEventListener('change', onChange);
     query('#page-canvas').addEventListener('submit', onSubmit);
-    documentRef.addEventListener('dragover', onDragOver);
+    documentRef.addEventListener('dragover', onDragOver, true);
     documentRef.addEventListener('dragleave', onDragLeave);
-    documentRef.addEventListener('drop', onDrop);
+    documentRef.addEventListener('drop', onDrop, true);
     documentRef.addEventListener('paste', onPaste, true);
     documentRef.addEventListener('keydown', onWorkspaceKeyDown, true);
     renderLibrary();
@@ -2533,9 +2536,9 @@ export function createInfiniteCanvasWorkspaceController({
   function destroy() {
     stopVideoPolling();
     flushScene(currentCanvasSession?.canvasId || currentId);
-    documentRef.removeEventListener('dragover', onDragOver);
+    documentRef.removeEventListener('dragover', onDragOver, true);
     documentRef.removeEventListener('dragleave', onDragLeave);
-    documentRef.removeEventListener('drop', onDrop);
+    documentRef.removeEventListener('drop', onDrop, true);
     documentRef.removeEventListener('paste', onPaste, true);
     documentRef.removeEventListener('keydown', onWorkspaceKeyDown, true);
     closeNativeAiCommandMenu({ restoreFocus: false });

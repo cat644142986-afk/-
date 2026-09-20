@@ -266,7 +266,9 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(app, /lineage_parent_id: asset\.lineage_parent_id \|\| ''/);
   assert.match(app, /已打开并预填快捷处理；尚未发起生成调用/);
   assert.doesNotMatch(app, /prepareSpatialQuickAction[\s\S]{0,2500}handleGenerate\(/);
-  assert.match(workspace, /documentRef\.addEventListener\('drop', onDrop\)/);
+  assert.match(workspace, /documentRef\.addEventListener\('dragover', onDragOver, true\)/);
+  assert.match(workspace, /documentRef\.addEventListener\('drop', onDrop, true\)/);
+  assert.match(workspace, /event\.stopImmediatePropagation\?\.\(\)/);
   assert.match(workspace, /documentRef\.addEventListener\('paste', onPaste, true\)/);
   assert.match(workspace, /const files = Array\.from\(transfer\?\.files \|\| \[\]\)/);
   assert.match(workspace, /await onImportFiles\(files\)/);

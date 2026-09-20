@@ -158,8 +158,11 @@ function createFakeDocument() {
     async emit(type, event = {}) {
       const value = {
         defaultPrevented: false,
+        propagationStopped: false,
+        immediatePropagationStopped: false,
         preventDefault() { this.defaultPrevented = true; },
-        stopPropagation() {},
+        stopPropagation() { this.propagationStopped = true; },
+        stopImmediatePropagation() { this.immediatePropagationStopped = true; },
         target: node('#spatial-canvas-host'),
         ...event,
       };
@@ -647,6 +650,8 @@ test('an Explorer FileList drop imports ledger assets before adding canvas refer
 
   const dragover = await harness.documentRef.emit('dragover', { dataTransfer: transfer });
   assert.equal(dragover.defaultPrevented, true);
+  assert.equal(dragover.propagationStopped, true);
+  assert.equal(dragover.immediatePropagationStopped, true);
   assert.equal(transfer.dropEffect, 'copy');
   assert.equal(harness.documentRef.node('#spatial-canvas-host').dataset.fileDropActive, 'true');
   const drop = await harness.documentRef.emit('drop', {
@@ -656,6 +661,8 @@ test('an Explorer FileList drop imports ledger assets before adding canvas refer
   });
 
   assert.equal(drop.defaultPrevented, true);
+  assert.equal(drop.propagationStopped, true);
+  assert.equal(drop.immediatePropagationStopped, true);
   assert.equal(harness.documentRef.node('#spatial-canvas-host').dataset.fileDropActive, 'false');
   assert.deepEqual(importCalls, [[file]]);
   assert.deepEqual(mount.calls.addBusinessItems, [[importedItem]]);
