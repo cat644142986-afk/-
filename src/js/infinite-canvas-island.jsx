@@ -19,6 +19,7 @@ import {
   mergeSpatialNodeBatch,
   selectedSpatialBusinessElement,
   spatialBusinessKey,
+  spatialScenePointFromViewport,
   spatialLineageFocusElements,
   updateSpatialTaskElements,
   uniqueSpatialBusinessItems,
@@ -452,7 +453,7 @@ export function mountInfiniteCanvas(host, options) {
     />,
   );
 
-  async function insertBusinessItems(items, { once = false } = {}) {
+  async function insertBusinessItems(items, { once = false, insertionPoint = null } = {}) {
     if (!canvasApi || !componentReady) throw new Error('Infinite canvas runtime is not ready');
     const existing = canvasApi.getSceneElementsIncludingDeleted();
     const normalized = once ? uniqueSpatialBusinessItems(items, existing) : Array.from(items || []);
@@ -467,7 +468,7 @@ export function mountInfiniteCanvas(host, options) {
       };
     }
     const appState = canvasApi.getAppState();
-    const batch = buildSpatialNodeBatch(normalized, { elements: existing, appState });
+    const batch = buildSpatialNodeBatch(normalized, { elements: existing, appState, insertionPoint });
     // convertToExcalidrawElements accepts iframe-like elements only when they
     // already satisfy the complete Excalidraw element contract. Passing our
     // partial video skeleton through unchanged can make Excalidraw publish a
@@ -499,7 +500,7 @@ export function mountInfiniteCanvas(host, options) {
     const viewportReady = focusElements.length
       ? await waitForVisibleCanvasViewport(canvasApi, host)
       : false;
-    if (viewportReady) {
+    if (viewportReady && !insertionPoint) {
       canvasApi.scrollToContent(focusElements, {
         animate: false,
         fitToContent: focusElements.length > inserted.length,
@@ -539,7 +540,7 @@ export function mountInfiniteCanvas(host, options) {
     playVideo: (elementId) => videoControls?.play?.(elementId),
     stopVideo: () => videoControls?.stop?.(),
     toggleVideo: (elementId) => videoControls?.toggle?.(elementId),
-    addBusinessItems: (items) => insertBusinessItems(items),
+    addBusinessItems: (items, options = {}) => insertBusinessItems(items, options),
     addBusinessItemsOnce: (items) => insertBusinessItems(items, { once: true }),
     updateTask,
     getBusinessKeys: () => new Set(
@@ -553,6 +554,9 @@ export function mountInfiniteCanvas(host, options) {
       appState: canvasApi?.getAppState?.() || {},
       files: {},
     }),
+    scenePointFromClient: (point) => (
+      canvasApi ? spatialScenePointFromViewport(point, canvasApi.getAppState()) : null
+    ),
     selectBusinessReference: async (references = {}) => {
       if (!canvasApi || !componentReady) return null;
       const elements = canvasApi.getSceneElementsIncludingDeleted();

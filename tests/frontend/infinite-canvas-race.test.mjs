@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createInfiniteCanvasWorkspaceController } from '../../src/js/infinite-canvas-workspace.js';
+import {
+  createInfiniteCanvasWorkspaceController,
+  spatialClipboardImageFiles,
+} from '../../src/js/infinite-canvas-workspace.js';
 
 const SOURCE_ASSET_ID = 'ast_0123456789abcdef0123456789abcdef';
 const RESULT_ASSET_ID = 'ast_11111111111111111111111111111111';
@@ -29,6 +32,15 @@ async function waitFor(predicate, message = 'condition was not reached') {
   assert.fail(message);
 }
 
+test('clipboard file extraction preserves native Excalidraw element paste', () => {
+  const image = { name: 'clipboard.png', type: 'image/png' };
+  assert.deepEqual(spatialClipboardImageFiles({ files: [image], types: ['Files'] }), [image]);
+  assert.deepEqual(spatialClipboardImageFiles({
+    files: [image],
+    types: ['application/vnd.excalidraw+json', 'image/png'],
+  }), []);
+});
+
 class FakeElement {
   constructor(selector = '') {
     this.selector = selector;
@@ -42,6 +54,8 @@ class FakeElement {
     this.listeners = new Map();
     this.children = new Map();
     this.focusCalls = 0;
+    this.clickCalls = 0;
+    this.attributes = new Map();
   }
 
   addEventListener(type, listener) {
@@ -89,6 +103,9 @@ class FakeElement {
   }
 
   focus() { this.focusCalls += 1; }
+  click() { this.clickCalls += 1; }
+  setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  removeAttribute(name) { this.attributes.delete(name); }
 }
 
 function createFakeDocument() {
@@ -335,6 +352,7 @@ function createFakeRuntime({ mutateBusinessItems = false } = {}) {
         const canvasId = options.canvasDocument.id;
         const calls = {
           addBusinessItems: [],
+          addBusinessItemOptions: [],
           addBusinessItemsOnce: [],
           selectBusinessReference: [],
           updateScene: [],
@@ -344,8 +362,9 @@ function createFakeRuntime({ mutateBusinessItems = false } = {}) {
         let currentScene = options.canvasDocument.scene;
         const island = {
           getScene: () => currentScene,
-          async addBusinessItems(items) {
+          async addBusinessItems(items, insertionOptions = {}) {
             calls.addBusinessItems.push(items);
+            calls.addBusinessItemOptions.push(insertionOptions);
             return { skipped: false };
           },
           async addBusinessItemsOnce(items) {
@@ -387,6 +406,9 @@ function createFakeRuntime({ mutateBusinessItems = false } = {}) {
           updateScene(value) {
             calls.updateScene.push(value);
             currentScene = value;
+          },
+          scenePointFromClient(point) {
+            return { x: Number(point.clientX) + 1000, y: Number(point.clientY) + 2000 };
           },
           stopVideo() {},
           unmount() { calls.unmount += 1; },
@@ -627,13 +649,66 @@ test('an Explorer FileList drop imports ledger assets before adding canvas refer
   assert.equal(dragover.defaultPrevented, true);
   assert.equal(transfer.dropEffect, 'copy');
   assert.equal(harness.documentRef.node('#spatial-canvas-host').dataset.fileDropActive, 'true');
-  const drop = await harness.documentRef.emit('drop', { dataTransfer: transfer });
+  const drop = await harness.documentRef.emit('drop', {
+    clientX: 320,
+    clientY: 240,
+    dataTransfer: transfer,
+  });
 
   assert.equal(drop.defaultPrevented, true);
   assert.equal(harness.documentRef.node('#spatial-canvas-host').dataset.fileDropActive, 'false');
   assert.deepEqual(importCalls, [[file]]);
   assert.deepEqual(mount.calls.addBusinessItems, [[importedItem]]);
+  assert.deepEqual(mount.calls.addBusinessItemOptions, [{
+    insertionPoint: { x: 1320, y: 2240 },
+  }]);
   assert.match(harness.documentRef.node('#spatial-save-state').textContent, /已加入|正在保存/);
+  harness.controller.destroy();
+});
+
+test('a clipboard image uses the same durable import path without intercepting ordinary paste', async () => {
+  const importCalls = [];
+  const importedItem = {
+    kind: 'image',
+    business_kind: 'asset',
+    references: {
+      asset_id: 'ast_clipboard_image',
+      result_id: null,
+      task_id: null,
+      product_profile_version_id: null,
+      lineage_parent_id: null,
+    },
+  };
+  const harness = createHarness({
+    async onImportFiles(files) {
+      importCalls.push(files);
+      return [importedItem];
+    },
+  });
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const file = { name: 'clipboard-product.png', size: 2048, type: 'image/png' };
+  const paste = await harness.documentRef.emit('paste', {
+    clipboardData: { files: [file], items: [], types: ['Files'] },
+  });
+  assert.equal(paste.defaultPrevented, true);
+  assert.deepEqual(importCalls, [[file]]);
+  assert.deepEqual(mount.calls.addBusinessItems, [[importedItem]]);
+  assert.deepEqual(mount.calls.addBusinessItemOptions, [{}]);
+
+  const textPaste = await harness.documentRef.emit('paste', {
+    clipboardData: { files: [], items: [], types: ['text/plain'] },
+  });
+  assert.equal(textPaste.defaultPrevented, false);
+  assert.equal(importCalls.length, 1);
+  harness.controller.destroy();
+});
+
+test('the visible import control opens the Canvas file picker', async () => {
+  const harness = createHarness();
+  harness.controller.bind();
+  await harness.documentRef.node('#btn-spatial-import').emit('click');
+  assert.equal(harness.documentRef.node('#spatial-file-input').clickCalls, 1);
   harness.controller.destroy();
 });
 

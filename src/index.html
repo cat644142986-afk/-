@@ -270,7 +270,9 @@
                 <div><p>SPATIAL WORKSPACE</p><h2 id="spatial-current-name">画布空间</h2></div>
               </div>
               <div class="spatial-toolbar__actions">
+                <input id="spatial-file-input" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime" multiple hidden />
                 <form class="spatial-rename-form" id="spatial-rename-form" hidden><label class="sr-only" for="spatial-rename-input">画布名称</label><input id="spatial-rename-input" maxlength="60" autocomplete="off" /><button type="submit">保存</button><button id="spatial-rename-cancel" type="button" aria-label="取消重命名">取消</button></form>
+                <button class="spatial-secondary-button" id="btn-spatial-import" type="button" aria-label="导入素材到当前画布" title="导入素材" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg><span>导入</span></button>
                 <button class="spatial-secondary-button" id="btn-spatial-assets" type="button" aria-label="打开素材库" title="素材库"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3Z"/><path d="M7 5h4l2 2"/></svg><span>素材</span></button>
                 <button class="spatial-secondary-button" id="btn-spatial-jobs" type="button" aria-label="打开任务中心" title="任务中心"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4Z"/><path d="M8 9h8M8 13h5"/></svg><span>任务</span></button>
                 <button class="spatial-secondary-button" id="btn-spatial-rename" type="button" aria-label="重命名当前画布" title="重命名当前画布" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10Z"/><path d="m13.5 7.5 3 3"/></svg><span>重命名</span></button>

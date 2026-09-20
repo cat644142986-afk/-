@@ -150,9 +150,11 @@ export function createAssetManagerController({
   let purgeAssetId = '';
   let armedPurgeAssetId = '';
   let purgeTimer = null;
+  let scopedCollection = '';
+  let openVersion = 0;
   const selected = { active: new Set(), trash: new Set() };
 
-  const collection = () => modeConfig[state.currentMode].collection;
+  const collection = () => scopedCollection || modeConfig[state.currentMode].collection;
   const drawerOpen = () => !query('#asset-drawer').hidden;
   const currentItems = () => view === 'trash' ? trash : (state.assetsByCollection[collection()] || []);
 
@@ -232,7 +234,7 @@ export function createAssetManagerController({
       const orderActions = manualOrder
         ? `<span class="asset-manager-item__order"><button type="button" data-asset-move-id="${escapeHtml(assetId)}" data-asset-move-delta="-1" aria-label="上移 ${escapeHtml(asset.name)}" ${itemIndex <= 0 ? 'disabled' : ''}>↑</button><button type="button" data-asset-move-id="${escapeHtml(assetId)}" data-asset-move-delta="1" aria-label="下移 ${escapeHtml(asset.name)}" ${itemIndex >= allItems.length - 1 ? 'disabled' : ''}>↓</button></span>`
         : '';
-      const taskAction = view === 'active' && !video
+      const taskAction = view === 'active' && !video && !scopedCollection
         ? `<button class="${taskSelection.has(assetId) ? 'is-selected' : ''}" type="button" data-asset-use-id="${escapeHtml(assetId)}">${taskSelection.has(assetId) ? '已选' : '用于任务'}</button>` : '';
       const stateAction = view === 'trash'
         ? `<button class="is-primary" type="button" data-asset-restore-id="${escapeHtml(assetId)}">恢复</button>`
@@ -453,7 +455,35 @@ export function createAssetManagerController({
     } finally { busy = false; }
   }
 
-  function open() {
+  async function refreshScopedCollection(targetCollection, version) {
+    const mode = modesForAssetCollection(modeConfig, targetCollection)[0];
+    if (!mode) return;
+    const list = query('#asset-manager-list');
+    list.innerHTML = statusPanelHtml('loading', {
+      title: '正在读取画布素材',
+      detail: '正在同步 Product Atelier 的持久素材账本。',
+      fill: true,
+    });
+    const loaded = await loadWorkspace(mode, true);
+    if (version !== openVersion || targetCollection !== scopedCollection || !drawerOpen()) return;
+    if (loaded === false) {
+      list.innerHTML = statusPanelHtml('offline', {
+        title: '画布素材暂时无法读取',
+        detail: '当前画布不会受影响；恢复连接后可重新读取素材账本。',
+        fill: true,
+        action: { label: '重新读取', attribute: 'data-asset-scope-retry', value: 'retry' },
+      });
+      query('[data-asset-scope-retry="retry"]', list)?.addEventListener('click', () => (
+        refreshScopedCollection(targetCollection, version)
+      ));
+      return;
+    }
+    render();
+  }
+
+  function open(options = {}) {
+    const version = ++openVersion;
+    scopedCollection = String(options?.collection || '');
     view = 'active';
     search = '';
     sort = 'custom';
@@ -461,6 +491,7 @@ export function createAssetManagerController({
     clearPurgeState();
     openDrawer('assets');
     render();
+    if (scopedCollection) refreshScopedCollection(scopedCollection, version);
   }
 
   function sync() {

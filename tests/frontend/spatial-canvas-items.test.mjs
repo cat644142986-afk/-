@@ -14,6 +14,7 @@ import {
   spatialCustomData,
   spatialItemFromAsset,
   spatialItemFromJob,
+  spatialScenePointFromViewport,
   spatialTaskLabel,
   updateSpatialTaskElements,
   spatialLineageFocusElements,
@@ -54,6 +55,49 @@ test('drag payload round-trips without URLs or file bytes', () => {
   const payload = serializeSpatialDragItem(item);
   assert.doesNotMatch(payload, /https?:|file:|base64|data:image/i);
   assert.deepEqual(parseSpatialDragItem(payload), item);
+});
+
+test('viewport drop coordinates convert to scene coordinates using the live Excalidraw view', () => {
+  assert.deepEqual(spatialScenePointFromViewport({ clientX: 470, clientY: 320 }, {
+    offsetLeft: 70,
+    offsetTop: 20,
+    scrollX: 40,
+    scrollY: -30,
+    zoom: { value: 2 },
+  }), { x: 160, y: 180 });
+  assert.equal(spatialScenePointFromViewport({ clientX: NaN, clientY: 20 }, {}), null);
+});
+
+test('explicit drops honor their scene point and repeated center imports remain visible', () => {
+  let id = 0;
+  const item = spatialItemFromAsset({
+    id: 'ast:pointer', name: '拖入素材', width: 1200, height: 900,
+  });
+  const first = buildSpatialNodeBatch([item], {
+    insertionPoint: { x: 240, y: 180 },
+    idFactory: (prefix) => `${prefix}_${++id}`,
+  });
+  const firstNode = first.skeletons.find((element) => element.type === 'image');
+  assert.equal(firstNode.x + firstNode.width / 2, 240);
+  assert.equal(firstNode.y + firstNode.height / 2, 180);
+
+  const second = buildSpatialNodeBatch([item], {
+    elements: [{ ...firstNode, isDeleted: false }],
+    insertionPoint: { x: 840, y: 620 },
+    idFactory: (prefix) => `${prefix}_${++id}`,
+  });
+  const secondNode = second.skeletons.find((element) => element.type === 'image');
+  assert.equal(secondNode.x + secondNode.width / 2, 840);
+  assert.equal(secondNode.y + secondNode.height / 2, 620);
+
+  const repeated = buildSpatialNodeBatch([item], {
+    elements: [{ ...firstNode, isDeleted: false }],
+    insertionPoint: { x: 240, y: 180 },
+    idFactory: (prefix) => `${prefix}_${++id}`,
+  });
+  const repeatedNode = repeated.skeletons.find((element) => element.type === 'image');
+  assert.equal(repeatedNode.x + repeatedNode.width / 2, 276);
+  assert.equal(repeatedNode.y + repeatedNode.height / 2, 216);
 });
 
 test('task nodes expose only task-compatible context actions', () => {

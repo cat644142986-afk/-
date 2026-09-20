@@ -102,6 +102,17 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+export function spatialClipboardImageFiles(clipboardData) {
+  const types = Array.from(clipboardData?.types || []).map((value) => String(value).toLowerCase());
+  if (types.some((value) => value.includes('excalidraw'))) return [];
+  const direct = Array.from(clipboardData?.files || []);
+  const files = direct.length ? direct : Array.from(clipboardData?.items || [])
+    .filter((item) => item?.kind === 'file')
+    .map((item) => item.getAsFile?.())
+    .filter(Boolean);
+  return files.filter((file) => /^image\//i.test(String(file?.type || '')));
+}
+
 function formatRecent(iso) {
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return '刚刚';
@@ -411,6 +422,7 @@ export function createInfiniteCanvasWorkspaceController({
   function syncEditorHeading() {
     const record = currentId ? adapter.get(currentId) : null;
     query('#spatial-current-name').textContent = record?.name || '无限画布';
+    query('#btn-spatial-import').hidden = !record;
     query('#btn-spatial-rename').hidden = !record;
     query('#btn-spatial-delete').hidden = !record;
   }
@@ -495,6 +507,7 @@ export function createInfiniteCanvasWorkspaceController({
         query('#spatial-library').hidden = false;
         query('#spatial-editor').hidden = true;
         query('#btn-spatial-home').hidden = true;
+        query('#btn-spatial-import').hidden = true;
         query('#btn-spatial-rename').hidden = true;
         query('#btn-spatial-delete').hidden = true;
         query('#spatial-current-name').textContent = '画布空间';
@@ -1619,6 +1632,7 @@ export function createInfiniteCanvasWorkspaceController({
     query('#spatial-library').hidden = false;
     query('#spatial-editor').hidden = true;
     query('#btn-spatial-home').hidden = true;
+    query('#btn-spatial-import').hidden = true;
     query('#btn-spatial-rename').hidden = true;
     query('#btn-spatial-delete').hidden = true;
     query('#spatial-current-name').textContent = '画布空间';
@@ -2045,7 +2059,12 @@ export function createInfiniteCanvasWorkspaceController({
     return session;
   }
 
-  async function addBusinessItems(items, targetSession = null, recoveryOptions = {}) {
+  async function addBusinessItems(
+    items,
+    targetSession = null,
+    recoveryOptions = {},
+    insertionOptions = {},
+  ) {
     const normalized = Array.from(items || []).filter(Boolean);
     if (!normalized.length) return null;
     try {
@@ -2055,13 +2074,13 @@ export function createInfiniteCanvasWorkspaceController({
         return { skipped: true, reason: 'canvas-switched' };
       }
       setSpatialStatus(`${normalized.length} 项已加入 · 正在保存`);
-      const result = await session.island.addBusinessItems(normalized);
+      const result = await session.island.addBusinessItems(normalized, insertionOptions);
       pendingBusinessImport = null;
       return canvasSessionIsCurrent(session) ? result : null;
     } catch (error) {
       const recoveryId = recoveryOptions.recoveryId || 'spatial-import';
       if (!recoveryOptions.external) {
-        pendingBusinessImport = { items: normalized, recoveryOptions };
+        pendingBusinessImport = { items: normalized, recoveryOptions, insertionOptions };
       }
       setSpatialRecovery(recoveryId, error, recoveryOptions.action
         ? { action: recoveryOptions.action }
@@ -2099,6 +2118,69 @@ export function createInfiniteCanvasWorkspaceController({
     else if (status.textContent === '正在接收图片') status.textContent = '本次会话 · 已打开';
   }
 
+  function setImportControlBusy(value) {
+    const button = query('#btn-spatial-import');
+    if (!button) return;
+    button.disabled = Boolean(value);
+    if (value) button.setAttribute?.('aria-busy', 'true');
+    else button.removeAttribute?.('aria-busy');
+  }
+
+  function canvasClientPoint(event) {
+    const clientX = Number(event?.clientX);
+    const clientY = Number(event?.clientY);
+    const host = query('#spatial-canvas-host');
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY) || !host || host.hidden) return null;
+    const rect = host.getBoundingClientRect?.();
+    if (rect && Number(rect.width) > 0 && Number(rect.height) > 0) {
+      if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+        return null;
+      }
+    }
+    return { clientX, clientY };
+  }
+
+  function insertionOptionsFor(session, clientPoint) {
+    const insertionPoint = clientPoint
+      ? session?.island?.scenePointFromClient?.(clientPoint)
+      : null;
+    return insertionPoint ? { insertionPoint } : {};
+  }
+
+  async function importFilesIntoCanvas(fileList, {
+    clientPoint = null,
+    source = 'button',
+  } = {}) {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length) return null;
+    setImportControlBusy(true);
+    try {
+      const targetSession = await ensureCanvasForImport();
+      const sourceCopy = source === 'paste' ? '正在粘贴' : source === 'drop' ? '正在导入' : '正在选择';
+      setSpatialStatus(`${sourceCopy} ${files.length} 项素材`);
+      const items = Array.from(await onImportFiles(files) || []).filter(Boolean);
+      if (!items.length) {
+        setSpatialStatus('没有可加入画布的图片或视频');
+        return null;
+      }
+      const result = await addBusinessItems(
+        items,
+        targetSession,
+        {},
+        insertionOptionsFor(targetSession, clientPoint),
+      );
+      if (!result?.skipped) pendingFileImport = null;
+      return result;
+    } catch (error) {
+      pendingFileImport = { files, clientPoint, source };
+      setSpatialRecovery('spatial-import', error, { title: '素材导入失败' });
+      console.error('Infinite canvas file import failed', error);
+      return null;
+    } finally {
+      setImportControlBusy(false);
+    }
+  }
+
   async function onDrop(event) {
     if (!active) return;
     const transfer = event.dataTransfer;
@@ -2115,26 +2197,39 @@ export function createInfiniteCanvasWorkspaceController({
         setSpatialStatus('没有读取到可导入的图片或视频');
         return;
       }
-      try {
-        const targetSession = await ensureCanvasForImport();
-        setSpatialStatus(`正在导入 ${files.length} 项素材`);
-        const items = Array.from(await onImportFiles(files) || []).filter(Boolean);
-        if (!items.length) {
-          setSpatialStatus('没有可加入画布的图片');
-          return;
-        }
-        await addBusinessItems(items, targetSession);
-        pendingFileImport = null;
-      } catch (error) {
-        pendingFileImport = files;
-        setSpatialRecovery('spatial-import', error, { title: '素材导入失败' });
-        console.error('Infinite canvas file import failed', error);
-      }
+      await importFilesIntoCanvas(files, { clientPoint: canvasClientPoint(event), source: 'drop' });
       return;
     }
     setFileDropActive(false);
-    try { await addBusinessItems([parseSpatialDragItem(payload)]); }
+    try {
+      const session = await ensureCanvasForImport();
+      await addBusinessItems(
+        [parseSpatialDragItem(payload)],
+        session,
+        {},
+        insertionOptionsFor(session, canvasClientPoint(event)),
+      );
+    }
     catch (error) { console.error('Infinite canvas drop payload was rejected', error); }
+  }
+
+  async function onPaste(event) {
+    if (!active || event.defaultPrevented) return;
+    if (
+      editableShortcutTarget(event.target)
+      || editableShortcutTarget(documentRef.activeElement)
+      || blockingShortcutLayer(event.target)
+      || blockingShortcutLayer(documentRef.activeElement)
+      || imageAiDraft
+      || videoDraft
+      || !query('#spatial-rename-form')?.hidden
+    ) return;
+    const files = spatialClipboardImageFiles(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+    await importFilesIntoCanvas(files, { source: 'paste' });
   }
 
   function onDragOver(event) {
@@ -2217,20 +2312,15 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   async function retryFileImport() {
-    const files = pendingFileImport;
+    const pending = Array.isArray(pendingFileImport)
+      ? { files: pendingFileImport, source: 'button', clientPoint: null }
+      : pendingFileImport;
+    const files = pending?.files;
     if (!files?.length) return false;
-    try {
-      const targetSession = await ensureCanvasForImport();
-      const items = Array.from(await onImportFiles(files) || []).filter(Boolean);
-      if (!items.length) throw new Error('没有可加入画布的图片或视频');
-      const result = await addBusinessItems(items, targetSession);
-      if (!result || result.skipped) throw new Error('画布已切换，请重新加入内容');
-      pendingFileImport = null;
-      return true;
-    } catch (error) {
-      setSpatialRecovery('spatial-import', error, { title: '素材导入失败' });
-      return false;
-    }
+    const result = await importFilesIntoCanvas(files, pending);
+    if (!result || result.skipped) return false;
+    pendingFileImport = null;
+    return true;
   }
 
   async function runSpatialRecovery(action, button = null) {
@@ -2262,7 +2352,12 @@ export function createInfiniteCanvasWorkspaceController({
       if (recoveryAction === 'retry-import') {
         if (pendingFileImport) return retryFileImport();
         if (!pendingBusinessImport) return false;
-        return Boolean(await addBusinessItems(pendingBusinessImport.items, null, pendingBusinessImport.recoveryOptions));
+        return Boolean(await addBusinessItems(
+          pendingBusinessImport.items,
+          null,
+          pendingBusinessImport.recoveryOptions,
+          pendingBusinessImport.insertionOptions,
+        ));
       }
       if (recoveryAction === 'retry-import-once') {
         if (!pendingBusinessImport) return false;
@@ -2372,6 +2467,13 @@ export function createInfiniteCanvasWorkspaceController({
     if (bound) return;
     bound = true;
     query('#btn-spatial-new').addEventListener('click', createCanvas);
+    query('#btn-spatial-import').addEventListener('click', () => query('#spatial-file-input').click());
+    query('#spatial-file-input').addEventListener('change', async (event) => {
+      const input = event.currentTarget;
+      const files = Array.from(input.files || []);
+      input.value = '';
+      await importFilesIntoCanvas(files, { source: 'button' });
+    });
     query('#btn-spatial-empty-new').addEventListener('click', (event) => (
       event.currentTarget.dataset.spatialEmptyAction === 'retry-list'
         ? runSpatialRecovery('retry-list', event.currentTarget)
@@ -2392,6 +2494,7 @@ export function createInfiniteCanvasWorkspaceController({
     documentRef.addEventListener('dragover', onDragOver);
     documentRef.addEventListener('dragleave', onDragLeave);
     documentRef.addEventListener('drop', onDrop);
+    documentRef.addEventListener('paste', onPaste, true);
     documentRef.addEventListener('keydown', onWorkspaceKeyDown, true);
     renderLibrary();
   }
@@ -2433,6 +2536,7 @@ export function createInfiniteCanvasWorkspaceController({
     documentRef.removeEventListener('dragover', onDragOver);
     documentRef.removeEventListener('dragleave', onDragLeave);
     documentRef.removeEventListener('drop', onDrop);
+    documentRef.removeEventListener('paste', onPaste, true);
     documentRef.removeEventListener('keydown', onWorkspaceKeyDown, true);
     closeNativeAiCommandMenu({ restoreFocus: false });
     closeDeleteDialog({ restoreFocus: false });

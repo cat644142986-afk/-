@@ -4527,7 +4527,9 @@ function bindEvents() {
   $('#btn-job-dock').addEventListener('click', (event) => openDrawer('jobs', event.currentTarget));
   $('#btn-rail-jobs').addEventListener('click', (event) => openDrawer('jobs', event.currentTarget));
   $('#sidebar-logo').addEventListener('click', (event) => openDrawer('jobs', event.currentTarget));
-  $('#btn-spatial-assets').addEventListener('click', () => assetManager.open());
+  $('#btn-spatial-assets').addEventListener('click', () => assetManager.open({
+    collection: MODE_CONFIG.single.collection,
+  }));
   $('#btn-spatial-jobs').addEventListener('click', (event) => openDrawer('jobs', event.currentTarget));
   $('#btn-refresh-jobs').addEventListener('click', async () => {
     const button = $('#btn-refresh-jobs');

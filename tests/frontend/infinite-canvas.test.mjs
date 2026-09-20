@@ -11,6 +11,7 @@ const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import
 const packageLock = JSON.parse(readFileSync(new URL('../../package-lock.json', import.meta.url), 'utf8'));
 const html = readFileSync(new URL('../../src/index.html', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../../src/js/app.js', import.meta.url), 'utf8');
+const studioAssetsSource = readFileSync(new URL('../../src/js/studio-assets.js', import.meta.url), 'utf8');
 const studioCanvasSource = readFileSync(new URL('../../src/js/studio-canvas.js', import.meta.url), 'utf8');
 const workspace = readFileSync(new URL('../../src/js/infinite-canvas-workspace.js', import.meta.url), 'utf8');
 const island = readFileSync(new URL('../../src/js/infinite-canvas-island.jsx', import.meta.url), 'utf8');
@@ -252,6 +253,8 @@ test('scene adapter keeps clean Excalidraw defaults and no embedded file bytes',
 });
 
 test('IC4 connects durable assets, tasks, results and Fabric without automatic paid execution', () => {
+  assert.match(html, /id="btn-spatial-import"[^>]*aria-label="导入素材到当前画布"/);
+  assert.match(html, /id="spatial-file-input"[^>]*accept="image\/png,image\/jpeg,image\/webp/);
   assert.match(html, /id="btn-spatial-assets"[^>]*aria-label="打开素材库"/);
   assert.match(html, /id="btn-spatial-jobs"[^>]*aria-label="打开任务中心"/);
   assert.match(html, /id="btn-send-result-canvas"/);
@@ -264,11 +267,16 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(app, /已打开并预填快捷处理；尚未发起生成调用/);
   assert.doesNotMatch(app, /prepareSpatialQuickAction[\s\S]{0,2500}handleGenerate\(/);
   assert.match(workspace, /documentRef\.addEventListener\('drop', onDrop\)/);
+  assert.match(workspace, /documentRef\.addEventListener\('paste', onPaste, true\)/);
   assert.match(workspace, /const files = Array\.from\(transfer\?\.files \|\| \[\]\)/);
   assert.match(workspace, /await onImportFiles\(files\)/);
   assert.match(workspace, /documentRef\.addEventListener\('dragleave', onDragLeave\)/);
   assert.match(stableUiCss, /\[data-file-drop-active="true"\]/);
   assert.match(app, /onImportFiles: importSpatialCanvasFiles/);
+  assert.match(app, /assetManager\.open\(\{\s*collection: MODE_CONFIG\.single\.collection/);
+  assert.match(studioAssetsSource, /const collection = \(\) => scopedCollection \|\| modeConfig\[state\.currentMode\]\.collection/);
+  assert.match(studioAssetsSource, /view === 'active' && !video && !scopedCollection/);
+  assert.match(studioAssetsSource, /refreshScopedCollection[\s\S]{0,900}loadWorkspace\(mode, true\)/);
   assert.match(app, /partitionSpatialImportFiles\(fileList\)/);
   assert.match(app, /API\.importAssets\(partition\.images, MODE_CONFIG\.single\.collection\)/);
   assert.match(app, /createVideoImportDescriptor\(file\)/);

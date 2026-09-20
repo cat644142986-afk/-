@@ -249,6 +249,17 @@ function viewportOrigin(appState = {}) {
   };
 }
 
+export function spatialScenePointFromViewport(point, appState = {}) {
+  const clientX = Number(point?.clientX);
+  const clientY = Number(point?.clientY);
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+  const zoom = Math.max(0.01, Number(appState.zoom?.value || 1));
+  return {
+    x: (clientX - Number(appState.offsetLeft || 0)) / zoom - Number(appState.scrollX || 0),
+    y: (clientY - Number(appState.offsetTop || 0)) / zoom - Number(appState.scrollY || 0),
+  };
+}
+
 function liveElements(elements) {
   return Array.from(elements || []).filter((element) => !element?.isDeleted);
 }
@@ -305,9 +316,36 @@ function parentElementFor(item, elements) {
   }) || null;
 }
 
-function placementFor(item, elements, appState, batchIndex) {
+function offsetOverlappingPlacement(placement, elements) {
+  let next = placement;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const centerX = next.x + next.width / 2;
+    const centerY = next.y + next.height / 2;
+    const overlaps = liveElements(elements).some((element) => {
+      const existingCenterX = Number(element.x || 0) + Number(element.width || 0) / 2;
+      const existingCenterY = Number(element.y || 0) + Number(element.height || 0) / 2;
+      return Math.abs(existingCenterX - centerX) < 12 && Math.abs(existingCenterY - centerY) < 12;
+    });
+    if (!overlaps) return next;
+    next = { ...next, x: next.x + 36, y: next.y + 36 };
+  }
+  return next;
+}
+
+function placementFor(item, elements, appState, batchIndex, insertionPoint = null) {
   const size = item.kind === 'task' ? { width: 320, height: 176 } : imageSize(item);
   const parent = parentElementFor(item, elements);
+  if (Number.isFinite(insertionPoint?.x) && Number.isFinite(insertionPoint?.y)) {
+    const column = batchIndex % 3;
+    const row = Math.floor(batchIndex / 3);
+    return offsetOverlappingPlacement({
+      ...size,
+      x: Number(insertionPoint.x) - size.width / 2 + column * (size.width + 72),
+      y: Number(insertionPoint.y) - size.height / 2 + row * (size.height + 72),
+      parent,
+      placement: 'pointer',
+    }, elements);
+  }
   if (parent) {
     const parentReference = reference(item?.references?.lineage_parent_id);
     const siblings = liveElements(elements).filter((element) => {
@@ -338,12 +376,37 @@ function placementFor(item, elements, appState, batchIndex) {
   const origin = viewportOrigin(appState);
   const column = batchIndex % 3;
   const row = Math.floor(batchIndex / 3);
-  return {
+  return offsetOverlappingPlacement({
     ...size,
     x: origin.x - size.width / 2 + column * (size.width + 72),
     y: origin.y - size.height / 2 + row * (size.height + 72),
-      parent: null,
-      placement: 'viewport',
+    parent: null,
+    placement: 'viewport',
+  }, elements);
+}
+
+function lineageArrowGeometry(parent, placement) {
+  const parentX = Number(parent.x);
+  const parentY = Number(parent.y);
+  const parentWidth = Number(parent.width);
+  const parentHeight = Number(parent.height);
+  const horizontal = (placement.x + placement.width / 2) - (parentX + parentWidth / 2);
+  const vertical = (placement.y + placement.height / 2) - (parentY + parentHeight / 2);
+  if (Math.abs(vertical) > Math.abs(horizontal)) {
+    const direction = vertical < 0 ? -1 : 1;
+    const gap = Math.max(40, Math.abs(vertical) - parentHeight / 2 - placement.height / 2 - 24);
+    return {
+      x: parentX + parentWidth / 2,
+      y: parentY + (direction < 0 ? -12 : parentHeight + 12),
+      points: [[0, 0], [0, direction * gap]],
+    };
+  }
+  const direction = horizontal < 0 ? -1 : 1;
+  const gap = Math.max(40, Math.abs(horizontal) - parentWidth / 2 - placement.width / 2 - 24);
+  return {
+    x: parentX + (direction < 0 ? -12 : parentWidth + 12),
+    y: parentY + parentHeight / 2,
+    points: [[0, 0], [direction * gap, 0]],
   };
 }
 
@@ -351,6 +414,7 @@ export function buildSpatialNodeBatch(items, {
   elements = [],
   appState = {},
   idFactory = runtimeId,
+  insertionPoint = null,
 } = {}) {
   const skeletons = [];
   const proxyRequests = [];
@@ -358,7 +422,7 @@ export function buildSpatialNodeBatch(items, {
   const lineageBindings = [];
   const working = liveElements(elements);
   Array.from(items || []).forEach((item, index) => {
-    const placement = placementFor(item, working, appState, index);
+    const placement = placementFor(item, working, appState, index, insertionPoint);
     const nodeId = idFactory('spatial_node');
     const refs = spatialCustomData(item);
     let node;
@@ -429,19 +493,13 @@ export function buildSpatialNodeBatch(items, {
     }
     if (placement.parent) {
       const arrowId = idFactory('spatial_lineage');
-      const below = placement.placement === 'below';
-      const parentX = Number(placement.parent.x);
-      const parentY = Number(placement.parent.y);
-      const parentWidth = Number(placement.parent.width);
-      const parentHeight = Number(placement.parent.height);
+      const arrow = lineageArrowGeometry(placement.parent, placement);
       skeletons.push({
         id: arrowId,
         type: 'arrow',
-        x: below ? parentX + parentWidth / 2 : parentX + parentWidth + 12,
-        y: below ? parentY + parentHeight + 12 : parentY + parentHeight / 2,
-        points: below
-          ? [[0, 0], [0, Math.max(40, placement.y - parentY - parentHeight - 24)]]
-          : [[0, 0], [Math.max(40, placement.x - parentX - parentWidth - 24), 0]],
+        x: arrow.x,
+        y: arrow.y,
+        points: arrow.points,
         strokeColor: '#c85f3b',
         strokeWidth: 2,
         strokeStyle: 'solid',
