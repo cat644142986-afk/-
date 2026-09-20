@@ -767,7 +767,8 @@ export function createInfiniteCanvasWorkspaceController({
     if (
       imageAiDraft
       && event.key === 'Escape'
-      && event.target?.closest?.('[data-spatial-image-ai-form]')
+      && query('[data-spatial-image-ai-form]')
+      && !blockingShortcutLayer(event.target)
       && !imageAiPreviewing
       && !imageAiSubmitting
     ) {

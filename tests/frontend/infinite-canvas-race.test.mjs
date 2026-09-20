@@ -1050,9 +1050,16 @@ test('Canvas Conversation only reviews context before confirmation and accepts o
     contract_version: 'canvas-conversation-input-v1',
   });
   assert.match(harness.documentRef.node('#spatial-inspector').innerHTML, /对话修改/);
+  await settle(8);
+
+  const escape = await harness.documentRef.emit('keydown', {
+    key: 'Escape', target: harness.documentRef.node('#spatial-canvas-host'),
+  });
+  await settle();
+  assert.equal(escape.defaultPrevented, true);
+  assert.equal(harness.documentRef.node('[data-spatial-conversation-field]').focusCalls, 1);
 
   const cancel = new FakeElement('[data-spatial-image-ai-cancel]');
-  await harness.documentRef.node('#page-canvas').emit('click', { target: cancel });
   const result = resultElement('canvas:a');
   mount.options.onSelectionChange(result);
   await settle();
