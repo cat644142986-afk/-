@@ -23,6 +23,7 @@ import {
   updateSpatialVideoDraft,
 } from './spatial-video.js';
 import {
+  SPATIAL_CANVAS_CONVERSATION_SURFACE,
   SPATIAL_IMAGE_AI_COMMAND_ID,
   SPATIAL_IMAGE_AI_SKILL_ID,
   SPATIAL_RESULT_VARIATION_ACTION,
@@ -173,7 +174,7 @@ function imageAiDraftHtml(draft, asset, {
   const context = preview?.executionContext || null;
   const skill = preview?.skillSnapshot || null;
   const summary = context?.summary || {};
-  const definition = spatialImageAiDefinition(draft.action);
+  const definition = spatialImageAiDefinition(draft.action, draft);
   const providerCalls = draft.productProfileVersionId ? 1 : 2;
   const busy = previewing || submitting;
   const primaryLabel = submitting
@@ -206,11 +207,39 @@ function imageAiDraftHtml(draft, asset, {
       </section>
       <p class="spatial-white-form__status" data-spatial-image-ai-status aria-live="polite"${error ? ' data-error="true" tabindex="-1"' : ''}>${escapeHtml(error || (preview ? '上下文已冻结；点击确认后才会创建正式任务。' : '尚未发起 Provider 调用。'))}</p>
       <div class="spatial-white-form__actions">
-        <button type="button" data-spatial-image-ai-classic ${busy ? 'disabled' : ''}>到经典页调整</button>
+        ${draft.inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE ? '' : `<button type="button" data-spatial-image-ai-classic ${busy ? 'disabled' : ''}>到经典页调整</button>`}
         <button type="button" data-spatial-image-ai-cancel ${busy ? 'disabled' : ''}>取消</button>
         <button type="submit" class="is-primary" ${busy ? 'disabled' : ''}>${primaryLabel}</button>
       </div>
       <p class="spatial-white-form__source">来源：${escapeHtml(asset?.name || draft.sourceAssetId)} · 失败后不自动付费重试</p>
+    </form>
+  `;
+}
+
+function canvasConversationEligible(element, asset) {
+  const refs = element?.customData || {};
+  const assetId = String(refs.asset_id || '');
+  const resultId = String(refs.result_id || '');
+  const exactResult = Boolean(resultId) && resultId === assetId;
+  const sourceRole = !resultId && asset?.role === 'workspace_source';
+  const resultRole = exactResult && String(asset?.role || '').startsWith('result_');
+  return Boolean(
+    element?.type === 'image'
+    && assetId
+    && asset?.id === assetId
+    && asset?.kind !== 'video'
+    && String(asset?.mime || '').startsWith('image/')
+    && (sourceRole || resultRole)
+  );
+}
+
+function canvasConversationHtml(value, asset, { reviewing = false, error = '' } = {}) {
+  return `
+    <form class="spatial-conversation" data-spatial-conversation-form novalidate>
+      <label><span>告诉 AI 下一步怎么改</span><textarea data-spatial-conversation-field maxlength="1200" rows="2" ${reviewing ? 'disabled' : ''}>${escapeHtml(value)}</textarea></label>
+      <div class="spatial-conversation__meta"><small>只针对当前所选图片 · 核对修改不会调用 Provider</small><kbd>Ctrl+Enter</kbd></div>
+      <p class="spatial-conversation__status" data-spatial-conversation-status aria-live="polite"${error ? ' data-error="true" tabindex="-1"' : ''}>${escapeHtml(error || (reviewing ? '正在编译本次执行上下文…' : `当前输入：${asset?.role === 'workspace_source' ? '原始素材' : '精确 Result'}`))}</p>
+      <div class="spatial-conversation__actions"><button type="submit" class="is-primary" ${reviewing ? 'disabled aria-busy="true"' : ''}>核对修改</button></div>
     </form>
   `;
 }
@@ -309,6 +338,9 @@ export function createInfiniteCanvasWorkspaceController({
   let imageAiPreviewing = false;
   let imageAiSubmitting = false;
   let imageAiDraftError = '';
+  let conversationInput = '';
+  let conversationError = '';
+  let conversationReviewing = false;
   let commandMenuReturnFocus = null;
   let emptySceneRecoveryPromise = null;
   const activeVideoJobIds = new Set();
@@ -545,6 +577,9 @@ export function createInfiniteCanvasWorkspaceController({
       videoDraftError = '';
       imageAiDraft = null;
       imageAiDraftError = '';
+      conversationInput = '';
+      conversationError = '';
+      conversationReviewing = false;
       selectedAsset = null;
     }
     selectedElement = element || null;
@@ -576,6 +611,12 @@ export function createInfiniteCanvasWorkspaceController({
       <header><span>${headerKind}</span><button type="button" data-spatial-inspector-close aria-label="收起对象操作">×</button></header>
       <div class="spatial-inspector__copy"><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></div>
       <div class="spatial-inspector__actions">${actions.map((action) => `<button type="button" data-spatial-action="${action}"${action === 'fine-edit' ? ' class="is-primary"' : ''}>${ACTION_COPY[action]}</button>`).join('')}</div>
+      ${!imageAiDraft && !videoDraft && canvasConversationEligible(element, selectedAsset)
+        ? canvasConversationHtml(conversationInput, selectedAsset, {
+          reviewing: conversationReviewing,
+          error: conversationError,
+        })
+        : ''}
       ${videoDraft?.sourceAssetId === refs.asset_id ? videoDraftHtml(videoDraft, selectedAsset, { submitting: videoSubmitting, error: videoDraftError }) : ''}
       ${imageAiDraft?.sourceAssetId === refs.asset_id ? imageAiDraftHtml(imageAiDraft, selectedAsset, {
         previewing: imageAiPreviewing,
@@ -709,6 +750,37 @@ export function createInfiniteCanvasWorkspaceController({
         event.stopPropagation?.();
         closeNativeAiCommandMenu();
       }
+      return;
+    }
+    const conversationField = event.target?.closest?.('[data-spatial-conversation-field]');
+    if (
+      conversationField
+      && String(event.key) === 'Enter'
+      && (event.ctrlKey || event.metaKey)
+      && !event.altKey
+    ) {
+      event.preventDefault();
+      event.stopPropagation?.();
+      submitConversationDraft({ preventDefault() {} });
+      return;
+    }
+    if (
+      imageAiDraft
+      && event.key === 'Escape'
+      && event.target?.closest?.('[data-spatial-image-ai-form]')
+      && !imageAiPreviewing
+      && !imageAiSubmitting
+    ) {
+      event.preventDefault();
+      event.stopPropagation?.();
+      if (imageAiDraft.inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE) {
+        conversationInput = imageAiDraft.userRequest;
+      }
+      imageAiDraft = null;
+      imageAiDraftError = '';
+      renderInspector(selectedElement).then(() => {
+        query('[data-spatial-conversation-field]')?.focus?.({ preventScroll: true });
+      });
       return;
     }
     if (
@@ -1252,8 +1324,7 @@ export function createInfiniteCanvasWorkspaceController({
     }
   }
 
-  async function openCanvasAiPreview(action, context = {}) {
-    const definition = spatialImageAiDefinition(action);
+  async function openCanvasAiPreview(action, context = {}, seed = {}) {
     const session = captureCanvasSession();
     const requestedCanvasId = String(context?.canvasId || session?.canvasId || '');
     if (!session || requestedCanvasId !== session.canvasId) {
@@ -1261,10 +1332,23 @@ export function createInfiniteCanvasWorkspaceController({
     }
     const element = context?.element || selectedElement;
     const refs = element?.customData || {};
+    const sourceElementId = String(element?.id || '');
+    const selectionIsCurrent = () => (
+      canvasSessionIsCurrent(session)
+      && String(selectedElement?.id || '') === sourceElementId
+    );
     const exactResult = String(refs.result_id || '') === String(refs.asset_id || '');
-    const sourceMatchesAction = definition.sourceKind === 'source'
-      ? !refs.result_id
-      : exactResult;
+    const inputSurface = String(seed?.inputSurface || '');
+    const conversation = inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE;
+    const definition = spatialImageAiDefinition(action, {
+      inputSurface,
+      sourceResultId: exactResult ? String(refs.result_id || '') : '',
+    });
+    const sourceMatchesAction = conversation
+      ? (!refs.result_id || exactResult)
+      : definition.sourceKind === 'source'
+        ? !refs.result_id
+        : exactResult;
     if (element?.type !== 'image' || !refs.asset_id || !sourceMatchesAction) {
       throw new Error(`${definition.title}当前只接受无限画布中的${definition.sourceLabel}`);
     }
@@ -1273,16 +1357,23 @@ export function createInfiniteCanvasWorkspaceController({
       const response = await api.getAsset(refs.asset_id, { timeoutMs: 10000 });
       asset = response?.asset || response || {};
     }
-    const roleMatches = definition.sourceKind === 'source'
-      ? asset?.role === 'workspace_source'
-      : String(asset?.role || '').startsWith('result_');
+    if (!selectionIsCurrent()) throw new Error('当前选区已变化，请重新核对修改');
+    const roleMatches = conversation
+      ? (
+        exactResult
+          ? String(asset?.role || '').startsWith('result_')
+          : asset?.role === 'workspace_source'
+      )
+      : definition.sourceKind === 'source'
+        ? asset?.role === 'workspace_source'
+        : String(asset?.role || '').startsWith('result_');
     if (!roleMatches || asset?.kind === 'video' || !String(asset?.mime || '').startsWith('image/')) {
       throw new Error(`${definition.title}当前只接受${definition.sourceLabel}`);
     }
-    if (!canvasSessionIsCurrent(session)) throw new Error('当前画布已切换，请重新选择素材');
+    if (!selectionIsCurrent()) throw new Error('当前选区已变化，请重新核对修改');
     await flushScene(session.canvasId);
     const durableCanvas = adapter.get(session.canvasId);
-    if (!durableCanvas?.current_version_id || !canvasSessionIsCurrent(session)) {
+    if (!durableCanvas?.current_version_id || !selectionIsCurrent()) {
       throw new Error('请等待当前画布保存完成后再创建任务');
     }
     const defaults = await Promise.resolve(getImageAiDefaults({
@@ -1291,21 +1382,73 @@ export function createInfiniteCanvasWorkspaceController({
       element,
       asset,
     }));
-    if (!canvasSessionIsCurrent(session)) throw new Error('当前画布已切换，请重新选择素材');
+    if (!selectionIsCurrent()) throw new Error('当前选区已变化，请重新核对修改');
     selectedAsset = asset;
     imageAiDraft = createSpatialImageAiDraft(definition.action, {
       ...defaults,
       canvasId: session.canvasId,
       sourceElementId: String(element.id || ''),
       sourceAssetId: String(refs.asset_id),
-      sourceResultId: definition.sourceKind === 'result' ? String(refs.result_id) : '',
+      sourceResultId: exactResult ? String(refs.result_id || '') : '',
       productProfileVersionId: String(refs.product_profile_version_id || ''),
+      userRequest: String(seed?.userRequest || defaults?.userRequest || ''),
+      inputSurface,
     });
     imageAiDraftError = '';
     await renderInspector(element);
     await compileImageAiPreview();
     query('[data-spatial-image-ai-field="userRequest"]')?.focus?.({ preventScroll: true });
     return imageAiDraft;
+  }
+
+  async function openCanvasConversationPreview(userRequest = conversationInput, context = {}) {
+    const message = String(userRequest || '').trim().replace(/\s+/g, ' ').slice(0, 1200);
+    const element = context?.element || selectedElement;
+    if (message.length < 2) {
+      conversationError = '请写明希望 AI 如何修改当前图片';
+      await renderInspector(element);
+      query('[data-spatial-conversation-status]')?.focus?.({ preventScroll: true });
+      return null;
+    }
+    if (!canvasConversationEligible(element, selectedAsset)) {
+      conversationError = '当前选区已变化，请重新选择一张图片';
+      await renderInspector(element);
+      return null;
+    }
+    conversationInput = message;
+    conversationError = '';
+    conversationReviewing = true;
+    await renderInspector(element);
+    try {
+      return await openCanvasAiPreview(SPATIAL_RESULT_VARIATION_ACTION, {
+        canvasId: String(context?.canvasId || currentId),
+        element,
+      }, {
+        inputSurface: SPATIAL_CANVAS_CONVERSATION_SURFACE,
+        userRequest: message,
+      });
+    } catch (error) {
+      conversationError = String(error?.detail?.message || error?.message || error);
+      if (String(selectedElement?.id || '') === String(element?.id || '')) {
+        await renderInspector(element);
+        query('[data-spatial-conversation-status]')?.focus?.({ preventScroll: true });
+      }
+      return null;
+    } finally {
+      conversationReviewing = false;
+      if (!imageAiDraft && String(selectedElement?.id || '') === String(element?.id || '')) {
+        await renderInspector(element);
+      }
+    }
+  }
+
+  async function submitConversationDraft(event) {
+    event?.preventDefault?.();
+    if (conversationReviewing || imageAiDraft || videoDraft) return null;
+    return openCanvasConversationPreview(conversationInput, {
+      canvasId: currentId,
+      element: selectedElement,
+    });
   }
 
   function syncImageAiControls(error = '') {
@@ -1382,6 +1525,10 @@ export function createInfiniteCanvasWorkspaceController({
       await persistImageAiJobAssociation(job, session);
       if (!canvasSessionIsCurrent(session)) return job;
       imageAiDraft = null;
+      if (submittedDraft.inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE) {
+        conversationInput = '';
+        conversationError = '';
+      }
       await reconcileImageAiJob(job, { session });
       if (!canvasSessionIsCurrent(session)) return job;
       const taskElement = await session.island.selectBusinessReference({ task_id: job.id });
@@ -2397,9 +2544,13 @@ export function createInfiniteCanvasWorkspaceController({
       return invokeCurrentNativeAiAction(commandAction.dataset.spatialCommandAction);
     }
     if (event.target.closest('[data-spatial-image-ai-cancel]')) {
+      const conversation = imageAiDraft?.inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE;
+      if (conversation) conversationInput = imageAiDraft.userRequest;
       imageAiDraft = null;
       imageAiDraftError = '';
-      return renderInspector(selectedElement);
+      return renderInspector(selectedElement).then(() => {
+        if (conversation) query('[data-spatial-conversation-field]')?.focus?.({ preventScroll: true });
+      });
     }
     if (event.target.closest('[data-spatial-image-ai-classic]')) {
       const context = { canvasId: currentId, element: selectedElement };
@@ -2443,6 +2594,12 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onInput(event) {
+    const conversationField = event.target.closest('[data-spatial-conversation-field]');
+    if (conversationField) {
+      conversationInput = String(conversationField.value || '').slice(0, 1200);
+      conversationError = '';
+      return;
+    }
     const imageAiControl = event.target.closest('[data-spatial-image-ai-field]');
     if (imageAiControl) return updateImageAiDraftFromField(imageAiControl);
     const control = event.target.closest('[data-spatial-video-field]');
@@ -2459,6 +2616,10 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onSubmit(event) {
+    if (event.target.matches('[data-spatial-conversation-form]')) {
+      submitConversationDraft(event);
+      return;
+    }
     if (event.target.matches('[data-spatial-image-ai-form]')) {
       submitImageAiDraft(event);
       return;
@@ -2561,6 +2722,7 @@ export function createInfiniteCanvasWorkspaceController({
     openCanvas,
     openDeleteDialog,
     openCanvasAiPreview,
+    openCanvasConversationPreview,
     openVideoComposer,
     openVideoJob,
     prepareForClose,

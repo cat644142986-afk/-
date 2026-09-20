@@ -2819,6 +2819,227 @@ class DurableJobApiTests(unittest.TestCase):
             )
             self.assertEqual(len(self.ai_calls), 1)
 
+    def test_canvas_conversation_two_rounds_bind_current_selection_without_prompt_history(self) -> None:
+        vault = self.root / "knowledge-vault"
+        (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+        server.KNOWLEDGE = server.KnowledgeCompiler(vault)
+        self.write_context_skill()
+        ui_context = {
+            "input_surface": server.SPATIAL_CANVAS_CONVERSATION_SURFACE,
+            "contract_version": server.SPATIAL_CANVAS_CONVERSATION_CONTRACT,
+        }
+
+        with self.live_client() as client:
+            source = self.import_asset(client, "conversation-source.png", (70, 120, 180))
+            profile = self.ledger.save_product_profile(
+                expected_revision=0,
+                client_request_id="conversation-profile-v1",
+                profile=product_profile_payload(source["id"]),
+            )
+            profile_version_id = profile["version"]["id"]
+            source_element = {
+                "id": "conversation-source-element",
+                "type": "image",
+                "x": 120,
+                "y": 80,
+                "width": 420,
+                "height": 300,
+                "isDeleted": False,
+                "customData": {
+                    "asset_id": source["id"],
+                    "result_id": None,
+                    "task_id": None,
+                    "product_profile_version_id": profile_version_id,
+                    "lineage_parent_id": None,
+                },
+            }
+            scene = {
+                "schema_version": 1,
+                "elements": [source_element],
+                "app_state": copy.deepcopy(server.DEFAULT_SPATIAL_APP_STATE)
+                if hasattr(server, "DEFAULT_SPATIAL_APP_STATE") else {
+                    "viewBackgroundColor": "#d4d0cb",
+                    "currentItemRoughness": 0,
+                    "currentItemStrokeStyle": "solid",
+                    "currentItemFillStyle": "solid",
+                    "gridSize": 20,
+                    "gridStep": 5,
+                    "gridModeEnabled": False,
+                    "zoom": {"value": 1},
+                    "scrollX": 0,
+                    "scrollY": 0,
+                },
+                "files": {},
+            }
+            canvas = self.ledger.create_spatial_canvas(
+                name="Canvas Conversation 两轮",
+                client_request_id="conversation-spatial-canvas",
+                scene=scene,
+            )
+
+            def run_round(
+                *,
+                element: dict,
+                source_asset_id: str,
+                message: str,
+                request_id: str,
+            ) -> tuple[dict, dict, dict]:
+                brief = {
+                    "objective": "根据当前要求修改所选图片",
+                    "user_request": message,
+                    "output_kind": "ecommerce-main-image",
+                    "output_spec": {"ratio": "1:1", "resolution": "2k"},
+                    "intent_locks": {
+                        "subject_shape": True,
+                        "product_count": True,
+                        "packaging_text": True,
+                        "logo": True,
+                    },
+                }
+                preview_response = client.post("/api/knowledge/compile", json={
+                    **brief,
+                    "mode": "single",
+                    "command_id": server.SPATIAL_IMAGE_AI_COMMAND_ID,
+                    "source_asset_ids": [source_asset_id],
+                    "model": "gpt-image-2",
+                    "prompt_version": "prompt_v1",
+                    "generation_strategy": "single_pass",
+                    "design_skill_id": CONTEXT_SKILL_ID,
+                    "spatial_action": server.SPATIAL_RESULT_VARIATION_ACTION,
+                    "spatial_canvas_id": canvas["id"],
+                    "spatial_source_element_id": element["id"],
+                    "ui_context": ui_context,
+                })
+                self.assertEqual(preview_response.status_code, 200, preview_response.text)
+                preview_bundle = preview_response.json()
+                preview = preview_bundle["execution_context"]
+                spatial = preview_bundle["spatial_context"]
+                self.assertEqual(spatial["input_surface"], "canvas-conversation")
+                self.assertEqual(spatial["source_asset_id"], source_asset_id)
+                self.assertEqual(spatial["lineage_parent_id"], source_asset_id)
+                self.assertEqual(
+                    preview["canvas_context"]["operation_id"],
+                    f"spatial-conversation:{spatial['fingerprint']}",
+                )
+
+                response = client.post(
+                    f"/api/commands/{server.SPATIAL_IMAGE_AI_COMMAND_ID}/execute",
+                    json={
+                        "client_request_id": request_id,
+                        "source_asset_ids": [source_asset_id],
+                        "max_attempts": 1,
+                        "spatial_canvas_id": canvas["id"],
+                        "spatial_source_element_id": element["id"],
+                        "parameters": {
+                            "batch": 1,
+                            "variations": 1,
+                            "model": "gpt-image-2",
+                            "brief": brief,
+                            "intent_locks": brief["intent_locks"],
+                            "prompt_version": "prompt_v1",
+                            "prompt_version_source": "user",
+                            "generation_strategy": "single_pass",
+                            "generation_strategy_source": "user",
+                            "design_skill_id": CONTEXT_SKILL_ID,
+                            "spatial_action": server.SPATIAL_RESULT_VARIATION_ACTION,
+                            "provider_call_confirmed": True,
+                            "automatic_paid_retry": False,
+                            "execution_context": preview,
+                            "ui_context": ui_context,
+                        },
+                    },
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                completed = self.wait_for_job(response.json()["job"]["id"])
+                self.assertIn(completed["status"], {"completed", "partial"}, completed)
+                self.assertEqual(completed["snapshot"]["source_asset_ids"], [source_asset_id])
+                self.assertEqual(completed["paid_call_authorization"]["max_calls"], 1)
+                frozen = completed["snapshot"]["parameters"]
+                self.assertEqual(frozen["ui_context"], ui_context)
+                self.assertEqual(frozen["execution_context"]["context_sha256"], preview["context_sha256"])
+                self.assertEqual(frozen["skill_snapshot"], preview_bundle["skill_snapshot"])
+                self.assert_result_lineage(client, completed, {source_asset_id: 2})
+                return completed, preview_bundle, brief
+
+            first_message = "把背景改成暖灰摄影棚，保留包装文字与 Logo"
+            first, first_preview, _ = run_round(
+                element=source_element,
+                source_asset_id=source["id"],
+                message=first_message,
+                request_id="canvas-conversation-round-one",
+            )
+            first_result_id = first["items"][0]["result_asset_ids"][0]
+            first_trace = next(
+                item for item in client.get(f"/api/jobs/{first['id']}/traces").json()["traces"]
+                if item["stage"] == "prompt.primary"
+            )
+            self.assertIn(first_message, first_trace["compiled_prompt"])
+            self.assertIn("TEST BRAND", first_trace["compiled_prompt"])
+            self.assertIn("包装上的文字、数字、标签位置与可读性", first_trace["compiled_prompt"])
+            self.assertIn("采用柔和漫射棚拍光", first_trace["compiled_prompt"])
+            self.assertEqual(
+                first_preview["skill_snapshot"]["adapter_version"],
+                CONTEXT_SKILL_ADAPTER_VERSION,
+            )
+
+            first_result_element = {
+                "id": "conversation-round-one-result",
+                "type": "image",
+                "x": 620,
+                "y": 80,
+                "width": 420,
+                "height": 300,
+                "isDeleted": False,
+                "customData": {
+                    "asset_id": first_result_id,
+                    "result_id": first_result_id,
+                    "task_id": first["id"],
+                    "product_profile_version_id": profile_version_id,
+                    "lineage_parent_id": source["id"],
+                },
+            }
+            scene["elements"].append(first_result_element)
+            self.ledger.save_spatial_canvas_scene(
+                canvas["id"],
+                expected_revision=1,
+                client_request_id="conversation-round-one-backfill",
+                scene=scene,
+            )
+
+            second_message = "把当前阴影改得更柔和并稍微向右"
+            second, _, _ = run_round(
+                element=first_result_element,
+                source_asset_id=first_result_id,
+                message=second_message,
+                request_id="canvas-conversation-round-two",
+            )
+            second_trace = next(
+                item for item in client.get(f"/api/jobs/{second['id']}/traces").json()["traces"]
+                if item["stage"] == "prompt.primary"
+            )
+            self.assertIn(second_message, second_trace["compiled_prompt"])
+            self.assertNotIn(first_message, second_trace["compiled_prompt"])
+            self.assertEqual(second["snapshot"]["source_asset_ids"], [first_result_id])
+            self.assertEqual(len(self.ai_calls), 2)
+            self.network_request.assert_not_called()
+
+        # A fresh app lifespan sees the same two durable tasks and the latest canvas Result.
+        with self.live_client() as restarted_client:
+            restored_canvas = restarted_client.get(f"/api/spatial-canvases/{canvas['id']}")
+            self.assertEqual(restored_canvas.status_code, 200, restored_canvas.text)
+            restored_elements = restored_canvas.json()["scene"]["elements"]
+            self.assertTrue(any(
+                item.get("customData", {}).get("result_id") == first_result_id
+                for item in restored_elements
+            ))
+            for job_id in (first["id"], second["id"]):
+                restored_job = restarted_client.get(f"/api/jobs/{job_id}")
+                self.assertEqual(restored_job.status_code, 200, restored_job.text)
+                self.assertEqual(
+                    restored_job.json()["job"]["snapshot"]["parameters"]["ui_context"],
+                    ui_context,
+                )
+
     def test_bound_profile_version_drives_prompt_and_survives_derived_adjustment(self) -> None:
         vault = self.root / "knowledge-vault"
         (vault / "20 知识库" / "设计知识").mkdir(parents=True)

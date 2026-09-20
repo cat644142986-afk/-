@@ -10,7 +10,7 @@ import base64, copy, json, time, io, os, sys, re, mimetypes, threading, tracebac
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 from urllib.parse import urlsplit
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import requests
@@ -4538,6 +4538,8 @@ SPATIAL_IMAGE_AI_COMMAND_ID = "command:existing-generate-single"
 SPATIAL_WHITE_BACKGROUND_COMMAND_ID = SPATIAL_IMAGE_AI_COMMAND_ID
 SPATIAL_WHITE_BACKGROUND_ACTION = "white-background"
 SPATIAL_RESULT_VARIATION_ACTION = "generate-image"
+SPATIAL_CANVAS_CONVERSATION_SURFACE = "canvas-conversation"
+SPATIAL_CANVAS_CONVERSATION_CONTRACT = "canvas-conversation-input-v1"
 SPATIAL_IMAGE_AI_ACTIONS = {
     SPATIAL_WHITE_BACKGROUND_ACTION,
     SPATIAL_RESULT_VARIATION_ACTION,
@@ -4560,12 +4562,41 @@ class SpatialExecutionContextError(ValueError):
         self.message = str(message)
 
 
+def _spatial_image_input_surface(parameters: Mapping[str, Any] | None) -> str:
+    values = dict(parameters or {})
+    raw_ui_context = values.get("ui_context")
+    if raw_ui_context in (None, "", {}):
+        return ""
+    if not isinstance(raw_ui_context, Mapping):
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_INVALID",
+            "Canvas AI 输入来源必须是可验证的对象",
+        )
+    input_surface = str(raw_ui_context.get("input_surface") or "").strip()
+    if not input_surface:
+        return ""
+    if input_surface != SPATIAL_CANVAS_CONVERSATION_SURFACE:
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_INVALID",
+            "当前 Canvas AI 输入来源不受支持",
+        )
+    if str(raw_ui_context.get("contract_version") or "").strip() != (
+        SPATIAL_CANVAS_CONVERSATION_CONTRACT
+    ):
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_INVALID",
+            "Canvas Conversation 输入合同不受支持",
+        )
+    return input_surface
+
+
 def _spatial_image_ai_binding(
     *,
     action: Any,
     spatial_canvas_id: Any,
     spatial_source_element_id: Any,
     source_asset_ids: list[str],
+    input_surface: Any = "",
 ) -> dict[str, Any]:
     """Resolve task-affecting canvas facts without binding unrelated scene edits."""
     action_id = str(action or "").strip()
@@ -4574,8 +4605,28 @@ def _spatial_image_ai_binding(
             "SPATIAL_EXECUTION_CONTEXT_INVALID",
             "当前 Canvas Native AI 动作不受支持",
         )
-    title = "白底图" if action_id == SPATIAL_WHITE_BACKGROUND_ACTION else "生图变体"
-    source_label = "原始素材" if action_id == SPATIAL_WHITE_BACKGROUND_ACTION else "Result"
+    surface_id = str(input_surface or "").strip()
+    conversation = surface_id == SPATIAL_CANVAS_CONVERSATION_SURFACE
+    if surface_id and not conversation:
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_INVALID",
+            "当前 Canvas AI 输入来源不受支持",
+        )
+    if conversation and action_id != SPATIAL_RESULT_VARIATION_ACTION:
+        raise SpatialExecutionContextError(
+            "SPATIAL_EXECUTION_CONTEXT_INVALID",
+            "Canvas Conversation 必须复用现有单图生成链",
+        )
+    title = (
+        "对话修改"
+        if conversation
+        else "白底图" if action_id == SPATIAL_WHITE_BACKGROUND_ACTION else "生图变体"
+    )
+    source_label = (
+        "图片"
+        if conversation
+        else "原始素材" if action_id == SPATIAL_WHITE_BACKGROUND_ACTION else "Result"
+    )
     canvas_id = str(spatial_canvas_id or "").strip()
     element_id = str(spatial_source_element_id or "").strip()
     if not canvas_id or not element_id or len(source_asset_ids) != 1:
@@ -4604,11 +4655,15 @@ def _spatial_image_ai_binding(
     element_is_image = str(element.get("type") or "") == "image"
     element_asset_matches = str(refs.get("asset_id") or "") == source_asset_id
     element_result_id = str(refs.get("result_id") or "").strip()
-    source_semantics_match = (
-        not element_result_id
-        if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
-        else element_result_id == source_asset_id
-    )
+    source_kind = "result" if element_result_id == source_asset_id else "source"
+    if conversation:
+        source_semantics_match = not element_result_id or element_result_id == source_asset_id
+    else:
+        source_semantics_match = (
+            not element_result_id
+            if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
+            else element_result_id == source_asset_id
+        )
     if not element_is_image or not element_asset_matches or not source_semantics_match:
         raise SpatialExecutionContextError(
             "SPATIAL_EXECUTION_CONTEXT_STALE",
@@ -4622,11 +4677,18 @@ def _spatial_image_ai_binding(
             f"所选{source_label}已不可用，请重新选择",
         ) from exc
     asset_role = str(asset.get("role") or "")
-    role_matches = (
-        asset_role == "workspace_source"
-        if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
-        else asset_role.startswith("result_")
-    )
+    if conversation:
+        role_matches = (
+            asset_role.startswith("result_")
+            if source_kind == "result"
+            else asset_role == "workspace_source"
+        )
+    else:
+        role_matches = (
+            asset_role == "workspace_source"
+            if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
+            else asset_role.startswith("result_")
+        )
     if not role_matches or str(asset.get("kind") or "image") != "image" or not str(
         asset.get("mime") or ""
     ).startswith("image/"):
@@ -4655,11 +4717,16 @@ def _spatial_image_ai_binding(
         "source_asset_id": source_asset_id,
         "product_profile_version_id": profile_version_id,
         "lineage_parent_id": (
-            str(refs.get("lineage_parent_id") or "")
-            if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
-            else source_asset_id
+            source_asset_id
+            if conversation or action_id == SPATIAL_RESULT_VARIATION_ACTION
+            else str(refs.get("lineage_parent_id") or "")
         ),
     }
+    if conversation:
+        semantic_anchor.update({
+            "input_surface": SPATIAL_CANVAS_CONVERSATION_SURFACE,
+            "source_kind": source_kind,
+        })
     fingerprint = hashlib.sha256(json.dumps(
         semantic_anchor,
         ensure_ascii=False,
@@ -4670,7 +4737,9 @@ def _spatial_image_ai_binding(
         **semantic_anchor,
         "fingerprint": fingerprint,
         "operation_id": (
-            f"spatial-white-background:{fingerprint}"
+            f"spatial-conversation:{fingerprint}"
+            if conversation
+            else f"spatial-white-background:{fingerprint}"
             if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
             else f"spatial-result-variation:{fingerprint}"
         ),
@@ -4830,6 +4899,7 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
                 spatial_canvas_id=request.spatial_canvas_id,
                 spatial_source_element_id=request.spatial_source_element_id,
                 source_asset_ids=source_asset_ids,
+                input_surface=_spatial_image_input_surface(request.parameters or {}),
             )
         if str(command["id"]) == IMAGE_TO_VIDEO_COMMAND_ID:
             parameters = _normalize_image_to_video_job_parameters(
@@ -5612,6 +5682,7 @@ async def compile_knowledge(data: dict):
                 spatial_canvas_id=context.get("spatial_canvas_id"),
                 spatial_source_element_id=context.get("spatial_source_element_id"),
                 source_asset_ids=source_asset_ids,
+                input_surface=_spatial_image_input_surface(context),
             )
         manifest, bundle, skill_snapshot = _build_job_execution_context(
             parameters,

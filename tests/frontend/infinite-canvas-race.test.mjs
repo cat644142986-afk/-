@@ -971,6 +971,157 @@ test('Result variation submits the exact selected Result through the shared Canv
   harness.controller.destroy();
 });
 
+test('Canvas Conversation only reviews context before confirmation and accepts one exact source or Result', async () => {
+  const previewCalls = [];
+  let executeCalls = 0;
+  const harness = createHarness({
+    getImageAiDefaults: () => ({
+      designSkillId: 'comfyui-food-product-main-image',
+    }),
+    api: {
+      async getAsset(assetId) {
+        return {
+          asset: {
+            id: assetId,
+            name: assetId === RESULT_ASSET_ID ? '当前精确 Result' : '原始素材',
+            kind: 'image',
+            role: assetId === RESULT_ASSET_ID ? 'result_main' : 'workspace_source',
+            mime: 'image/png',
+            width: 320,
+            height: 240,
+          },
+        };
+      },
+      async compileKnowledge(payload) {
+        previewCalls.push(payload);
+        return {
+          execution_context: {
+            binding: 'preview',
+            context_sha256: String(previewCalls.length).repeat(64),
+            summary: { source_count: 1, positive_rule_count: 4 },
+            user_intent: { user_request: payload.user_request },
+            provider_adapter: { model: payload.model },
+          },
+          spatial_context: {
+            action: payload.spatial_action,
+            input_surface: payload.ui_context?.input_surface,
+            spatial_canvas_id: payload.spatial_canvas_id,
+            source_element_id: payload.spatial_source_element_id,
+            source_asset_id: payload.source_asset_ids[0],
+            lineage_parent_id: payload.source_asset_ids[0],
+            fingerprint: 'f'.repeat(64),
+          },
+          skill_snapshot: {
+            title: '食品饮料白底主图',
+            version: 'content-test',
+            content_sha256: 'a'.repeat(64),
+            adapter_version: 'context-skill-adapter-v1',
+          },
+        };
+      },
+      async executeCommand() {
+        executeCalls += 1;
+        throw new Error('Ctrl+Enter must not create a paid task');
+      },
+    },
+  });
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const source = sourceElement('canvas:a');
+  mount.options.onSelectionChange(source);
+  await settle();
+
+  assert.match(harness.documentRef.node('#spatial-inspector').innerHTML, /告诉 AI 下一步怎么改/);
+  const sourceField = new FakeElement('[data-spatial-conversation-field]');
+  sourceField.tagName = 'TEXTAREA';
+  sourceField.value = '把背景改成暖灰摄影棚，保留包装文字与 Logo';
+  await harness.documentRef.node('#page-canvas').emit('input', { target: sourceField });
+  const reviewShortcut = await harness.documentRef.emit('keydown', {
+    key: 'Enter', ctrlKey: true, target: sourceField,
+  });
+  await waitFor(() => previewCalls.length === 1, 'source conversation preview was not compiled');
+
+  assert.equal(reviewShortcut.defaultPrevented, true);
+  assert.equal(executeCalls, 0);
+  assert.deepEqual(previewCalls[0].source_asset_ids, [SOURCE_ASSET_ID]);
+  assert.equal(previewCalls[0].user_request, sourceField.value);
+  assert.deepEqual(previewCalls[0].ui_context, {
+    input_surface: 'canvas-conversation',
+    contract_version: 'canvas-conversation-input-v1',
+  });
+  assert.match(harness.documentRef.node('#spatial-inspector').innerHTML, /对话修改/);
+
+  const cancel = new FakeElement('[data-spatial-image-ai-cancel]');
+  await harness.documentRef.node('#page-canvas').emit('click', { target: cancel });
+  const result = resultElement('canvas:a');
+  mount.options.onSelectionChange(result);
+  await settle();
+  const resultField = new FakeElement('[data-spatial-conversation-field]');
+  resultField.tagName = 'TEXTAREA';
+  resultField.value = '把当前阴影再柔和一点';
+  await harness.documentRef.node('#page-canvas').emit('input', { target: resultField });
+  await harness.documentRef.emit('keydown', {
+    key: 'Enter', ctrlKey: true, target: resultField,
+  });
+  await waitFor(() => previewCalls.length === 2, 'Result conversation preview was not compiled');
+
+  assert.deepEqual(previewCalls[1].source_asset_ids, [RESULT_ASSET_ID]);
+  assert.equal(previewCalls[1].spatial_source_element_id, result.id);
+  assert.equal(previewCalls[1].user_request, resultField.value);
+  assert.equal(executeCalls, 0);
+
+  await harness.documentRef.node('#page-canvas').emit('click', { target: cancel });
+  await harness.controller.openCanvasAiPreview('generate-image', {
+    canvasId: 'canvas:a', element: result,
+  });
+  assert.equal(previewCalls.length, 3);
+  assert.equal(previewCalls[2].ui_context, undefined, 'ordinary Ctrl+K/Inspector action remains unchanged');
+  assert.match(previewCalls[2].user_request, /当前结果/);
+  harness.controller.destroy();
+});
+
+test('Canvas Conversation discards a preview when the exact selection changes during preparation', async () => {
+  const defaults = deferred();
+  let previewCalls = 0;
+  const harness = createHarness({
+    getImageAiDefaults: () => defaults.promise,
+    api: {
+      async getAsset(assetId) {
+        return {
+          asset: {
+            id: assetId,
+            name: assetId === RESULT_ASSET_ID ? '新选 Result' : '原始素材',
+            kind: 'image',
+            role: assetId === RESULT_ASSET_ID ? 'result_main' : 'workspace_source',
+            mime: 'image/png',
+            width: 320,
+            height: 240,
+          },
+        };
+      },
+      async compileKnowledge() {
+        previewCalls += 1;
+        throw new Error('stale selection must not compile');
+      },
+    },
+  });
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const source = sourceElement('canvas:a');
+  mount.options.onSelectionChange(source);
+  await settle();
+  const pending = harness.controller.openCanvasConversationPreview('把背景改成暖灰色');
+  await settle();
+  const result = resultElement('canvas:a');
+  mount.options.onSelectionChange(result);
+  await settle();
+  defaults.resolve({ designSkillId: 'comfyui-food-product-main-image' });
+  assert.equal(await pending, null);
+  assert.equal(previewCalls, 0);
+  assert.match(harness.documentRef.node('#spatial-inspector').innerHTML, /新选 Result/);
+  assert.match(harness.documentRef.node('#spatial-inspector').innerHTML, /告诉 AI 下一步怎么改/);
+  harness.controller.destroy();
+});
+
 test('Inspector and Ctrl+K share the current-selection Native AI action adapter', async () => {
   const previewCalls = [];
   const harness = createHarness({

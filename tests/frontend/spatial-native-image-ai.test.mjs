@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  SPATIAL_CANVAS_CONVERSATION_CONTRACT,
+  SPATIAL_CANVAS_CONVERSATION_SURFACE,
   SPATIAL_IMAGE_AI_COMMAND_ID,
   SPATIAL_IMAGE_AI_SKILL_ID,
   SPATIAL_RESULT_VARIATION_ACTION,
@@ -31,6 +33,7 @@ function previewBundle(draft) {
       source_asset_id: draft.sourceAssetId,
       lineage_parent_id: draft.sourceAssetId,
       fingerprint: 'd'.repeat(64),
+      ...(draft.inputSurface ? { input_surface: draft.inputSurface } : {}),
     },
     skill_snapshot: {
       skill_id: SPATIAL_IMAGE_AI_SKILL_ID,
@@ -110,6 +113,63 @@ test('result variation rejects a silently substituted original source', () => {
     sourceResultId: 'ast:selected-result',
   });
   assert.throws(() => spatialImageAiPreviewPayload(draft), /精确使用当前选中的 Result/);
+});
+
+test('Canvas Conversation reuses the governed image chain for one exact source or Result', () => {
+  const source = createSpatialImageAiDraft(SPATIAL_RESULT_VARIATION_ACTION, {
+    canvasId: 'spatial:conversation-canvas',
+    sourceElementId: 'source-element',
+    sourceAssetId: 'ast:source',
+    userRequest: '把背景改成暖灰色摄影棚，保留包装文字和 Logo',
+    designSkillId: SPATIAL_IMAGE_AI_SKILL_ID,
+    inputSurface: SPATIAL_CANVAS_CONVERSATION_SURFACE,
+  });
+  const previewPayload = spatialImageAiPreviewPayload(source);
+
+  assert.deepEqual(previewPayload.source_asset_ids, ['ast:source']);
+  assert.equal(previewPayload.spatial_action, SPATIAL_RESULT_VARIATION_ACTION);
+  assert.equal(previewPayload.objective, '根据当前要求修改所选图片');
+  assert.equal(previewPayload.user_request, '把背景改成暖灰色摄影棚，保留包装文字和 Logo');
+  assert.deepEqual(previewPayload.ui_context, {
+    input_surface: SPATIAL_CANVAS_CONVERSATION_SURFACE,
+    contract_version: SPATIAL_CANVAS_CONVERSATION_CONTRACT,
+  });
+
+  const previewed = applySpatialImageAiPreview(source, previewBundle(source));
+  const submission = spatialImageAiCommandPayload(
+    previewed,
+    () => 'spatial-canvas-conversation:fixed',
+  );
+  assert.equal(submission.payload.client_request_id, 'spatial-canvas-conversation:fixed');
+  assert.deepEqual(submission.payload.source_asset_ids, ['ast:source']);
+  assert.equal(submission.payload.max_attempts, 1);
+  assert.equal(submission.payload.parameters.automatic_paid_retry, false);
+  assert.deepEqual(submission.payload.parameters.ui_context, previewPayload.ui_context);
+
+  const result = createSpatialImageAiDraft(SPATIAL_RESULT_VARIATION_ACTION, {
+    canvasId: 'spatial:conversation-canvas',
+    sourceElementId: 'result-element',
+    sourceAssetId: 'ast:current-result',
+    sourceResultId: 'ast:current-result',
+    userRequest: '把阴影再柔和一点',
+    inputSurface: SPATIAL_CANVAS_CONVERSATION_SURFACE,
+  });
+  assert.deepEqual(spatialImageAiPreviewPayload(result).source_asset_ids, ['ast:current-result']);
+
+  const changed = updateSpatialImageAiDraft(previewed, { userRequest: '改成冷灰背景' });
+  assert.equal(changed.preview, null);
+  assert.throws(() => spatialImageAiCommandPayload(changed), /先核对/);
+  assert.throws(() => spatialImageAiPreviewPayload(createSpatialImageAiDraft(
+    SPATIAL_RESULT_VARIATION_ACTION,
+    {
+      canvasId: 'spatial:conversation-canvas',
+      sourceElementId: 'result-element',
+      sourceAssetId: 'ast:original',
+      sourceResultId: 'ast:current-result',
+      userRequest: '继续调整',
+      inputSurface: SPATIAL_CANVAS_CONVERSATION_SURFACE,
+    },
+  )), /精确使用当前选中的 Result/);
 });
 
 test('all governed Canvas image actions share task ownership and result recovery helpers', () => {

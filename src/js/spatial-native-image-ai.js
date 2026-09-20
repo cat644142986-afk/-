@@ -2,6 +2,8 @@ export const SPATIAL_IMAGE_AI_COMMAND_ID = 'command:existing-generate-single';
 export const SPATIAL_WHITE_BACKGROUND_ACTION = 'white-background';
 export const SPATIAL_RESULT_VARIATION_ACTION = 'generate-image';
 export const SPATIAL_IMAGE_AI_SKILL_ID = 'comfyui-food-product-main-image';
+export const SPATIAL_CANVAS_CONVERSATION_SURFACE = 'canvas-conversation';
+export const SPATIAL_CANVAS_CONVERSATION_CONTRACT = 'canvas-conversation-input-v1';
 
 const ACTIVE_JOB_STATUSES = new Set(['queued', 'running', 'paused', 'canceling']);
 const SETTLED_JOB_STATUSES = new Set(['completed', 'partial', 'failed', 'canceled', 'interrupted']);
@@ -38,6 +40,27 @@ function actionDefinition(action) {
   return definition;
 }
 
+function draftDefinition(draft) {
+  const definition = actionDefinition(draft?.action);
+  if (draft?.inputSurface !== SPATIAL_CANVAS_CONVERSATION_SURFACE) return definition;
+  return {
+    ...definition,
+    title: '对话修改',
+    sourceLabel: draft?.sourceResultId ? '所选结果' : '所选素材',
+    defaultUserRequest: '',
+    objective: '根据当前要求修改所选图片',
+    requestPrefix: 'spatial-canvas-conversation',
+  };
+}
+
+function conversationUiContext(draft) {
+  if (draft?.inputSurface !== SPATIAL_CANVAS_CONVERSATION_SURFACE) return null;
+  return {
+    input_surface: SPATIAL_CANVAS_CONVERSATION_SURFACE,
+    contract_version: SPATIAL_CANVAS_CONVERSATION_CONTRACT,
+  };
+}
+
 function requestId(definition) {
   const suffix = globalThis.crypto?.randomUUID?.()
     || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -54,7 +77,7 @@ function intentLocks() {
 }
 
 function creativeBrief(draft) {
-  const definition = actionDefinition(draft.action);
+  const definition = draftDefinition(draft);
   return {
     objective: definition.objective,
     user_request: cleanText(draft.userRequest),
@@ -73,14 +96,29 @@ function creativeBrief(draft) {
 }
 
 function validateDraft(draft) {
-  const definition = actionDefinition(draft.action);
+  const definition = draftDefinition(draft);
+  const inputSurface = String(draft.inputSurface || '');
+  if (inputSurface && inputSurface !== SPATIAL_CANVAS_CONVERSATION_SURFACE) {
+    throw new Error('当前 Canvas AI 输入来源不受支持');
+  }
+  if (
+    inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE
+    && draft.action !== SPATIAL_RESULT_VARIATION_ACTION
+  ) {
+    throw new Error('Canvas Conversation 必须复用现有单图生成链');
+  }
   if (!SPATIAL_CANVAS_ID.test(String(draft.canvasId || ''))) {
     throw new Error(`${definition.title}任务需要已保存的无限画布`);
   }
   if (!draft.sourceElementId || !draft.sourceAssetId) {
     throw new Error(`${definition.title}任务缺少${definition.sourceLabel}`);
   }
-  if (
+  if (inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE) {
+    if (
+      draft.sourceResultId
+      && String(draft.sourceResultId) !== String(draft.sourceAssetId || '')
+    ) throw new Error('Canvas Conversation 必须精确使用当前选中的 Result');
+  } else if (
     definition.sourceKind === 'result'
     && String(draft.sourceResultId || '') !== String(draft.sourceAssetId || '')
   ) {
@@ -91,8 +129,8 @@ function validateDraft(draft) {
   }
 }
 
-export function spatialImageAiDefinition(action) {
-  return { ...actionDefinition(action) };
+export function spatialImageAiDefinition(action, draft = null) {
+  return { ...(draft ? draftDefinition({ ...draft, action }) : actionDefinition(action)) };
 }
 
 export function createSpatialImageAiDraft(action, {
@@ -108,8 +146,9 @@ export function createSpatialImageAiDraft(action, {
   outputRatio = '1:1',
   outputResolution = '2k',
   designSkillId = '',
+  inputSurface = '',
 } = {}) {
-  const definition = actionDefinition(action);
+  const definition = draftDefinition({ action, inputSurface, sourceResultId });
   return {
     action: definition.action,
     canvasId: String(canvasId || ''),
@@ -117,13 +156,18 @@ export function createSpatialImageAiDraft(action, {
     sourceAssetId: String(sourceAssetId || ''),
     sourceResultId: String(sourceResultId || ''),
     productProfileVersionId: String(productProfileVersionId || ''),
-    userRequest: cleanText(userRequest || definition.defaultUserRequest),
+    userRequest: cleanText(
+      inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE
+        ? userRequest
+        : userRequest || definition.defaultUserRequest,
+    ),
     model: String(model || 'gpt-image-2'),
     promptVersion: String(promptVersion || 'prompt_v1'),
     materialProfile: String(materialProfile || 'unknown'),
     outputRatio: String(outputRatio || '1:1'),
     outputResolution: String(outputResolution || '2k'),
     designSkillId: designSkillId === SPATIAL_IMAGE_AI_SKILL_ID ? designSkillId : '',
+    inputSurface: String(inputSurface || ''),
     preview: null,
     requestId: '',
   };
@@ -135,6 +179,7 @@ export function updateSpatialImageAiDraft(draft, patch = {}) {
   [
     'userRequest', 'model', 'promptVersion', 'materialProfile', 'outputRatio',
     'outputResolution', 'designSkillId',
+    'inputSurface',
   ].forEach((field) => {
     if (Object.hasOwn(patch, field)) next[field] = patch[field];
   });
@@ -152,6 +197,7 @@ export function updateSpatialImageAiDraft(draft, patch = {}) {
 export function spatialImageAiPreviewPayload(draft) {
   const current = { ...createSpatialImageAiDraft(draft?.action, draft), ...draft };
   validateDraft(current);
+  const uiContext = conversationUiContext(current);
   return {
     ...creativeBrief(current),
     command_id: SPATIAL_IMAGE_AI_COMMAND_ID,
@@ -164,6 +210,7 @@ export function spatialImageAiPreviewPayload(draft) {
     spatial_action: current.action,
     spatial_canvas_id: current.canvasId,
     spatial_source_element_id: current.sourceElementId,
+    ...(uiContext ? { ui_context: uiContext } : {}),
   };
 }
 
@@ -178,7 +225,11 @@ export function applySpatialImageAiPreview(draft, bundle) {
     || spatial?.spatial_canvas_id !== current.canvasId
     || spatial?.source_element_id !== current.sourceElementId
     || spatial?.source_asset_id !== current.sourceAssetId
-  ) throw new Error(`${actionDefinition(current.action).title}执行上下文返回不完整，请重新预览`);
+    || (
+      current.inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE
+      && spatial?.input_surface !== SPATIAL_CANVAS_CONVERSATION_SURFACE
+    )
+  ) throw new Error(`${draftDefinition(current).title}执行上下文返回不完整，请重新预览`);
   return {
     ...current,
     preview: {
@@ -193,7 +244,7 @@ export function applySpatialImageAiPreview(draft, bundle) {
 
 export function spatialImageAiCommandPayload(draft, idFactory = null) {
   const current = { ...createSpatialImageAiDraft(draft?.action, draft), ...draft };
-  const definition = actionDefinition(current.action);
+  const definition = draftDefinition(current);
   validateDraft(current);
   if (!current.preview?.executionContext?.context_sha256) {
     throw new Error('提交前需要先核对本次执行上下文');
@@ -202,6 +253,7 @@ export function spatialImageAiCommandPayload(draft, idFactory = null) {
     typeof idFactory === 'function' ? idFactory() : requestId(definition),
   );
   const brief = creativeBrief(current);
+  const uiContext = conversationUiContext(current);
   return {
     draft: { ...current, requestId: stableRequestId },
     payload: {
@@ -229,6 +281,7 @@ export function spatialImageAiCommandPayload(draft, idFactory = null) {
         provider_call_confirmed: true,
         automatic_paid_retry: false,
         execution_context: current.preview.executionContext,
+        ...(uiContext ? { ui_context: uiContext } : {}),
       },
     },
   };
