@@ -553,18 +553,18 @@ async function activateAndOpen(harness, canvasId) {
   return harness.mounts.get(canvasId);
 }
 
-test('Canvas Product Shell projects empty, idle, single-selection and multi-selection states without a second execution path', async () => {
+test('Canvas Product Shell keeps an empty work surface and projects composer, single-selection and multi-selection states without a second execution path', async () => {
   const harness = createHarness();
   harness.records.get('canvas:a').scene = scene('empty', []);
   harness.records.get('canvas:a').summary = { element_count: 0 };
   harness.controller.bind();
   const mount = await activateAndOpen(harness, 'canvas:a');
 
-  assert.equal(harness.documentRef.node('#spatial-empty-launcher').hidden, false);
-  assert.equal(harness.documentRef.node('#spatial-idle-bar').hidden, true);
+  assert.equal(harness.documentRef.node('#spatial-empty-launcher').hidden, true);
 
   const zeroOpen = new FakeElement('[data-spatial-zero-open]');
   await harness.documentRef.node('#page-canvas').emit('click', { target: zeroOpen });
+  assert.equal(harness.documentRef.node('#spatial-empty-launcher').hidden, false);
   assert.equal(harness.documentRef.node('#spatial-zero-composer').hidden, false);
   const zeroField = new FakeElement('[data-spatial-zero-field]');
   zeroField.value = '一张克制的夏日饮料主视觉';
@@ -579,7 +579,6 @@ test('Canvas Product Shell projects empty, idle, single-selection and multi-sele
   const source = sourceElement('canvas:a');
   mount.emitChange(scene('with-source', [source]));
   assert.equal(harness.documentRef.node('#spatial-empty-launcher').hidden, true);
-  assert.equal(harness.documentRef.node('#spatial-idle-bar').hidden, false);
 
   mount.options.onSelectionContextChange({
     activeTool: 'selection', count: 1, elementIds: [source.id], businessElements: [source],

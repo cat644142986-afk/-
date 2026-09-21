@@ -46,9 +46,11 @@ test('spatial workspace is a primary route and the old Studio switch is gone', (
   assert.match(html, /id="spatial-inspector"[^>]*hidden/);
   assert.match(html, /id="spatial-product-shell"/);
   assert.match(html, /id="spatial-empty-launcher"/);
+  assert.match(html, /id="btn-spatial-generate"[^>]*data-spatial-zero-open/);
   assert.match(html, /data-spatial-zero-open/);
   assert.match(html, /id="spatial-context-bar"/);
   assert.match(html, /class="spatial-workspace" data-adapter="sqlite-v10"/);
+  assert.doesNotMatch(html, /START HERE|从想法或素材开始|id="spatial-idle-bar"/);
   assert.doesNotMatch(html, /data-studio-view=/);
   assert.doesNotMatch(html, />自由画布</);
   assert.match(app, /infiniteCanvasWorkspace\.setPage\(page === 'canvas'\)/);

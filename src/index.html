@@ -272,6 +272,7 @@
               <div class="spatial-toolbar__actions">
                 <input id="spatial-file-input" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime" multiple hidden />
                 <form class="spatial-rename-form" id="spatial-rename-form" hidden><label class="sr-only" for="spatial-rename-input">画布名称</label><input id="spatial-rename-input" maxlength="60" autocomplete="off" /><button type="submit">保存</button><button id="spatial-rename-cancel" type="button" aria-label="取消重命名">取消</button></form>
+                <button class="spatial-secondary-button spatial-generate-button" id="btn-spatial-generate" type="button" data-spatial-zero-open aria-label="生成图片" title="生成图片"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.4 4.2L18 9l-4.6 1.8L12 15l-1.4-4.2L6 9l4.6-1.8Z"/><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z"/></svg><span>生成图片</span></button>
                 <button class="spatial-secondary-button" id="btn-spatial-import" type="button" aria-label="导入素材到当前画布" title="导入素材" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg><span>导入</span></button>
                 <button class="spatial-secondary-button" id="btn-spatial-assets" type="button" aria-label="打开素材库" title="素材库"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3Z"/><path d="M7 5h4l2 2"/></svg><span>素材</span></button>
                 <button class="spatial-secondary-button" id="btn-spatial-jobs" type="button" aria-label="打开任务中心" title="任务中心"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4Z"/><path d="M8 9h8M8 13h5"/></svg><span>任务</span></button>
@@ -304,15 +305,7 @@
                   </div>
                 </nav>
 
-                <section class="spatial-empty-launcher" id="spatial-empty-launcher" aria-labelledby="spatial-empty-launcher-title" hidden>
-                  <span>START HERE</span>
-                  <h3 id="spatial-empty-launcher-title">从想法或素材开始</h3>
-                  <p>先描述要做的画面，或把现有素材直接放进工作现场。</p>
-                  <div class="spatial-empty-launcher__actions">
-                    <button class="is-primary" type="button" data-spatial-zero-open><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.4 4.2L18 9l-4.6 1.8L12 15l-1.4-4.2L6 9l4.6-1.8Z"/><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z"/></svg>从零生成图片</button>
-                    <button type="button" data-spatial-shell-import><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>导入素材</button>
-                    <button type="button" data-spatial-shell-assets><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3Z"/><path d="M7 5h4l2 2"/></svg>打开素材库</button>
-                  </div>
+                <section class="spatial-empty-launcher" id="spatial-empty-launcher" aria-label="生成图片" hidden>
                   <form class="spatial-zero-composer" id="spatial-zero-composer" data-spatial-zero-form hidden novalidate>
                     <label for="spatial-zero-prompt">描述想创建的画面</label>
                     <textarea id="spatial-zero-prompt" data-spatial-zero-field rows="3" maxlength="1200" placeholder="例如：为这款饮料创建一张清爽、克制的夏日主视觉"></textarea>
@@ -321,13 +314,6 @@
                   </form>
                 </section>
 
-                <div class="spatial-idle-bar" id="spatial-idle-bar" hidden>
-                  <span>继续创作</span>
-                  <button type="button" data-spatial-zero-open>从零生成</button>
-                  <button type="button" data-spatial-shell-import>导入素材</button>
-                  <button type="button" data-spatial-shell-assets>素材库</button>
-                  <small>滚轮缩放 · Space 拖动画布</small>
-                </div>
                 <section class="spatial-context-bar" id="spatial-context-bar" aria-label="当前选区操作" hidden></section>
               </div>
               <aside class="spatial-inspector" id="spatial-inspector" aria-label="执行核对与对象详情" hidden></aside>

@@ -491,24 +491,21 @@ export function createInfiniteCanvasWorkspaceController({
 
   function renderProductShell() {
     const empty = query('#spatial-empty-launcher');
-    const idle = query('#spatial-idle-bar');
     const contextBar = query('#spatial-context-bar');
     const zeroComposer = query('#spatial-zero-composer');
-    if (!empty || !idle || !contextBar) return;
+    if (!empty || !contextBar) return;
     const reviewing = Boolean(imageAiDraft || videoDraft);
     const selectionCount = Number(selectionContext.count || 0);
     const showZeroComposer = zeroComposerOpen && !reviewing;
-    empty.hidden = reviewing || (canvasHasContent && !showZeroComposer);
-    empty.dataset.mode = canvasHasContent ? 'composer' : 'empty';
+    empty.hidden = !showZeroComposer;
     if (zeroComposer) zeroComposer.hidden = !showZeroComposer;
-    idle.hidden = reviewing || !canvasHasContent || selectionCount > 0 || showZeroComposer;
     contextBar.hidden = true;
     contextBar.innerHTML = '';
     syncToolStrip(selectionContext.activeTool);
     if (reviewing || selectionCount < 1) return;
     if (selectionCount > 1) {
       contextBar.innerHTML = `
-        <div class="spatial-context-bar__identity"><span>MULTI SELECT</span><strong>已选择 ${selectionCount} 个对象</strong></div>
+        <div class="spatial-context-bar__identity"><span>多选</span><strong>已选择 ${selectionCount} 个对象</strong></div>
         <div class="spatial-context-bar__hints"><span><kbd>Ctrl+G</kbd> 组合</span><span><kbd>Delete</kbd> 删除</span><span><kbd>Shift</kbd> 调整选区</span></div>
       `;
       contextBar.hidden = false;
@@ -516,14 +513,14 @@ export function createInfiniteCanvasWorkspaceController({
     }
     if (!selectedElement) {
       contextBar.innerHTML = `
-        <div class="spatial-context-bar__identity"><span>CANVAS OBJECT</span><strong>已选择 1 个标注对象</strong></div>
+        <div class="spatial-context-bar__identity"><span>对象</span><strong>已选择 1 个标注对象</strong></div>
         <div class="spatial-context-bar__hints"><span><kbd>Delete</kbd> 删除</span><span><kbd>Ctrl+D</kbd> 复制</span></div>
       `;
       contextBar.hidden = false;
       return;
     }
     const refs = selectedElement.customData || {};
-    const kind = selectedElement.type === 'embeddable' ? 'VIDEO' : refs.result_id ? 'RESULT' : refs.task_id ? 'TASK' : 'ASSET';
+    const kind = selectedElement.type === 'embeddable' ? '视频' : refs.result_id ? '生成结果' : refs.task_id ? '任务结果' : '素材';
     const fallbackName = refs.result_id ? '生成结果' : refs.task_id ? '创作任务' : '素材图片';
     const name = selectedAsset?.name || fallbackName;
     const conversation = canvasConversationEligible(selectedElement, selectedAsset)
