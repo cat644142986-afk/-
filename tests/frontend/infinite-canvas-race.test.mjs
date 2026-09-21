@@ -130,6 +130,8 @@ function createFakeDocument() {
   imageAiForm.children.set('[data-spatial-image-ai-preview]', imageAiPreview);
   node('#spatial-rename-form').hidden = true;
   node('#spatial-command-menu').hidden = true;
+  node('#spatial-annotation-menu').hidden = true;
+  node('#spatial-zero-composer').hidden = true;
   const deleteDialog = node('#spatial-delete-dialog');
   const deleteCancel = node('#spatial-delete-cancel');
   deleteCancel.selector = '[data-spatial-delete-cancel]';
@@ -550,6 +552,56 @@ async function activateAndOpen(harness, canvasId) {
   await settle();
   return harness.mounts.get(canvasId);
 }
+
+test('Canvas Product Shell projects empty, idle, single-selection and multi-selection states without a second execution path', async () => {
+  const harness = createHarness();
+  harness.records.get('canvas:a').scene = scene('empty', []);
+  harness.records.get('canvas:a').summary = { element_count: 0 };
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+
+  assert.equal(harness.documentRef.node('#spatial-empty-launcher').hidden, false);
+  assert.equal(harness.documentRef.node('#spatial-idle-bar').hidden, true);
+
+  const zeroOpen = new FakeElement('[data-spatial-zero-open]');
+  await harness.documentRef.node('#page-canvas').emit('click', { target: zeroOpen });
+  assert.equal(harness.documentRef.node('#spatial-zero-composer').hidden, false);
+  const zeroField = new FakeElement('[data-spatial-zero-field]');
+  zeroField.value = '一张克制的夏日饮料主视觉';
+  await harness.documentRef.node('#page-canvas').emit('input', { target: zeroField });
+  await harness.documentRef.node('#page-canvas').emit('submit', {
+    target: new FakeElement('[data-spatial-zero-form]'),
+  });
+  assert.match(harness.documentRef.node('#spatial-zero-status').textContent, /未创建 Task/);
+
+  const zeroClose = new FakeElement('[data-spatial-zero-close]');
+  await harness.documentRef.node('#page-canvas').emit('click', { target: zeroClose });
+  const source = sourceElement('canvas:a');
+  mount.emitChange(scene('with-source', [source]));
+  assert.equal(harness.documentRef.node('#spatial-empty-launcher').hidden, true);
+  assert.equal(harness.documentRef.node('#spatial-idle-bar').hidden, false);
+
+  mount.options.onSelectionContextChange({
+    activeTool: 'selection', count: 1, elementIds: [source.id], businessElements: [source],
+  });
+  mount.options.onSelectionChange(source);
+  await settle();
+  const contextBar = harness.documentRef.node('#spatial-context-bar');
+  assert.equal(contextBar.hidden, false);
+  assert.match(contextBar.innerHTML, /白底图/);
+  assert.match(contextBar.innerHTML, /Fabric 精修/);
+  assert.match(contextBar.innerHTML, /告诉 AI 下一步怎么改/);
+  assert.equal(harness.documentRef.node('#spatial-inspector').hidden, true);
+
+  mount.options.onSelectionContextChange({
+    activeTool: 'selection', count: 2, elementIds: [source.id, 'note-1'], businessElements: [source],
+  });
+  mount.options.onSelectionChange(null);
+  await settle();
+  assert.match(contextBar.innerHTML, /已选择 2 个对象/);
+  assert.match(contextBar.innerHTML, /Ctrl\+G/);
+  harness.controller.destroy();
+});
 
 test('video and selection callbacks cannot postpone an unchanged scene save', async () => {
   const harness = createHarness();

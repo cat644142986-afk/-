@@ -44,6 +44,10 @@ test('spatial workspace is a primary route and the old Studio switch is gone', (
   assert.match(html, /id="btn-spatial-delete"[^>]*aria-label="删除当前画布"/);
   assert.match(html, /id="spatial-delete-dialog"[^>]*role="dialog"[^>]*aria-modal="true"/);
   assert.match(html, /id="spatial-inspector"[^>]*hidden/);
+  assert.match(html, /id="spatial-product-shell"/);
+  assert.match(html, /id="spatial-empty-launcher"/);
+  assert.match(html, /data-spatial-zero-open/);
+  assert.match(html, /id="spatial-context-bar"/);
   assert.match(html, /class="spatial-workspace" data-adapter="sqlite-v10"/);
   assert.doesNotMatch(html, /data-studio-view=/);
   assert.doesNotMatch(html, />自由画布</);
@@ -58,6 +62,7 @@ test('Excalidraw is isolated behind a user-triggered dynamic import', () => {
   assert.match(island, /from '@excalidraw\/excalidraw'/);
   assert.match(island, /@excalidraw\/excalidraw\/index\.css/);
   assert.match(adapterSource, /currentItemRoughness:\s*0/);
+  assert.match(adapterSource, /currentItemFontFamily:\s*2/);
   assert.match(island, /dark: '#cfd3d7'/);
   assert.match(island, /initialData=\{runtimeSceneForTheme\(canvasDocument\.scene, theme\)\}/);
   assert.match(island, /appState: persistentAppState\(appState\)/);
@@ -69,6 +74,9 @@ test('Excalidraw is isolated behind a user-triggered dynamic import', () => {
   assert.match(stableUiCss, /\.spatial-canvas-host \.App-toolbar__extra-tools-dropdown \[data-testid="toolbar-embeddable"\]/);
   assert.match(stableUiCss, /\[data-testid="toolbar-laser"\]/);
   assert.match(stableUiCss, /@media \(max-width: 1080px\)[\s\S]*?\.spatial-inspector \{ top: 72px;/);
+  assert.match(stableUiCss, /Excalidraw stays the spatial engine, not the product chrome/);
+  assert.match(stableUiCss, /\.spatial-canvas-host \.excalidraw \.App-menu_top/);
+  assert.match(stableUiCss, /\.spatial-context-bar/);
   assert.match(viteConfig, /manifest:\s*true/);
   assert.match(bundleVerifier, /isDynamicEntry/);
   assert.match(bundleVerifier, /modulepreload/);
@@ -246,6 +254,7 @@ test('IC3 production adapter invalidates queued old-base saves after a conflict'
 test('scene adapter keeps clean Excalidraw defaults and no embedded file bytes', () => {
   const adapter = createMemorySpatialCanvasAdapter({ idFactory: () => 'clean' });
   const record = adapter.create();
+  assert.equal(record.scene.appState.currentItemFontFamily, 2);
   assert.equal(record.scene.appState.currentItemRoughness, 0);
   assert.equal(record.scene.appState.currentItemStrokeStyle, 'solid');
   assert.deepEqual(record.scene.files, {});

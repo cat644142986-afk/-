@@ -1,5 +1,6 @@
 const DEFAULT_APP_STATE = Object.freeze({
   viewBackgroundColor: '#d4d0cb',
+  currentItemFontFamily: 2,
   currentItemRoughness: 0,
   currentItemStrokeStyle: 'solid',
   currentItemFillStyle: 'solid',
@@ -13,6 +14,7 @@ const DEFAULT_APP_STATE = Object.freeze({
 
 const STABLE_APP_STATE_FIELDS = Object.freeze([
   'viewBackgroundColor',
+  'currentItemFontFamily',
   'currentItemRoughness',
   'currentItemStrokeStyle',
   'currentItemFillStyle',

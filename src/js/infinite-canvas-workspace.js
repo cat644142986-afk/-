@@ -325,8 +325,13 @@ export function createInfiniteCanvasWorkspaceController({
   let islandReadyPromise = null;
   let resolveIslandReady = null;
   let selectedElement = null;
+  let selectionContext = { activeTool: 'selection', count: 0, elementIds: [], businessElements: [] };
   let inspectorEpoch = 0;
   let selectedAsset = null;
+  let detailsOpen = false;
+  let canvasHasContent = false;
+  let zeroComposerOpen = false;
+  let zeroGenerationInput = '';
   let videoDraft = null;
   let videoSubmitting = false;
   let videoDraftError = '';
@@ -459,6 +464,90 @@ export function createInfiniteCanvasWorkspaceController({
     query('#btn-spatial-delete').hidden = !record;
   }
 
+  function syncToolStrip(activeTool = selectionContext.activeTool) {
+    ['selection', 'hand', 'text'].forEach((tool) => {
+      const button = query(`[data-spatial-tool="${tool}"]`);
+      const activeToolMatches = String(activeTool || 'selection') === tool;
+      button?.setAttribute?.('aria-pressed', String(activeToolMatches));
+      button?.classList?.toggle?.('is-active', activeToolMatches);
+    });
+  }
+
+  function contextActionButtons(element) {
+    const refs = element?.customData || {};
+    const available = new Set(spatialContextActions(element || {}));
+    const preferred = refs.result_id
+      ? ['generate-image', 'fine-edit', 'export']
+      : refs.task_id
+        ? ['open-task']
+        : element?.type === 'embeddable'
+          ? ['toggle-video', 'export']
+          : ['white-background', 'fine-edit'];
+    return preferred
+      .filter((action) => available.has(action))
+      .map((action, index) => `<button type="button" data-spatial-action="${action}"${index === 0 ? ' class="is-primary"' : ''}>${escapeHtml(action === 'generate-image' ? '生成变体' : action === 'fine-edit' ? 'Fabric 精修' : ACTION_COPY[action])}</button>`)
+      .join('');
+  }
+
+  function renderProductShell() {
+    const empty = query('#spatial-empty-launcher');
+    const idle = query('#spatial-idle-bar');
+    const contextBar = query('#spatial-context-bar');
+    const zeroComposer = query('#spatial-zero-composer');
+    if (!empty || !idle || !contextBar) return;
+    const reviewing = Boolean(imageAiDraft || videoDraft);
+    const selectionCount = Number(selectionContext.count || 0);
+    const showZeroComposer = zeroComposerOpen && !reviewing;
+    empty.hidden = reviewing || (canvasHasContent && !showZeroComposer);
+    empty.dataset.mode = canvasHasContent ? 'composer' : 'empty';
+    if (zeroComposer) zeroComposer.hidden = !showZeroComposer;
+    idle.hidden = reviewing || !canvasHasContent || selectionCount > 0 || showZeroComposer;
+    contextBar.hidden = true;
+    contextBar.innerHTML = '';
+    syncToolStrip(selectionContext.activeTool);
+    if (reviewing || selectionCount < 1) return;
+    if (selectionCount > 1) {
+      contextBar.innerHTML = `
+        <div class="spatial-context-bar__identity"><span>MULTI SELECT</span><strong>已选择 ${selectionCount} 个对象</strong></div>
+        <div class="spatial-context-bar__hints"><span><kbd>Ctrl+G</kbd> 组合</span><span><kbd>Delete</kbd> 删除</span><span><kbd>Shift</kbd> 调整选区</span></div>
+      `;
+      contextBar.hidden = false;
+      return;
+    }
+    if (!selectedElement) {
+      contextBar.innerHTML = `
+        <div class="spatial-context-bar__identity"><span>CANVAS OBJECT</span><strong>已选择 1 个标注对象</strong></div>
+        <div class="spatial-context-bar__hints"><span><kbd>Delete</kbd> 删除</span><span><kbd>Ctrl+D</kbd> 复制</span></div>
+      `;
+      contextBar.hidden = false;
+      return;
+    }
+    const refs = selectedElement.customData || {};
+    const kind = selectedElement.type === 'embeddable' ? 'VIDEO' : refs.result_id ? 'RESULT' : refs.task_id ? 'TASK' : 'ASSET';
+    const fallbackName = refs.result_id ? '生成结果' : refs.task_id ? '创作任务' : '素材图片';
+    const name = selectedAsset?.name || fallbackName;
+    const conversation = canvasConversationEligible(selectedElement, selectedAsset)
+      ? canvasConversationHtml(conversationInput, selectedAsset, {
+        reviewing: conversationReviewing,
+        error: conversationError,
+      }).replace('class="spatial-conversation"', 'class="spatial-conversation is-compact"')
+      : '';
+    contextBar.innerHTML = `
+      <div class="spatial-context-bar__topline">
+        <div class="spatial-context-bar__identity"><span>${kind}</span><strong>${escapeHtml(name)}</strong></div>
+        <div class="spatial-context-bar__actions">${contextActionButtons(selectedElement)}<button type="button" data-spatial-details aria-label="打开对象详情">更多</button></div>
+      </div>
+      ${conversation}
+    `;
+    contextBar.hidden = false;
+  }
+
+  function syncCanvasContentState(scene) {
+    canvasHasContent = Array.from(scene?.elements || []).some((element) => !element?.isDeleted);
+    if (canvasHasContent && selectionContext.count > 0) zeroComposerOpen = false;
+    renderProductShell();
+  }
+
   function openDeleteDialog(id, returnFocus = null) {
     const record = adapter.get(id);
     const dialog = query('#spatial-delete-dialog');
@@ -581,14 +670,17 @@ export function createInfiniteCanvasWorkspaceController({
       conversationError = '';
       conversationReviewing = false;
       selectedAsset = null;
+      detailsOpen = false;
     }
     selectedElement = element || null;
     const actions = spatialContextActions(element || {});
     if (!element || !actions.length) {
       inspector.hidden = true;
       inspector.innerHTML = '';
+      renderProductShell();
       return;
     }
+    renderProductShell();
     const refs = element.customData || {};
     const videoElement = element.type === 'embeddable';
     let name = videoElement ? '视频结果' : refs.result_id ? '生成结果' : refs.task_id ? '创作任务' : '素材图片';
@@ -624,7 +716,9 @@ export function createInfiniteCanvasWorkspaceController({
         error: imageAiDraftError,
       }) : ''}
     `;
-    inspector.hidden = false;
+    inspector.dataset.mode = imageAiDraft || videoDraft ? 'review' : 'details';
+    inspector.hidden = !(detailsOpen || imageAiDraft || videoDraft);
+    renderProductShell();
   }
 
   function getCurrentNativeAiActions() {
@@ -750,6 +844,19 @@ export function createInfiniteCanvasWorkspaceController({
         event.stopPropagation?.();
         closeNativeAiCommandMenu();
       }
+      return;
+    }
+    if (event.key === 'Escape' && !query('#spatial-annotation-menu')?.hidden) {
+      event.preventDefault();
+      query('#spatial-annotation-menu').hidden = true;
+      query('[data-spatial-annotation-toggle]')?.setAttribute?.('aria-expanded', 'false');
+      return;
+    }
+    if (event.key === 'Escape' && zeroComposerOpen && !imageAiDraft && !videoDraft) {
+      event.preventDefault();
+      zeroComposerOpen = false;
+      renderProductShell();
+      query('[data-spatial-zero-open]')?.focus?.({ preventScroll: true });
       return;
     }
     const conversationField = event.target?.closest?.('[data-spatial-conversation-field]');
@@ -1777,6 +1884,10 @@ export function createInfiniteCanvasWorkspaceController({
     resolveIslandReady = null;
     closeNativeAiCommandMenu({ restoreFocus: false });
     renderInspector(null);
+    selectionContext = { activeTool: 'selection', count: 0, elementIds: [], businessElements: [] };
+    canvasHasContent = false;
+    zeroComposerOpen = false;
+    query('.spatial-workspace')?.setAttribute?.('data-view', 'library');
     query('#spatial-library').hidden = false;
     query('#spatial-editor').hidden = true;
     query('#btn-spatial-home').hidden = true;
@@ -1825,6 +1936,7 @@ export function createInfiniteCanvasWorkspaceController({
 
   function queueScene(scene, session = captureCanvasSession()) {
     if (!session || !canvasSessionIsCurrent(session)) return false;
+    syncCanvasContentState(scene);
     if (recoverUnexpectedEmptyScene(scene, session)) return false;
     const signature = spatialSceneSignature(scene);
     const pending = pendingScenes.get(session.canvasId);
@@ -2131,6 +2243,9 @@ export function createInfiniteCanvasWorkspaceController({
     mountedIsland = null;
     islandReadyPromise = new Promise((resolve) => { resolveIslandReady = resolve; });
     renderInspector(null);
+    selectionContext = { activeTool: 'selection', count: 0, elementIds: [], businessElements: [] };
+    zeroComposerOpen = false;
+    query('.spatial-workspace')?.setAttribute?.('data-view', 'editor');
     query('#spatial-library').hidden = true;
     query('#spatial-editor').hidden = false;
     query('#btn-spatial-home').hidden = false;
@@ -2149,6 +2264,7 @@ export function createInfiniteCanvasWorkspaceController({
       const pendingEntry = pendingScenes.get(record.id);
       const canvasDocument = adapter.get(record.id);
       if (pendingEntry) canvasDocument.scene = pendingEntry.scene;
+      syncCanvasContentState(canvasDocument.scene);
       const session = { canvasId: record.id, epoch, island: null };
       currentCanvasSession = session;
       const island = runtime.mountInfiniteCanvas(host, {
@@ -2160,6 +2276,17 @@ export function createInfiniteCanvasWorkspaceController({
         },
         onSelectionChange: (element) => {
           if (canvasSessionIsCurrent(session)) renderInspector(element);
+        },
+        onSelectionContextChange: (context) => {
+          if (!canvasSessionIsCurrent(session)) return;
+          selectionContext = {
+            activeTool: String(context?.activeTool || 'selection'),
+            count: Number(context?.count || 0),
+            elementIds: Array.from(context?.elementIds || []),
+            businessElements: Array.from(context?.businessElements || []),
+          };
+          if (selectionContext.count !== 1) detailsOpen = false;
+          renderProductShell();
         },
         resolveProxyUrl,
         resolveVideoAsset,
@@ -2540,6 +2667,46 @@ export function createInfiniteCanvasWorkspaceController({
     if (event.target.closest('[data-spatial-command-close]')) {
       return closeNativeAiCommandMenu();
     }
+    const toolButton = event.target.closest('[data-spatial-tool]');
+    if (toolButton) {
+      const tool = String(toolButton.dataset.spatialTool || 'selection');
+      mountedIsland?.setActiveTool?.(tool);
+      selectionContext = { ...selectionContext, activeTool: tool };
+      const annotationMenu = query('#spatial-annotation-menu');
+      if (annotationMenu) annotationMenu.hidden = true;
+      query('[data-spatial-annotation-toggle]')?.setAttribute?.('aria-expanded', 'false');
+      syncToolStrip(tool);
+      return;
+    }
+    const annotationToggle = event.target.closest('[data-spatial-annotation-toggle]');
+    if (annotationToggle) {
+      const annotationMenu = query('#spatial-annotation-menu');
+      if (!annotationMenu) return;
+      annotationMenu.hidden = !annotationMenu.hidden;
+      annotationToggle.setAttribute?.('aria-expanded', String(!annotationMenu.hidden));
+      return;
+    }
+    if (event.target.closest('[data-spatial-shell-import]')) {
+      return query('#spatial-file-input')?.click?.();
+    }
+    if (event.target.closest('[data-spatial-shell-assets]')) {
+      return query('#btn-spatial-assets')?.click?.();
+    }
+    if (event.target.closest('[data-spatial-zero-open]')) {
+      zeroComposerOpen = true;
+      renderProductShell();
+      windowRef.requestAnimationFrame(() => query('[data-spatial-zero-field]')?.focus?.({ preventScroll: true }));
+      return;
+    }
+    if (event.target.closest('[data-spatial-zero-close]')) {
+      zeroComposerOpen = false;
+      renderProductShell();
+      return;
+    }
+    if (event.target.closest('[data-spatial-details]') && selectedElement) {
+      detailsOpen = true;
+      return renderInspector(selectedElement);
+    }
     const commandAction = event.target.closest('[data-spatial-command-action]');
     if (commandAction) {
       return invokeCurrentNativeAiAction(commandAction.dataset.spatialCommandAction);
@@ -2580,7 +2747,12 @@ export function createInfiniteCanvasWorkspaceController({
         element: selectedElement,
       });
     }
-    if (event.target.closest('[data-spatial-inspector-close]')) return renderInspector(null);
+    if (event.target.closest('[data-spatial-inspector-close]')) {
+      detailsOpen = false;
+      if (!imageAiDraft && !videoDraft) query('#spatial-inspector').hidden = true;
+      renderProductShell();
+      return;
+    }
     const openButton = event.target.closest('[data-spatial-open]');
     if (openButton) return openCanvas(openButton.dataset.spatialOpen);
     const renameButton = event.target.closest('[data-spatial-rename]');
@@ -2595,6 +2767,16 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onInput(event) {
+    const zeroField = event.target.closest('[data-spatial-zero-field]');
+    if (zeroField) {
+      zeroGenerationInput = String(zeroField.value || '').slice(0, 1200);
+      const status = query('#spatial-zero-status');
+      if (status) {
+        status.textContent = '执行前仍会进入现有上下文核对；不会自动发起 Provider 调用。';
+        status.dataset.error = 'false';
+      }
+      return;
+    }
     const conversationField = event.target.closest('[data-spatial-conversation-field]');
     if (conversationField) {
       conversationInput = String(conversationField.value || '').slice(0, 1200);
@@ -2617,6 +2799,19 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onSubmit(event) {
+    if (event.target.matches('[data-spatial-zero-form]')) {
+      event.preventDefault?.();
+      const status = query('#spatial-zero-status');
+      const message = zeroGenerationInput.trim();
+      if (status && message.length < 2) {
+        status.textContent = '请先写下希望生成的画面。';
+        status.dataset.error = 'true';
+      } else if (status) {
+        status.textContent = '从零生成入口已就绪；本视觉检查点未创建 Task，也未调用 Provider。';
+        status.dataset.error = 'false';
+      }
+      return;
+    }
     if (event.target.matches('[data-spatial-conversation-form]')) {
       submitConversationDraft(event);
       return;

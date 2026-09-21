@@ -262,7 +262,7 @@
         </section>
 
         <section class="app-page spatial-page" id="page-canvas" data-page-name="canvas" hidden>
-          <div class="spatial-workspace" data-adapter="sqlite-v10">
+          <div class="spatial-workspace" data-adapter="sqlite-v10" data-view="library">
             <header class="spatial-toolbar">
               <div class="spatial-toolbar__identity">
                 <button class="spatial-icon-button" id="btn-spatial-home" type="button" aria-label="返回画布列表" title="返回画布列表" hidden><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
@@ -291,7 +291,46 @@
             <section class="spatial-editor" id="spatial-editor" aria-label="无限画布编辑区" hidden>
               <div class="spatial-editor-loading" id="spatial-editor-loading" role="status" aria-live="polite"><span></span><strong>正在载入画布</strong></div>
               <div class="spatial-canvas-host" id="spatial-canvas-host" tabindex="-1" hidden></div>
-              <aside class="spatial-inspector" id="spatial-inspector" aria-label="对象操作" hidden></aside>
+              <div class="spatial-product-shell" id="spatial-product-shell" aria-label="Product Atelier 画布工具">
+                <nav class="spatial-tool-strip" aria-label="画布工具">
+                  <button type="button" data-spatial-tool="selection" aria-label="选择工具" title="选择 · V" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 3 13 9-6 1.5L9 19Z"/></svg><span>选择</span></button>
+                  <button type="button" data-spatial-tool="hand" aria-label="移动画布" title="移动画布 · H" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 11V5.5a1.5 1.5 0 0 1 3 0V10M11.5 10V4.5a1.5 1.5 0 0 1 3 0V10M14.5 10V6a1.5 1.5 0 0 1 3 0v7M8.5 9a1.5 1.5 0 0 0-3 0v4.5c0 4.1 2.8 7 7 7h.7c3.7 0 6.3-2.4 6.3-6V9a1.5 1.5 0 0 0-3 0v1"/></svg><span>移动</span></button>
+                  <button type="button" data-spatial-tool="text" aria-label="添加文字" title="添加文字 · T" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M12 5v14M8 19h8"/></svg><span>文字</span></button>
+                  <button type="button" data-spatial-annotation-toggle aria-label="打开标注工具" title="标注工具" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18 18 5M10 5h8v8"/><path d="M5 12v7h7"/></svg><span>标注</span></button>
+                  <div class="spatial-annotation-menu" id="spatial-annotation-menu" role="menu" aria-label="标注工具" hidden>
+                    <button type="button" role="menuitem" data-spatial-tool="rectangle">矩形</button>
+                    <button type="button" role="menuitem" data-spatial-tool="ellipse">椭圆</button>
+                    <button type="button" role="menuitem" data-spatial-tool="arrow">箭头</button>
+                  </div>
+                </nav>
+
+                <section class="spatial-empty-launcher" id="spatial-empty-launcher" aria-labelledby="spatial-empty-launcher-title" hidden>
+                  <span>START HERE</span>
+                  <h3 id="spatial-empty-launcher-title">从想法或素材开始</h3>
+                  <p>先描述要做的画面，或把现有素材直接放进工作现场。</p>
+                  <div class="spatial-empty-launcher__actions">
+                    <button class="is-primary" type="button" data-spatial-zero-open><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.4 4.2L18 9l-4.6 1.8L12 15l-1.4-4.2L6 9l4.6-1.8Z"/><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z"/></svg>从零生成图片</button>
+                    <button type="button" data-spatial-shell-import><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>导入素材</button>
+                    <button type="button" data-spatial-shell-assets><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3Z"/><path d="M7 5h4l2 2"/></svg>打开素材库</button>
+                  </div>
+                  <form class="spatial-zero-composer" id="spatial-zero-composer" data-spatial-zero-form hidden novalidate>
+                    <label for="spatial-zero-prompt">描述想创建的画面</label>
+                    <textarea id="spatial-zero-prompt" data-spatial-zero-field rows="3" maxlength="1200" placeholder="例如：为这款饮料创建一张清爽、克制的夏日主视觉"></textarea>
+                    <p id="spatial-zero-status" role="status" aria-live="polite">执行前仍会进入现有上下文核对；不会自动发起 Provider 调用。</p>
+                    <div><button type="button" data-spatial-zero-close>取消</button><button class="is-primary" type="submit">核对生成</button></div>
+                  </form>
+                </section>
+
+                <div class="spatial-idle-bar" id="spatial-idle-bar" hidden>
+                  <span>继续创作</span>
+                  <button type="button" data-spatial-zero-open>从零生成</button>
+                  <button type="button" data-spatial-shell-import>导入素材</button>
+                  <button type="button" data-spatial-shell-assets>素材库</button>
+                  <small>滚轮缩放 · Space 拖动画布</small>
+                </div>
+                <section class="spatial-context-bar" id="spatial-context-bar" aria-label="当前选区操作" hidden></section>
+              </div>
+              <aside class="spatial-inspector" id="spatial-inspector" aria-label="执行核对与对象详情" hidden></aside>
               <div class="spatial-command-menu" id="spatial-command-menu" role="dialog" aria-modal="true" aria-labelledby="spatial-command-menu-title" hidden></div>
             </section>
 

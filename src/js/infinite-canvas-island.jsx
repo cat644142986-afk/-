@@ -8,6 +8,7 @@ import { createRoot } from 'react-dom/client';
 import {
   CaptureUpdateAction,
   Excalidraw,
+  FONT_FAMILY,
   convertToExcalidrawElements,
   newElementWith,
   restoreElements,
@@ -192,6 +193,8 @@ function runtimeSceneForTheme(scene, theme) {
     appState: {
       ...appState,
       viewBackgroundColor: themedCanvasBackground(appState.viewBackgroundColor, theme),
+      currentItemFontFamily: FONT_FAMILY.Helvetica,
+      currentItemRoughness: 0,
     },
   };
 }
@@ -199,8 +202,14 @@ function runtimeSceneForTheme(scene, theme) {
 function persistentAppState(appState) {
   const source = appState && typeof appState === 'object' ? appState : {};
   const current = String(source.viewBackgroundColor || '').trim().toLowerCase();
-  if (!Object.values(THEMED_CANVAS_BACKGROUNDS).includes(current)) return source;
-  return { ...source, viewBackgroundColor: THEMED_CANVAS_BACKGROUNDS.light };
+  return {
+    ...source,
+    currentItemFontFamily: FONT_FAMILY.Helvetica,
+    currentItemRoughness: 0,
+    ...(Object.values(THEMED_CANVAS_BACKGROUNDS).includes(current)
+      ? { viewBackgroundColor: THEMED_CANVAS_BACKGROUNDS.light }
+      : {}),
+  };
 }
 
 function SpatialCanvas({
@@ -211,6 +220,7 @@ function SpatialCanvas({
   onPointerBusinessTarget,
   onReady,
   onSelectionChange,
+  onSelectionContextChange,
   resolveProxyUrl,
   resolveVideoAsset,
 }) {
@@ -225,6 +235,7 @@ function SpatialCanvas({
   const pointerUnsubscribe = useRef(null);
   const readyFrame = useRef(null);
   const selectionKey = useRef('');
+  const selectionContextKey = useRef('');
 
   useEffect(() => {
     setVideoPlayback((current) => switchSpatialVideoCanvas(current, canvasDocument?.id));
@@ -298,6 +309,22 @@ function SpatialCanvas({
   const synchronizeScene = useCallback(async (elements, appState, { persist = true } = {}) => {
     if (persist) onChange?.({ elements, appState: persistentAppState(appState), files: {} });
     const hydration = hydrateProxyFiles(elements);
+    const selectedIds = appState?.selectedElementIds || {};
+    const selectedElements = Array.from(elements || []).filter((element) => (
+      !element?.isDeleted && selectedIds[element.id]
+    ));
+    const businessElements = selectedElements.filter((element) => Boolean(spatialBusinessKey(element)));
+    const activeTool = String(appState?.activeTool?.type || 'selection');
+    const nextContextKey = `${activeTool}:${selectedElements.map((element) => element.id).sort().join('|')}`;
+    if (selectionContextKey.current !== nextContextKey) {
+      selectionContextKey.current = nextContextKey;
+      onSelectionContextChange?.({
+        activeTool,
+        count: selectedElements.length,
+        elementIds: selectedElements.map((element) => element.id),
+        businessElements,
+      });
+    }
     const selected = selectedSpatialBusinessElement(elements, appState);
     const nextKey = selected?.id || '';
     if (selectionKey.current !== nextKey) {
@@ -317,7 +344,7 @@ function SpatialCanvas({
       onSelectionChange?.(selected || null);
     }
     await hydration;
-  }, [hydrateProxyFiles, onBusinessImageSelection, onChange, onSelectionChange]);
+  }, [hydrateProxyFiles, onBusinessImageSelection, onChange, onSelectionChange, onSelectionContextChange]);
 
   const bindApi = useCallback((api) => {
     if (!api) return;
@@ -406,6 +433,7 @@ function SpatialCanvas({
       autoFocus
       handleKeyboardGlobally={false}
       objectsSnapModeEnabled
+      zenModeEnabled
       UIOptions={{
         canvasActions: {
           changeViewBackgroundColor: false,
@@ -543,6 +571,11 @@ export function mountInfiniteCanvas(host, options) {
     addBusinessItems: (items, options = {}) => insertBusinessItems(items, options),
     addBusinessItemsOnce: (items) => insertBusinessItems(items, { once: true }),
     updateTask,
+    setActiveTool: (type) => {
+      if (!canvasApi || !componentReady) return false;
+      canvasApi.setActiveTool({ type: String(type || 'selection') });
+      return true;
+    },
     getBusinessKeys: () => new Set(
       Array.from(canvasApi?.getSceneElementsIncludingDeleted?.() || [])
         .filter((element) => !element?.isDeleted)
