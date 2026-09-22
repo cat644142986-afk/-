@@ -12,6 +12,22 @@ This file lists the direct browser runtime dependencies. The distributable plain
 | Fabric.js | 7.4.0 | MIT | https://github.com/fabricjs/fabric.js/tree/v7.4.0 |
 | Lucide | 1.31.0 | ISC/MIT | https://github.com/lucide-icons/lucide |
 | Bloub animation engine | 0.1.1 (`b4bb3c1`) | MIT | https://github.com/jeremy-prt/bloub |
+| Loomic Canvas UI adapter | `bdb47a5adf900b48615af0bd914336e3770021b5` | MIT | https://github.com/fancyboi999/Loomic |
+| basketikun/infinite-canvas selection toolbar | `e6d0911e9d509d00150eaab02f9ca05be94ffc46` | MIT | https://github.com/basketikun/infinite-canvas |
+| BeatDesign composer utilities | `13689dd5e54d959461f9316c8adfb89a496db80b` | Apache-2.0 | https://github.com/BeatDesign/BeatDesign |
+| Retake dismissible popover | `036efecb00ff009fde3483f74c7ed46b0d125cbe` | Apache-2.0 | https://github.com/retake-tools/whiteboard |
+
+## Canvas Interaction Transplant prototype
+
+The prototype selectively adapts the live Excalidraw selection/viewport subscription
+pattern from Loomic, selection-toolbar bounds and pointer containment from
+basketikun/infinite-canvas, composer placement and keyboard/IME containment
+from BeatDesign, and outside-pointer/Escape dismissal from Retake. All PA
+Asset/Task/Result/Provider/lineage semantics remain PA code. The upstream
+license texts are distributed at `canvas-transplant-licenses/{loomic,basket,beat,retake}.txt`.
+The adaptations live in `src/js/canvas-transplant-{geometry.js,shell.jsx}` and
+the existing Excalidraw island. No upstream provider, storage or scene model
+is imported.
 
 ## Bloub animation engine
 

@@ -1,5 +1,15 @@
 Product Atelier third-party notices
 
+Canvas Interaction Transplant prototype (source commits and exact adaptations:
+see THIRD_PARTY_NOTICES.md in the source repository):
+- Loomic, MIT, bdb47a5adf900b48615af0bd914336e3770021b5.
+- basketikun/infinite-canvas, MIT, e6d0911e9d509d00150eaab02f9ca05be94ffc46.
+- BeatDesign, Apache-2.0, 13689dd5e54d959461f9316c8adfb89a496db80b.
+- Retake whiteboard, Apache-2.0, 036efecb00ff009fde3483f74c7ed46b0d125cbe.
+Complete license texts: canvas-transplant-licenses/loomic.txt,
+canvas-transplant-licenses/basket.txt, canvas-transplant-licenses/beat.txt,
+canvas-transplant-licenses/retake.txt.
+
 Excalidraw 0.18.1
 https://github.com/excalidraw/excalidraw/tree/v0.18.1
 

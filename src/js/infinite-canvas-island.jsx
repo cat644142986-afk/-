@@ -14,6 +14,7 @@ import {
   restoreElements,
 } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
+import { CanvasTransplantShell } from './canvas-transplant-shell.jsx';
 
 import {
   buildSpatialNodeBatch,
@@ -37,6 +38,19 @@ import {
 } from './spatial-video.js';
 
 const SPATIAL_VIDEO_LINK = /^product-atelier-video:\/\/[A-Za-z0-9:_-]{3,160}$/;
+const StableExcalidraw = React.memo(Excalidraw);
+const SPATIAL_UI_OPTIONS = {
+  canvasActions: {
+    changeViewBackgroundColor: false,
+    clearCanvas: false,
+    export: false,
+    loadScene: false,
+    saveToActiveFile: false,
+    saveAsImage: false,
+    toggleTheme: false,
+  },
+  tools: { image: false },
+};
 
 function videoPresentation(element, value = {}) {
   const metadata = value?.metadata && typeof value.metadata === 'object' ? value.metadata : {};
@@ -221,12 +235,24 @@ function SpatialCanvas({
   onReady,
   onSelectionChange,
   onSelectionContextChange,
+  initialShellMode = 'legacy',
+  onTransplantReady,
   resolveProxyUrl,
   resolveVideoAsset,
 }) {
   const [theme, setTheme] = useState(() => (
     document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
   ));
+  const [shellMode, setShellMode] = useState(initialShellMode);
+  const [transplantView, setTransplantView] = useState({ selected: [], appState: null });
+  const [transplantBusiness, setTransplantBusiness] = useState({});
+  const transplantViewKey = useRef('');
+  const shellModeRef = useRef(shellMode);
+  shellModeRef.current = shellMode;
+  const initialScene = React.useMemo(
+    () => runtimeSceneForTheme(canvasDocument.scene, theme),
+    [canvasDocument.scene, theme],
+  );
   const [videoPlayback, setVideoPlayback] = useState(() => (
     createSpatialVideoPlaybackState(canvasDocument?.id)
   ));
@@ -313,6 +339,17 @@ function SpatialCanvas({
     const selectedElements = Array.from(elements || []).filter((element) => (
       !element?.isDeleted && selectedIds[element.id]
     ));
+    if (shellModeRef.current === 'transplant') {
+      // Loomic's onChange-driven viewport/selection projection, reusing the
+      // existing Excalidraw callback rather than creating a second store.
+      const viewKey = `${appState?.activeTool?.type}:${appState?.scrollX}:${appState?.scrollY}:${appState?.zoom?.value}:`
+        + `${appState?.offsetLeft}:${appState?.offsetTop}:${appState?.width}:${appState?.height}:`
+        + selectedElements.map((element) => `${element.id}:${element.x}:${element.y}:${element.width}:${element.height}:${element.angle}`).join('|');
+      if (transplantViewKey.current !== viewKey) {
+        transplantViewKey.current = viewKey;
+        setTransplantView({ selected: selectedElements, appState });
+      }
+    }
     const businessElements = selectedElements.filter((element) => Boolean(spatialBusinessKey(element)));
     const activeTool = String(appState?.activeTool?.type || 'selection');
     const nextContextKey = `${activeTool}:${selectedElements.map((element) => element.id).sort().join('|')}`;
@@ -346,6 +383,12 @@ function SpatialCanvas({
     await hydration;
   }, [hydrateProxyFiles, onBusinessImageSelection, onChange, onSelectionChange, onSelectionContextChange]);
 
+  useEffect(() => {
+    const api = apiRef.current;
+    if (shellMode !== 'transplant' || !api) return;
+    synchronizeScene(api.getSceneElementsIncludingDeleted(), api.getAppState(), { persist: false });
+  }, [shellMode, synchronizeScene]);
+
   const bindApi = useCallback((api) => {
     if (!api) return;
     apiRef.current = api;
@@ -373,7 +416,7 @@ function SpatialCanvas({
         perform: () => false,
       });
       readyFrame.current = null;
-      onReady?.(api, synchronizeScene, videoControls);
+      onReady?.(api, synchronizeScene, videoControls, setShellMode, setTransplantBusiness);
     };
     if (readyFrame.current !== null) cancelAnimationFrame(readyFrame.current);
     notifyReady();
@@ -420,8 +463,9 @@ function SpatialCanvas({
   }, [resolveVideoAsset, videoControls, videoPlayback]);
 
   return (
-    <Excalidraw
-      initialData={runtimeSceneForTheme(canvasDocument.scene, theme)}
+    <>
+    <StableExcalidraw
+      initialData={initialScene}
       excalidrawAPI={bindApi}
       onChange={handleChange}
       renderEmbeddable={renderVideoEmbeddable}
@@ -434,19 +478,15 @@ function SpatialCanvas({
       handleKeyboardGlobally={false}
       objectsSnapModeEnabled
       zenModeEnabled
-      UIOptions={{
-        canvasActions: {
-          changeViewBackgroundColor: false,
-          clearCanvas: false,
-          export: false,
-          loadScene: false,
-          saveToActiveFile: false,
-          saveAsImage: false,
-          toggleTheme: false,
-        },
-        tools: { image: false },
-      }}
+      UIOptions={SPATIAL_UI_OPTIONS}
     />
+    {shellMode === 'transplant' && <CanvasTransplantShell
+      api={apiRef.current}
+      view={transplantView}
+      business={transplantBusiness}
+      onTool={(type) => apiRef.current?.setActiveTool({ type })}
+    />}
+    </>
   );
 }
 
@@ -455,6 +495,8 @@ export function mountInfiniteCanvas(host, options) {
   let componentReady = false;
   let synchronizeScene = null;
   let videoControls = null;
+  let setShellMode = null;
+  let setTransplantBusiness = null;
   let pointerBusinessTarget = null;
   host.dataset.businessImageSelected = 'false';
   const removeFineEditGestureRouter = installSpatialFineEditGestureRouter({
@@ -471,10 +513,12 @@ export function mountInfiniteCanvas(host, options) {
         host.dataset.businessImageSelected = selected ? 'true' : 'false';
       }}
       onPointerBusinessTarget={(element) => { pointerBusinessTarget = element; }}
-      onReady={(api, synchronize, controls) => {
+      onReady={(api, synchronize, controls, switchShell, updateBusiness) => {
         canvasApi = api;
         synchronizeScene = synchronize;
         videoControls = controls;
+        setShellMode = switchShell;
+        setTransplantBusiness = updateBusiness;
         componentReady = true;
         options.onReady?.(api);
       }}
@@ -568,6 +612,15 @@ export function mountInfiniteCanvas(host, options) {
     playVideo: (elementId) => videoControls?.play?.(elementId),
     stopVideo: () => videoControls?.stop?.(),
     toggleVideo: (elementId) => videoControls?.toggle?.(elementId),
+    setShellMode: (mode) => setShellMode?.(mode),
+    updateTransplantShell: (business) => setTransplantBusiness?.((current) => (
+      current.elementId === business.elementId
+      && current.asset === business.asset
+      && current.reviewing === business.reviewing
+      && current.conversationInput === business.conversationInput
+      && current.conversationError === business.conversationError
+        ? current : business
+    )),
     addBusinessItems: (items, options = {}) => insertBusinessItems(items, options),
     addBusinessItemsOnce: (items) => insertBusinessItems(items, { once: true }),
     updateTask,

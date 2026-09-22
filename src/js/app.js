@@ -292,6 +292,7 @@ const canvasController = createCanvasController({
   onSpatialResult: handleSpatialFineEditResult,
 });
 const infiniteCanvasWorkspace = createInfiniteCanvasWorkspaceController({
+  shellMode: localStorage.getItem('pa-canvas-shell') === 'legacy' ? 'legacy' : 'transplant',
   onAction: handleSpatialAction,
   onFineEdit: handleSpatialFineEdit,
   onImportFiles: importSpatialCanvasFiles,

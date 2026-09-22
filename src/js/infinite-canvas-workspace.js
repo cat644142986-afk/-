@@ -277,6 +277,7 @@ export function createInfiniteCanvasWorkspaceController({
   api = API,
   adapter = createApiSpatialCanvasAdapter({ api }),
   runtimeLoader = () => import('./infinite-canvas-island.jsx'),
+  shellMode: initialShellMode = 'legacy',
   onAction = () => {},
   onFineEdit = () => {},
   onImportFiles = async () => [],
@@ -303,6 +304,7 @@ export function createInfiniteCanvasWorkspaceController({
   let active = false;
   let currentId = '';
   let mountedIsland = null;
+  let shellMode = initialShellMode;
   let currentCanvasSession = null;
   let runtimePromise = null;
   let recordsPromise = null;
@@ -462,6 +464,11 @@ export function createInfiniteCanvasWorkspaceController({
     query('#btn-spatial-import').hidden = !record;
     query('#btn-spatial-rename').hidden = !record;
     query('#btn-spatial-delete').hidden = !record;
+    const shellToggle = query('#btn-spatial-shell-toggle');
+    if (shellToggle) {
+      shellToggle.hidden = !record;
+      shellToggle.textContent = shellMode === 'transplant' ? '旧界面' : '试用新界面';
+    }
   }
 
   function syncToolStrip(activeTool = selectionContext.activeTool) {
@@ -495,6 +502,20 @@ export function createInfiniteCanvasWorkspaceController({
     const zeroComposer = query('#spatial-zero-composer');
     if (!empty || !contextBar) return;
     const reviewing = Boolean(imageAiDraft || videoDraft);
+    if (shellMode === 'transplant') {
+      const showZeroComposer = zeroComposerOpen && !reviewing;
+      empty.hidden = !showZeroComposer;
+      if (zeroComposer) zeroComposer.hidden = !showZeroComposer;
+      contextBar.hidden = true;
+      mountedIsland?.updateTransplantShell?.({
+        elementId: selectedElement?.id || '',
+        asset: selectedAsset,
+        reviewing,
+        conversationInput,
+        conversationError,
+      });
+      return;
+    }
     const selectionCount = Number(selectionContext.count || 0);
     const showZeroComposer = zeroComposerOpen && !reviewing;
     empty.hidden = !showZeroComposer;
@@ -862,6 +883,8 @@ export function createInfiniteCanvasWorkspaceController({
       && String(event.key) === 'Enter'
       && (event.ctrlKey || event.metaKey)
       && !event.altKey
+      && !event.isComposing
+      && event.keyCode !== 229
     ) {
       event.preventDefault();
       event.stopPropagation?.();
@@ -2245,6 +2268,7 @@ export function createInfiniteCanvasWorkspaceController({
     query('.spatial-workspace')?.setAttribute?.('data-view', 'editor');
     query('#spatial-library').hidden = true;
     query('#spatial-editor').hidden = false;
+    query('#spatial-editor').dataset.shell = shellMode;
     query('#btn-spatial-home').hidden = false;
     query('#spatial-editor-loading').hidden = false;
     query('#spatial-editor-loading').innerHTML = '<span></span><strong>正在载入画布</strong>';
@@ -2256,8 +2280,9 @@ export function createInfiniteCanvasWorkspaceController({
       currentId = record.id;
       syncEditorHeading();
       const runtime = await ensureRuntime();
-      const host = query('#spatial-canvas-host');
+    const host = query('#spatial-canvas-host');
       if (!host || currentId !== record.id || epoch !== openEpoch) return;
+      host.dataset.shell = shellMode;
       const pendingEntry = pendingScenes.get(record.id);
       const canvasDocument = adapter.get(record.id);
       if (pendingEntry) canvasDocument.scene = pendingEntry.scene;
@@ -2266,6 +2291,7 @@ export function createInfiniteCanvasWorkspaceController({
       currentCanvasSession = session;
       const island = runtime.mountInfiniteCanvas(host, {
         canvasDocument,
+        initialShellMode: shellMode,
         onChange: (scene) => queueScene(scene, session),
         onOpenFineEdit: (element) => {
           if (!canvasSessionIsCurrent(session)) return undefined;
@@ -2303,6 +2329,7 @@ export function createInfiniteCanvasWorkspaceController({
       });
       session.island = island;
       mountedIsland = island;
+      renderProductShell();
       return true;
     } catch (error) {
       if (epoch !== openEpoch) return;
@@ -2659,6 +2686,18 @@ export function createInfiniteCanvasWorkspaceController({
   }
 
   function onClick(event) {
+    if (event.target.closest('#btn-spatial-shell-toggle')) {
+      shellMode = shellMode === 'transplant' ? 'legacy' : 'transplant';
+      const editor = query('#spatial-editor');
+      if (editor) editor.dataset.shell = shellMode;
+      const host = query('#spatial-canvas-host');
+      if (host) host.dataset.shell = shellMode;
+      mountedIsland?.setShellMode?.(shellMode);
+      try { windowRef.localStorage?.setItem?.('pa-canvas-shell', shellMode); } catch (_) { /* prototype fallback still works in memory */ }
+      syncEditorHeading();
+      renderProductShell();
+      return;
+    }
     if (event.target.closest('[data-spatial-delete-cancel]')) return closeDeleteDialog();
     if (event.target.closest('[data-spatial-delete-confirm]')) return confirmDeleteCanvas();
     if (event.target.closest('[data-spatial-command-close]')) {

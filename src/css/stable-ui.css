@@ -1717,6 +1717,76 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .spatial-canvas-host,
   .spatial-product-shell * { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* Parallel Canvas Interaction Transplant prototype. The legacy Shell stays
+   mounted as a fallback; only the product surface changes. */
+.spatial-workspace[data-view="editor"] .spatial-shell-toggle { display: inline-flex; width: auto; padding: 0 9px; color: var(--ink-3); font-size: 11px; }
+.spatial-workspace[data-view="editor"] .spatial-shell-toggle[hidden] { display: none; }
+.spatial-editor[data-shell="transplant"] .spatial-tool-strip,
+.spatial-editor[data-shell="transplant"] .spatial-context-bar { display: none !important; }
+.spatial-editor[data-shell="transplant"] .spatial-empty-launcher { z-index: 9; right: 16px; top: 56px; }
+.spatial-editor[data-shell="transplant"] .spatial-product-shell { z-index: 9; }
+.spatial-workspace[data-view="editor"]:has(.spatial-editor[data-shell="transplant"]) #btn-spatial-generate,
+.spatial-workspace[data-view="editor"]:has(.spatial-editor[data-shell="transplant"]) #btn-spatial-import,
+.spatial-workspace[data-view="editor"]:has(.spatial-editor[data-shell="transplant"]) #btn-spatial-assets { display: none; }
+.spatial-canvas-host[data-shell="transplant"] { position: relative; }
+.pa-transplant { position: absolute; z-index: 5; inset: 0; pointer-events: none; color: var(--ink); font-family: inherit; }
+.pa-transplant button, .pa-transplant textarea { pointer-events: auto; }
+.pa-transplant__tools, .pa-transplant__create { position: absolute; display: flex; align-items: center; gap: 2px; min-height: 42px; padding: 4px; border: 1px solid var(--line-2); border-radius: 8px; background: color-mix(in srgb,var(--paper) 97%,transparent); box-shadow: 0 4px 15px rgb(30 29 27 / .09); pointer-events: auto; }
+.pa-transplant__tools { top: 16px; left: 16px; }
+.pa-transplant__create { top: 16px; right: 16px; }
+.pa-transplant__tools > span { height: 20px; width: 1px; margin: 0 3px; background: var(--line-2); }
+.pa-transplant button { min-height: 32px; padding: 0 10px; border-radius: 5px; color: var(--ink-2); font-size: var(--type-caption); font-weight: 710; white-space: nowrap; }
+.pa-transplant button:hover { background: var(--paper-2); color: var(--ink); }
+.pa-transplant button[aria-pressed="true"] { background: var(--paper-2); color: var(--ink); }
+.pa-transplant__create button:first-child { background: var(--dark); color: #fff; }
+.pa-transplant__create button:first-child:hover { background: var(--ink-2); color: #fff; }
+.pa-transplant button:focus-visible, .pa-transplant textarea:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px; }
+.pa-transplant__popover-anchor { position: relative; }
+.pa-transplant__popover { position: absolute; z-index: 12; top: calc(100% + 8px); right: 0; display: grid; min-width: 126px; padding: 4px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--paper); box-shadow: 0 10px 30px rgb(30 29 27 / .18); pointer-events: auto; }
+.pa-transplant__popover button { width: 100%; text-align: left; }
+.pa-transplant__selection { position: absolute; z-index: 7; display: grid; min-width: 0; padding: 4px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--paper); box-shadow: 0 8px 27px rgb(30 29 27 / .15); pointer-events: auto; }
+.pa-transplant__selection-row { display: flex; align-items: center; gap: 2px; min-height: 36px; }
+.pa-transplant__selection-row strong { flex: 1 1 auto; min-width: 0; padding: 0 7px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--type-caption); }
+.pa-transplant__selection-row .is-primary { background: var(--dark); color: #fff; }
+.pa-transplant__selection-row .is-primary:hover { background: var(--ink-2); color: #fff; }
+.pa-transplant__hint { padding: 0 8px; color: var(--ink-3); font-size: var(--type-micro); white-space: nowrap; }
+.pa-transplant__composer { display: flex; align-items: center; gap: 5px; border-top: 1px solid var(--line); }
+.pa-transplant__composer textarea { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 37px; max-height: 110px; padding: 8px 10px; resize: none; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: var(--type-caption); line-height: 1.45; letter-spacing: 0; user-select: text; }
+.pa-transplant__composer.is-open { display: grid; grid-template-columns: 1fr; }
+.pa-transplant__composer.is-open textarea { min-height: 75px; }
+.pa-transplant__composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 5px 4px 9px; }
+.pa-transplant__composer-footer small { min-width: 0; overflow: hidden; color: var(--ink-3); font-size: var(--type-micro); text-overflow: ellipsis; white-space: nowrap; }
+.pa-transplant__composer-footer button { background: var(--dark); color: #fff; }
+.pa-transplant__composer-footer button:hover { background: var(--ink-2); color: #fff; }
+/* Reproject Excalidraw's native zoom controls; its action owns zoom math and
+   history. Keep the rest of its footer out of the transplant shell. */
+.spatial-editor[data-shell="transplant"] .spatial-canvas-host .excalidraw .layer-ui__wrapper__footer { display: flex !important; }
+.spatial-editor[data-shell="transplant"] .spatial-canvas-host .excalidraw .layer-ui__wrapper__footer-left { transform: none !important; }
+.spatial-editor[data-shell="transplant"] .spatial-canvas-host .excalidraw .layer-ui__wrapper__footer-left .undo-redo-buttons,
+.spatial-editor[data-shell="transplant"] .spatial-canvas-host .excalidraw .layer-ui__wrapper__footer-right,
+.spatial-editor[data-shell="transplant"] .spatial-canvas-host .excalidraw .footer-center { display: none !important; }
+/* Multi-selection borrows Excalidraw's own align/distribute actions on demand. */
+.spatial-editor[data-shell="transplant"][data-arrange-open="true"] .spatial-canvas-host .excalidraw .App-menu_top { display: block !important; pointer-events: none; }
+.spatial-editor[data-shell="transplant"][data-arrange-open="true"] .spatial-canvas-host .excalidraw .App-menu_top > :not(.App-menu_top__left),
+.spatial-editor[data-shell="transplant"][data-arrange-open="true"] .spatial-canvas-host .excalidraw .App-menu_top__left > :not(.selected-shape-actions),
+.spatial-editor[data-shell="transplant"][data-arrange-open="true"] .spatial-canvas-host .excalidraw .selected-shape-actions .panelColumn > :not(fieldset),
+.spatial-editor[data-shell="transplant"][data-arrange-open="true"] .spatial-canvas-host .excalidraw .selected-shape-actions .panelColumn > fieldset:not(:nth-last-of-type(2)) { display: none !important; }
+.spatial-editor[data-shell="transplant"][data-arrange-open="true"] .spatial-canvas-host .excalidraw .selected-shape-actions { transform: none !important; margin-top: 64px; pointer-events: auto; }
+@media (max-width: 760px) {
+  .pa-transplant__tools { top: 9px; left: 9px; }
+  .pa-transplant__create { top: 9px; right: 9px; }
+  .pa-transplant__tools button, .pa-transplant__create button { padding-inline: 7px; font-size: 11px; }
+  .pa-transplant__selection { max-width: calc(100% - 22px); }
+  .pa-transplant__selection-row button { padding-inline: 6px; font-size: 11px; }
+  .spatial-editor[data-shell="transplant"] .spatial-empty-launcher { top: 48px; right: 9px; }
+}
+@media (max-width: 520px) {
+  .pa-transplant__tools { top: auto; bottom: 9px; }
+  .pa-transplant__create { right: 9px; left: 9px; justify-content: flex-end; }
+  .pa-transplant__selection-row strong { font-size: 11px; }
+  .pa-transplant__selection-row [data-spatial-action="fine-edit"] { display: none; }
+}
 .canvas-save-state { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .canvas-save-state > span { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px color-mix(in srgb,var(--green) 13%,transparent); }
 .canvas-save-state[data-kind="saving"] > span, .canvas-save-state[data-kind="dirty"] > span, .canvas-save-state[data-kind="loading"] > span { background: var(--coral); box-shadow: 0 0 0 4px var(--coral-soft); }

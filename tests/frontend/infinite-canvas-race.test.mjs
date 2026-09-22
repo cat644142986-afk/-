@@ -363,6 +363,8 @@ function createFakeRuntime({ mutateBusinessItems = false } = {}) {
           updateScene: [],
           updateTask: [],
           unmount: 0,
+          shellModes: [],
+          transplantUpdates: [],
         };
         let currentScene = options.canvasDocument.scene;
         const island = {
@@ -416,6 +418,8 @@ function createFakeRuntime({ mutateBusinessItems = false } = {}) {
             return { x: Number(point.clientX) + 1000, y: Number(point.clientY) + 2000 };
           },
           stopVideo() {},
+          setShellMode(mode) { calls.shellModes.push(mode); },
+          updateTransplantShell(value) { calls.transplantUpdates.push(value); },
           unmount() { calls.unmount += 1; },
         };
         const mount = {
@@ -506,6 +510,7 @@ function createHarness({
   removeCanvas,
   updateScene,
   runtimeLoader,
+  shellMode,
 } = {}) {
   const documentRef = createFakeDocument();
   const clock = createFakeWindow();
@@ -541,6 +546,7 @@ function createHarness({
     getWhiteBackgroundDefaults,
     onImportFiles,
     runtimeLoader: runtimeLoader || (async () => runtimeState.runtime),
+    shellMode,
   });
   return { api, clock, controller, documentRef, ...adapterState, ...runtimeState };
 }
@@ -552,6 +558,23 @@ async function activateAndOpen(harness, canvasId) {
   await settle();
   return harness.mounts.get(canvasId);
 }
+
+test('Canvas transplant is parallel to the legacy Shell and keeps one mounted island', async () => {
+  const harness = createHarness({ shellMode: 'transplant' });
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  assert.equal(mount.options.initialShellMode, 'transplant');
+  assert.equal(harness.documentRef.node('#spatial-editor').dataset.shell, 'transplant');
+  mount.options.onSelectionChange(sourceElement('canvas:a'));
+  await settle();
+  assert.equal(mount.calls.transplantUpdates.at(-1).asset.role, 'workspace_source');
+  const toggle = harness.documentRef.node('#btn-spatial-shell-toggle');
+  await harness.documentRef.node('#page-canvas').emit('click', { target: toggle });
+  assert.deepEqual(mount.calls.shellModes, ['legacy']);
+  assert.equal(harness.documentRef.node('#spatial-editor').dataset.shell, 'legacy');
+  assert.equal(harness.mounts.size, 1);
+  harness.controller.destroy();
+});
 
 test('Canvas Product Shell keeps an empty work surface and projects composer, single-selection and multi-selection states without a second execution path', async () => {
   const harness = createHarness();
