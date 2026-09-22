@@ -1271,6 +1271,17 @@ def build_single_prompt(product_name, platter_mode="auto", product_type="food", 
             f"{plate}，产品细节清晰锐利，材质质感真实，色彩准确饱和，高光自然，阴影柔和，"
             f"高端电商产品摄影，8K超清，影棚级画质，专业修图，干净极简构图，广告级质感")
 
+
+def build_canvas_reference_prompt(product_name: str) -> str:
+    """Single-image reference, not the white-background product edit template."""
+    return (
+        f"以当前输入图片作为视觉参考，创作一张独立的新商业视觉方案。"
+        f"参考图中的{product_name}是内容和品牌识别依据，不要直接覆写原图。"
+        "具体场景、背景、构图和光线以本次用户要求为准；未要求纯白背景时不要强制白底。"
+        "保持产品外形、数量、包装文字、数字与 Logo 的真实可读性；"
+        "让新方案可以与参考图在同一画布上并列比较，画面自然清晰。"
+    )
+
 def build_stage2_prompt(product_name, platter_mode="auto", product_type="food", angle="auto"):
     plate = "智能保留或去除器皿，整体协调"
     if platter_mode == "remove": plate = "无任何器皿托盘，产品直接纯白底"
@@ -4540,6 +4551,8 @@ SPATIAL_WHITE_BACKGROUND_ACTION = "white-background"
 SPATIAL_RESULT_VARIATION_ACTION = "generate-image"
 SPATIAL_CANVAS_CONVERSATION_SURFACE = "canvas-conversation"
 SPATIAL_CANVAS_CONVERSATION_CONTRACT = "canvas-conversation-input-v1"
+SPATIAL_CANVAS_REFERENCE_SURFACE = "canvas-reference"
+SPATIAL_CANVAS_REFERENCE_CONTRACT = "canvas-reference-input-v1"
 SPATIAL_IMAGE_AI_ACTIONS = {
     SPATIAL_WHITE_BACKGROUND_ACTION,
     SPATIAL_RESULT_VARIATION_ACTION,
@@ -4575,17 +4588,19 @@ def _spatial_image_input_surface(parameters: Mapping[str, Any] | None) -> str:
     input_surface = str(raw_ui_context.get("input_surface") or "").strip()
     if not input_surface:
         return ""
-    if input_surface != SPATIAL_CANVAS_CONVERSATION_SURFACE:
+    contracts = {
+        SPATIAL_CANVAS_CONVERSATION_SURFACE: SPATIAL_CANVAS_CONVERSATION_CONTRACT,
+        SPATIAL_CANVAS_REFERENCE_SURFACE: SPATIAL_CANVAS_REFERENCE_CONTRACT,
+    }
+    if input_surface not in contracts:
         raise SpatialExecutionContextError(
             "SPATIAL_EXECUTION_CONTEXT_INVALID",
             "当前 Canvas AI 输入来源不受支持",
         )
-    if str(raw_ui_context.get("contract_version") or "").strip() != (
-        SPATIAL_CANVAS_CONVERSATION_CONTRACT
-    ):
+    if str(raw_ui_context.get("contract_version") or "").strip() != contracts[input_surface]:
         raise SpatialExecutionContextError(
             "SPATIAL_EXECUTION_CONTEXT_INVALID",
-            "Canvas Conversation 输入合同不受支持",
+            "Canvas AI 输入合同不受支持",
         )
     return input_surface
 
@@ -4607,24 +4622,26 @@ def _spatial_image_ai_binding(
         )
     surface_id = str(input_surface or "").strip()
     conversation = surface_id == SPATIAL_CANVAS_CONVERSATION_SURFACE
-    if surface_id and not conversation:
+    reference = surface_id == SPATIAL_CANVAS_REFERENCE_SURFACE
+    if surface_id and not (conversation or reference):
         raise SpatialExecutionContextError(
             "SPATIAL_EXECUTION_CONTEXT_INVALID",
             "当前 Canvas AI 输入来源不受支持",
         )
-    if conversation and action_id != SPATIAL_RESULT_VARIATION_ACTION:
+    if (conversation or reference) and action_id != SPATIAL_RESULT_VARIATION_ACTION:
         raise SpatialExecutionContextError(
             "SPATIAL_EXECUTION_CONTEXT_INVALID",
-            "Canvas Conversation 必须复用现有单图生成链",
+            "Canvas 创作必须复用现有单图生成链",
         )
     title = (
         "对话修改"
         if conversation
+        else "参考生成" if reference
         else "白底图" if action_id == SPATIAL_WHITE_BACKGROUND_ACTION else "生图变体"
     )
     source_label = (
         "图片"
-        if conversation
+        if conversation or reference
         else "原始素材" if action_id == SPATIAL_WHITE_BACKGROUND_ACTION else "Result"
     )
     canvas_id = str(spatial_canvas_id or "").strip()
@@ -4656,7 +4673,7 @@ def _spatial_image_ai_binding(
     element_asset_matches = str(refs.get("asset_id") or "") == source_asset_id
     element_result_id = str(refs.get("result_id") or "").strip()
     source_kind = "result" if element_result_id == source_asset_id else "source"
-    if conversation:
+    if conversation or reference:
         source_semantics_match = not element_result_id or element_result_id == source_asset_id
     else:
         source_semantics_match = (
@@ -4677,7 +4694,7 @@ def _spatial_image_ai_binding(
             f"所选{source_label}已不可用，请重新选择",
         ) from exc
     asset_role = str(asset.get("role") or "")
-    if conversation:
+    if conversation or reference:
         role_matches = (
             asset_role.startswith("result_")
             if source_kind == "result"
@@ -4718,13 +4735,13 @@ def _spatial_image_ai_binding(
         "product_profile_version_id": profile_version_id,
         "lineage_parent_id": (
             source_asset_id
-            if conversation or action_id == SPATIAL_RESULT_VARIATION_ACTION
+            if conversation or reference or action_id == SPATIAL_RESULT_VARIATION_ACTION
             else str(refs.get("lineage_parent_id") or "")
         ),
     }
-    if conversation:
+    if conversation or reference:
         semantic_anchor.update({
-            "input_surface": SPATIAL_CANVAS_CONVERSATION_SURFACE,
+            "input_surface": surface_id,
             "source_kind": source_kind,
         })
     fingerprint = hashlib.sha256(json.dumps(
@@ -4739,6 +4756,8 @@ def _spatial_image_ai_binding(
         "operation_id": (
             f"spatial-conversation:{fingerprint}"
             if conversation
+            else f"spatial-reference:{fingerprint}"
+            if reference
             else f"spatial-white-background:{fingerprint}"
             if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
             else f"spatial-result-variation:{fingerprint}"
@@ -4901,6 +4920,12 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
                 source_asset_ids=source_asset_ids,
                 input_surface=_spatial_image_input_surface(request.parameters or {}),
             )
+            if (spatial_binding.get("input_surface") == SPATIAL_CANVAS_REFERENCE_SURFACE
+                    and str((request.parameters or {}).get("prompt_version") or "prompt_v1").lower() != "prompt_v1"):
+                raise SpatialExecutionContextError(
+                    "SPATIAL_EXECUTION_CONTEXT_INVALID",
+                    "参考生成当前只使用现有 prompt_v1 编译链",
+                )
         if str(command["id"]) == IMAGE_TO_VIDEO_COMMAND_ID:
             parameters = _normalize_image_to_video_job_parameters(
                 request.parameters or {},
@@ -5684,6 +5709,12 @@ async def compile_knowledge(data: dict):
                 source_asset_ids=source_asset_ids,
                 input_surface=_spatial_image_input_surface(context),
             )
+            if (spatial_binding.get("input_surface") == SPATIAL_CANVAS_REFERENCE_SURFACE
+                    and str(context.get("prompt_version") or "prompt_v1").lower() != "prompt_v1"):
+                raise SpatialExecutionContextError(
+                    "SPATIAL_EXECUTION_CONTEXT_INVALID",
+                    "参考生成当前只使用现有 prompt_v1 编译链",
+                )
         manifest, bundle, skill_snapshot = _build_job_execution_context(
             parameters,
             mode=mode,
@@ -7929,7 +7960,14 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             },
         )
 
-    negative = build_negative(platter)
+    reference_input = (
+        isinstance(params.get("ui_context"), dict)
+        and params["ui_context"].get("input_surface") == SPATIAL_CANVAS_REFERENCE_SURFACE
+    )
+    negative = (
+        "模糊,低质量,变形,暗角,杂物,水印,阴影过重,噪点,失真,jpeg压缩痕迹,过度曝光,欠曝"
+        if reference_input else build_negative(platter)
+    )
     outputs = []
     per = 0.92 / batch
     for index in range(batch):
@@ -7946,8 +7984,11 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             product_count=product_count,
             output_spec=output_spec,
         )
-        template_stage1_prompt = make_prompt(
-            build_single_prompt(product_name, platter, product_type, angle), fidelity
+        template_stage1_prompt = (
+            build_canvas_reference_prompt(product_name)
+            if reference_input else make_prompt(
+                build_single_prompt(product_name, platter, product_type, angle), fidelity
+            )
         )
         base_stage1_prompt = _compile_job_base_prompt(
             trace, template_stage1_prompt, knowledge_context, "primary"

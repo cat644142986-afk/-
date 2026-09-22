@@ -1521,6 +1521,11 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .spatial-white-form textarea, .spatial-white-form select { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--paper); color: var(--ink); font: inherit; letter-spacing: 0; }
 .spatial-white-form textarea { min-height: 82px; resize: vertical; line-height: 1.5; }
 .spatial-white-form textarea:focus-visible, .spatial-white-form select:focus-visible, .spatial-white-form button:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px; }
+.spatial-white-form__reference { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--paper-2); font-size: var(--type-micro); }
+.spatial-white-form__reference > span { flex: none; color: var(--ink-3); }
+.spatial-white-form__reference > strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spatial-white-form__reference > small { flex: none; color: var(--ink-3); }
+.spatial-white-form__settings { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .spatial-context-preview { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-2); }
 .spatial-context-preview dl { display: grid; gap: 7px; margin: 0; }
 .spatial-context-preview dl > div { display: grid; grid-template-columns: 104px minmax(0,1fr); gap: 8px; align-items: start; }

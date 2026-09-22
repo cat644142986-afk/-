@@ -129,6 +129,7 @@ export function CanvasTransplantShell({ api, view, business, onTool }) {
           <strong>{selected.length > 1 ? `${selected.length} 个对象` : kind}</strong>
           {selected.length > 1 ? <><span className="pa-transplant__hint">Ctrl+G 组合 · Delete 删除</span><button type="button" ref={arrangeRef} aria-expanded={arrangeOpen} onClick={() => setArrangeOpen(!arrangeOpen)}>对齐</button></> : <>
             {one?.type === 'image' && refs.asset_id && <button type="button" data-spatial-action={imageAction} className="is-primary">{imageLabel}</button>}
+            {eligible && <button type="button" data-spatial-reference title="用当前图片作为精确参考，创建可并列比较的新方案">作为参考</button>}
             {refs.asset_id && <button type="button" data-spatial-action="fine-edit">Fabric 精修</button>}
             <div className="pa-transplant__popover-anchor" ref={moreRef}>
               <button type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>更多</button>

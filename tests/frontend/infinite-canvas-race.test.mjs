@@ -1045,6 +1045,70 @@ test('Result variation submits the exact selected Result through the shared Canv
   harness.controller.destroy();
 });
 
+test('Canvas reference entry reviews the exact source or Result without creating a second Task path', async () => {
+  const previewCalls = [];
+  let executeCalls = 0;
+  const harness = createHarness({
+    getImageAiDefaults: () => ({
+      promptVersion: 'prompt_v3',
+      designSkillId: 'comfyui-food-product-main-image',
+    }),
+    api: {
+      async getAsset(assetId) {
+        return { asset: {
+          id: assetId, name: assetId === RESULT_ASSET_ID ? '当前 Result' : '当前素材',
+          kind: 'image', role: assetId === RESULT_ASSET_ID ? 'result_main' : 'workspace_source',
+          mime: 'image/png', width: 320, height: 240,
+        } };
+      },
+      async compileKnowledge(payload) {
+        previewCalls.push(payload);
+        return {
+          execution_context: {
+            binding: 'preview', context_sha256: 'c'.repeat(64),
+            summary: {}, user_intent: { user_request: payload.user_request },
+          },
+          spatial_context: {
+            action: payload.spatial_action,
+            input_surface: payload.ui_context?.input_surface,
+            spatial_canvas_id: payload.spatial_canvas_id,
+            source_element_id: payload.spatial_source_element_id,
+            source_asset_id: payload.source_asset_ids[0],
+            lineage_parent_id: payload.source_asset_ids[0],
+            fingerprint: 'd'.repeat(64),
+          },
+        };
+      },
+      async executeCommand() { executeCalls += 1; throw new Error('no task expected'); },
+    },
+  });
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const source = sourceElement('canvas:a');
+  mount.options.onSelectionChange(source);
+  await settle();
+  const referenceButton = new FakeElement('[data-spatial-reference]');
+  await harness.documentRef.node('#page-canvas').emit('click', { target: referenceButton });
+  assert.equal(previewCalls.length, 1);
+  assert.deepEqual(previewCalls[0].source_asset_ids, [SOURCE_ASSET_ID]);
+  assert.equal(previewCalls[0].ui_context.input_surface, 'canvas-reference');
+  assert.equal(previewCalls[0].prompt_version, 'prompt_v1');
+  assert.equal(previewCalls[0].design_skill_id, '');
+  assert.match(harness.documentRef.node('#spatial-inspector').innerHTML, /参考生成/);
+  assert.match(harness.documentRef.node('#spatial-inspector').innerHTML, /当前素材/);
+  assert.equal(executeCalls, 0);
+
+  const result = resultElement('canvas:a');
+  mount.options.onSelectionChange(result);
+  await settle();
+  await harness.documentRef.node('#page-canvas').emit('click', { target: referenceButton });
+  assert.equal(previewCalls.length, 2);
+  assert.deepEqual(previewCalls[1].source_asset_ids, [RESULT_ASSET_ID]);
+  assert.equal(previewCalls[1].spatial_source_element_id, result.id);
+  assert.equal(executeCalls, 0);
+  harness.controller.destroy();
+});
+
 test('Canvas Conversation only reviews context before confirmation and accepts one exact source or Result', async () => {
   const previewCalls = [];
   let executeCalls = 0;

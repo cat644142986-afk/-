@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   SPATIAL_CANVAS_CONVERSATION_CONTRACT,
   SPATIAL_CANVAS_CONVERSATION_SURFACE,
+  SPATIAL_CANVAS_REFERENCE_CONTRACT,
+  SPATIAL_CANVAS_REFERENCE_SURFACE,
   SPATIAL_IMAGE_AI_COMMAND_ID,
   SPATIAL_IMAGE_AI_SKILL_ID,
   SPATIAL_RESULT_VARIATION_ACTION,
@@ -191,4 +193,48 @@ test('all governed Canvas image actions share task ownership and result recovery
   assert.equal(isSpatialImageAiJob(job), true);
   assert.equal(spatialImageAiAction(job), SPATIAL_RESULT_VARIATION_ACTION);
   assert.equal(spatialImageAiCanvasId(job), 'spatial:result-canvas');
+});
+
+test('one reference image enters the existing governed single-image Task without weakening exact Result binding', () => {
+  for (const sourceResultId of ['', 'ast:selected-result']) {
+    const sourceAssetId = sourceResultId || 'ast:source';
+    const draft = createSpatialImageAiDraft(SPATIAL_RESULT_VARIATION_ACTION, {
+      canvasId: 'spatial:reference-canvas',
+      sourceElementId: sourceResultId ? 'result-element' : 'source-element',
+      sourceAssetId,
+      sourceResultId,
+      inputSurface: SPATIAL_CANVAS_REFERENCE_SURFACE,
+      promptVersion: 'prompt_v1',
+      designSkillId: '',
+    });
+    const preview = spatialImageAiPreviewPayload(draft);
+    assert.equal(preview.command_id, SPATIAL_IMAGE_AI_COMMAND_ID);
+    assert.deepEqual(preview.source_asset_ids, [sourceAssetId]);
+    assert.equal(preview.objective, '以所选图片为参考创作新的商业视觉方案，不覆写原图');
+    assert.deepEqual(preview.ui_context, {
+      input_surface: SPATIAL_CANVAS_REFERENCE_SURFACE,
+      contract_version: SPATIAL_CANVAS_REFERENCE_CONTRACT,
+    });
+    assert.equal(preview.design_skill_id, '');
+    const frozen = applySpatialImageAiPreview(draft, previewBundle(draft));
+    const task = spatialImageAiCommandPayload(frozen, () => 'reference:fixed');
+    assert.deepEqual(task.payload.source_asset_ids, [sourceAssetId]);
+    assert.equal(task.payload.max_attempts, 1);
+    assert.equal(task.payload.parameters.automatic_paid_retry, false);
+    assert.equal(task.payload.parameters.execution_context.context_sha256, 'c'.repeat(64));
+    assert.deepEqual(task.payload.parameters.ui_context, preview.ui_context);
+    const changed = updateSpatialImageAiDraft(frozen, { outputRatio: '16:9' });
+    assert.equal(changed.preview, null);
+    assert.throws(() => spatialImageAiCommandPayload(changed), /先核对/);
+  }
+  assert.throws(() => spatialImageAiPreviewPayload(createSpatialImageAiDraft(
+    SPATIAL_RESULT_VARIATION_ACTION,
+    {
+      canvasId: 'spatial:reference-canvas',
+      sourceElementId: 'result-element',
+      sourceAssetId: 'ast:original',
+      sourceResultId: 'ast:selected-result',
+      inputSurface: SPATIAL_CANVAS_REFERENCE_SURFACE,
+    },
+  )), /精确使用当前选中的 Result/);
 });

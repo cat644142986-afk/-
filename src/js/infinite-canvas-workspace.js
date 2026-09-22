@@ -24,6 +24,7 @@ import {
 } from './spatial-video.js';
 import {
   SPATIAL_CANVAS_CONVERSATION_SURFACE,
+  SPATIAL_CANVAS_REFERENCE_SURFACE,
   SPATIAL_IMAGE_AI_COMMAND_ID,
   SPATIAL_IMAGE_AI_SKILL_ID,
   SPATIAL_RESULT_VARIATION_ACTION,
@@ -188,10 +189,15 @@ function imageAiDraftHtml(draft, asset, {
     <option value=""${draft.designSkillId ? '' : ' selected'}>默认方法 · 不额外引用</option>
     <option value="${SPATIAL_IMAGE_AI_SKILL_ID}"${draft.designSkillId === SPATIAL_IMAGE_AI_SKILL_ID ? ' selected' : ''}>食品饮料白底主图</option>
   `;
+  const reference = draft.inputSurface === SPATIAL_CANVAS_REFERENCE_SURFACE;
+  const ratioOptions = ['original', '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9'].map((ratio) =>
+    `<option value="${ratio}"${draft.outputRatio === ratio ? ' selected' : ''}>${ratio}</option>`).join('');
   return `
     <form class="spatial-white-form" data-spatial-image-ai-form novalidate>
       <div class="spatial-white-form__heading"><span>CANVAS NATIVE AI</span><strong>${escapeHtml(definition.title)}</strong><small>提交前核对本次真正生效的上下文</small></div>
-      <label class="spatial-white-form__wide"><span>本次要求</span><textarea data-spatial-image-ai-field="userRequest" maxlength="1200" rows="4" ${busy ? 'disabled' : ''}>${escapeHtml(draft.userRequest)}</textarea><small>主体结构、数量、包装文字与 Logo 始终锁定。</small></label>
+      <div class="spatial-white-form__reference" role="group" aria-label="本次图片输入"><span>${reference ? '参考图' : definition.sourceLabel}</span><strong title="${escapeHtml(asset?.name || draft.sourceAssetId)}">${escapeHtml(asset?.name || draft.sourceAssetId)}</strong><small>${draft.sourceResultId ? '精确 Result' : '原始素材'}</small></div>
+      <label class="spatial-white-form__wide"><span>Prompt · 本次要求</span><textarea data-spatial-image-ai-field="userRequest" maxlength="1200" rows="4" ${busy ? 'disabled' : ''}>${escapeHtml(draft.userRequest)}</textarea><small>主体结构、数量、包装文字与 Logo 始终锁定。</small></label>
+      <div class="spatial-white-form__settings"><label><span>画幅</span><select data-spatial-image-ai-field="outputRatio" ${busy ? 'disabled' : ''}>${ratioOptions}</select></label><label><span>质量</span><select data-spatial-image-ai-field="outputResolution" ${busy ? 'disabled' : ''}><option value="2k"${draft.outputResolution === '2k' ? ' selected' : ''}>标准 · 2K</option><option value="4k"${draft.outputResolution === '4k' ? ' selected' : ''}>高 · 4K</option></select></label></div>
       <label class="spatial-white-form__wide"><span>设计方法</span><select data-spatial-image-ai-field="designSkillId" ${busy ? 'disabled' : ''}>${skillOptions}</select><small>只读贡献设计规则，不执行脚本或 Provider。</small></label>
       <section class="spatial-context-preview" data-spatial-image-ai-preview aria-live="polite">
         ${preview ? `
@@ -1468,11 +1474,12 @@ export function createInfiniteCanvasWorkspaceController({
     const exactResult = String(refs.result_id || '') === String(refs.asset_id || '');
     const inputSurface = String(seed?.inputSurface || '');
     const conversation = inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE;
+    const reference = inputSurface === SPATIAL_CANVAS_REFERENCE_SURFACE;
     const definition = spatialImageAiDefinition(action, {
       inputSurface,
       sourceResultId: exactResult ? String(refs.result_id || '') : '',
     });
-    const sourceMatchesAction = conversation
+    const sourceMatchesAction = conversation || reference
       ? (!refs.result_id || exactResult)
       : definition.sourceKind === 'source'
         ? !refs.result_id
@@ -1486,7 +1493,7 @@ export function createInfiniteCanvasWorkspaceController({
       asset = response?.asset || response || {};
     }
     if (!selectionIsCurrent()) throw new Error('当前选区已变化，请重新核对修改');
-    const roleMatches = conversation
+    const roleMatches = conversation || reference
       ? (
         exactResult
           ? String(asset?.role || '').startsWith('result_')
@@ -1520,6 +1527,8 @@ export function createInfiniteCanvasWorkspaceController({
       sourceResultId: exactResult ? String(refs.result_id || '') : '',
       productProfileVersionId: String(refs.product_profile_version_id || ''),
       userRequest: String(seed?.userRequest || defaults?.userRequest || ''),
+      promptVersion: reference ? 'prompt_v1' : defaults?.promptVersion,
+      designSkillId: reference ? '' : defaults?.designSkillId,
       inputSurface,
     });
     imageAiDraftError = '';
@@ -1567,6 +1576,20 @@ export function createInfiniteCanvasWorkspaceController({
       if (!imageAiDraft && String(selectedElement?.id || '') === String(element?.id || '')) {
         await renderInspector(element);
       }
+    }
+  }
+
+  async function openCanvasReferencePreview(context = {}) {
+    try {
+      return await openCanvasAiPreview(SPATIAL_RESULT_VARIATION_ACTION, {
+        canvasId: currentId,
+        element: selectedElement,
+        ...context,
+      }, { inputSurface: SPATIAL_CANVAS_REFERENCE_SURFACE });
+    } catch (error) {
+      imageAiDraftError = String(error?.detail?.message || error?.message || error);
+      setSpatialStatus(`参考生成上下文未建立 · ${imageAiDraftError}`, { kind: 'error' });
+      return null;
     }
   }
 
@@ -2742,6 +2765,9 @@ export function createInfiniteCanvasWorkspaceController({
     if (event.target.closest('[data-spatial-details]') && selectedElement) {
       detailsOpen = true;
       return renderInspector(selectedElement);
+    }
+    if (event.target.closest('[data-spatial-reference]')) {
+      return openCanvasReferencePreview();
     }
     const commandAction = event.target.closest('[data-spatial-command-action]');
     if (commandAction) {

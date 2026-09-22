@@ -72,6 +72,9 @@ test('prototype shares the existing Excalidraw host and PA action contract', () 
   assert.match(island, /<CanvasTransplantShell/);
   assert.match(shell, /data-spatial-action=\{imageAction\}/);
   assert.match(shell, /data-spatial-conversation-form/);
+  assert.match(shell, /data-spatial-reference/);
+  assert.match(workspace, /openCanvasReferencePreview\(/);
+  assert.match(workspace, /data-spatial-image-ai-field="outputRatio"/);
   assert.match(workspace, /openCanvasConversationPreview\(conversationInput/);
   assert.match(workspace, /shellMode: initialShellMode = 'legacy'/);
   assert.match(css, /\[data-shell="transplant"\].*\.layer-ui__wrapper__footer \{ display: flex !important; \}/);
