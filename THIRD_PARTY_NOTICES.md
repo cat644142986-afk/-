@@ -16,6 +16,7 @@ This file lists the direct browser runtime dependencies. The distributable plain
 | basketikun/infinite-canvas selection toolbar | `e6d0911e9d509d00150eaab02f9ca05be94ffc46` | MIT | https://github.com/basketikun/infinite-canvas |
 | BeatDesign composer utilities | `13689dd5e54d959461f9316c8adfb89a496db80b` | Apache-2.0 | https://github.com/BeatDesign/BeatDesign |
 | Retake dismissible popover | `036efecb00ff009fde3483f74c7ed46b0d125cbe` | Apache-2.0 | https://github.com/retake-tools/whiteboard |
+| Retake reference picker, tray and image controls | `a24d0684efe7929e2e6ac00e137bcdbee23b010e` (`v0.1.3`) | Apache-2.0 | https://github.com/retake-tools/whiteboard/tree/v0.1.3 |
 
 ## Canvas Interaction Transplant prototype
 
@@ -28,6 +29,14 @@ license texts are distributed at `canvas-transplant-licenses/{loomic,basket,beat
 The adaptations live in `src/js/canvas-transplant-{geometry.js,shell.jsx}` and
 the existing Excalidraw island. No upstream provider, storage or scene model
 is imported.
+
+`src/js/canvas-retake-reference.jsx` adapts Retake's
+`InputReferencePicker.tsx`, `ImageComposerReferenceTray.tsx`, and
+`ImageComposerControls.tsx` (with their local interaction styles) to PA's
+single exact Canvas Asset/Result reference. Retake Board, Provider, storage,
+execution and mention models are not included. Retake's upstream NOTICE reads:
+"Retake Whiteboard — Copyright 2026 Retake Tools. This product includes
+software developed by Retake Tools. https://retake.tools/".
 
 ## Bloub animation engine
 

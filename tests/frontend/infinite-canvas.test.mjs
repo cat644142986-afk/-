@@ -66,7 +66,7 @@ test('Excalidraw is isolated behind a user-triggered dynamic import', () => {
   assert.match(adapterSource, /currentItemRoughness:\s*0/);
   assert.match(adapterSource, /currentItemFontFamily:\s*2/);
   assert.match(island, /dark: '#cfd3d7'/);
-  assert.match(island, /initialData=\{runtimeSceneForTheme\(canvasDocument\.scene, theme\)\}/);
+  assert.match(island, /initialData=\{initialScene\}/);
   assert.match(island, /appState: persistentAppState\(appState\)/);
   assert.match(island, /api\.updateScene\(\{ appState: \{ viewBackgroundColor \} \}\)/);
   assert.doesNotMatch(itemsSource, /#fffdf9|#3f3b37/);
@@ -325,7 +325,9 @@ test('IC4 connects durable assets, tasks, results and Fabric without automatic p
   assert.match(fineEditGesture, /host\.addEventListener\('keydown', captureKeyDown, true\)/);
   assert.match(fineEditGesture, /host\.removeEventListener\('keydown', captureKeyDown, true\)/);
   assert.match(island, /isBusinessImageSelected: \(\) => host\.dataset\.businessImageSelected === 'true'/);
-  assert.match(island, /mergeSpatialNodeBatch\(existing, additions, batch\.lineageBindings\)/);
+  assert.match(island, /mergeSpatialNodeBatch\(existing, additions\)/);
+  assert.match(island, /normalizeSpatialBusinessPresentation\(source\.elements\)/);
+  assert.match(island, /currentItemFontFamily: appState\.currentItemFontFamily \?\? FONT_FAMILY\.Helvetica/);
   assert.match(island, /captureUpdate: CaptureUpdateAction\.IMMEDIATELY/);
   assert.match(island, /captureUpdate: CaptureUpdateAction\.NEVER/);
   assert.match(island, /spatialLineageFocusElements\(normalized, boundExisting, boundAdditions\)/);

@@ -1,19 +1,29 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { getCommonBounds, sceneCoordsToViewportCoords } from '@excalidraw/excalidraw';
 import { anchoredSurface, selectionFrame, shouldDismissComposerOnEscape, stopComposerKeyboardEvent } from './canvas-transplant-geometry.js';
+import { CanvasReferenceControls, CanvasReferencePicker, CanvasReferenceTray } from './canvas-retake-reference.jsx';
+import { activeCanvasReference, canvasReferenceOptions } from './canvas-reference-adapter.js';
 
 // Interaction transplant: selection geometry follows basketikun's contextual
 // toolbar; Excalidraw's live onChange provides Loomic-style viewport sync.
 // Composer keyboard/IME containment follows BeatDesign; the transient popover
 // dismissal follows Retake. PA owns all business actions and execution.
-export function CanvasTransplantShell({ api, view, business, onTool }) {
+export function CanvasTransplantShell({ api, view, business, onTool, onReferenceReview }) {
   const [composerOpen, setComposerOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [annotateOpen, setAnnotateOpen] = useState(false);
   const [arrangeOpen, setArrangeOpen] = useState(false);
   const [compositionActive, setCompositionActive] = useState(false);
+  const [reference, setReference] = useState(null);
+  const [pickerAnchor, setPickerAnchor] = useState(null);
+  const [pickerSelectedId, setPickerSelectedId] = useState('');
+  const [referencePrompt, setReferencePrompt] = useState('');
+  const [referenceRatio, setReferenceRatio] = useState('original');
+  const [referenceResolution, setReferenceResolution] = useState('2k');
+  const [referenceError, setReferenceError] = useState('');
   const [, setHostLayoutVersion] = useState(0);
   const composerRef = useRef(null);
+  const referenceAddRef = useRef(null);
   const moreRef = useRef(null);
   const annotateRef = useRef(null);
   const arrangeRef = useRef(null);
@@ -55,11 +65,21 @@ export function CanvasTransplantShell({ api, view, business, onTool }) {
   }, [arrangeOpen]);
 
   useEffect(() => {
-    setComposerOpen(false);
+    if (reference?.elementId !== one?.id) {
+      setReference(null);
+      setComposerOpen(false);
+    }
+    setPickerAnchor(null);
     setMoreOpen(false);
     setAnnotateOpen(false);
     setArrangeOpen(false);
   }, [one?.id, selected.length]);
+
+  const closePicker = useCallback((restoreFocus = true) => {
+    setPickerAnchor(null);
+    setPickerSelectedId('');
+    if (restoreFocus) requestAnimationFrame(() => referenceAddRef.current?.focus());
+  }, []);
 
   // Retake's outside-pointer/Escape pattern, scoped to the transplant's
   // lightweight popovers. The Governor preview retains its own focus rules.
@@ -101,9 +121,56 @@ export function CanvasTransplantShell({ api, view, business, onTool }) {
     : null;
   const imageAction = refs.result_id === refs.asset_id ? 'generate-image' : 'white-background';
   const imageLabel = refs.result_id === refs.asset_id ? '生成变体' : '白底图';
+  const files = api?.getFiles?.() || {};
+  const referenceOptions = canvasReferenceOptions(
+    api?.getSceneElementsIncludingDeleted?.(), files, business.elementId, business.asset,
+  );
+  const selectedPickerImage = referenceOptions.find((image) => image.elementId === pickerSelectedId);
+  const activeReference = activeCanvasReference(reference, one?.id, referenceOptions);
   const tool = view.appState?.activeTool?.type || 'selection';
   const preventCanvasPointer = (event) => event.stopPropagation();
   const setTool = (type) => { onTool(type); setAnnotateOpen(false); };
+
+  function openReferencePicker(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setPickerAnchor({ x: rect.left, y: rect.bottom + 8 });
+    setPickerSelectedId('');
+    setReferencePrompt(composerRef.current?.querySelector('textarea')?.value || referencePrompt);
+  }
+
+  function confirmReference() {
+    if (!selectedPickerImage) return;
+    const image = selectedPickerImage;
+    api?.setActiveTool?.({ type: 'selection' });
+    if (one?.id !== image.elementId) {
+      api?.updateScene?.({ appState: { selectedElementIds: { [image.elementId]: true } } });
+    }
+    setReference(image);
+    setComposerOpen(true);
+    setReferenceError('');
+    closePicker(false);
+    requestAnimationFrame(() => composerRef.current?.querySelector('textarea')?.focus());
+  }
+
+  function reviewReference(event) {
+    event.preventDefault();
+    const message = String(composerRef.current?.querySelector('textarea')?.value || '').trim();
+    if (!activeReference || activeReference.elementId !== one?.id) {
+      setReferenceError('参考图已变化，请重新选择');
+      return;
+    }
+    if (message.length < 2) {
+      setReferenceError('请先描述希望生成的新方案');
+      return;
+    }
+    setReferenceError('');
+    onReferenceReview?.({
+      sourceElementId: activeReference.elementId,
+      userRequest: message,
+      outputRatio: referenceRatio,
+      outputResolution: referenceResolution,
+    });
+  }
 
   return (
     <div className="pa-transplant" aria-label="Product Atelier Canvas 工作台">
@@ -129,7 +196,6 @@ export function CanvasTransplantShell({ api, view, business, onTool }) {
           <strong>{selected.length > 1 ? `${selected.length} 个对象` : kind}</strong>
           {selected.length > 1 ? <><span className="pa-transplant__hint">Ctrl+G 组合 · Delete 删除</span><button type="button" ref={arrangeRef} aria-expanded={arrangeOpen} onClick={() => setArrangeOpen(!arrangeOpen)}>对齐</button></> : <>
             {one?.type === 'image' && refs.asset_id && <button type="button" data-spatial-action={imageAction} className="is-primary">{imageLabel}</button>}
-            {eligible && <button type="button" data-spatial-reference title="用当前图片作为精确参考，创建可并列比较的新方案">作为参考</button>}
             {refs.asset_id && <button type="button" data-spatial-action="fine-edit">Fabric 精修</button>}
             <div className="pa-transplant__popover-anchor" ref={moreRef}>
               <button type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>更多</button>
@@ -137,12 +203,20 @@ export function CanvasTransplantShell({ api, view, business, onTool }) {
             </div>
           </>}
         </div>
-        {eligible && <form className={`pa-transplant__composer${composerOpen ? ' is-open' : ''}`} ref={composerRef} data-spatial-conversation-form noValidate>
-          <label className="sr-only" htmlFor="pa-transplant-message">告诉 AI 下一步怎么改</label>
-          <textarea id="pa-transplant-message" data-spatial-conversation-field maxLength="1200" rows={composerOpen ? 3 : 1} placeholder="告诉 AI 下一步怎么改" defaultValue={business.conversationInput || ''} key={`${one.id}:${reviewing}`} onFocus={() => setComposerOpen(true)} onCompositionStart={() => setCompositionActive(true)} onCompositionEnd={() => setCompositionActive(false)} onKeyDownCapture={(event) => {
+        {eligible && <form className={`pa-transplant__composer${composerOpen ? ' is-open' : ''}`} ref={composerRef} data-spatial-conversation-form={activeReference ? undefined : ''} onSubmit={activeReference ? reviewReference : undefined} noValidate>
+          <div className="pa-transplant__composer-main">
+          <CanvasReferenceTray image={activeReference} onAdd={openReferencePicker} onRemove={() => { setReference(null); setReferenceError(''); }} addButtonRef={referenceAddRef} />
+          <label className="sr-only" htmlFor="pa-transplant-message">{activeReference ? '描述参考生成的新方案' : '告诉 AI 下一步怎么改'}</label>
+          <textarea id="pa-transplant-message" data-spatial-conversation-field={activeReference ? undefined : ''} maxLength="1200" rows={composerOpen ? 3 : 1} placeholder={activeReference ? '描述希望参考这张图片生成的新方案' : '告诉 AI 下一步怎么改'} defaultValue={activeReference ? referencePrompt : business.conversationInput || ''} key={`${one.id}:${reviewing}:${activeReference ? 'reference' : 'conversation'}`} onChange={activeReference ? (event) => setReferencePrompt(event.target.value) : undefined} onFocus={() => setComposerOpen(true)} onCompositionStart={() => setCompositionActive(true)} onCompositionEnd={() => setCompositionActive(false)} onKeyDownCapture={(event) => {
             // Workspace's document capture listener handles Ctrl+Enter; IME
             // composition must not submit, while all other keys stay in text.
-            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !compositionActive && !event.nativeEvent?.isComposing) return;
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !compositionActive && !event.nativeEvent?.isComposing) {
+              if (activeReference) {
+                stopComposerKeyboardEvent(event);
+                reviewReference(event);
+              }
+              return;
+            }
             if (shouldDismissComposerOnEscape(event, compositionActive)) {
               event.preventDefault();
               stopComposerKeyboardEvent(event);
@@ -152,9 +226,11 @@ export function CanvasTransplantShell({ api, view, business, onTool }) {
             }
             stopComposerKeyboardEvent(event);
           }} />
-          {composerOpen && <div className="pa-transplant__composer-footer"><small data-spatial-conversation-status aria-live="polite">{business.conversationError || '当前选区 · 核对不会调用 Provider'}</small><button type="submit" disabled={reviewing}>核对修改</button></div>}
+          </div>
+          {composerOpen && <div className="pa-transplant__composer-footer"><small data-spatial-conversation-status aria-live="polite">{referenceError || business.conversationError || '当前选区 · 核对不会调用 Provider'}</small>{activeReference && <CanvasReferenceControls ratio={referenceRatio} resolution={referenceResolution} onChange={(patch) => { if (patch.ratio) setReferenceRatio(patch.ratio); if (patch.resolution) setReferenceResolution(patch.resolution); }} />}<button type="submit" disabled={reviewing}>{activeReference ? '核对生成' : '核对修改'}</button></div>}
         </form>}
       </section>}
+      {pickerAnchor && <CanvasReferencePicker anchor={pickerAnchor} images={referenceOptions} selectedImage={selectedPickerImage} onSelectImage={setPickerSelectedId} onConfirm={confirmReference} onCancel={closePicker} />}
     </div>
   );
 }

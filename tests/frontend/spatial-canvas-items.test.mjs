@@ -6,6 +6,7 @@ import {
   SPATIAL_REFERENCE_FIELDS,
   buildSpatialNodeBatch,
   mergeSpatialNodeBatch,
+  normalizeSpatialBusinessPresentation,
   parseSpatialDragItem,
   selectedSpatialBusinessElement,
   serializeSpatialDragItem,
@@ -147,10 +148,9 @@ test('video task nodes sit below their source while sibling results use separate
     elements: [parent], idFactory: (prefix) => `${prefix}_${++id}`,
   });
   const taskNode = taskBatch.skeletons.find((element) => element.type === 'rectangle');
-  const taskArrow = taskBatch.skeletons.find((element) => element.type === 'arrow');
   assert.equal(taskNode.x, parent.x);
   assert.equal(taskNode.y, parent.y + parent.height + 120);
-  assert.equal(taskArrow.points[1][0], 0);
+  assert.equal(taskBatch.skeletons.some((element) => element.type === 'arrow'), false);
 
   const first = spatialItemFromAsset({ id: 'ast:video-1', role: 'result_video', kind: 'video' }, {
     lineage_parent_id: 'ast:source',
@@ -179,7 +179,7 @@ test('idempotent imports reject existing and repeated business references', () =
   assert.deepEqual(uniqueSpatialBusinessItems([duplicate, fresh, fresh], existing), [fresh]);
 });
 
-test('result nodes are placed beside their parent and receive a lineage arrow', () => {
+test('result nodes retain lineage data without painting a permanent arrow', () => {
   let id = 0;
   const parent = {
     id: 'parent', type: 'image', x: 100, y: 120, width: 300, height: 220,
@@ -194,42 +194,26 @@ test('result nodes are placed beside their parent and receive a lineage arrow', 
     appState: { width: 1200, height: 800, zoom: { value: 1 }, scrollX: 0, scrollY: 0 },
     idFactory: (prefix) => `${prefix}_${++id}`,
   });
-  assert.equal(batch.skeletons.length, 2);
-  assert.equal(batch.skeletons[0].type, 'arrow');
-  assert.equal(batch.skeletons[1].type, 'image');
-  assert.equal(batch.skeletons[1].x, 560);
-  assert.equal(batch.skeletons[1].customData.lineage_parent_id, 'ast:parent');
+  assert.equal(batch.skeletons.length, 1);
+  assert.equal(batch.skeletons[0].type, 'image');
+  assert.equal(batch.skeletons[0].x, 560);
+  assert.equal(batch.skeletons[0].roundness, null);
+  assert.equal(batch.skeletons[0].customData.lineage_parent_id, 'ast:parent');
   assert.deepEqual(batch.nodeIds, ['spatial_node_1']);
   assert.deepEqual(batch.proxyRequests, [{
     elementId: 'spatial_node_1', fileId: 'proxy_ast_child', assetId: 'ast:child',
   }]);
-  assert.deepEqual(batch.lineageBindings, [{
-    arrow_id: 'spatial_lineage_2',
-    parent_element_id: 'parent',
-    child_element_id: 'spatial_node_1',
-  }]);
-  const converted = batch.skeletons.map((element) => ({
-    ...element,
-    isDeleted: false,
-    boundElements: null,
-    ...(element.type === 'arrow' ? { startBinding: null, endBinding: null } : {}),
-  }));
-  const merged = mergeSpatialNodeBatch([parent], converted, batch.lineageBindings);
-  assert.deepEqual(merged[0].boundElements, [{ id: 'spatial_lineage_2', type: 'arrow' }]);
-  assert.deepEqual(merged[1].startBinding, { elementId: 'parent', focus: 0, gap: 12 });
-  assert.deepEqual(merged[1].endBinding, { elementId: 'spatial_node_1', focus: 0, gap: 12 });
-  assert.deepEqual(merged[2].boundElements, [{ id: 'spatial_lineage_2', type: 'arrow' }]);
+  assert.deepEqual(batch.lineageBindings, []);
+  const merged = mergeSpatialNodeBatch([parent], batch.skeletons);
+  assert.equal(merged[1].id, 'spatial_node_1');
   assert.equal(parent.boundElements, undefined);
-  const mergedAgain = mergeSpatialNodeBatch([], merged, batch.lineageBindings);
-  assert.deepEqual(mergedAgain[0].boundElements, [{ id: 'spatial_lineage_2', type: 'arrow' }]);
-  assert.deepEqual(mergedAgain[2].boundElements, [{ id: 'spatial_lineage_2', type: 'arrow' }]);
   assert.deepEqual(
     spatialLineageFocusElements([item], [parent], batch.skeletons).map((element) => element.id),
-    ['parent', 'spatial_lineage_2', 'spatial_node_1'],
+    ['parent', 'spatial_node_1'],
   );
 });
 
-test('video results become embeddables without image proxy bytes and keep lineage bindings', () => {
+test('video results become embeddables without image proxy bytes or visual lineage', () => {
   let id = 0;
   const parent = {
     id: 'parent-video-frame', type: 'image', x: 80, y: 120, width: 320, height: 240,
@@ -259,31 +243,43 @@ test('video results become embeddables without image proxy bytes and keep lineag
     idFactory: (prefix) => `${prefix}_${++id}`,
   });
   assert.deepEqual(batch.proxyRequests, []);
-  assert.equal(batch.skeletons.length, 2);
-  assert.equal(batch.skeletons[0].type, 'arrow');
-  assert.equal(batch.skeletons[1].type, 'embeddable');
-  assert.equal(batch.skeletons[1].link, 'product-atelier-video://ast:video-result');
-  assert.deepEqual(Object.keys(batch.skeletons[1].customData), [...SPATIAL_REFERENCE_FIELDS]);
-  assert.deepEqual(batch.skeletons[1].customData, {
+  assert.equal(batch.skeletons.length, 1);
+  assert.equal(batch.skeletons[0].type, 'embeddable');
+  assert.equal(batch.skeletons[0].link, 'product-atelier-video://ast:video-result');
+  assert.deepEqual(Object.keys(batch.skeletons[0].customData), [...SPATIAL_REFERENCE_FIELDS]);
+  assert.deepEqual(batch.skeletons[0].customData, {
     asset_id: 'ast:video-result',
     result_id: 'ast:video-result',
     task_id: 'job:video-1',
     product_profile_version_id: 'product-profile-version:video-1',
     lineage_parent_id: 'ast:first-frame',
   });
-  const serialized = JSON.stringify(batch.skeletons[1]);
+  const serialized = JSON.stringify(batch.skeletons[0]);
   assert.doesNotMatch(serialized, /base64|data:video|[A-Za-z]:\\\\/i);
 
-  const converted = batch.skeletons.map((element) => ({
-    ...element,
-    isDeleted: false,
-    boundElements: null,
-    ...(element.type === 'arrow' ? { startBinding: null, endBinding: null } : {}),
-  }));
-  const merged = mergeSpatialNodeBatch([parent], converted, batch.lineageBindings);
-  assert.equal(merged[1].startBinding.elementId, parent.id);
-  assert.equal(merged[1].endBinding.elementId, batch.skeletons[1].id);
-  assert.deepEqual(merged[2].boundElements, [{ id: batch.skeletons[0].id, type: 'arrow' }]);
+  assert.deepEqual(batch.lineageBindings, []);
+  assert.equal(mergeSpatialNodeBatch([parent], batch.skeletons)[1].id, batch.skeletons[0].id);
+});
+
+test('PA image placement preserves extreme source ratios and only PA decoration is removed', () => {
+  const wide = buildSpatialNodeBatch([spatialItemFromAsset({
+    id: 'ast:wide', role: 'workspace_source', width: 3000, height: 300,
+  })], { idFactory: (prefix) => `${prefix}_wide` }).skeletons[0];
+  assert.equal(wide.width, 420);
+  assert.equal(wide.height, 42);
+  const source = [
+    { id: 'business', type: 'image', customData: { asset_id: 'ast:old' }, roundness: { type: 3 }, crop: { x: 3 }, width: 320, height: 240, boundElements: [{ id: 'spatial_lineage_old', type: 'arrow' }, { id: 'user-arrow', type: 'arrow' }] },
+    { id: 'spatial_lineage_old', type: 'arrow' },
+    { id: 'user-arrow', type: 'arrow' },
+    { id: 'user-text', type: 'text', text: '原样文字', fontFamily: 1, fontSize: 37 },
+  ];
+  const cleaned = normalizeSpatialBusinessPresentation(source);
+  assert.deepEqual(cleaned.map((element) => element.id), ['business', 'user-arrow', 'user-text']);
+  assert.equal(cleaned[0].roundness, null);
+  assert.deepEqual(cleaned[0].crop, { x: 3 });
+  assert.deepEqual(cleaned[0].boundElements, [{ id: 'user-arrow', type: 'arrow' }]);
+  assert.deepEqual(cleaned[2], source[3]);
+  assert.equal(normalizeSpatialBusinessPresentation(cleaned), cleaned);
 });
 
 test('independent imports focus only their new additions', () => {

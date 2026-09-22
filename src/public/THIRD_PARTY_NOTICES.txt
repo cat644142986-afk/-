@@ -6,6 +6,11 @@ see THIRD_PARTY_NOTICES.md in the source repository):
 - basketikun/infinite-canvas, MIT, e6d0911e9d509d00150eaab02f9ca05be94ffc46.
 - BeatDesign, Apache-2.0, 13689dd5e54d959461f9316c8adfb89a496db80b.
 - Retake whiteboard, Apache-2.0, 036efecb00ff009fde3483f74c7ed46b0d125cbe.
+- Retake reference picker, tray and image controls, Apache-2.0,
+  a24d0684efe7929e2e6ac00e137bcdbee23b010e (v0.1.3).
+  Retake Whiteboard. Copyright 2026 Retake Tools.
+  This product includes software developed by Retake Tools.
+  https://retake.tools/
 Complete license texts: canvas-transplant-licenses/loomic.txt,
 canvas-transplant-licenses/basket.txt, canvas-transplant-licenses/beat.txt,
 canvas-transplant-licenses/retake.txt.

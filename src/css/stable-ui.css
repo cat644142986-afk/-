@@ -1521,11 +1521,6 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .spatial-white-form textarea, .spatial-white-form select { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--paper); color: var(--ink); font: inherit; letter-spacing: 0; }
 .spatial-white-form textarea { min-height: 82px; resize: vertical; line-height: 1.5; }
 .spatial-white-form textarea:focus-visible, .spatial-white-form select:focus-visible, .spatial-white-form button:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px; }
-.spatial-white-form__reference { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--paper-2); font-size: var(--type-micro); }
-.spatial-white-form__reference > span { flex: none; color: var(--ink-3); }
-.spatial-white-form__reference > strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.spatial-white-form__reference > small { flex: none; color: var(--ink-3); }
-.spatial-white-form__settings { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .spatial-context-preview { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-2); }
 .spatial-context-preview dl { display: grid; gap: 7px; margin: 0; }
 .spatial-context-preview dl > div { display: grid; grid-template-columns: 104px minmax(0,1fr); gap: 8px; align-items: start; }
@@ -1756,14 +1751,58 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .pa-transplant__selection-row .is-primary { background: var(--dark); color: #fff; }
 .pa-transplant__selection-row .is-primary:hover { background: var(--ink-2); color: #fff; }
 .pa-transplant__hint { padding: 0 8px; color: var(--ink-3); font-size: var(--type-micro); white-space: nowrap; }
-.pa-transplant__composer { display: flex; align-items: center; gap: 5px; border-top: 1px solid var(--line); }
+.pa-transplant__composer { display: grid; min-width: 0; gap: 4px; border-top: 1px solid var(--line); }
+.pa-transplant__composer-main { display: flex; align-items: center; min-width: 0; gap: 6px; }
 .pa-transplant__composer textarea { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 37px; max-height: 110px; padding: 8px 10px; resize: none; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: var(--type-caption); line-height: 1.45; letter-spacing: 0; user-select: text; }
-.pa-transplant__composer.is-open { display: grid; grid-template-columns: 1fr; }
+.pa-transplant__composer.is-open { grid-template-columns: 1fr; }
 .pa-transplant__composer.is-open textarea { min-height: 75px; }
 .pa-transplant__composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 5px 4px 9px; }
 .pa-transplant__composer-footer small { min-width: 0; overflow: hidden; color: var(--ink-3); font-size: var(--type-micro); text-overflow: ellipsis; white-space: nowrap; }
 .pa-transplant__composer-footer button { background: var(--dark); color: #fff; }
 .pa-transplant__composer-footer button:hover { background: var(--ink-2); color: #fff; }
+/* Retake Whiteboard v0.1.3 reference picker, tray and parameter popover,
+   adapted to PA tokens and a single exact Canvas Asset/Result binding. */
+.pa-reference-tray { position: relative; flex: 0 0 auto; min-width: 0; padding-left: 5px; pointer-events: auto; }
+.pa-reference-tray__list { display: flex; align-items: center; gap: 5px; }
+.pa-reference-tray__item { position: relative; flex: 0 0 42px; width: 42px; height: 42px; }
+.pa-reference-tray__thumbnail, .pa-reference-tray__add { display: grid; place-items: center; height: 42px; overflow: hidden; border: 1px solid var(--line-2); border-radius: 6px; background: var(--paper-2); color: var(--ink-2); }
+.pa-reference-tray__thumbnail { width: 42px; padding: 0 !important; }
+.pa-reference-tray__thumbnail img { width: 100%; height: 100%; object-fit: contain; }
+.pa-reference-tray__thumbnail[aria-pressed="true"], .pa-reference-tray__add:hover { border-color: var(--coral); box-shadow: 0 0 0 2px var(--coral-soft); }
+.pa-reference-tray__badge { position: absolute; right: 2px; bottom: 2px; left: 2px; overflow: hidden; padding: 1px 2px; border-radius: 3px; background: rgb(24 26 29 / .82); color: #fff; font-size: 9px; text-align: center; white-space: nowrap; pointer-events: none; }
+.pa-reference-tray__remove { position: absolute; top: -6px; right: -6px; width: 19px; min-height: 19px !important; padding: 0 !important; border-radius: 50% !important; background: var(--dark) !important; color: #fff !important; opacity: 0; }
+.pa-reference-tray__item:hover .pa-reference-tray__remove, .pa-reference-tray__item:focus-within .pa-reference-tray__remove { opacity: 1; }
+.pa-reference-tray__add { min-width: 68px; padding: 0 6px !important; border-style: dashed; background: var(--paper) !important; color: var(--ink-2) !important; font-size: var(--type-micro) !important; }
+.pa-reference-tray__preview { position: absolute; z-index: 12; bottom: calc(100% + 8px); left: 0; display: grid; width: 220px; gap: 7px; margin: 0; padding: 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--paper); box-shadow: 0 10px 30px rgb(30 29 27 / .18); }
+.pa-reference-tray__preview > div { display: grid; place-items: center; height: 150px; overflow: hidden; background: var(--paper-2); }
+.pa-reference-tray__preview img { width: 100%; height: 100%; object-fit: contain; }
+.pa-reference-tray__preview figcaption { display: grid; min-width: 0; gap: 2px; }
+.pa-reference-tray__preview strong, .pa-reference-tray__preview span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-micro); }
+.pa-reference-tray__preview span { color: var(--ink-3); }
+.pa-reference-picker { position: fixed; z-index: 2200; display: grid; width: min(360px,calc(100vw - 32px)); max-height: min(350px,calc(100vh - 32px)); gap: 10px; padding: 12px; overflow: hidden; border: 1px solid var(--line-2); border-radius: 8px; background: var(--paper); box-shadow: 0 18px 44px rgb(15 23 42 / .2); pointer-events: auto; }
+.pa-reference-picker > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pa-reference-picker > header > span { display: grid; gap: 3px; }
+.pa-reference-picker > header strong { color: var(--ink); font-size: var(--type-caption); }
+.pa-reference-picker > header small { color: var(--ink-3); font-size: var(--type-micro); line-height: 1.4; }
+.pa-reference-picker > header button { flex: 0 0 28px; padding: 0 !important; }
+.pa-reference-picker__list { display: grid; min-height: 0; gap: 4px; overflow-y: auto; }
+.pa-reference-picker__list button, .pa-reference-picker__selected { display: flex; align-items: center; width: 100%; min-height: 52px; gap: 10px; padding: 7px 8px; border-radius: 6px; color: var(--ink-2); text-align: left; }
+.pa-reference-picker__list button:hover { background: var(--paper-2); color: var(--ink); }
+.pa-reference-picker__list img, .pa-reference-picker__selected img, .pa-reference-picker__fallback { flex: 0 0 48px; width: 48px; height: 38px; object-fit: contain; background: var(--paper-2); }
+.pa-reference-picker__fallback { display: grid; place-items: center; }
+.pa-reference-picker__list button > span:not(.pa-reference-picker__fallback), .pa-reference-picker__selected strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pa-reference-picker__list small, .pa-reference-picker__selected small { flex: 0 0 auto; color: var(--ink-3); }
+.pa-reference-picker__selected { border: 1px solid var(--line-2); background: var(--paper-2); }
+.pa-reference-picker__confirm { justify-self: stretch; background: var(--dark); color: #fff !important; }
+.pa-reference-picker__empty { padding: 30px 0; color: var(--ink-3); text-align: center; }
+.pa-reference-controls { position: relative; flex: 0 0 auto; pointer-events: auto; }
+.pa-transplant .pa-reference-controls__button { min-height: 30px; background: var(--paper-2); color: var(--ink-2); font-size: var(--type-micro); }
+.pa-reference-controls__popover { position: absolute; z-index: 13; bottom: calc(100% + 8px); right: 0; display: grid; width: min(340px,calc(100vw - 32px)); gap: 12px; padding: 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--paper); box-shadow: 0 16px 34px rgb(16 24 40 / .16); pointer-events: auto; }
+.pa-reference-controls__group { display: grid; gap: 7px; }
+.pa-reference-controls__group > strong { color: var(--ink-3); font-size: var(--type-micro); }
+.pa-reference-controls__group > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.pa-reference-controls__group button { min-height: 28px; padding: 0 9px; border: 1px solid var(--line-2); background: var(--paper-2); color: var(--ink-2); }
+.pa-reference-controls__group button.is-selected { border-color: var(--coral); background: var(--coral-soft); color: var(--coral-deep); }
 /* Reproject Excalidraw's native zoom controls; its action owns zoom math and
    history. Keep the rest of its footer out of the transplant shell. */
 .spatial-editor[data-shell="transplant"] .spatial-canvas-host .excalidraw .layer-ui__wrapper__footer { display: flex !important; }

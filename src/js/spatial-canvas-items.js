@@ -234,8 +234,8 @@ function imageSize(item) {
   const sourceHeight = positiveInteger(item?.height) || 900;
   const scale = Math.min(420 / sourceWidth, 320 / sourceHeight, 1);
   return {
-    width: Math.max(120, Math.round(sourceWidth * scale)),
-    height: Math.max(90, Math.round(sourceHeight * scale)),
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale)),
   };
 }
 
@@ -274,37 +274,34 @@ export function uniqueSpatialBusinessItems(items, elements = []) {
   });
 }
 
-function appendBoundArrow(element, arrowId) {
-  const boundElements = Array.from(element?.boundElements || []);
-  if (boundElements.some((bound) => bound?.id === arrowId && bound?.type === 'arrow')) {
-    return element;
-  }
-  return { ...element, boundElements: [...boundElements, { id: arrowId, type: 'arrow' }] };
+export function mergeSpatialNodeBatch(elements, additions) {
+  return [...Array.from(elements || []), ...Array.from(additions || [])];
 }
 
-export function mergeSpatialNodeBatch(elements, additions, lineageBindings = []) {
-  const bindingsByArrow = new Map();
-  const arrowsByEndpoint = new Map();
-  Array.from(lineageBindings || []).forEach((binding) => {
-    if (!binding?.arrow_id || !binding?.parent_element_id || !binding?.child_element_id) return;
-    bindingsByArrow.set(binding.arrow_id, binding);
-    [binding.parent_element_id, binding.child_element_id].forEach((elementId) => {
-      const arrowIds = arrowsByEndpoint.get(elementId) || [];
-      arrowIds.push(binding.arrow_id);
-      arrowsByEndpoint.set(elementId, arrowIds);
-    });
-  });
-  return [...Array.from(elements || []), ...Array.from(additions || [])].map((element) => {
-    const binding = bindingsByArrow.get(element?.id);
-    if (binding) {
-      return {
-        ...element,
-        startBinding: { elementId: binding.parent_element_id, focus: 0, gap: 12 },
-        endBinding: { elementId: binding.child_element_id, focus: 0, gap: 12 },
-      };
+// Only PA-generated presentation is normalized. User-authored arrows, text,
+// cropping and transforms remain Excalidraw content, not PA-owned metadata.
+export function normalizeSpatialBusinessPresentation(elements) {
+  const source = Array.from(elements || []);
+  const legacyArrowIds = new Set(source.filter((element) => (
+    element?.type === 'arrow' && /^spatial_lineage_/.test(String(element.id || ''))
+  )).map((element) => element.id));
+  let changed = legacyArrowIds.size > 0;
+  const normalized = source.filter((element) => !legacyArrowIds.has(element?.id)).map((element) => {
+    let next = element;
+    if (element?.type === 'image' && element?.customData?.asset_id && element.roundness) {
+      next = { ...next, roundness: null };
+      changed = true;
     }
-    return (arrowsByEndpoint.get(element?.id) || []).reduce(appendBoundArrow, element);
+    if (legacyArrowIds.size && Array.isArray(element?.boundElements)) {
+      const boundElements = element.boundElements.filter((bound) => !legacyArrowIds.has(bound?.id));
+      if (boundElements.length !== element.boundElements.length) {
+        next = { ...next, boundElements };
+        changed = true;
+      }
+    }
+    return next;
   });
+  return changed ? normalized : elements;
 }
 
 function parentElementFor(item, elements) {
@@ -385,31 +382,6 @@ function placementFor(item, elements, appState, batchIndex, insertionPoint = nul
   }, elements);
 }
 
-function lineageArrowGeometry(parent, placement) {
-  const parentX = Number(parent.x);
-  const parentY = Number(parent.y);
-  const parentWidth = Number(parent.width);
-  const parentHeight = Number(parent.height);
-  const horizontal = (placement.x + placement.width / 2) - (parentX + parentWidth / 2);
-  const vertical = (placement.y + placement.height / 2) - (parentY + parentHeight / 2);
-  if (Math.abs(vertical) > Math.abs(horizontal)) {
-    const direction = vertical < 0 ? -1 : 1;
-    const gap = Math.max(40, Math.abs(vertical) - parentHeight / 2 - placement.height / 2 - 24);
-    return {
-      x: parentX + parentWidth / 2,
-      y: parentY + (direction < 0 ? -12 : parentHeight + 12),
-      points: [[0, 0], [0, direction * gap]],
-    };
-  }
-  const direction = horizontal < 0 ? -1 : 1;
-  const gap = Math.max(40, Math.abs(horizontal) - parentWidth / 2 - placement.width / 2 - 24);
-  return {
-    x: parentX + (direction < 0 ? -12 : parentWidth + 12),
-    y: parentY + parentHeight / 2,
-    points: [[0, 0], [direction * gap, 0]],
-  };
-}
-
 export function buildSpatialNodeBatch(items, {
   elements = [],
   appState = {},
@@ -419,7 +391,6 @@ export function buildSpatialNodeBatch(items, {
   const skeletons = [];
   const proxyRequests = [];
   const nodeIds = [];
-  const lineageBindings = [];
   const working = liveElements(elements);
   Array.from(items || []).forEach((item, index) => {
     const placement = placementFor(item, working, appState, index, insertionPoint);
@@ -486,39 +457,17 @@ export function buildSpatialNodeBatch(items, {
         strokeWidth: 1,
         strokeStyle: 'solid',
         roughness: 0,
-        roundness: { type: 3 },
+        roundness: null,
         customData: refs,
       };
       proxyRequests.push({ elementId: nodeId, fileId, assetId: refs.asset_id });
-    }
-    if (placement.parent) {
-      const arrowId = idFactory('spatial_lineage');
-      const arrow = lineageArrowGeometry(placement.parent, placement);
-      skeletons.push({
-        id: arrowId,
-        type: 'arrow',
-        x: arrow.x,
-        y: arrow.y,
-        points: arrow.points,
-        strokeColor: '#c85f3b',
-        strokeWidth: 2,
-        strokeStyle: 'solid',
-        roughness: 0,
-        startArrowhead: null,
-        endArrowhead: 'arrow',
-      });
-      lineageBindings.push({
-        arrow_id: arrowId,
-        parent_element_id: placement.parent.id,
-        child_element_id: nodeId,
-      });
     }
     skeletons.push(node);
     nodeIds.push(nodeId);
     working.push(node);
   });
   return {
-    skeletons, proxyRequests, nodeIds, lineageBindings,
+    skeletons, proxyRequests, nodeIds, lineageBindings: [],
   };
 }
 

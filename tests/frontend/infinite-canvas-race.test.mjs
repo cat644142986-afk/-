@@ -1087,13 +1087,17 @@ test('Canvas reference entry reviews the exact source or Result without creating
   const source = sourceElement('canvas:a');
   mount.options.onSelectionChange(source);
   await settle();
-  const referenceButton = new FakeElement('[data-spatial-reference]');
-  await harness.documentRef.node('#page-canvas').emit('click', { target: referenceButton });
+  await mount.options.onReferenceReview({
+    sourceElementId: source.id, userRequest: '参考当前素材生成新的商业方案',
+    outputRatio: '4:3', outputResolution: '4k',
+  });
   assert.equal(previewCalls.length, 1);
   assert.deepEqual(previewCalls[0].source_asset_ids, [SOURCE_ASSET_ID]);
   assert.equal(previewCalls[0].ui_context.input_surface, 'canvas-reference');
   assert.equal(previewCalls[0].prompt_version, 'prompt_v1');
   assert.equal(previewCalls[0].design_skill_id, '');
+  assert.equal(previewCalls[0].output_spec.ratio, '4:3');
+  assert.equal(previewCalls[0].output_spec.resolution, '4k');
   assert.match(harness.documentRef.node('#spatial-inspector').innerHTML, /参考生成/);
   assert.match(harness.documentRef.node('#spatial-inspector').innerHTML, /当前素材/);
   assert.equal(executeCalls, 0);
@@ -1101,7 +1105,10 @@ test('Canvas reference entry reviews the exact source or Result without creating
   const result = resultElement('canvas:a');
   mount.options.onSelectionChange(result);
   await settle();
-  await harness.documentRef.node('#page-canvas').emit('click', { target: referenceButton });
+  await mount.options.onReferenceReview({
+    sourceElementId: result.id, userRequest: '参考当前结果生成新的商业方案',
+    outputRatio: 'original', outputResolution: '2k',
+  });
   assert.equal(previewCalls.length, 2);
   assert.deepEqual(previewCalls[1].source_asset_ids, [RESULT_ASSET_ID]);
   assert.equal(previewCalls[1].spatial_source_element_id, result.id);

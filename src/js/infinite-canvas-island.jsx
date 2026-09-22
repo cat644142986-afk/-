@@ -19,6 +19,7 @@ import { CanvasTransplantShell } from './canvas-transplant-shell.jsx';
 import {
   buildSpatialNodeBatch,
   mergeSpatialNodeBatch,
+  normalizeSpatialBusinessPresentation,
   selectedSpatialBusinessElement,
   spatialBusinessKey,
   spatialScenePointFromViewport,
@@ -204,11 +205,14 @@ function runtimeSceneForTheme(scene, theme) {
   const appState = source.appState || source.app_state || {};
   return {
     ...source,
+    elements: source.elements
+      ? normalizeSpatialBusinessPresentation(source.elements)
+      : source.elements,
     appState: {
       ...appState,
       viewBackgroundColor: themedCanvasBackground(appState.viewBackgroundColor, theme),
-      currentItemFontFamily: FONT_FAMILY.Helvetica,
-      currentItemRoughness: 0,
+      currentItemFontFamily: appState.currentItemFontFamily ?? FONT_FAMILY.Helvetica,
+      currentItemRoughness: appState.currentItemRoughness ?? 0,
     },
   };
 }
@@ -218,8 +222,6 @@ function persistentAppState(appState) {
   const current = String(source.viewBackgroundColor || '').trim().toLowerCase();
   return {
     ...source,
-    currentItemFontFamily: FONT_FAMILY.Helvetica,
-    currentItemRoughness: 0,
     ...(Object.values(THEMED_CANVAS_BACKGROUNDS).includes(current)
       ? { viewBackgroundColor: THEMED_CANVAS_BACKGROUNDS.light }
       : {}),
@@ -235,6 +237,7 @@ function SpatialCanvas({
   onReady,
   onSelectionChange,
   onSelectionContextChange,
+  onReferenceReview,
   initialShellMode = 'legacy',
   onTransplantReady,
   resolveProxyUrl,
@@ -253,6 +256,8 @@ function SpatialCanvas({
     () => runtimeSceneForTheme(canvasDocument.scene, theme),
     [canvasDocument.scene, theme],
   );
+  const presentationCleanupNeeded = initialScene.elements !== canvasDocument.scene?.elements;
+  const presentationCleanupApplied = useRef(false);
   const [videoPlayback, setVideoPlayback] = useState(() => (
     createSpatialVideoPlaybackState(canvasDocument?.id)
   ));
@@ -417,10 +422,16 @@ function SpatialCanvas({
       });
       readyFrame.current = null;
       onReady?.(api, synchronizeScene, videoControls, setShellMode, setTransplantBusiness);
+      if (presentationCleanupNeeded && !presentationCleanupApplied.current) {
+        presentationCleanupApplied.current = true;
+        // Persist the one-time removal of PA-generated decoration, without
+        // touching user-authored Excalidraw shapes or formatting.
+        void synchronizeScene(api.getSceneElementsIncludingDeleted(), api.getAppState());
+      }
     };
     if (readyFrame.current !== null) cancelAnimationFrame(readyFrame.current);
     notifyReady();
-  }, [hydrateProxyFiles, onPointerBusinessTarget, onReady, synchronizeScene, videoControls]);
+  }, [hydrateProxyFiles, onPointerBusinessTarget, onReady, presentationCleanupNeeded, synchronizeScene, videoControls]);
 
   const handleChange = useCallback((elements, appState) => {
     const croppingElementId = String(appState?.croppingElementId || '');
@@ -485,6 +496,7 @@ function SpatialCanvas({
       view={transplantView}
       business={transplantBusiness}
       onTool={(type) => apiRef.current?.setActiveTool({ type })}
+      onReferenceReview={onReferenceReview}
     />}
     </>
   );
@@ -557,7 +569,7 @@ export function mountInfiniteCanvas(host, options) {
     ));
     const additions = convertToExcalidrawElements(normalizedSkeletons, { regenerateIds: false });
     const selectedElementIds = Object.fromEntries(batch.nodeIds.map((id) => [id, true]));
-    const nextElements = mergeSpatialNodeBatch(existing, additions, batch.lineageBindings);
+    const nextElements = mergeSpatialNodeBatch(existing, additions);
     const boundExisting = nextElements.slice(0, existing.length);
     const boundAdditions = nextElements.slice(existing.length);
     const nextAppState = { ...appState, selectedElementIds };
