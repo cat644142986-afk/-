@@ -6,6 +6,10 @@ import './preview.css';
 
 // Screenshot fixture only: actual transplanted components, synthetic content,
 // no Task, Provider, packaged runtime or durable asset writes.
+const fixtureParams = new URLSearchParams(location.search);
+const fixtureTheme = fixtureParams.get('theme') === 'dark' ? 'dark' : 'light';
+document.documentElement.dataset.theme = fixtureTheme;
+
 function thumbnail(color, label) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600"><rect width="600" height="600" fill="#f4f0e9"/><rect x="180" y="88" width="240" height="424" rx="8" fill="${color}"/><text x="300" y="295" fill="white" font-family="Arial" font-size="44" font-weight="700" text-anchor="middle">${label}</text><text x="300" y="340" fill="white" font-family="Arial" font-size="18" text-anchor="middle">VISUAL STUDY</text></svg>`)}`;
 }
@@ -40,7 +44,7 @@ function Fixture() {
   const selected = images.filter((element) => element.id === selectedId);
   const business = { elementId: selectedId, asset: assets[selectedId], conversationInput: '', reviewing: false };
   return <div className="fixture-window">
-    <div className="fixture-titlebar"><strong>Product Atelier</strong><span>Canvas / 创作现场</span><small>静态组件预览 · 非 packaged</small></div>
+    <div className="fixture-titlebar"><strong>Product Atelier</strong><span>Canvas / 创作现场</span><small>{fixtureTheme === 'dark' ? 'Dark' : 'Light'} · 静态组件预览</small></div>
     <div id="spatial-canvas-host" className="fixture-canvas">
       <div className="fixture-grid" />
       {images.map((element) => <img key={element.id} src={files[element.fileId].dataURL} alt="合成示例素材" className={`fixture-object${element.id === selectedId ? ' is-selected' : ''}`} style={{ left: element.x, top: element.y, width: element.width, height: element.height }} />)}
@@ -51,7 +55,7 @@ function Fixture() {
 
 createRoot(document.getElementById('root')).render(<Fixture />);
 
-const state = new URLSearchParams(location.search).get('state');
+const state = fixtureParams.get('state');
 if (state === 'picker' || state === 'tray' || state === 'controls') {
   setTimeout(() => document.querySelector('.pa-reference-tray__add')?.click(), 500);
   if (state === 'tray' || state === 'controls') {

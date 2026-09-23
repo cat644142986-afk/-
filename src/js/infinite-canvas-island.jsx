@@ -186,21 +186,26 @@ async function waitForVisibleCanvasViewport(api, host, maxFrames = 60) {
   return false;
 }
 
-const THEMED_CANVAS_BACKGROUNDS = Object.freeze({
-  light: '#d4d0cb',
-  dark: '#cfd3d7',
-});
+const PRODUCT_CANVAS_BACKGROUNDS = Object.freeze([
+  '#e7e6e3',
+  '#222528',
+  '#d4d0cb',
+  '#cfd3d7',
+]);
+// Product Atelier owns the surrounding UI theme and Canvas surface tokens.
+// Keep Excalidraw's document renderer stable so switching PA Light/Dark never
+// remaps user-authored element colors.
+const EXCALIDRAW_DOCUMENT_THEME = 'light';
+const EXCALIDRAW_DOCUMENT_BACKGROUND = 'transparent';
 
-function themedCanvasBackground(value, theme) {
+function runtimeCanvasBackground(value) {
   const current = String(value || '').trim().toLowerCase();
-  const usesProductDefault = !current
-    || Object.values(THEMED_CANVAS_BACKGROUNDS).includes(current);
-  return usesProductDefault
-    ? THEMED_CANVAS_BACKGROUNDS[theme === 'dark' ? 'dark' : 'light']
+  return !current || PRODUCT_CANVAS_BACKGROUNDS.includes(current)
+    ? EXCALIDRAW_DOCUMENT_BACKGROUND
     : value;
 }
 
-function runtimeSceneForTheme(scene, theme) {
+function runtimeSceneForCanvas(scene) {
   const source = scene && typeof scene === 'object' ? scene : {};
   const appState = source.appState || source.app_state || {};
   return {
@@ -210,7 +215,7 @@ function runtimeSceneForTheme(scene, theme) {
       : source.elements,
     appState: {
       ...appState,
-      viewBackgroundColor: themedCanvasBackground(appState.viewBackgroundColor, theme),
+      viewBackgroundColor: runtimeCanvasBackground(appState.viewBackgroundColor),
       currentItemFontFamily: appState.currentItemFontFamily ?? FONT_FAMILY.Helvetica,
       currentItemRoughness: appState.currentItemRoughness ?? 0,
     },
@@ -222,8 +227,8 @@ function persistentAppState(appState) {
   const current = String(source.viewBackgroundColor || '').trim().toLowerCase();
   return {
     ...source,
-    ...(Object.values(THEMED_CANVAS_BACKGROUNDS).includes(current)
-      ? { viewBackgroundColor: THEMED_CANVAS_BACKGROUNDS.light }
+    ...([EXCALIDRAW_DOCUMENT_BACKGROUND, ...PRODUCT_CANVAS_BACKGROUNDS].includes(current)
+      ? { viewBackgroundColor: PRODUCT_CANVAS_BACKGROUNDS[2] }
       : {}),
   };
 }
@@ -243,9 +248,6 @@ function SpatialCanvas({
   resolveProxyUrl,
   resolveVideoAsset,
 }) {
-  const [theme, setTheme] = useState(() => (
-    document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
-  ));
   const [shellMode, setShellMode] = useState(initialShellMode);
   const [transplantView, setTransplantView] = useState({ selected: [], appState: null });
   const [transplantBusiness, setTransplantBusiness] = useState({});
@@ -253,8 +255,8 @@ function SpatialCanvas({
   const shellModeRef = useRef(shellMode);
   shellModeRef.current = shellMode;
   const initialScene = React.useMemo(
-    () => runtimeSceneForTheme(canvasDocument.scene, theme),
-    [canvasDocument.scene, theme],
+    () => runtimeSceneForCanvas(canvasDocument.scene),
+    [canvasDocument.scene],
   );
   const presentationCleanupNeeded = initialScene.elements !== canvasDocument.scene?.elements;
   const presentationCleanupApplied = useRef(false);
@@ -282,22 +284,6 @@ function SpatialCanvas({
         : playSpatialVideo(current, elementId)
     )),
   }), []);
-
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
-      setTheme(nextTheme);
-      const api = apiRef.current;
-      if (!api) return;
-      const appState = api.getAppState();
-      const viewBackgroundColor = themedCanvasBackground(appState?.viewBackgroundColor, nextTheme);
-      if (viewBackgroundColor !== appState?.viewBackgroundColor) {
-        api.updateScene({ appState: { viewBackgroundColor } });
-      }
-    });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => observer.disconnect();
-  }, []);
 
   const hydrateProxyFiles = useCallback(async (elements) => {
     const api = apiRef.current;
@@ -483,7 +469,7 @@ function SpatialCanvas({
       validateEmbeddable={validateVideoEmbeddable}
       langCode="zh-CN"
       name={canvasDocument.name}
-      theme={theme}
+      theme={EXCALIDRAW_DOCUMENT_THEME}
       aiEnabled={false}
       autoFocus
       handleKeyboardGlobally={false}

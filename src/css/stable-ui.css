@@ -63,6 +63,25 @@
   --type-body: 14px;
   --type-title: 24px;
   --type-display: 64px;
+  /* Canvas Visual Unification: software chrome only. These tokens never style
+     Excalidraw content elements or imported user artwork. */
+  --canvas-ui-background: #e7e6e3;
+  --canvas-ui-grid: rgba(33, 36, 40, .09);
+  --canvas-ui-surface: rgba(255, 254, 252, .94);
+  --canvas-ui-surface-solid: #fffefc;
+  --canvas-ui-surface-muted: #f2f0ec;
+  --canvas-ui-text: #202328;
+  --canvas-ui-text-muted: #666b72;
+  --canvas-ui-border: rgba(32, 35, 40, .16);
+  --canvas-ui-border-subtle: rgba(32, 35, 40, .09);
+  --canvas-ui-accent: #d95f42;
+  --canvas-ui-accent-strong: #a9402a;
+  --canvas-ui-accent-soft: rgba(217, 95, 66, .12);
+  --canvas-ui-focus: #c94f34;
+  --canvas-ui-radius-control: 8px;
+  --canvas-ui-radius-surface: 12px;
+  --canvas-ui-shadow-surface: 0 7px 22px rgba(27, 29, 32, .11), 0 1px 2px rgba(27, 29, 32, .06);
+  --canvas-ui-shadow-overlay: 0 18px 48px rgba(22, 24, 27, .18), 0 2px 8px rgba(22, 24, 27, .08);
   font-family: "Segoe UI Variable", "Microsoft YaHei UI", Inter, "SF Pro Display", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -93,6 +112,21 @@
   --shadow-card: 0 14px 34px rgba(0, 0, 0, .2);
   --shadow-float: 0 22px 56px rgba(0, 0, 0, .35);
   --canvas-checker: #e3e5e7;
+  --canvas-ui-background: #222528;
+  --canvas-ui-grid: rgba(255, 255, 255, .075);
+  --canvas-ui-surface: rgba(42, 45, 49, .94);
+  --canvas-ui-surface-solid: #2a2d31;
+  --canvas-ui-surface-muted: #34383d;
+  --canvas-ui-text: #f2f1ed;
+  --canvas-ui-text-muted: #b3b7bd;
+  --canvas-ui-border: rgba(255, 255, 255, .16);
+  --canvas-ui-border-subtle: rgba(255, 255, 255, .09);
+  --canvas-ui-accent: #ff896a;
+  --canvas-ui-accent-strong: #ffad98;
+  --canvas-ui-accent-soft: rgba(255, 137, 106, .15);
+  --canvas-ui-focus: #ff9a80;
+  --canvas-ui-shadow-surface: 0 9px 26px rgba(0, 0, 0, .28), 0 1px 2px rgba(0, 0, 0, .32);
+  --canvas-ui-shadow-overlay: 0 20px 52px rgba(0, 0, 0, .42), 0 2px 8px rgba(0, 0, 0, .32);
 }
 
 :root[data-colorway="mono"] {
@@ -1830,6 +1864,224 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .pa-transplant__create { right: 9px; left: 9px; justify-content: flex-end; }
   .pa-transplant__selection-row strong { font-size: 11px; }
   .pa-transplant__selection-row [data-spatial-action="fine-edit"] { display: none; }
+}
+
+/* Canvas Visual Unification. This layer only restyles PA chrome and stable
+   Excalidraw theme variables; it does not touch scene elements or depend on
+   new Excalidraw DOM ordering. */
+.spatial-workspace[data-view="editor"] {
+  color: var(--canvas-ui-text);
+  background: var(--canvas-ui-surface-solid);
+}
+.spatial-workspace[data-view="editor"] .spatial-toolbar,
+.spatial-workspace[data-view="editor"] .spatial-status {
+  border-color: var(--canvas-ui-border-subtle);
+  background: var(--canvas-ui-surface-solid);
+  color: var(--canvas-ui-text);
+}
+.spatial-editor { background: var(--canvas-ui-background); }
+.spatial-canvas-host { color-scheme: light; }
+.spatial-canvas-host .excalidraw {
+  --color-primary: var(--canvas-ui-accent);
+  --color-primary-darker: var(--canvas-ui-accent-strong);
+  --color-primary-light: var(--canvas-ui-accent-soft);
+}
+.pa-transplant {
+  color: var(--canvas-ui-text);
+  font-family: "Segoe UI Variable", "Microsoft YaHei UI", Inter, sans-serif;
+}
+.pa-transplant__tools,
+.pa-transplant__create {
+  gap: 3px;
+  min-height: 44px;
+  padding: 4px;
+  border-color: var(--canvas-ui-border);
+  border-radius: var(--canvas-ui-radius-surface);
+  background: var(--canvas-ui-surface);
+  box-shadow: var(--canvas-ui-shadow-surface);
+  backdrop-filter: blur(16px) saturate(1.08);
+}
+.pa-transplant__tools > span { background: var(--canvas-ui-border); }
+.pa-transplant button {
+  min-height: 34px;
+  border-radius: var(--canvas-ui-radius-control);
+  color: var(--canvas-ui-text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+.pa-transplant button:hover { background: var(--canvas-ui-surface-muted); color: var(--canvas-ui-text); }
+.pa-transplant button[aria-pressed="true"] {
+  background: var(--canvas-ui-accent-soft);
+  color: var(--canvas-ui-accent-strong);
+}
+.pa-transplant button:disabled { opacity: .48; }
+.pa-transplant__create button:first-child,
+.pa-transplant__selection-row .is-primary,
+.pa-transplant__composer-footer > button,
+.pa-reference-picker__confirm {
+  background: var(--dark);
+  color: #fff !important;
+}
+:root[data-theme="dark"] .pa-transplant__create button:first-child,
+:root[data-theme="dark"] .pa-transplant__selection-row .is-primary,
+:root[data-theme="dark"] .pa-transplant__composer-footer > button,
+:root[data-theme="dark"] .pa-reference-picker__confirm {
+  background: #111315;
+  color: #fff !important;
+}
+.pa-transplant__create button:first-child:hover,
+.pa-transplant__selection-row .is-primary:hover,
+.pa-transplant__composer-footer > button:hover,
+.pa-reference-picker__confirm:hover { background: var(--canvas-ui-accent-strong); color: #fff !important; }
+.pa-transplant button:focus-visible,
+.pa-transplant textarea:focus-visible,
+.pa-reference-picker button:focus-visible {
+  outline: 2px solid var(--canvas-ui-focus);
+  outline-offset: 2px;
+}
+.pa-transplant__selection,
+.pa-transplant__popover,
+.pa-reference-tray__preview,
+.pa-reference-picker,
+.pa-reference-controls__popover,
+.spatial-editor .spatial-inspector {
+  border-color: var(--canvas-ui-border);
+  border-radius: var(--canvas-ui-radius-surface);
+  background: var(--canvas-ui-surface);
+  color: var(--canvas-ui-text);
+  box-shadow: var(--canvas-ui-shadow-overlay);
+  backdrop-filter: blur(18px) saturate(1.06);
+}
+.pa-transplant__popover { min-width: 144px; padding: 5px; }
+.pa-transplant__popover button { min-height: 36px; padding-inline: 10px; }
+.pa-transplant__selection { padding: 5px; }
+.pa-transplant__selection-row { gap: 3px; min-height: 38px; }
+.pa-transplant__selection-row strong {
+  padding-inline: 8px;
+  color: var(--canvas-ui-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+.pa-transplant__hint { color: var(--canvas-ui-text-muted); font-size: 10px; }
+.pa-transplant__composer { gap: 5px; border-color: var(--canvas-ui-border-subtle); }
+.pa-transplant__composer-main { gap: 8px; }
+.pa-transplant__composer textarea {
+  min-height: 40px;
+  padding: 9px 10px;
+  color: var(--canvas-ui-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.pa-transplant__composer textarea::placeholder { color: var(--canvas-ui-text-muted); opacity: .84; }
+.pa-transplant__composer.is-open textarea { min-height: 76px; }
+.pa-transplant__composer-footer { gap: 9px; padding: 1px 5px 5px 9px; }
+.pa-transplant__composer-footer small { color: var(--canvas-ui-text-muted); font-size: 10px; }
+.pa-reference-tray { padding-left: 6px; }
+.pa-reference-tray__list { gap: 6px; }
+.pa-reference-tray__thumbnail,
+.pa-reference-tray__add,
+.pa-reference-picker__selected,
+.pa-reference-controls__group button,
+.pa-transplant .pa-reference-controls__button {
+  border-color: var(--canvas-ui-border);
+  border-radius: var(--canvas-ui-radius-control);
+  background: var(--canvas-ui-surface-muted);
+  color: var(--canvas-ui-text-muted);
+}
+.pa-reference-tray__thumbnail[aria-pressed="true"],
+.pa-reference-tray__add:hover,
+.pa-reference-controls__group button.is-selected {
+  border-color: var(--canvas-ui-accent);
+  background: var(--canvas-ui-accent-soft);
+  color: var(--canvas-ui-accent-strong);
+  box-shadow: 0 0 0 2px var(--canvas-ui-accent-soft);
+}
+.pa-reference-tray__badge { background: rgba(22, 24, 27, .82); }
+.pa-reference-tray__remove { background: #202328 !important; }
+.pa-reference-tray__preview > div,
+.pa-reference-picker__list img,
+.pa-reference-picker__selected img,
+.pa-reference-picker__fallback { background: var(--canvas-ui-surface-muted); }
+.pa-reference-tray__preview span,
+.pa-reference-picker > header small,
+.pa-reference-picker__list small,
+.pa-reference-picker__selected small,
+.pa-reference-controls__group > strong { color: var(--canvas-ui-text-muted); }
+.pa-reference-picker {
+  width: min(372px, calc(100vw - 28px));
+  max-height: min(390px, calc(100vh - 28px));
+  gap: 12px;
+  padding: 13px;
+}
+.pa-reference-picker > header strong { color: var(--canvas-ui-text); font-size: 12px; }
+.pa-reference-picker__list { gap: 5px; scrollbar-width: thin; }
+.pa-reference-picker__list button,
+.pa-reference-picker__selected {
+  min-height: 56px;
+  gap: 11px;
+  padding: 8px;
+  border-radius: var(--canvas-ui-radius-control);
+  color: var(--canvas-ui-text-muted);
+}
+.pa-reference-picker__list button:hover { background: var(--canvas-ui-surface-muted); color: var(--canvas-ui-text); }
+.pa-reference-controls__popover {
+  top: calc(100% + 8px);
+  bottom: auto;
+  width: min(344px, calc(100vw - 28px));
+  max-height: calc(100vh - 88px);
+  gap: 14px;
+  padding: 13px;
+  overflow-y: auto;
+}
+.pa-reference-controls__group { gap: 8px; }
+.pa-reference-controls__group > div { gap: 6px; }
+.pa-reference-controls__group button { min-height: 30px; padding-inline: 10px; }
+.spatial-editor .spatial-inspector header { border-color: var(--canvas-ui-border-subtle); }
+.spatial-editor .spatial-inspector,
+.spatial-editor .spatial-inspector input,
+.spatial-editor .spatial-inspector textarea,
+.spatial-editor .spatial-inspector select { color: var(--canvas-ui-text); }
+
+/* Canvas-only notifications. Other Product Atelier pages retain their formal
+   release styling. */
+.app-shell.is-spatial-workspace .toast-wrap { top: 64px; right: 14px; gap: 8px; }
+.app-shell.is-spatial-workspace .toast {
+  max-width: min(360px, calc(100vw - 84px));
+  padding: 10px 12px;
+  border-color: var(--canvas-ui-border);
+  border-radius: var(--canvas-ui-radius-surface);
+  background: color-mix(in srgb, var(--dark) 94%, transparent);
+  box-shadow: var(--canvas-ui-shadow-overlay);
+  font-size: 11px;
+  backdrop-filter: blur(16px);
+}
+
+@media (max-width: 1080px), (max-height: 680px) {
+  .pa-transplant__tools { top: 10px; left: 10px; }
+  .pa-transplant__create { top: 10px; right: 10px; }
+  .pa-transplant__tools,
+  .pa-transplant__create { min-height: 40px; padding: 3px; }
+  .pa-transplant button { min-height: 32px; padding-inline: 8px; }
+  .pa-transplant__selection { max-width: calc(100% - 20px); padding: 4px; }
+  .pa-transplant__selection-row { min-height: 35px; }
+  .pa-transplant__composer.is-open textarea { min-height: 62px; }
+  .pa-reference-picker { max-height: calc(100vh - 20px); }
+  .pa-reference-controls__popover { max-height: calc(100vh - 64px); }
+}
+
+@media (max-width: 760px) {
+  .pa-transplant__composer-footer { flex-wrap: wrap; }
+  .pa-transplant__composer-footer small { flex: 1 1 100%; }
+  .pa-reference-controls__popover { right: auto; left: 0; }
+  .app-shell.is-spatial-workspace .toast-wrap { right: 8px; }
+}
+
+@media (max-height: 680px) {
+  .pa-reference-controls__popover {
+    top: auto;
+    bottom: calc(100% + 8px);
+  }
 }
 .canvas-save-state { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .canvas-save-state > span { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px color-mix(in srgb,var(--green) 13%,transparent); }
