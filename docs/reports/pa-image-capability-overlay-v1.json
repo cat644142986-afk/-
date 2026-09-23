@@ -1,0 +1,115 @@
+{
+  "format_version": 1,
+  "kind": "product-atelier-image-capability-overlay",
+  "status": "offline-verified",
+  "source_checkpoint": "baad1c7d8629711f93ca2f71d47552118e0825b9",
+  "overlay": {
+    "schema_version": "pa-image-capability-overlay-v1",
+    "revision": "2026-09-23.1",
+    "sha256": "1dad1b04f9860fd158ab9ca2cdfbf2ab21b6d249e9760308741f68cc82833ce6",
+    "routing_policy_included": false,
+    "provider_facts_included": false
+  },
+  "catalog_binding": {
+    "provider": "lk-ai-model-center",
+    "normalized_catalog_sha256": "486a4b7c07c74e869e4adbaaea264390836b89a66e69147f4958a94e065d7cf8",
+    "fetched_at": "2026-09-23T12:34:30.511+00:00",
+    "image_model_count": 19,
+    "binding_match": true,
+    "generation_calls": 0
+  },
+  "classification": {
+    "stable": [],
+    "experimental": [
+      "tt-image-2"
+    ],
+    "candidate": [
+      "banana-2",
+      "banana-2-token",
+      "banana-pro",
+      "banana-pro-token",
+      "doubao-seedream-4-5-251128",
+      "doubao-seedream-5-0-260128",
+      "doubao-seedream-5-0-pro-260628",
+      "gk-image-2.0",
+      "kling-v3",
+      "kling-v3-omni",
+      "mj_imagine",
+      "qwen-image",
+      "tt-image-2-token",
+      "tt-image-2.5",
+      "tt-image-2.5-token",
+      "vidu-image-2",
+      "wan2.6-image",
+      "wan2.7-image"
+    ],
+    "blocked": []
+  },
+  "legacy_execution_ids": {
+    "gpt-image-2": {
+      "status": "stable",
+      "catalog_presence": "absent-from-bound-catalog",
+      "composer_capable_now": true,
+      "verified_task_kinds": [
+        "edit-current-image",
+        "variant"
+      ],
+      "reference_generate": "experimental-packaged-offline",
+      "tested_output": [
+        "1:1@2k"
+      ]
+    },
+    "gemini-3.1-flash-image-preview": {
+      "status": "experimental",
+      "catalog_presence": "absent-from-bound-catalog",
+      "composer_capable_now": false,
+      "verified_task_kinds": [
+        "edit-current-image:bounded-outpaint-only"
+      ],
+      "tested_output": [
+        "4:3@2k"
+      ]
+    }
+  },
+  "composer_decision": {
+    "new_catalog_models_to_expose_now": [],
+    "existing_execution_ids_that_may_remain": [
+      "gpt-image-2"
+    ],
+    "reason": "No current Catalog model id has both exact-id Provider evidence and a closed PA adapter/Governor path. Historical evidence remains bound to the exact legacy execution id and is not inherited by tt-image-2 or banana aliases."
+  },
+  "real_verification_required": {
+    "after_existing_adapter_only": [
+      "tt-image-2"
+    ],
+    "after_model_specific_adapter_and_offline_gate": [
+      "banana-2",
+      "banana-2-token",
+      "banana-pro",
+      "banana-pro-token",
+      "doubao-seedream-4-5-251128",
+      "doubao-seedream-5-0-260128",
+      "doubao-seedream-5-0-pro-260628",
+      "gk-image-2.0",
+      "kling-v3",
+      "kling-v3-omni",
+      "mj_imagine",
+      "qwen-image",
+      "tt-image-2-token",
+      "tt-image-2.5",
+      "tt-image-2.5-token",
+      "vidu-image-2",
+      "wan2.6-image",
+      "wan2.7-image"
+    ],
+    "legacy_general_canvas_path": [
+      "gemini-3.1-flash-image-preview"
+    ]
+  },
+  "boundaries": [
+    "Catalog availability, provider parameters and pricing remain dynamic provider facts and cannot upgrade Overlay status.",
+    "A provider family or marketing alias is not exact-model evidence.",
+    "Source-free text-to-image remains blocked in Overlay v1 because PA has not closed a durable source-free Task workflow.",
+    "No Smart Router, Composer model selector change, schema migration, paid generation or promotion was performed."
+  ]
+}

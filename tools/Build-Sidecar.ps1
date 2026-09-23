@@ -229,6 +229,7 @@ try {
             "python/server.py",
             "python/credential_store.py",
             "python/provider_catalog.py",
+            "python/model_capability_overlay.py",
             "python/atelier_ledger.py",
             "python/command_registry.py",
             "python/canvas_export.py",

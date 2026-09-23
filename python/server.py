@@ -140,6 +140,7 @@ try:
         ProviderCatalogStore,
         synchronize_catalog,
     )
+    from model_capability_overlay import build_image_capability_overlay
 except ImportError:  # Allows importing as python.server during local tests.
     from python.asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
     from python.canvas_export import CanvasExportError, render_canvas_png
@@ -259,6 +260,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         ProviderCatalogStore,
         synchronize_catalog,
     )
+    from python.model_capability_overlay import build_image_capability_overlay
 
 # ======================== GUI MODE STDOUT GUARD ========================
 # When running as windowed (no console) exe, sys.stdout/sys.stderr may be None.
@@ -6323,6 +6325,28 @@ async def get_provider_catalog(connection_id: str):
         "connection": _public_provider_connection(),
         "snapshot": latest,
     }
+
+
+@app.get("/api/provider-connections/{connection_id}/image-capabilities")
+async def get_provider_image_capabilities(connection_id: str):
+    """Join the latest provider facts to PA's independent evidence overlay."""
+    if connection_id != LK_CONNECTION_ID:
+        raise HTTPException(status_code=404, detail="Provider connection not found")
+    connection = PROVIDER_CATALOG_STORE.get_connection(connection_id)
+    latest = PROVIDER_CATALOG_STORE.latest_snapshot(connection_id)
+    if latest is None:
+        return build_image_capability_overlay(
+            {},
+            catalog_status=str(connection.get("catalog_status") or "unavailable"),
+        )
+    return build_image_capability_overlay(
+        latest.get("normalized_catalog") or {},
+        normalized_catalog_sha256=str(
+            latest.get("normalized_catalog_sha256") or ""
+        ),
+        catalog_fetched_at=str(latest.get("fetched_at") or ""),
+        catalog_status=str(connection.get("catalog_status") or "unavailable"),
+    )
 
 
 @app.delete("/api/provider-connections/{connection_id}")
