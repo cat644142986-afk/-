@@ -1,0 +1,81 @@
+{
+  "format_version": 1,
+  "kind": "product-atelier-model-identity-resolution",
+  "status": "offline-verified",
+  "source_checkpoint": "e6ee6029d6e2ffde74964c763e782d6157e5efb0",
+  "identity": {
+    "schema_version": "pa-model-identity-v1",
+    "revision": "2026-09-24.1",
+    "sha256": "43087239d27d56e702c1288f0aad7d22569db2bb5240b516c6b374dd00ed5f78",
+    "verified_alias_groups": 0,
+    "unresolved_relations": 6
+  },
+  "catalog_binding": {
+    "provider": "lk-ai-model-center",
+    "normalized_catalog_sha256": "486a4b7c07c74e869e4adbaaea264390836b89a66e69147f4958a94e065d7cf8",
+    "fetched_at": "2026-09-23T12:34:30.511+00:00",
+    "image_model_count": 19,
+    "read_only_sources": [
+      "v1/models snapshot",
+      "v1/media/models?type=image snapshot",
+      "v1/skills/models snapshot",
+      "v1/skills/guide snapshot",
+      "per-model pricing snapshots",
+      "historical PA task/provider evidence"
+    ],
+    "generation_calls": 0
+  },
+  "merge_rule": "Raw ids share a PA canonical identity only when explicit provider metadata or a formal equivalence receipt proves equivalence. Names, descriptions, parameter similarity, pricing channel labels and adapter-family compatibility are insufficient.",
+  "findings": {
+    "tt-image-2_vs_gpt-image-2": {
+      "status": "unresolved",
+      "merge_allowed": false,
+      "left_canonical_model_id": "pa:image:lk-ai-model-center:gpt-image-2",
+      "right_canonical_model_id": "pa:image:lk-ai-model-center:tt-image-2",
+      "evidence": [
+        "Current Catalog contains tt-image-2 but no gpt-image-2.",
+        "v1/models reports tt-image-2 owned_by=lingkeai and exposes no alias/upstream/canonical field.",
+        "Skill guide documents compatible endpoints using tt-image-2 ids only.",
+        "A pricing channel group happens to contain gpt-image-2 in its label, but a mutable routing label is not an identity declaration.",
+        "Historical PA receipts remain bound to the exact raw id gpt-image-2.",
+        "The existing PA adapter-family mapping proves request compatibility only, not model equivalence."
+      ]
+    },
+    "gemini_legacy": {
+      "gemini-3.1-flash-image-preview_to_banana-2": "unresolved",
+      "gemini-3-pro-image-preview_to_banana-pro": "unresolved",
+      "merge_allowed": false,
+      "reason": "The legacy Gemini ids are absent from the current Catalog. Banana marketing names and compatible parameter shapes do not provide an explicit alias or upstream model id."
+    },
+    "banana_aliases": {
+      "banana-2_to_banana-2-token": "unresolved-distinct-provider-ids",
+      "banana-pro_to_banana-pro-token": "unresolved-distinct-provider-ids",
+      "banana-2_to_banana-pro": "distinct-catalog-products",
+      "merge_allowed": false,
+      "reason": "Token labels describe provider routing/billing variants, but no canonical upstream identity is exposed; reference limits or parameter signatures can also differ."
+    }
+  },
+  "history_policy": {
+    "rewrite_historical_tasks": false,
+    "rewrite_historical_receipts": false,
+    "raw_provider_model_id_retained": true,
+    "canonical_identity_is_projection_only": true
+  },
+  "composer_decision": {
+    "canonical_models": [],
+    "new_catalog_models": [],
+    "legacy_execution_exception": {
+      "provider_model_id": "gpt-image-2",
+      "capability_status": "stable",
+      "catalog_presence": false,
+      "decision": "May remain in existing legacy execution surfaces, but is not eligible for a Catalog-driven Composer until current availability or an explicit identity mapping is proven."
+    },
+    "reason": "No current Catalog canonical identity is stable in Overlay v1, and no legacy/current alias relation is verified."
+  },
+  "boundaries": [
+    "No Composer UI or routing policy changed.",
+    "No provider generation endpoint was called.",
+    "No ledger schema or historical record was modified.",
+    "No release promotion was performed."
+  ]
+}

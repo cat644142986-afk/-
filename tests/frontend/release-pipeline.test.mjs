@@ -107,6 +107,7 @@ test('sidecar build cannot overwrite the formal portable release', () => {
   assert.match(script, /"python\/credential_store\.py"/);
   assert.match(script, /"python\/provider_catalog\.py"/);
   assert.match(script, /"python\/model_capability_overlay\.py"/);
+  assert.match(script, /"python\/model_identity\.py"/);
   assert.match(script, /"python\/command_registry\.py"/);
   assert.match(script, /"python\/canvas_export\.py"/);
   assert.match(script, /"python\/local_edit_contract\.py"/);
@@ -146,6 +147,7 @@ test('packaged schema upgrade gate preserves offline video evidence across resta
 
   assert.match(gate, /"python\/video_contract\.py": "image-to-video contract"/);
   assert.match(gate, /"python\/model_capability_overlay\.py": "model capability overlay"/);
+  assert.match(gate, /"python\/model_identity\.py": "model identity resolution"/);
   assert.match(gate, /manifest_tracks_video_contract/);
   assert.match(gate, /\/api\/progress\/\{job_id\}/);
   assert.match(gate, /\/api\/jobs\/\{job_id\}\/traces/);

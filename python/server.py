@@ -141,6 +141,10 @@ try:
         synchronize_catalog,
     )
     from model_capability_overlay import build_image_capability_overlay
+    from model_identity import (
+        attach_identity_to_capability_overlay,
+        build_model_identity_resolution,
+    )
 except ImportError:  # Allows importing as python.server during local tests.
     from python.asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
     from python.canvas_export import CanvasExportError, render_canvas_png
@@ -261,6 +265,10 @@ except ImportError:  # Allows importing as python.server during local tests.
         synchronize_catalog,
     )
     from python.model_capability_overlay import build_image_capability_overlay
+    from python.model_identity import (
+        attach_identity_to_capability_overlay,
+        build_model_identity_resolution,
+    )
 
 # ======================== GUI MODE STDOUT GUARD ========================
 # When running as windowed (no console) exe, sys.stdout/sys.stderr may be None.
@@ -6335,11 +6343,48 @@ async def get_provider_image_capabilities(connection_id: str):
     connection = PROVIDER_CATALOG_STORE.get_connection(connection_id)
     latest = PROVIDER_CATALOG_STORE.latest_snapshot(connection_id)
     if latest is None:
-        return build_image_capability_overlay(
+        capability_overlay = build_image_capability_overlay(
             {},
             catalog_status=str(connection.get("catalog_status") or "unavailable"),
         )
-    return build_image_capability_overlay(
+        identity_resolution = build_model_identity_resolution(
+            {},
+            catalog_status=str(connection.get("catalog_status") or "unavailable"),
+        )
+    else:
+        catalog = latest.get("normalized_catalog") or {}
+        catalog_hash = str(latest.get("normalized_catalog_sha256") or "")
+        fetched_at = str(latest.get("fetched_at") or "")
+        catalog_status = str(connection.get("catalog_status") or "unavailable")
+        capability_overlay = build_image_capability_overlay(
+            catalog,
+            normalized_catalog_sha256=catalog_hash,
+            catalog_fetched_at=fetched_at,
+            catalog_status=catalog_status,
+        )
+        identity_resolution = build_model_identity_resolution(
+            catalog,
+            normalized_catalog_sha256=catalog_hash,
+            catalog_fetched_at=fetched_at,
+            catalog_status=catalog_status,
+        )
+    return attach_identity_to_capability_overlay(
+        capability_overlay, identity_resolution
+    )
+
+
+@app.get("/api/provider-connections/{connection_id}/model-identities")
+async def get_provider_model_identities(connection_id: str):
+    if connection_id != LK_CONNECTION_ID:
+        raise HTTPException(status_code=404, detail="Provider connection not found")
+    connection = PROVIDER_CATALOG_STORE.get_connection(connection_id)
+    latest = PROVIDER_CATALOG_STORE.latest_snapshot(connection_id)
+    if latest is None:
+        return build_model_identity_resolution(
+            {},
+            catalog_status=str(connection.get("catalog_status") or "unavailable"),
+        )
+    return build_model_identity_resolution(
         latest.get("normalized_catalog") or {},
         normalized_catalog_sha256=str(
             latest.get("normalized_catalog_sha256") or ""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -26,6 +27,7 @@ from python.provider_catalog import (  # noqa: E402
     LK_PROVIDER,
     ProviderCatalogStore,
 )
+from python.model_identity import canonical_model_id  # noqa: E402
 
 
 class _MemoryCredentialStore:
@@ -139,7 +141,53 @@ class ProviderCredentialMigrationTests(unittest.TestCase):
             secret,
         )
 
+    def test_identity_and_capability_routes_preserve_raw_catalog_id(self) -> None:
+        self.store.record_snapshot(
+            LK_CONNECTION_ID,
+            raw_catalog={"fixture": True},
+            normalized_catalog={
+                "models": [
+                    {
+                        "provider_model_id": "tt-image-2",
+                        "display_name": "TT Image 2",
+                        "available_for_this_key": True,
+                        "modalities": ["image"],
+                        "source_catalogs": ["v1/media/models?type=image"],
+                        "provider_parameters": [],
+                    }
+                ]
+            },
+            endpoint_status={"status": "complete", "generation_calls": 0},
+        )
+
+        identities = asyncio.run(
+            server.get_provider_model_identities(LK_CONNECTION_ID)
+        )
+        identity = identities["identities"][0]
+        self.assertEqual(identity["provider_model_id"], "tt-image-2")
+        self.assertEqual(
+            identity["canonical_model_id"],
+            canonical_model_id(LK_PROVIDER, "tt-image-2"),
+        )
+        self.assertEqual(identities["summary"]["verified_alias_groups"], 0)
+
+        capabilities = asyncio.run(
+            server.get_provider_image_capabilities(LK_CONNECTION_ID)
+        )
+        canonical = {
+            item["canonical_model_id"]: item
+            for item in capabilities["canonical_models"]
+        }
+        tt_identity = canonical_model_id(LK_PROVIDER, "tt-image-2")
+        legacy_identity = canonical_model_id(LK_PROVIDER, "gpt-image-2")
+        self.assertIn(tt_identity, canonical)
+        self.assertIn(legacy_identity, canonical)
+        self.assertNotEqual(tt_identity, legacy_identity)
+        self.assertEqual(
+            capabilities["summary"]["composer_eligible_canonical_model_ids"],
+            [],
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-
