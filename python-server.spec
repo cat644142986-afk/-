@@ -51,6 +51,8 @@ hidden = [
     'certifi',
     'requests',
     'requests.adapters',
+    'win32cred',
+    'pywintypes',
     'urllib3',
     'charset_normalizer',
     'idna',
@@ -82,7 +84,7 @@ datas.append((os.path.join('docs', 'model-artifacts', 'grounding-dino-tiny.json'
 # Package metadata needed by pymatting/numba/llvmlite version checks
 for pkg in ['pymatting', 'numba', 'llvmlite', 'rembg', 'onnxruntime', 'scipy', 'scikit-image',
            'PIL', 'numpy', 'fastapi', 'uvicorn', 'python-multipart', 'starlette', 'anyio',
-           'certifi', 'requests', 'urllib3', 'charset_normalizer', 'idna']:
+           'certifi', 'requests', 'urllib3', 'charset_normalizer', 'idna', 'pywin32']:
     try:
         datas += copy_metadata(pkg)
     except: pass

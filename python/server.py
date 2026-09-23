@@ -18,7 +18,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 import uvicorn
 
 try:
@@ -72,6 +72,11 @@ try:
     from generation_quality_gate import (
         QUALITY_GATE_CONTRACT_VERSION,
         evaluate_generation_quality,
+    )
+    from credential_store import (
+        CredentialStoreError,
+        WindowsCredentialStore,
+        credential_fingerprint,
     )
     from knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from memory_engine import MemoryEngine, resolve_approved_memory_rules
@@ -127,6 +132,14 @@ try:
         publish_staged_file,
         validate_output_root,
     )
+    from provider_catalog import (
+        LK_API_BASE,
+        LK_CONNECTION_ID,
+        LK_PROVIDER,
+        ProviderCatalogError,
+        ProviderCatalogStore,
+        synchronize_catalog,
+    )
 except ImportError:  # Allows importing as python.server during local tests.
     from python.asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
     from python.canvas_export import CanvasExportError, render_canvas_png
@@ -178,6 +191,11 @@ except ImportError:  # Allows importing as python.server during local tests.
     from python.generation_quality_gate import (
         QUALITY_GATE_CONTRACT_VERSION,
         evaluate_generation_quality,
+    )
+    from python.credential_store import (
+        CredentialStoreError,
+        WindowsCredentialStore,
+        credential_fingerprint,
     )
     from python.knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
     from python.memory_engine import MemoryEngine, resolve_approved_memory_rules
@@ -233,6 +251,14 @@ except ImportError:  # Allows importing as python.server during local tests.
         publish_staged_file,
         validate_output_root,
     )
+    from python.provider_catalog import (
+        LK_API_BASE,
+        LK_CONNECTION_ID,
+        LK_PROVIDER,
+        ProviderCatalogError,
+        ProviderCatalogStore,
+        synchronize_catalog,
+    )
 
 # ======================== GUI MODE STDOUT GUARD ========================
 # When running as windowed (no console) exe, sys.stdout/sys.stderr may be None.
@@ -276,6 +302,27 @@ HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 LEDGER = AtelierLedger(APP_DIR / "atelier.sqlite3")
 ASSET_DIR = APP_DIR / "assets"
 ASSET_STORE = AssetStore(ASSET_DIR, LEDGER)
+_credential_namespace = str(
+    os.environ.get("PRODUCT_ATELIER_CREDENTIAL_NAMESPACE", "")
+).strip()
+if not _credential_namespace:
+    isolated_root = str(os.environ.get("PRODUCT_ATELIER_DATA_DIR", "")).strip()
+    _credential_namespace = (
+        f"ProductAtelier-Test-{hashlib.sha256(isolated_root.encode('utf-8')).hexdigest()[:12]}"
+        if isolated_root
+        else "ProductAtelier"
+    )
+CREDENTIAL_STORE = WindowsCredentialStore(namespace=_credential_namespace)
+PROVIDER_CATALOG_STORE = ProviderCatalogStore(APP_DIR / "provider-catalog.sqlite3")
+LK_SECRET_REF = CREDENTIAL_STORE.secret_ref(LK_PROVIDER, LK_CONNECTION_ID)
+PROVIDER_CATALOG_STORE.ensure_connection(
+    connection_id=LK_CONNECTION_ID,
+    provider=LK_PROVIDER,
+    display_name="LK / AI模型中心",
+    auth_kind="api_key",
+    secret_ref=LK_SECRET_REF,
+    api_base=LK_API_BASE,
+)
 try:
     _startup_config = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
 except Exception:
@@ -295,7 +342,7 @@ LEGACY_CONFIG = Path(
     )
 ).expanduser()
 
-BASE_URL = "https://api.lk888.ai/api"
+BASE_URL = LK_API_BASE
 
 MODEL_OPTIONS = {
     "GPT-Image-2 (最高质量)": "gpt-image-2",
@@ -310,7 +357,7 @@ FOLDER_DELIVERY_PREFIX = "ProductAtelier-已处理-"
 FOLDER_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _FOLDER_DELIVERY_LOCK = threading.RLock()
 PRODUCT_ATELIER_VERSION = "1.0.0"
-SIDECAR_CONTRACT_VERSION = "2026-09-02.4"
+SIDECAR_CONTRACT_VERSION = "2026-09-23.1"
 SIDECAR_MANIFEST_FILENAME = "sidecar-manifest.json"
 try:
     TRASH_RETENTION_DAYS = max(
@@ -758,18 +805,6 @@ def load_config() -> dict:
         return _read_config_unlocked()
 
 
-def load_api_key():
-    # Check app config first
-    cfg = load_config()
-    if cfg.get("api_key"):
-        return cfg["api_key"]
-    # Fallback to legacy config
-    if LEGACY_CONFIG.exists():
-        cfg = json.loads(LEGACY_CONFIG.read_text(encoding="utf-8"))
-        if cfg.get("api_key"):
-            return cfg["api_key"]
-    return None
-
 def save_config(cfg: dict):
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _config_write_lock():
@@ -791,6 +826,166 @@ def save_config(cfg: dict):
             os.replace(temp_path, CONFIG_PATH)
         finally:
             temp_path.unlink(missing_ok=True)
+
+
+def remove_config_keys(keys: set[str] | frozenset[str]) -> None:
+    """Atomically remove deprecated fields after their replacement is durable."""
+    targets = {str(key) for key in keys}
+    if not targets:
+        return
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _config_write_lock():
+        existing = _read_config_unlocked()
+        if not targets.intersection(existing):
+            return
+        updated = {key: value for key, value in existing.items() if key not in targets}
+        temp_path = CONFIG_PATH.with_name(
+            f".{CONFIG_PATH.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            with open(temp_path, "x", encoding="utf-8") as handle:
+                json.dump(updated, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                os.chmod(temp_path, 0o600)
+            except OSError:
+                pass
+            os.replace(temp_path, CONFIG_PATH)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+
+def _remove_json_keys_atomic(path: Path, keys: set[str] | frozenset[str]) -> bool:
+    """Remove fields from a non-PA legacy JSON file without partial writes."""
+    targets = {str(key) for key in keys}
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(existing, dict):
+        return False
+    if not targets.intersection(existing):
+        return True
+    updated = {key: value for key, value in existing.items() if key not in targets}
+    temp_path = path.with_name(
+        f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    )
+    try:
+        with open(temp_path, "x", encoding="utf-8") as handle:
+            json.dump(updated, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.chmod(temp_path, 0o600)
+        except OSError:
+            pass
+        os.replace(temp_path, path)
+        return True
+    except OSError:
+        return False
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _plaintext_api_key_sources() -> list[tuple[str, Path, str]]:
+    sources: list[tuple[str, Path, str]] = []
+    for source, path in (
+        ("app-config", CONFIG_PATH),
+        ("legacy-skill-config", LEGACY_CONFIG),
+    ):
+        if any(existing_path == path for _, existing_path, _ in sources):
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        value = str(payload.get("api_key") or "").strip() if isinstance(payload, dict) else ""
+        if value:
+            sources.append((source, path, value))
+    return sources
+
+
+def _legacy_plaintext_api_key() -> tuple[str | None, str]:
+    sources = _plaintext_api_key_sources()
+    if sources:
+        source, _path, value = sources[0]
+        return value, source
+    return None, ""
+
+
+def _credential_migration_summary() -> dict[str, Any]:
+    connection = PROVIDER_CATALOG_STORE.get_connection(LK_CONNECTION_ID)
+    fingerprint = str(connection.get("credential_fingerprint") or "")
+    matching_sources = []
+    mismatched_sources = []
+    for source, _path, value in _plaintext_api_key_sources():
+        destination = (
+            matching_sources
+            if fingerprint and credential_fingerprint(value) == fingerprint
+            else mismatched_sources
+        )
+        destination.append(source)
+    return {
+        "status": "pending" if matching_sources else "complete",
+        "pending_sources": matching_sources,
+        "mismatched_sources": mismatched_sources,
+    }
+
+
+def _finalize_plaintext_credential_migration() -> dict[str, Any]:
+    """Delete matching plaintext only after a complete catalog handshake."""
+    connection = PROVIDER_CATALOG_STORE.get_connection(LK_CONNECTION_ID)
+    if (
+        connection.get("catalog_status") != "fresh"
+        or not connection.get("active_snapshot_id")
+        or not connection.get("last_handshake_at")
+    ):
+        return _credential_migration_summary()
+    secret = CREDENTIAL_STORE.read(str(connection["secret_ref"]))
+    if not secret:
+        return _credential_migration_summary()
+    fingerprint = credential_fingerprint(secret)
+    if fingerprint != str(connection.get("credential_fingerprint") or ""):
+        return _credential_migration_summary()
+
+    for source, path, candidate in _plaintext_api_key_sources():
+        if credential_fingerprint(candidate) != fingerprint:
+            continue
+        if source == "app-config":
+            remove_config_keys(frozenset({"api_key"}))
+        else:
+            _remove_json_keys_atomic(path, frozenset({"api_key"}))
+    return _credential_migration_summary()
+
+
+def load_api_key():
+    """Resolve the active key from Windows Credential Manager only.
+
+    Existing PA config and the legacy LK skill config are import sources, not
+    runtime credential stores. Plaintext is retained until a later complete
+    read-only catalog handshake succeeds.
+    """
+    connection = PROVIDER_CATALOG_STORE.get_connection(LK_CONNECTION_ID)
+    secret_ref = str(connection["secret_ref"])
+    secret = CREDENTIAL_STORE.read(secret_ref)
+    if secret:
+        if not connection.get("credential_fingerprint"):
+            PROVIDER_CATALOG_STORE.set_credential(
+                LK_CONNECTION_ID, credential_fingerprint(secret)
+            )
+        return secret
+
+    candidate, source = _legacy_plaintext_api_key()
+    if not candidate:
+        return None
+    stored = CREDENTIAL_STORE.write_verified(
+        secret_ref, candidate, username=LK_PROVIDER
+    )
+    PROVIDER_CATALOG_STORE.set_credential(LK_CONNECTION_ID, stored.fingerprint)
+    return candidate
 
 
 def _output_root_protected_paths() -> tuple[Path, ...]:
@@ -862,8 +1057,15 @@ def get_api_key():
 
 def set_api_key(key: str):
     global API_KEY
-    save_config({"api_key": key})
-    API_KEY = key
+    value = str(key or "").strip()
+    if not value:
+        raise ValueError("API Key 不能为空")
+    connection = PROVIDER_CATALOG_STORE.get_connection(LK_CONNECTION_ID)
+    stored = CREDENTIAL_STORE.write_verified(
+        str(connection["secret_ref"]), value, username=LK_PROVIDER
+    )
+    PROVIDER_CATALOG_STORE.set_credential(LK_CONNECTION_ID, stored.fingerprint)
+    API_KEY = value
 
 
 def _normalize_pack_root(value: Any, *, kind: str) -> Path:
@@ -944,8 +1146,7 @@ def refresh_runtime_config() -> dict:
     cfg = load_config()
     with _RUNTIME_CONFIG_LOCK:
         updates: dict[str, object] = {}
-        configured_key = str(cfg.get("api_key") or "").strip()
-        API_KEY = configured_key or load_api_key()
+        API_KEY = load_api_key()
         configured_path = str(cfg.get("knowledge_base_path") or _RUNTIME_KNOWLEDGE_PATH).strip()
         canonical_path = str(canonicalize_vault_path(configured_path))
         if canonical_path != _RUNTIME_KNOWLEDGE_PATH:
@@ -990,11 +1191,53 @@ def refresh_runtime_config() -> dict:
             cfg = {**cfg, **updates}
     return cfg
 
+
+def _public_provider_connection() -> dict[str, Any]:
+    connection = PROVIDER_CATALOG_STORE.get_connection(LK_CONNECTION_ID)
+    latest = PROVIDER_CATALOG_STORE.latest_snapshot(LK_CONNECTION_ID)
+    catalog = latest.get("normalized_catalog", {}) if latest else {}
+    counts = catalog.get("counts", {}) if isinstance(catalog, dict) else {}
+    balance_payload = (
+        catalog.get("account", {}).get("balance", {})
+        if isinstance(catalog, dict)
+        else {}
+    )
+    credential_migration = _credential_migration_summary()
+    return {
+        "id": connection["id"],
+        "provider": connection["provider"],
+        "display_name": connection["display_name"],
+        "auth_kind": connection["auth_kind"],
+        "api_base": connection["api_base"],
+        "credential_configured": bool(connection["credential_fingerprint"]),
+        "credential_fingerprint": connection["credential_fingerprint"],
+        "connection_status": connection["connection_status"],
+        "catalog_status": connection["catalog_status"],
+        "active_snapshot_id": connection["active_snapshot_id"],
+        "last_handshake_at": connection["last_handshake_at"],
+        "last_sync_attempt_at": connection["last_sync_attempt_at"],
+        "last_sync_success_at": connection["last_sync_success_at"],
+        "last_error_code": connection["last_error_code"],
+        "last_error_message": connection["last_error_message"],
+        "snapshot_version": latest.get("version") if latest else None,
+        "catalog_hash": latest.get("raw_catalog_sha256") if latest else None,
+        "normalized_hash": latest.get("normalized_catalog_sha256") if latest else None,
+        "fetched_at": latest.get("fetched_at") if latest else None,
+        "counts": counts,
+        "balance": balance_payload,
+        "credential_migration": credential_migration,
+        "private_agents_supported": False,
+        "private_agents_evidence": "not-exposed-by-current-catalog-contract",
+    }
+
+
 def get_settings():
     cfg = refresh_runtime_config()
+    provider_connection = _public_provider_connection()
     return {
-        "api_key": "***" if cfg.get("api_key") else "",
-        "api_key_set": bool(cfg.get("api_key")),
+        "api_key": "***" if provider_connection["credential_configured"] else "",
+        "api_key_set": provider_connection["credential_configured"],
+        "provider_connection": provider_connection,
         "default_model": cfg.get("default_model", "gpt-image-2"),
         "default_platter": cfg.get("default_platter", "auto"),
         "default_angle": cfg.get("default_angle", "auto"),
@@ -5999,6 +6242,107 @@ async def govern_memory_suggestion(suggestion_id: str, data: dict):
 async def get_app_settings():
     return get_settings()
 
+
+class ProviderConnectionRequest(BaseModel):
+    api_key: SecretStr
+
+
+@app.get("/api/provider-connections")
+async def list_provider_connections():
+    return {
+        "connections": [_public_provider_connection()],
+        "private_agents_supported": False,
+    }
+
+
+@app.post("/api/provider-connections/lk/connect")
+async def connect_lk_provider(request: ProviderConnectionRequest):
+    try:
+        set_api_key(request.api_key.get_secret_value())
+        return _public_provider_connection()
+    except CredentialStoreError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_PROVIDER_CREDENTIAL", "message": str(exc)},
+        ) from exc
+
+
+@app.post("/api/provider-connections/{connection_id}/sync")
+async def sync_provider_connection(connection_id: str):
+    if connection_id != LK_CONNECTION_ID:
+        raise HTTPException(status_code=404, detail="Provider connection not found")
+    try:
+        api_key = get_api_key()
+        await run_in_threadpool(
+            synchronize_catalog,
+            store=PROVIDER_CATALOG_STORE,
+            connection_id=connection_id,
+            api_key=api_key,
+        )
+        await run_in_threadpool(_finalize_plaintext_credential_migration)
+        return _public_provider_connection()
+    except CredentialStoreError as exc:
+        PROVIDER_CATALOG_STORE.mark_sync_failure(
+            connection_id, code=exc.code, message=str(exc)
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except ProviderCatalogError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except RuntimeError as exc:
+        PROVIDER_CATALOG_STORE.mark_sync_failure(
+            connection_id,
+            code="PROVIDER_CREDENTIAL_REQUIRED",
+            message="Provider credential is not configured",
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "PROVIDER_CREDENTIAL_REQUIRED",
+                "message": "请先连接 LK / AI模型中心账户",
+            },
+        ) from exc
+
+
+@app.get("/api/provider-connections/{connection_id}/catalog")
+async def get_provider_catalog(connection_id: str):
+    if connection_id != LK_CONNECTION_ID:
+        raise HTTPException(status_code=404, detail="Provider connection not found")
+    latest = PROVIDER_CATALOG_STORE.latest_snapshot(connection_id)
+    return {
+        "connection": _public_provider_connection(),
+        "snapshot": latest,
+    }
+
+
+@app.delete("/api/provider-connections/{connection_id}")
+async def disconnect_provider_connection(connection_id: str):
+    global API_KEY
+    if connection_id != LK_CONNECTION_ID:
+        raise HTTPException(status_code=404, detail="Provider connection not found")
+    connection = PROVIDER_CATALOG_STORE.get_connection(connection_id)
+    try:
+        CREDENTIAL_STORE.delete(str(connection["secret_ref"]))
+        PROVIDER_CATALOG_STORE.disconnect(connection_id)
+        API_KEY = None
+        return _public_provider_connection()
+    except CredentialStoreError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+
+
 @app.post("/api/settings")
 async def update_settings(data: dict):
     allowed = {
@@ -6010,9 +6354,9 @@ async def update_settings(data: dict):
         "knowledge_base_path",
     }
     save = {key: value for key, value in data.items() if key in allowed}
-    if "api_key" in data and data["api_key"]:
-        save["api_key"] = str(data["api_key"])
     try:
+        if "api_key" in data and data["api_key"]:
+            set_api_key(str(data["api_key"]))
         if "output_root" in data:
             selected = _validate_output_root(str(data.get("output_root") or ""), test_write=True)
             existing = load_config()
@@ -6055,6 +6399,11 @@ async def update_settings(data: dict):
             status_code=400,
             detail={"code": exc.code, "message": exc.message},
         )
+    except CredentialStoreError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=400,

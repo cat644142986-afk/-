@@ -6,9 +6,46 @@ export function normalizeSettingsPayload(values = {}, includeKey = false) {
     default_fidelity: Number(values.defaultFidelity ?? 40),
     knowledge_base_path: String(values.knowledgeBasePath || '').trim(),
   };
-  const apiKey = String(values.apiKey || '').trim();
-  if (includeKey && apiKey) payload.api_key = apiKey;
+  // Provider credentials use the dedicated connection endpoint and Windows
+  // Credential Manager. They must never enter the ordinary settings payload.
+  void includeKey;
   return payload;
+}
+
+export function providerConnectionCopy(connection = {}) {
+  const configured = Boolean(connection.credential_configured);
+  const fresh = connection.catalog_status === 'fresh';
+  const stale = connection.catalog_status === 'stale';
+  const counts = connection.counts || {};
+  const media = counts.media_models || {};
+  const modelCount = Number(counts.catalog_models || 0);
+  const mediaCount = Number(counts.media_models_total || 0);
+  const skillCount = Number(counts.skill_categories || 0);
+  const balance = connection.balance || {};
+  const balanceValue = balance.balance;
+  const balanceText = balanceValue === undefined || balanceValue === null
+    ? '余额尚未同步'
+    : `余额：${balanceValue} ${balance.unit || ''}`.trim();
+  if (!configured) {
+    return {
+      tone: 'idle',
+      title: '尚未连接 LK / AI模型中心',
+      detail: '输入账户创建的 API Key 后执行只读目录同步。',
+      summary: '尚无目录快照',
+      balance: balanceText,
+    };
+  }
+  const summary = modelCount
+    ? `${modelCount} 模型 · ${mediaCount} 媒体模型 · ${skillCount} 类 Skills`
+    : '已保存凭证，尚无目录快照';
+  return {
+    tone: fresh ? 'ready' : stale ? 'stale' : connection.connection_status === 'error' ? 'error' : 'configured',
+    title: fresh ? '账户已连接，目录为最新状态' : stale ? '账户已连接，正在使用上次目录' : '凭证已安全保存',
+    detail: connection.last_error_message
+      || (connection.fetched_at ? `最近同步：${connection.fetched_at}` : `凭证指纹：${connection.credential_fingerprint || '已保存'}`),
+    summary: `${summary}${media.image ? ` · 图片 ${Number(media.image)}` : ''}`,
+    balance: balanceText,
+  };
 }
 
 export function knowledgeStatusCopy(status) {
@@ -92,7 +129,8 @@ export function createSettingsController({
     host.hidden = false;
     const action = query('[data-settings-status-action]', host);
     action?.addEventListener('click', () => {
-      if (action.dataset.settingsStatusAction === 'retry-save-key') save(true);
+      if (action.dataset.settingsStatusAction === 'retry-connect-provider') connectProviderAndSync();
+      else if (action.dataset.settingsStatusAction === 'retry-sync-provider') syncProvider();
       else if (action.dataset.settingsStatusAction === 'retry-save') save(false);
       else load();
     });
@@ -136,6 +174,21 @@ export function createSettingsController({
     query('#btn-disable-grounding-pack').disabled = !runtimeRoot && !modelRoot;
   }
 
+  function renderProviderConnection(connection = {}) {
+    const copy = providerConnectionCopy(connection);
+    const host = query('#provider-connection-status');
+    host.dataset.tone = copy.tone;
+    query('#provider-connection-title').textContent = copy.title;
+    query('#provider-connection-detail').textContent = copy.detail;
+    query('#provider-catalog-summary').textContent = copy.summary;
+    query('#balance-display').textContent = copy.balance;
+    query('#setting-api-key').placeholder = connection.credential_configured
+      ? '输入新 Key 可替换当前连接'
+      : '输入 API Key';
+    query('#btn-sync-provider').disabled = !connection.credential_configured;
+    query('#btn-disconnect-provider').disabled = !connection.credential_configured;
+  }
+
   async function load({ silent = false } = {}) {
     setPageStatus('loading', {
       title: '正在读取本机设置',
@@ -167,7 +220,7 @@ export function createSettingsController({
       query('#setting-fid-val').textContent = `${query('#setting-fidelity').value}%`;
       renderOutputRoot(settings);
       renderGroundingPack(settings);
-      query('#setting-api-key').placeholder = settings.api_key_set ? '已配置（留空不修改）' : '输入 API Key';
+      renderProviderConnection(settings.provider_connection || {});
       query('#setting-knowledge-path').value = settings.knowledge_base_path || '';
       renderKnowledgeStatus(settings.knowledge);
       updateQuickControls();
@@ -202,7 +255,7 @@ export function createSettingsController({
   async function save(includeKey = false) {
     setPageStatus('loading', {
       title: '正在保存设置',
-      detail: '当前输入会写入本机配置；运行中任务继续使用原快照。',
+      detail: '普通设置写入本机配置；Provider 凭证由独立连接管理。',
     });
     try {
       const result = await api.saveSettings(readPayload(includeKey));
@@ -228,6 +281,91 @@ export function createSettingsController({
         },
       });
       toast(`保存失败：${error}`, 'error');
+    }
+  }
+
+  async function syncProvider() {
+    const connection = state.settings?.provider_connection || {};
+    if (!connection.credential_configured) {
+      toast('请先连接 LK / AI模型中心', 'error');
+      return false;
+    }
+    const button = query('#btn-sync-provider');
+    button.disabled = true;
+    setPageStatus('loading', {
+      title: '正在同步 Provider Catalog',
+      detail: '只读取模型、媒体模型、Skills、价格、余额和用量，不会调用生成接口。',
+    });
+    try {
+      const updated = await api.syncProvider(connection.id || 'provider_lk_primary');
+      state.settings = { ...state.settings, provider_connection: updated, api_key_set: true };
+      renderProviderConnection(updated);
+      setPageStatus('recovered', {
+        title: 'Provider Catalog 已同步',
+        detail: '当前目录快照和 hash 已在本机版本化保存。',
+        autoHide: 3200,
+      });
+      toast('Provider Catalog 已同步', 'success');
+      return true;
+    } catch (error) {
+      await load({ silent: true });
+      setPageStatus('error', {
+        title: '目录同步未完成',
+        detail: formatApiError(error, '已保留上一次成功快照'),
+        action: { label: '重新同步', attribute: 'data-settings-status-action', value: 'retry-sync-provider' },
+      });
+      toast(`目录同步失败：${error}`, 'error');
+      return false;
+    } finally {
+      button.disabled = !state.settings?.provider_connection?.credential_configured;
+    }
+  }
+
+  async function connectProviderAndSync() {
+    const input = query('#setting-api-key');
+    const apiKey = String(input.value || '').trim();
+    if (!apiKey) {
+      toast('请输入 API Key', 'error');
+      input.focus();
+      return false;
+    }
+    const button = query('#btn-save-key');
+    button.disabled = true;
+    setPageStatus('loading', {
+      title: '正在安全保存账户凭证',
+      detail: '密钥将写入 Windows 凭证管理器，不进入配置、SQLite 或 trace。',
+    });
+    try {
+      const connection = await api.connectProvider(apiKey);
+      input.value = '';
+      state.settings = { ...state.settings, provider_connection: connection, api_key_set: true };
+      renderProviderConnection(connection);
+      return await syncProvider();
+    } catch (error) {
+      setPageStatus('error', {
+        title: 'Provider 连接未完成',
+        detail: formatApiError(error, '凭证未保存'),
+        action: { label: '重试连接', attribute: 'data-settings-status-action', value: 'retry-connect-provider' },
+      });
+      toast(`Provider 连接失败：${error}`, 'error');
+      return false;
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function disconnectProvider() {
+    const connection = state.settings?.provider_connection || {};
+    if (!connection.credential_configured) return;
+    const confirmed = windowRef.confirm?.('断开 LK / AI模型中心并从 Windows 凭证管理器移除密钥？');
+    if (confirmed === false) return;
+    try {
+      const updated = await api.disconnectProvider(connection.id || 'provider_lk_primary');
+      state.settings = { ...state.settings, provider_connection: updated, api_key_set: false };
+      renderProviderConnection(updated);
+      toast('Provider 已断开；历史目录快照保留并标记为 stale', 'success');
+    } catch (error) {
+      toast(`断开 Provider 失败：${error}`, 'error');
     }
   }
 
@@ -336,10 +474,11 @@ export function createSettingsController({
 
   function bind() {
     if (bound) return;
-    query('#btn-save-key').addEventListener('click', () => save(true));
+    query('#btn-save-key').addEventListener('click', connectProviderAndSync);
+    query('#btn-sync-provider').addEventListener('click', syncProvider);
+    query('#btn-disconnect-provider').addEventListener('click', disconnectProvider);
     query('#btn-save-settings').addEventListener('click', () => save(false));
     query('#btn-reload-knowledge').addEventListener('click', reloadKnowledge);
-    query('#btn-check-balance').addEventListener('click', checkBalance);
     query('#btn-select-output-root').addEventListener('click', selectOutputRoot);
     query('#btn-open-output-root').addEventListener('click', openOutputRoot);
     query('#btn-select-grounding-runtime').addEventListener('click', () => selectGroundingRoot('runtime'));
@@ -355,12 +494,16 @@ export function createSettingsController({
   return {
     bind,
     checkBalance,
+    connectProviderAndSync,
+    disconnectProvider,
     load,
     reloadKnowledge,
     renderKnowledgeStatus,
     renderGroundingPack,
     renderOutputRoot,
+    renderProviderConnection,
     save,
     setPageStatus,
+    syncProvider,
   };
 }

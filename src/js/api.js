@@ -150,6 +150,31 @@ export async function saveSettings(settings) {
   return resp.json();
 }
 
+export async function connectProvider(apiKey) {
+  return fetchJSON('/api/provider-connections/lk/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: String(apiKey || '').trim() }),
+  });
+}
+
+export async function syncProvider(connectionId = 'provider_lk_primary') {
+  return fetchJSON(`/api/provider-connections/${encodeURIComponent(connectionId)}/sync`, {
+    method: 'POST',
+    timeoutMs: 300000,
+  });
+}
+
+export async function getProviderCatalog(connectionId = 'provider_lk_primary') {
+  return fetchJSON(`/api/provider-connections/${encodeURIComponent(connectionId)}/catalog`);
+}
+
+export async function disconnectProvider(connectionId = 'provider_lk_primary') {
+  return fetchJSON(`/api/provider-connections/${encodeURIComponent(connectionId)}`, {
+    method: 'DELETE',
+  });
+}
+
 async function fetchBinary(url, options) {
   options = options || {};
   const base = await getPort();

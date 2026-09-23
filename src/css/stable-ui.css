@@ -856,6 +856,13 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .input-action button, .settings-inline button { padding: 0 12px; border-radius: 10px; background: var(--dark); color: white; font-size: var(--type-caption); cursor: pointer; }
 .settings-inline { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; color: var(--ink-3); font-size: var(--type-caption); }
 .settings-inline button { min-height: 27px; }
+.provider-connection-status { display: grid; gap: 3px; margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-soft); }
+.provider-connection-status strong { font-size: var(--type-control); }
+.provider-connection-status small { overflow-wrap: anywhere; color: var(--ink-3); font-size: var(--type-caption); }
+.provider-connection-status[data-tone="ready"] { border-color: color-mix(in srgb, #2f8f62 35%, var(--line)); }
+.provider-connection-status[data-tone="stale"], .provider-connection-status[data-tone="error"] { border-color: color-mix(in srgb, var(--coral-deep) 40%, var(--line)); }
+.provider-connection-actions { display: flex; gap: 8px; margin-top: 9px; }
+.provider-connection-actions .secondary-button { min-height: 30px; }
 .knowledge-status-box { display: flex; align-items: center; gap: 10px; margin: 12px 0; padding: 12px; border-radius: 15px; background: var(--paper-soft); }
 .knowledge-status-box div { display: grid; gap: 2px; }
 .knowledge-status-box strong { font-size: var(--type-control); }

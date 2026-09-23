@@ -70,7 +70,7 @@ class ConfigConcurrencyTests(unittest.TestCase):
                 server.OUTPUT_DIR = Path(temp_dir) / "output"
                 server.OUTPUT_DIR.mkdir()
                 server._RUNTIME_OUTPUT_ROOT = server.OUTPUT_DIR
-                server.API_KEY = "stale-process-value"
+                server.API_KEY = None
                 recorder = _RecordingKnowledge()
                 server.KNOWLEDGE = recorder
                 server._RUNTIME_KNOWLEDGE_PATH = ""
@@ -79,7 +79,7 @@ class ConfigConcurrencyTests(unittest.TestCase):
                 barrier = context.Barrier(2)
                 first = context.Process(
                     target=_save_config_in_process,
-                    args=(temp_dir, "api_key", "shared-offline-key", barrier),
+                    args=(temp_dir, "default_model", "shared-offline-model", barrier),
                 )
                 second = context.Process(
                     target=_save_config_in_process,
@@ -93,9 +93,8 @@ class ConfigConcurrencyTests(unittest.TestCase):
                     self.assertEqual(process.exitcode, 0)
 
                 stored = json.loads(config_path.read_text(encoding="utf-8"))
-                self.assertEqual(stored["api_key"], "shared-offline-key")
+                self.assertEqual(stored["default_model"], "shared-offline-model")
                 self.assertEqual(stored["knowledge_base_path"], str(knowledge_path))
-                self.assertEqual(server.get_api_key(), "shared-offline-key")
                 refreshed = server.refresh_runtime_config()
                 self.assertEqual(
                     refreshed,

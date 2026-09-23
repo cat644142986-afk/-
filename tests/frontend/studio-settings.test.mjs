@@ -6,9 +6,10 @@ import {
   knowledgeStatusCopy,
   normalizeSettingsPayload,
   outputRootStatusCopy,
+  providerConnectionCopy,
 } from '../../src/js/studio-settings.js';
 
-test('settings payload trims paths and only sends a non-empty key on explicit save', () => {
+test('ordinary settings payload never includes provider credentials', () => {
   const values = {
     defaultModel: 'gemini-3.1-flash-image-preview',
     defaultPlatter: 'keep',
@@ -24,8 +25,42 @@ test('settings payload trims paths and only sends a non-empty key on explicit sa
     default_fidelity: 65,
     knowledge_base_path: 'D:\\知识库',
   });
-  assert.equal(normalizeSettingsPayload(values, true).api_key, 'secret-value');
-  assert.equal('api_key' in normalizeSettingsPayload({ ...values, apiKey: '   ' }, true), false);
+  assert.equal('api_key' in normalizeSettingsPayload(values, true), false);
+  assert.equal('apiKey' in normalizeSettingsPayload(values, true), false);
+});
+
+test('provider connection copy distinguishes fresh and stale catalog state', () => {
+  assert.deepEqual(providerConnectionCopy({ credential_configured: false }), {
+    tone: 'idle',
+    title: '尚未连接 LK / AI模型中心',
+    detail: '输入账户创建的 API Key 后执行只读目录同步。',
+    summary: '尚无目录快照',
+    balance: '余额尚未同步',
+  });
+  const fresh = providerConnectionCopy({
+    credential_configured: true,
+    credential_fingerprint: 'sha256:abc123',
+    catalog_status: 'fresh',
+    fetched_at: '2026-09-23T00:00:00Z',
+    counts: {
+      catalog_models: 173,
+      media_models_total: 100,
+      media_models: { image: 19, video: 74, audio: 7 },
+      skill_categories: 9,
+    },
+    balance: { balance: 12.5, unit: 'CNY' },
+  });
+  assert.equal(fresh.tone, 'ready');
+  assert.match(fresh.summary, /173 模型/);
+  assert.match(fresh.summary, /图片 19/);
+  assert.equal(fresh.balance, '余额：12.5 CNY');
+  const stale = providerConnectionCopy({
+    credential_configured: true,
+    catalog_status: 'stale',
+    last_error_message: 'Provider catalog endpoint returned HTTP 503',
+  });
+  assert.equal(stale.tone, 'stale');
+  assert.match(stale.title, /上次目录/);
 });
 
 test('optional grounding pack status distinguishes disabled, ready, and verified states', () => {

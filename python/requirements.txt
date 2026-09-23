@@ -3,5 +3,6 @@ uvicorn>=0.23.0
 python-multipart>=0.0.6
 Pillow>=10.0.0
 requests>=2.31.0
+pywin32==312; sys_platform == "win32"
 rembg>=2.0.50
 onnxruntime>=1.16.0
