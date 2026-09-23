@@ -145,6 +145,7 @@ try:
         attach_identity_to_capability_overlay,
         build_model_identity_resolution,
     )
+    from model_admission import build_composer_admission
 except ImportError:  # Allows importing as python.server during local tests.
     from python.asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
     from python.canvas_export import CanvasExportError, render_canvas_png
@@ -269,6 +270,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         attach_identity_to_capability_overlay,
         build_model_identity_resolution,
     )
+    from python.model_admission import build_composer_admission
 
 # ======================== GUI MODE STDOUT GUARD ========================
 # When running as windowed (no console) exe, sys.stdout/sys.stderr may be None.
@@ -6392,6 +6394,13 @@ async def get_provider_model_identities(connection_id: str):
         catalog_fetched_at=str(latest.get("fetched_at") or ""),
         catalog_status=str(connection.get("catalog_status") or "unavailable"),
     )
+
+
+@app.get("/api/provider-connections/{connection_id}/model-admission")
+async def get_provider_model_admission(connection_id: str):
+    """Return the read-only Composer admission view; never routes a task."""
+    capabilities = await get_provider_image_capabilities(connection_id)
+    return build_composer_admission(capabilities)
 
 
 @app.delete("/api/provider-connections/{connection_id}")

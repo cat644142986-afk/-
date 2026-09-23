@@ -188,6 +188,16 @@ class ProviderCredentialMigrationTests(unittest.TestCase):
             [],
         )
 
+        admission = asyncio.run(
+            server.get_provider_model_admission(LK_CONNECTION_ID)
+        )
+        tt_admission = next(
+            item for item in admission["candidates"]
+            if item["provider_model_id"] == "tt-image-2"
+        )
+        self.assertEqual(tt_admission["category"], "needs_canary")
+        self.assertEqual(admission["summary"]["eligible_canonical_model_ids"], [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

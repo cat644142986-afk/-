@@ -1,0 +1,71 @@
+{
+  "format_version": 1,
+  "kind": "product-atelier-composer-admission-plan",
+  "status": "offline-verified",
+  "source_checkpoint": "b1440d856b07d9963a584fa7d3a3ca8ba0d3da9c",
+  "admission": {
+    "schema_version": "pa-composer-admission-v1",
+    "revision": "2026-09-24.1",
+    "sha256": "c3be49d30e7c94c54378416c94aeb3dbbfa72b22f6f4ca0ebca9e140739a5392",
+    "target_task_kind": "reference-generate",
+    "required_evidence_level": "provider-verified",
+    "rule": "current Catalog route exists AND canonical identity resolved AND adapter contract exists AND required task capability evidence exists AND status != blocked"
+  },
+  "source_binding": {
+    "normalized_catalog_sha256": "486a4b7c07c74e869e4adbaaea264390836b89a66e69147f4958a94e065d7cf8",
+    "overlay_sha256": "1dad1b04f9860fd158ab9ca2cdfbf2ab21b6d249e9760308741f68cc82833ce6",
+    "identity_sha256": "43087239d27d56e702c1288f0aad7d22569db2bb5240b516c6b374dd00ed5f78"
+  },
+  "classification": {
+    "eligible": [],
+    "needs_identity": [],
+    "needs_adapter": [
+      "banana-2",
+      "banana-pro"
+    ],
+    "needs_offline_gate": [],
+    "needs_canary": [
+      "tt-image-2"
+    ],
+    "legacy_only": [
+      "gemini-3.1-flash-image-preview",
+      "gpt-image-2"
+    ]
+  },
+  "candidate_plans": {
+    "tt-image-2": {
+      "current_gap": "Exact current identity and dedicated adapter contract are present; exact-id Provider evidence for reference-generate is absent.",
+      "offline_only": "Existing contract fixtures can prove request compilation, exact binding, size/quality mapping and Governor precedence, but cannot prove the current route accepts and completes the request.",
+      "requires_canary": true,
+      "minimum_canary_task_kind": "reference-generate",
+      "minimum_canary": "One explicit max_attempts=1 run with one exact Result reference, packaging text/logo protection, 1:1 at 2K; retain request, receipt, actual pixels, Result and lineage.",
+      "composer_value": "high; first validation priority",
+      "admission_boundary": "Only reference-generate becomes eligible from this canary; no legacy gpt-image-2 evidence is inherited."
+    },
+    "banana-2": {
+      "current_gap": "Current route and exact canonical identity exist, but PA only has the generic-image compatibility fallback, not a banana-specific adapter contract.",
+      "offline_only": "Catalog-declared images/aspectRatio/imageSize can support a model-family adapter and complete request, parameter, Governor, exact binding, response-fixture and receipt gates without a Provider call.",
+      "requires_canary": true,
+      "minimum_canary_task_kind": "reference-generate",
+      "minimum_canary": "After adapter/offline Gate, one explicit max_attempts=1 run with one exact Result reference and packaging text/logo protection at 1:1 and 2K.",
+      "composer_value": "high; second priority as a speed/cost-oriented manual choice",
+      "admission_boundary": "Banana marketing or Gemini legacy names provide no evidence inheritance."
+    },
+    "banana-pro": {
+      "current_gap": "Current route and exact canonical identity exist, but PA only has the generic-image compatibility fallback, not a banana-specific adapter contract.",
+      "offline_only": "Catalog-declared images/aspectRatio/imageSize can support a model-family adapter and complete 1K/2K/4K parameter, Governor, exact binding, response-fixture and receipt gates without a Provider call.",
+      "requires_canary": true,
+      "minimum_canary_task_kind": "reference-generate",
+      "minimum_canary": "After adapter/offline Gate, one explicit max_attempts=1 run with one exact Result reference and packaging text/logo protection at 1:1 and 2K.",
+      "composer_value": "high; quality-oriented manual choice after the shared parameter-family adapter is closed",
+      "admission_boundary": "It requires a separate exact-id canary; banana-2 or Gemini legacy evidence is not reusable."
+    }
+  },
+  "boundaries": [
+    "Admission is task-scoped; it does not imply support for text-to-image, edit-current-image or variant.",
+    "Source-free text-to-image remains blocked by the existing Overlay and is not changed by this plan.",
+    "No Composer UI, routing policy, historical evidence, adapter implementation or schema was changed.",
+    "No Provider generation endpoint was called and no promotion was performed."
+  ],
+  "provider_generation_calls": 0
+}

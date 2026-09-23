@@ -1261,6 +1261,7 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
     required_sources = {
         "python/model_capability_overlay.py": "model capability overlay",
         "python/model_identity.py": "model identity resolution",
+        "python/model_admission.py": "model admission policy",
         "python/command_registry.py": "command registry",
         "python/canvas_export.py": "canvas export renderer",
         "python/local_edit_contract.py": "strict local edit compositor",
