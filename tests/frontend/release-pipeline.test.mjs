@@ -104,6 +104,8 @@ test('sidecar build cannot overwrite the formal portable release', () => {
 
   assert.doesNotMatch(script, /DeployPortable/);
   assert.doesNotMatch(script, /release\\ProductAtelier-Portable/);
+  assert.match(script, /"python\/credential_store\.py"/);
+  assert.match(script, /"python\/provider_catalog\.py"/);
   assert.match(script, /"python\/command_registry\.py"/);
   assert.match(script, /"python\/canvas_export\.py"/);
   assert.match(script, /"python\/local_edit_contract\.py"/);
@@ -123,6 +125,9 @@ test('sidecar build cannot overwrite the formal portable release', () => {
   assert.match(script, /sha256-text-lf-v1/);
   assert.match(script, /Get-SourceFileSha256/);
   assert.match(script, /source_hash_format = \$CanonicalSourceHashFormat/);
+  assert.match(spec, /'win32cred'/);
+  assert.match(spec, /'win32timezone'/);
+  assert.match(spec, /'pywintypes'/);
   assert.match(spec, /'torch'/);
   assert.match(spec, /'transformers'/);
   assert.match(spec, /'tokenizers'/);

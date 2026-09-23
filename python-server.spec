@@ -52,6 +52,9 @@ hidden = [
     'requests',
     'requests.adapters',
     'win32cred',
+    # CredRead materializes provider metadata with this module. PyInstaller's
+    # win32cred hook does not discover it automatically in the windowed sidecar.
+    'win32timezone',
     'pywintypes',
     'urllib3',
     'charset_normalizer',
