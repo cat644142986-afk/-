@@ -85,6 +85,41 @@ PROVIDER_CANARY_RECORDS = {
 }
 
 
+# Observed telemetry is intentionally kept outside provider_canary_definition():
+# it is useful execution evidence, not an admission input or quality ranking, and
+# adding it must not rewrite the sealed canary identity above.
+PROVIDER_CANARY_TELEMETRY = {
+    "tt-image-2": {
+        "channel_group": "XT2",
+        "gate_elapsed_seconds": 121.749,
+        "billing": {"cost": 0.0359, "unit": "算力", "balance_delta": 0.04},
+    },
+    "banana-2": {
+        "channel_group": "MC-限时特惠",
+        "gate_elapsed_seconds": 95.697,
+        "billing": {"cost": 0.1256, "unit": "算力", "balance_delta": 0.13},
+    },
+    "banana-pro": {
+        "channel_group": "nano",
+        "gate_elapsed_seconds": 85.724,
+        "billing": {"cost": 0.1579, "unit": "算力", "balance_delta": 0.15},
+    },
+}
+
+
+def provider_canary_telemetry(model_id: str) -> dict[str, Any] | None:
+    telemetry = PROVIDER_CANARY_TELEMETRY.get(str(model_id or "").strip())
+    if telemetry is None:
+        return None
+    record = PROVIDER_CANARY_RECORDS.get(str(model_id or "").strip()) or {}
+    return {
+        **copy.deepcopy(telemetry),
+        "provider_elapsed_ms": record.get("provider_elapsed_ms"),
+        "evidence_source": copy.deepcopy(record.get("evidence_source")),
+        "interpretation": "single-canary telemetry; not a quality or preference ranking",
+    }
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 

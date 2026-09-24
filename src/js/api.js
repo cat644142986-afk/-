@@ -169,6 +169,19 @@ export async function getProviderCatalog(connectionId = 'provider_lk_primary') {
   return fetchJSON(`/api/provider-connections/${encodeURIComponent(connectionId)}/catalog`);
 }
 
+export async function getProviderModelAdmission({
+  connectionId = 'provider_lk_primary', taskKind, ratio, resolution,
+} = {}) {
+  const query = new URLSearchParams({
+    task_kind: String(taskKind || ''),
+    ratio: String(ratio || ''),
+    resolution: String(resolution || ''),
+  });
+  return fetchJSON(
+    `/api/provider-connections/${encodeURIComponent(connectionId)}/model-admission?${query}`,
+  );
+}
+
 export async function disconnectProvider(connectionId = 'provider_lk_primary') {
   return fetchJSON(`/api/provider-connections/${encodeURIComponent(connectionId)}`, {
     method: 'DELETE',

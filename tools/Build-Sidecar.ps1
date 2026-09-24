@@ -233,6 +233,7 @@ try {
             "python/model_identity.py",
             "python/model_admission.py",
             "python/model_candidate_validation.py",
+            "python/model_candidate_canary.py",
             "python/atelier_ledger.py",
             "python/command_registry.py",
             "python/canvas_export.py",

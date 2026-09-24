@@ -145,7 +145,10 @@ try:
         attach_identity_to_capability_overlay,
         build_model_identity_resolution,
     )
-    from model_admission import build_composer_admission
+    from model_admission import (
+        build_composer_admission,
+        build_composer_model_selection,
+    )
     from model_candidate_validation import apply_candidate_validation_overlay
     from model_candidate_canary import apply_provider_canary_overlay
 except ImportError:  # Allows importing as python.server during local tests.
@@ -272,7 +275,10 @@ except ImportError:  # Allows importing as python.server during local tests.
         attach_identity_to_capability_overlay,
         build_model_identity_resolution,
     )
-    from python.model_admission import build_composer_admission
+    from python.model_admission import (
+        build_composer_admission,
+        build_composer_model_selection,
+    )
     from python.model_candidate_validation import apply_candidate_validation_overlay
     from python.model_candidate_canary import apply_provider_canary_overlay
 
@@ -4844,6 +4850,15 @@ class SpatialExecutionContextError(ValueError):
         self.message = str(message)
 
 
+class ModelAdmissionError(ValueError):
+    """The exact model/task/output tuple is not admitted for execution."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = str(code)
+        self.message = str(message)
+
+
 def _spatial_image_input_surface(parameters: Mapping[str, Any] | None) -> str:
     values = dict(parameters or {})
     raw_ui_context = values.get("ui_context")
@@ -5214,6 +5229,14 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
                 "spatial_context_fingerprint": spatial_binding["fingerprint"],
             })
         _validate_job_request(mode, source_asset_ids, parameters)
+        if (
+            spatial_binding is not None
+            and spatial_binding.get("input_surface") == SPATIAL_CANVAS_REFERENCE_SURFACE
+        ):
+            parameters = _freeze_reference_model_admission(
+                parameters,
+                idempotency_key=str(request.client_request_id or "").strip(),
+            )
         if str(command["id"]) == LOCAL_EDIT_GENERATE_COMMAND_ID:
             _validate_local_edit_generate_request(request, parameters)
         if str(command["id"]) != IMAGE_TO_VIDEO_COMMAND_ID:
@@ -5340,6 +5363,11 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
             },
         )
     except SpatialExecutionContextError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        )
+    except ModelAdmissionError as exc:
         raise HTTPException(
             status_code=409,
             detail={"code": exc.code, "message": exc.message},
@@ -6351,9 +6379,7 @@ async def get_provider_catalog(connection_id: str):
     }
 
 
-@app.get("/api/provider-connections/{connection_id}/image-capabilities")
-async def get_provider_image_capabilities(connection_id: str):
-    """Join the latest provider facts to PA's independent evidence overlay."""
+def _provider_image_capabilities(connection_id: str) -> dict[str, Any]:
     if connection_id != LK_CONNECTION_ID:
         raise HTTPException(status_code=404, detail="Provider connection not found")
     connection = PROVIDER_CATALOG_STORE.get_connection(connection_id)
@@ -6392,6 +6418,103 @@ async def get_provider_image_capabilities(connection_id: str):
     )
 
 
+def _freeze_reference_model_admission(
+    parameters: Mapping[str, Any],
+    *,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """Revalidate and freeze the exact Composer model decision on the Task."""
+    frozen = dict(parameters or {})
+    existing = LEDGER.get_job_by_idempotency_key(
+        str(idempotency_key or ""), include_attempts=False
+    )
+    if existing is not None:
+        existing_parameters = dict(existing.get("parameters") or {})
+        existing_snapshot = existing_parameters.get("model_admission_snapshot")
+        if isinstance(existing_snapshot, Mapping):
+            frozen["model_admission_snapshot"] = copy.deepcopy(dict(existing_snapshot))
+        else:
+            # Historical idempotent replays remain byte-compatible and do not
+            # backfill a newer contract onto an already-created Task.
+            frozen.pop("model_admission_snapshot", None)
+        return frozen
+
+    model_id = str(frozen.get("model") or "").strip()
+    task_kind = "reference-generate"
+    ratio = str(frozen.get("output_ratio") or "").strip().lower()
+    resolution = str(frozen.get("output_resolution") or "").strip().lower()
+    capabilities = _provider_image_capabilities(LK_CONNECTION_ID)
+    selection = build_composer_model_selection(
+        capabilities,
+        task_kind=task_kind,
+        output_ratio=ratio,
+        output_resolution=resolution,
+    )
+    selected = next(
+        (
+            item for item in selection.get("models", [])
+            if isinstance(item, Mapping)
+            and str(item.get("provider_model_id") or "") == model_id
+        ),
+        None,
+    )
+    if selected is None:
+        raise ModelAdmissionError(
+            "MODEL_PARAMETERS_NOT_ADMITTED",
+            (
+                f"模型 {model_id or '未选择'} 当前不支持 "
+                f"{task_kind} / {ratio or '未指定画幅'} / {resolution or '未指定清晰度'}；"
+                "不会自动切换模型或降低参数"
+            ),
+        )
+    latest = PROVIDER_CATALOG_STORE.latest_snapshot(LK_CONNECTION_ID)
+    if latest is None:
+        raise ModelAdmissionError(
+            "MODEL_CATALOG_UNAVAILABLE",
+            "当前没有可追溯的 Provider Catalog 快照，请同步目录后重新核对",
+        )
+    connection = PROVIDER_CATALOG_STORE.get_connection(LK_CONNECTION_ID)
+    snapshot = {
+        "contract_version": "pa-task-model-admission-snapshot-v1",
+        "provider_model_id": model_id,
+        "canonical_model_id": selected.get("canonical_model_id"),
+        "task_kind": task_kind,
+        "output": {"ratio": ratio, "resolution": resolution},
+        "catalog_snapshot": {
+            "id": latest.get("id"),
+            "version": latest.get("version"),
+            "normalized_catalog_sha256": latest.get("normalized_catalog_sha256"),
+            "fetched_at": latest.get("fetched_at"),
+            "status": connection.get("catalog_status"),
+            "stale": str(connection.get("catalog_status") or "").lower() == "stale",
+        },
+        "adapter": copy.deepcopy(selected.get("adapter")),
+        "evidence": copy.deepcopy(selected.get("evidence")),
+        "telemetry": copy.deepcopy(selected.get("telemetry")),
+        "admission": {
+            "schema_version": selection.get("schema_version"),
+            "revision": selection.get("revision"),
+            "selection_sha256": selection.get("selection_sha256"),
+            "category": "eligible",
+            "no_silent_model_substitution": True,
+            "no_silent_parameter_downgrade": True,
+        },
+    }
+    snapshot["snapshot_sha256"] = hashlib.sha256(
+        json.dumps(
+            snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    frozen["model_admission_snapshot"] = snapshot
+    return frozen
+
+
+@app.get("/api/provider-connections/{connection_id}/image-capabilities")
+async def get_provider_image_capabilities(connection_id: str):
+    """Join the latest provider facts to PA's independent evidence overlay."""
+    return _provider_image_capabilities(connection_id)
+
+
 @app.get("/api/provider-connections/{connection_id}/model-identities")
 async def get_provider_model_identities(connection_id: str):
     if connection_id != LK_CONNECTION_ID:
@@ -6414,10 +6537,32 @@ async def get_provider_model_identities(connection_id: str):
 
 
 @app.get("/api/provider-connections/{connection_id}/model-admission")
-async def get_provider_model_admission(connection_id: str):
+async def get_provider_model_admission(
+    connection_id: str,
+    task_kind: str = "",
+    ratio: str = "",
+    resolution: str = "",
+):
     """Return the read-only Composer admission view; never routes a task."""
-    capabilities = await get_provider_image_capabilities(connection_id)
-    return build_composer_admission(capabilities)
+    capabilities = _provider_image_capabilities(connection_id)
+    response = build_composer_admission(capabilities)
+    requested = [task_kind, ratio, resolution]
+    if any(str(value or "").strip() for value in requested):
+        if not all(str(value or "").strip() for value in requested):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "MODEL_SELECTION_REQUEST_INCOMPLETE",
+                    "message": "task_kind、ratio 和 resolution 必须同时提供",
+                },
+            )
+        response["selection"] = build_composer_model_selection(
+            capabilities,
+            task_kind=task_kind,
+            output_ratio=ratio,
+            output_resolution=resolution,
+        )
+    return response
 
 
 @app.delete("/api/provider-connections/{connection_id}")

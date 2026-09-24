@@ -242,6 +242,7 @@ function SpatialCanvas({
   onReady,
   onSelectionChange,
   onSelectionContextChange,
+  onReferenceAdmission,
   onReferenceReview,
   initialShellMode = 'legacy',
   onTransplantReady,
@@ -482,6 +483,7 @@ function SpatialCanvas({
       view={transplantView}
       business={transplantBusiness}
       onTool={(type) => apiRef.current?.setActiveTool({ type })}
+      onReferenceAdmission={onReferenceAdmission}
       onReferenceReview={onReferenceReview}
     />}
     </>

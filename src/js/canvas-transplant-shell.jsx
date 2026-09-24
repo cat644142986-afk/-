@@ -3,12 +3,21 @@ import { getCommonBounds, sceneCoordsToViewportCoords } from '@excalidraw/excali
 import { anchoredSurface, selectionFrame, shouldDismissComposerOnEscape, stopComposerKeyboardEvent } from './canvas-transplant-geometry.js';
 import { CanvasReferenceControls, CanvasReferencePicker, CanvasReferenceTray } from './canvas-retake-reference.jsx';
 import { activeCanvasReference, canvasReferenceOptions } from './canvas-reference-adapter.js';
+import { CanvasModelSelector } from './canvas-model-selector.jsx';
+import {
+  admittedComposerModel,
+  composerAdmissionRequest,
+  composerSelection,
+  initialComposerModel,
+} from './canvas-model-admission.js';
 
 // Interaction transplant: selection geometry follows basketikun's contextual
 // toolbar; Excalidraw's live onChange provides Loomic-style viewport sync.
 // Composer keyboard/IME containment follows BeatDesign; the transient popover
 // dismissal follows Retake. PA owns all business actions and execution.
-export function CanvasTransplantShell({ api, view, business, onTool, onReferenceReview }) {
+export function CanvasTransplantShell({
+  api, view, business, onTool, onReferenceReview, onReferenceAdmission,
+}) {
   const [composerOpen, setComposerOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [annotateOpen, setAnnotateOpen] = useState(false);
@@ -18,9 +27,13 @@ export function CanvasTransplantShell({ api, view, business, onTool, onReference
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const [pickerSelectedId, setPickerSelectedId] = useState('');
   const [referencePrompt, setReferencePrompt] = useState('');
-  const [referenceRatio, setReferenceRatio] = useState('original');
+  const [referenceRatio, setReferenceRatio] = useState('1:1');
   const [referenceResolution, setReferenceResolution] = useState('2k');
   const [referenceError, setReferenceError] = useState('');
+  const [modelAdmission, setModelAdmission] = useState(null);
+  const [modelAdmissionLoading, setModelAdmissionLoading] = useState(false);
+  const [modelAdmissionError, setModelAdmissionError] = useState('');
+  const [selectedModel, setSelectedModel] = useState('');
   const [, setHostLayoutVersion] = useState(0);
   const composerRef = useRef(null);
   const referenceAddRef = useRef(null);
@@ -127,9 +140,42 @@ export function CanvasTransplantShell({ api, view, business, onTool, onReference
   );
   const selectedPickerImage = referenceOptions.find((image) => image.elementId === pickerSelectedId);
   const activeReference = activeCanvasReference(reference, one?.id, referenceOptions);
+  const selectedModelEvidence = admittedComposerModel(modelAdmission, selectedModel);
   const tool = view.appState?.activeTool?.type || 'selection';
   const preventCanvasPointer = (event) => event.stopPropagation();
   const setTool = (type) => { onTool(type); setAnnotateOpen(false); };
+
+  useEffect(() => {
+    if (!activeReference?.elementId || typeof onReferenceAdmission !== 'function') {
+      setModelAdmission(null);
+      setModelAdmissionLoading(false);
+      setModelAdmissionError('');
+      return undefined;
+    }
+    let canceled = false;
+    setModelAdmissionLoading(true);
+    setModelAdmissionError('');
+    const request = composerAdmissionRequest({
+      ratio: referenceRatio,
+      resolution: referenceResolution,
+    });
+    Promise.resolve(onReferenceAdmission(request)).then((payload) => {
+      if (canceled) return;
+      const selection = composerSelection(payload);
+      setModelAdmission(selection);
+      setSelectedModel((current) => initialComposerModel(selection, current));
+      if (selection?.status !== 'ready') {
+        setModelAdmissionError('当前任务与参数组合暂无已验证模型；不会自动切换或降级');
+      }
+    }).catch((error) => {
+      if (canceled) return;
+      setModelAdmission(null);
+      setModelAdmissionError(String(error?.detail?.message || error?.message || error));
+    }).finally(() => {
+      if (!canceled) setModelAdmissionLoading(false);
+    });
+    return () => { canceled = true; };
+  }, [activeReference?.elementId, onReferenceAdmission, referenceRatio, referenceResolution]);
 
   function openReferencePicker(event) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -163,12 +209,18 @@ export function CanvasTransplantShell({ api, view, business, onTool, onReference
       setReferenceError('请先描述希望生成的新方案');
       return;
     }
+    if (!selectedModelEvidence) {
+      setReferenceError('请选择当前任务与参数支持的模型');
+      return;
+    }
     setReferenceError('');
     onReferenceReview?.({
       sourceElementId: activeReference.elementId,
       userRequest: message,
       outputRatio: referenceRatio,
       outputResolution: referenceResolution,
+      model: selectedModelEvidence.provider_model_id,
+      modelAdmission,
     });
   }
 
@@ -227,7 +279,7 @@ export function CanvasTransplantShell({ api, view, business, onTool, onReference
             stopComposerKeyboardEvent(event);
           }} />
           </div>
-          {composerOpen && <div className="pa-transplant__composer-footer"><small data-spatial-conversation-status aria-live="polite">{referenceError || business.conversationError || '当前选区 · 核对不会调用 Provider'}</small>{activeReference && <CanvasReferenceControls ratio={referenceRatio} resolution={referenceResolution} onChange={(patch) => { if (patch.ratio) setReferenceRatio(patch.ratio); if (patch.resolution) setReferenceResolution(patch.resolution); }} />}<button type="submit" disabled={reviewing}>{activeReference ? '核对生成' : '核对修改'}</button></div>}
+          {composerOpen && <div className="pa-transplant__composer-footer"><small data-spatial-conversation-status aria-live="polite">{referenceError || modelAdmissionError || business.conversationError || '当前选区 · 核对不会调用 Provider'}</small>{activeReference && <><CanvasModelSelector admission={modelAdmission} value={selectedModel} loading={modelAdmissionLoading} error="" onChange={(model) => { setSelectedModel(model); setReferenceError(''); }} /><CanvasReferenceControls ratio={referenceRatio} resolution={referenceResolution} onChange={(patch) => { if (patch.ratio) setReferenceRatio(patch.ratio); if (patch.resolution) setReferenceResolution(patch.resolution); setReferenceError(''); }} /></>}<button type="submit" disabled={reviewing || (activeReference && (modelAdmissionLoading || !selectedModelEvidence))}>{activeReference ? '核对生成' : '核对修改'}</button></div>}
         </form>}
       </section>}
       {pickerAnchor && <CanvasReferencePicker anchor={pickerAnchor} images={referenceOptions} selectedImage={selectedPickerImage} onSelectImage={setPickerSelectedId} onConfirm={confirmReference} onCancel={closePicker} />}

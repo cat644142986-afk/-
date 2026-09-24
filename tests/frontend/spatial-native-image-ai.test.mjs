@@ -226,6 +226,10 @@ test('one reference image enters the existing governed single-image Task without
     const changed = updateSpatialImageAiDraft(frozen, { outputRatio: '16:9' });
     assert.equal(changed.preview, null);
     assert.throws(() => spatialImageAiCommandPayload(changed), /先核对/);
+    const switched = updateSpatialImageAiDraft(frozen, { model: 'banana-pro' });
+    assert.equal(switched.model, 'banana-pro');
+    assert.equal(switched.preview, null);
+    assert.throws(() => spatialImageAiCommandPayload(switched), /先核对/);
   }
   assert.throws(() => spatialImageAiPreviewPayload(createSpatialImageAiDraft(
     SPATIAL_RESULT_VARIATION_ACTION,

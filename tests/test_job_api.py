@@ -33,6 +33,12 @@ from python.asset_store import AssetStore  # noqa: E402
 from python.atelier_ledger import AtelierLedger  # noqa: E402
 from python.job_engine import JobExecutionError  # noqa: E402
 from python.local_edit_contract import image_fingerprint  # noqa: E402
+from python.provider_catalog import (  # noqa: E402
+    LK_API_BASE,
+    LK_CONNECTION_ID,
+    LK_PROVIDER,
+    ProviderCatalogStore,
+)
 from python.skill_context import CONTEXT_SKILL_ADAPTER_VERSION  # noqa: E402
 from tests.test_product_profile_ledger import product_profile as product_profile_payload  # noqa: E402
 
@@ -51,6 +57,37 @@ description: API test fixture
 自然真实色彩，材质清晰。
 原始模板含无文字水印说明。
 """
+
+
+def candidate_catalog_fixture() -> dict:
+    return {
+        "catalog_schema_version": 1,
+        "provider": LK_PROVIDER,
+        "api_base": LK_API_BASE,
+        "models": [{
+            "provider_model_id": model_id,
+            "display_name": model_id,
+            "modalities": ["image"],
+            "available_for_this_key": True,
+            "openai_compatible": False,
+            "description": "test catalog image route",
+            "input_hint": "prompt and images",
+            "tags": ["image"],
+            "provider_parameters": [
+                {"name": "prompt", "required": True},
+                {"name": "images", "required": False},
+            ],
+            "pricing": None,
+            "source_catalogs": [
+                "v1/media/models?type=image",
+                "v1/skills/models",
+            ],
+        } for model_id in ("tt-image-2", "banana-2", "banana-pro")],
+        "skills": [],
+        "skill_guide": {},
+        "account": {"balance": {}, "usage": {}},
+        "counts": {},
+    }
 
 
 def png_bytes(color: tuple[int, int, int]) -> bytes:
@@ -151,6 +188,7 @@ class DurableJobApiTests(unittest.TestCase):
             "KNOWLEDGE": server.KNOWLEDGE,
             "JOB_ENGINE": server.JOB_ENGINE,
             "CONTEXT_SKILL_ROOT": server.CONTEXT_SKILL_ROOT,
+            "PROVIDER_CATALOG_STORE": server.PROVIDER_CATALOG_STORE,
         }
         server.LEDGER = self.ledger
         server.ASSET_STORE = self.store
@@ -161,6 +199,23 @@ class DurableJobApiTests(unittest.TestCase):
         server.KNOWLEDGE = OfflineKnowledge()
         server.JOB_ENGINE = None
         server.CONTEXT_SKILL_ROOT = self.root / "skills"
+        self.catalog_store = ProviderCatalogStore(self.root / "provider-catalog.sqlite3")
+        self.catalog_store.ensure_connection(
+            connection_id=LK_CONNECTION_ID,
+            provider=LK_PROVIDER,
+            display_name="LK / AI模型中心",
+            auth_kind="api_key",
+            secret_ref="ProductAtelier-Test/provider/lk/primary",
+            api_base=LK_API_BASE,
+        )
+        self.catalog_store.record_snapshot(
+            LK_CONNECTION_ID,
+            raw_catalog={"fixture": "job-api"},
+            normalized_catalog=candidate_catalog_fixture(),
+            endpoint_status={"status": "complete", "read_only": True, "generation_calls": 0},
+            fetched_at="2026-09-24T10:00:00+08:00",
+        )
+        server.PROVIDER_CATALOG_STORE = self.catalog_store
         server.save_config({
             "output_root": str(self.output_dir),
             "known_output_roots": [str(self.output_dir)],
@@ -2859,7 +2914,7 @@ class DurableJobApiTests(unittest.TestCase):
                     "objective": "以所选图片为参考创作新的商业视觉方案，不覆写原图",
                     "user_request": "生成暖灰色咖啡店场景，保留包装文字与 Logo",
                     "output_kind": "ecommerce-main-image",
-                    "output_spec": {"ratio": "4:3", "resolution": "2k"},
+                    "output_spec": {"ratio": "1:1", "resolution": "2k"},
                     "intent_locks": {
                         "subject_shape": True, "product_count": True,
                         "packaging_text": True, "logo": True,
@@ -2868,7 +2923,7 @@ class DurableJobApiTests(unittest.TestCase):
                 common = {
                     **brief, "mode": "single",
                     "command_id": server.SPATIAL_IMAGE_AI_COMMAND_ID,
-                    "source_asset_ids": [source_id], "model": "gpt-image-2",
+                    "source_asset_ids": [source_id], "model": "tt-image-2",
                     "prompt_version": "prompt_v1", "generation_strategy": "single_pass",
                     "spatial_action": server.SPATIAL_RESULT_VARIATION_ACTION,
                     "spatial_canvas_id": canvas["id"],
@@ -2892,9 +2947,9 @@ class DurableJobApiTests(unittest.TestCase):
                         "spatial_canvas_id": canvas["id"],
                         "spatial_source_element_id": element["id"],
                         "parameters": {
-                            "batch": 1, "variations": 1, "model": "gpt-image-2",
+                            "batch": 1, "variations": 1, "model": "tt-image-2",
                             "brief": brief, "intent_locks": brief["intent_locks"],
-                            "output_ratio": "4:3", "output_resolution": "2k",
+                            "output_ratio": "1:1", "output_resolution": "2k",
                             "prompt_version": "prompt_v1", "prompt_version_source": "user",
                             "generation_strategy": "single_pass",
                             "generation_strategy_source": "user", "design_skill_id": "",
@@ -2912,6 +2967,12 @@ class DurableJobApiTests(unittest.TestCase):
                 self.assertEqual(completed["snapshot"]["parameters"]["ui_context"], ui_context)
                 self.assertEqual(completed["snapshot"]["parameters"]["execution_context"]["context_sha256"],
                                  preview_bundle["execution_context"]["context_sha256"])
+                admission = completed["snapshot"]["parameters"]["model_admission_snapshot"]
+                self.assertEqual(admission["provider_model_id"], "tt-image-2")
+                self.assertEqual(admission["output"], {"ratio": "1:1", "resolution": "2k"})
+                self.assertEqual(admission["adapter"]["version"], "lk-media-generate-v1")
+                self.assertEqual(admission["admission"]["category"], "eligible")
+                self.assertTrue(admission["catalog_snapshot"]["normalized_catalog_sha256"])
                 self.assertEqual(completed["paid_call_authorization"]["max_calls"], 1)
                 self.assert_result_lineage(client, completed, {source_id: 2})
                 trace = next(item for item in client.get(f"/api/jobs/{completed['id']}/traces").json()["traces"]
@@ -2963,6 +3024,32 @@ class DurableJobApiTests(unittest.TestCase):
             "contract_version": server.SPATIAL_CANVAS_REFERENCE_CONTRACT,
         }
         with self.live_client() as client:
+            admitted = client.get(
+                f"/api/provider-connections/{LK_CONNECTION_ID}/model-admission",
+                params={
+                    "task_kind": "reference-generate",
+                    "ratio": "1:1",
+                    "resolution": "2k",
+                },
+            )
+            self.assertEqual(admitted.status_code, 200, admitted.text)
+            self.assertEqual(
+                admitted.json()["selection"]["eligible_provider_model_ids"],
+                ["tt-image-2", "banana-2", "banana-pro"],
+            )
+            unsupported_admission = client.get(
+                f"/api/provider-connections/{LK_CONNECTION_ID}/model-admission",
+                params={
+                    "task_kind": "reference-generate",
+                    "ratio": "4:3",
+                    "resolution": "2k",
+                },
+            )
+            self.assertEqual(unsupported_admission.status_code, 200)
+            self.assertEqual(
+                unsupported_admission.json()["selection"]["eligible_provider_model_ids"],
+                [],
+            )
             imported = client.post(
                 "/api/assets/import",
                 files={"file": ("candidate-source.png", reference_bytes, "image/png")},
@@ -3096,6 +3183,18 @@ class DurableJobApiTests(unittest.TestCase):
                 self.assertEqual(completed["status"], "completed", completed)
                 self.assertEqual(completed["snapshot"]["source_asset_ids"], [selected_result["id"]])
                 self.assertEqual(completed["snapshot"]["parameters"]["model"], model_id)
+                admission = completed["snapshot"]["parameters"]["model_admission_snapshot"]
+                self.assertEqual(admission["provider_model_id"], model_id)
+                self.assertEqual(admission["canonical_model_id"], f"pa:image:lk-ai-model-center:{model_id}")
+                self.assertEqual(admission["output"], {"ratio": "1:1", "resolution": "2k"})
+                self.assertEqual(admission["adapter"]["contract"], model_id)
+                self.assertEqual(
+                    admission["evidence"]["provider_canary"]["task_id"],
+                    {
+                        "banana-2": "job_1c7c16dbcd784646866595fd8f540fb0",
+                        "banana-pro": "job_e668dd6932a6444491efc65d6c9a29f9",
+                    }[model_id],
+                )
                 self.assertEqual(completed["paid_call_authorization"]["max_calls"], 1)
                 self.assertEqual(completed["items"][0]["attempt_count"], 1)
                 self.assert_result_lineage(client, completed, {selected_result["id"]: 2})
@@ -3123,6 +3222,27 @@ class DurableJobApiTests(unittest.TestCase):
                 self.assertEqual(len(receipts), 1)
                 self.assertEqual(receipts[0]["model"], model_id)
                 self.assertEqual(receipts[0]["status"], "completed")
+
+            calls_before_rejection = len(self.ai_calls)
+            unsupported = copy.deepcopy(execute_parameters)
+            unsupported["output_ratio"] = "4:3"
+            rejected = client.post(
+                f"/api/commands/{server.SPATIAL_IMAGE_AI_COMMAND_ID}/execute",
+                json={
+                    "client_request_id": "candidate-adapter-unsupported-ratio",
+                    "source_asset_ids": [selected_result["id"]],
+                    "max_attempts": 1,
+                    "spatial_canvas_id": canvas["id"],
+                    "spatial_source_element_id": result_element["id"],
+                    "parameters": unsupported,
+                },
+            )
+            self.assertEqual(rejected.status_code, 409, rejected.text)
+            self.assertEqual(
+                rejected.json()["detail"]["code"],
+                "MODEL_PARAMETERS_NOT_ADMITTED",
+            )
+            self.assertEqual(len(self.ai_calls), calls_before_rejection)
 
     def test_canvas_conversation_two_rounds_bind_current_selection_without_prompt_history(self) -> None:
         vault = self.root / "knowledge-vault"

@@ -12,6 +12,17 @@ import hashlib
 import json
 from typing import Any, Mapping
 
+try:
+    from model_candidate_canary import (
+        provider_canary_sha256,
+        provider_canary_telemetry,
+    )
+except ImportError:  # Allows importing as python.model_admission.
+    from python.model_candidate_canary import (
+        provider_canary_sha256,
+        provider_canary_telemetry,
+    )
+
 
 ADMISSION_SCHEMA_VERSION = "pa-composer-admission-v1"
 ADMISSION_REVISION = "2026-09-24.1"
@@ -26,6 +37,8 @@ ADMISSION_CATEGORIES = (
 )
 TARGET_TASK_KIND = "reference-generate"
 REQUIRED_EVIDENCE_LEVEL = "provider-verified"
+COMPOSER_SELECTION_SCHEMA_VERSION = "pa-composer-model-selection-v1"
+COMPOSER_SELECTION_REVISION = "2026-09-24.1"
 EVIDENCE_RANK = {
     "none": 0,
     "catalog-only": 1,
@@ -158,6 +171,25 @@ def admission_definition() -> dict[str, Any]:
 
 def admission_sha256() -> str:
     return _sha256(admission_definition())
+
+
+def composer_selection_definition() -> dict[str, Any]:
+    return {
+        "schema_version": COMPOSER_SELECTION_SCHEMA_VERSION,
+        "revision": COMPOSER_SELECTION_REVISION,
+        "candidate_order": list(FOCUS_CANDIDATE_IDS),
+        "default_provider_model_id": "tt-image-2",
+        "rule": [
+            "base Composer admission is eligible for the exact task kind",
+            "the exact ratio and resolution pair has provider-verified evidence",
+            "no model substitution or parameter downgrade is permitted",
+        ],
+        "telemetry_is_not_ranking": True,
+    }
+
+
+def composer_selection_sha256() -> str:
+    return _sha256(composer_selection_definition())
 
 
 def _route_check(catalog: Mapping[str, Any]) -> dict[str, Any]:
@@ -359,4 +391,124 @@ def build_composer_admission(
         },
         "candidates": evaluated,
         "legacy_only": legacy_only,
+    }
+
+
+def _tested_output_pair(overlay: Mapping[str, Any], ratio: str, resolution: str) -> dict[str, Any] | None:
+    tested_output = overlay.get("tested_output")
+    tested_output = tested_output if isinstance(tested_output, Mapping) else {}
+    pairs = tested_output.get("pairs")
+    pairs = pairs if isinstance(pairs, list) else []
+    for pair in pairs:
+        if not isinstance(pair, Mapping):
+            continue
+        if (
+            str(pair.get("ratio") or "").strip().lower() == ratio
+            and str(pair.get("resolution") or "").strip().lower() == resolution
+        ):
+            return copy.deepcopy(dict(pair))
+    return None
+
+
+def build_composer_model_selection(
+    capability_projection: Mapping[str, Any],
+    *,
+    task_kind: str,
+    output_ratio: str,
+    output_resolution: str,
+) -> dict[str, Any]:
+    """Return exact models admitted for one task/ratio/resolution tuple."""
+    task = str(task_kind or "").strip().lower()
+    ratio = str(output_ratio or "").strip().lower()
+    resolution = str(output_resolution or "").strip().lower()
+    admission = build_composer_admission(
+        capability_projection,
+        task_kind=task or TARGET_TASK_KIND,
+    )
+    models = capability_projection.get("models")
+    models = models if isinstance(models, list) else []
+    by_id = {
+        str((item.get("catalog") or {}).get("provider_model_id") or ""): item
+        for item in models
+        if isinstance(item, Mapping) and isinstance(item.get("catalog"), Mapping)
+    }
+    admitted_by_id = {
+        str(item.get("provider_model_id") or ""): item
+        for item in admission["candidates"]
+        if isinstance(item, Mapping)
+    }
+    selected_models = []
+    for model_id in FOCUS_CANDIDATE_IDS:
+        source = by_id.get(model_id)
+        evaluated = admitted_by_id.get(model_id) or {}
+        if not isinstance(source, Mapping) or evaluated.get("eligible") is not True:
+            continue
+        overlay = source.get("overlay")
+        overlay = overlay if isinstance(overlay, Mapping) else {}
+        pair = _tested_output_pair(overlay, ratio, resolution)
+        if task != TARGET_TASK_KIND or pair is None:
+            continue
+        catalog = source.get("catalog")
+        catalog = catalog if isinstance(catalog, Mapping) else {}
+        adapter = overlay.get("adapter")
+        adapter = adapter if isinstance(adapter, Mapping) else {}
+        canary = source.get("provider_canary")
+        canary = canary if isinstance(canary, Mapping) else {}
+        selected_models.append({
+            "provider_model_id": model_id,
+            "canonical_model_id": evaluated.get("canonical_model_id"),
+            "display_name": str(catalog.get("display_name") or model_id),
+            "task_kind": task,
+            "output": {"ratio": ratio, "resolution": resolution},
+            "adapter": {
+                "contract": adapter.get("contract"),
+                "version": adapter.get("version"),
+                "status": adapter.get("status"),
+            },
+            "evidence": {
+                "admission_schema_version": ADMISSION_SCHEMA_VERSION,
+                "admission_revision": ADMISSION_REVISION,
+                "admission_sha256": admission["admission_sha256"],
+                "overlay_schema_version": capability_projection.get("schema_version"),
+                "overlay_revision": capability_projection.get("revision"),
+                "overlay_sha256": capability_projection.get("overlay_sha256"),
+                "identity_sha256": (
+                    capability_projection.get("identity_resolution") or {}
+                ).get("identity_sha256"),
+                "candidate_validation": copy.deepcopy(
+                    capability_projection.get("candidate_validation")
+                ),
+                "provider_canary": {
+                    "sha256": provider_canary_sha256(),
+                    "task_id": canary.get("task_id"),
+                    "remote_task_id": canary.get("remote_task_id"),
+                    "last_verified_at": canary.get("last_verified_at"),
+                    "fixture": copy.deepcopy(canary.get("fixture")),
+                    "provider_route": copy.deepcopy(canary.get("provider_route")),
+                    "result_main_sha256": canary.get("result_main_sha256"),
+                },
+                "tested_output": pair,
+            },
+            "telemetry": provider_canary_telemetry(model_id),
+        })
+    eligible_ids = [item["provider_model_id"] for item in selected_models]
+    default_id = str(composer_selection_definition()["default_provider_model_id"])
+    return {
+        "schema_version": COMPOSER_SELECTION_SCHEMA_VERSION,
+        "revision": COMPOSER_SELECTION_REVISION,
+        "selection_sha256": composer_selection_sha256(),
+        "request": {
+            "task_kind": task,
+            "output_ratio": ratio,
+            "output_resolution": resolution,
+        },
+        "status": "ready" if selected_models else "unsupported",
+        "eligible_provider_model_ids": eligible_ids,
+        "default_provider_model_id": default_id if default_id in eligible_ids else None,
+        "models": selected_models,
+        "policy": {
+            "no_silent_model_substitution": True,
+            "no_silent_parameter_downgrade": True,
+            "telemetry_is_not_ranking": True,
+        },
     }

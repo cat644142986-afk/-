@@ -5,11 +5,15 @@ from pathlib import Path
 
 from python.model_admission import (
     ADMISSION_SCHEMA_VERSION,
+    COMPOSER_SELECTION_SCHEMA_VERSION,
     FOCUS_CANDIDATE_IDS,
     admission_sha256,
     build_composer_admission,
+    build_composer_model_selection,
     evaluate_model_admission,
 )
+from python.model_candidate_canary import apply_provider_canary_overlay
+from python.model_candidate_validation import apply_candidate_validation_overlay
 from python.model_capability_overlay import build_image_capability_overlay
 from python.model_identity import (
     CATALOG_IMAGE_SOURCE,
@@ -46,6 +50,17 @@ def capability_fixture():
     overlay = build_image_capability_overlay(catalog)
     identities = build_model_identity_resolution(catalog)
     return attach_identity_to_capability_overlay(overlay, identities)
+
+
+def verified_capability_fixture():
+    return attach_identity_to_capability_overlay(
+        apply_provider_canary_overlay(
+            apply_candidate_validation_overlay(
+                build_image_capability_overlay(catalog_fixture())
+            )
+        ),
+        build_model_identity_resolution(catalog_fixture()),
+    )
 
 
 class ModelAdmissionTests(unittest.TestCase):
@@ -138,6 +153,45 @@ class ModelAdmissionTests(unittest.TestCase):
             ["banana-2", "banana-pro"],
         )
         self.assertEqual(report["provider_generation_calls"], 0)
+
+    def test_selection_admits_only_verified_reference_tuple(self) -> None:
+        selection = build_composer_model_selection(
+            verified_capability_fixture(),
+            task_kind="reference-generate",
+            output_ratio="1:1",
+            output_resolution="2K",
+        )
+        self.assertEqual(selection["schema_version"], COMPOSER_SELECTION_SCHEMA_VERSION)
+        self.assertEqual(selection["status"], "ready")
+        self.assertEqual(
+            selection["eligible_provider_model_ids"],
+            ["tt-image-2", "banana-2", "banana-pro"],
+        )
+        self.assertEqual(selection["default_provider_model_id"], "tt-image-2")
+        self.assertTrue(selection["policy"]["telemetry_is_not_ranking"])
+        self.assertNotIn("quality_score", json.dumps(selection["models"]))
+        self.assertNotIn("recommended", json.dumps(selection["models"]))
+        for item in selection["models"]:
+            self.assertEqual(item["output"], {"ratio": "1:1", "resolution": "2k"})
+            self.assertEqual(item["adapter"]["status"], "provider-verified")
+            self.assertIn("single-canary", item["telemetry"]["interpretation"])
+
+    def test_selection_never_downgrades_or_substitutes_unsupported_request(self) -> None:
+        capabilities = verified_capability_fixture()
+        for task_kind, ratio, resolution in (
+            ("reference-generate", "original", "2k"),
+            ("reference-generate", "1:1", "4k"),
+            ("variant", "1:1", "2k"),
+        ):
+            selection = build_composer_model_selection(
+                capabilities,
+                task_kind=task_kind,
+                output_ratio=ratio,
+                output_resolution=resolution,
+            )
+            self.assertEqual(selection["status"], "unsupported")
+            self.assertEqual(selection["eligible_provider_model_ids"], [])
+            self.assertIsNone(selection["default_provider_model_id"])
 
 
 if __name__ == "__main__":

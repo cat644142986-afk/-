@@ -169,6 +169,7 @@ function imageAiDraftHtml(draft, asset, {
   previewing = false,
   submitting = false,
   error = '',
+  modelAdmission = null,
 } = {}) {
   if (!draft) return '';
   const preview = draft.preview;
@@ -189,10 +190,21 @@ function imageAiDraftHtml(draft, asset, {
     <option value=""${draft.designSkillId ? '' : ' selected'}>默认方法 · 不额外引用</option>
     <option value="${SPATIAL_IMAGE_AI_SKILL_ID}"${draft.designSkillId === SPATIAL_IMAGE_AI_SKILL_ID ? ' selected' : ''}>食品饮料白底主图</option>
   `;
+  const admittedModels = Array.isArray(modelAdmission?.models)
+    ? modelAdmission.models : [];
+  const selectedModel = admittedModels.find((item) => (
+    String(item?.provider_model_id || '') === String(draft.model || '')
+  ));
+  const modelOptions = admittedModels.map((item) => `
+    <option value="${escapeHtml(item.provider_model_id)}"${item.provider_model_id === draft.model ? ' selected' : ''}>${escapeHtml(item.display_name || item.provider_model_id)}</option>
+  `).join('');
+  const telemetry = selectedModel?.telemetry || {};
+  const billing = telemetry?.billing || {};
   return `
     <form class="spatial-white-form" data-spatial-image-ai-form novalidate>
       <div class="spatial-white-form__heading"><span>CANVAS NATIVE AI</span><strong>${escapeHtml(definition.title)}</strong><small>提交前核对本次真正生效的上下文</small></div>
       <label class="spatial-white-form__wide"><span>本次要求</span><textarea data-spatial-image-ai-field="userRequest" maxlength="1200" rows="4" ${busy ? 'disabled' : ''}>${escapeHtml(draft.userRequest)}</textarea><small>主体结构、数量、包装文字与 Logo 始终锁定。</small></label>
+      ${draft.inputSurface === SPATIAL_CANVAS_REFERENCE_SURFACE ? `<label class="spatial-white-form__wide"><span>生成模型</span><select data-spatial-image-ai-field="model" ${busy ? 'disabled' : ''}>${modelOptions}</select><small>只显示 ${escapeHtml(draft.outputRatio)} / ${escapeHtml(draft.outputResolution.toUpperCase())} 已验证模型；切换后必须重新核对上下文。</small></label>${selectedModel ? `<details class="spatial-model-details"><summary>模型与证据详情</summary><dl><div><dt>模型 ID</dt><dd>${escapeHtml(selectedModel.provider_model_id)}</dd></div><div><dt>适配器</dt><dd>${escapeHtml(selectedModel.adapter?.contract || '')} · ${escapeHtml(selectedModel.adapter?.version || '')}</dd></div><div><dt>Provider</dt><dd>LK / AI模型中心</dd></div><div><dt>单次 canary</dt><dd>${Number(telemetry.provider_elapsed_ms || 0) ? `${(Number(telemetry.provider_elapsed_ms) / 1000).toFixed(1)} 秒` : '—'} · ${escapeHtml(billing.cost ?? '—')} ${escapeHtml(billing.unit || '')}</dd></div><div><dt>通道证据</dt><dd>${escapeHtml(telemetry.channel_group || '—')}</dd></div></dl><small>单次验证证据，不代表质量、速度或成本排名。</small></details>` : ''}` : ''}
       <label class="spatial-white-form__wide"><span>设计方法</span><select data-spatial-image-ai-field="designSkillId" ${busy ? 'disabled' : ''}>${skillOptions}</select><small>只读贡献设计规则，不执行脚本或 Provider。</small></label>
       <section class="spatial-context-preview" data-spatial-image-ai-preview aria-live="polite">
         ${preview ? `
@@ -202,7 +214,7 @@ function imageAiDraftHtml(draft, asset, {
             <div><dt>Product Profile</dt><dd>${draft.productProfileVersionId ? `已冻结 · ${escapeHtml(shortHash(draft.productProfileVersionId))}` : '未绑定 · 将先识别素材'}</dd></div>
             <div><dt>Approved Knowledge</dt><dd>${Number(summary.source_count || 0)} 条来源 · ${Number(summary.positive_rule_count || 0) + Number(summary.negative_rule_count || 0)} 条规则</dd></div>
             <div><dt>设计方法</dt><dd>${skill ? `${escapeHtml(skill.title || '食品饮料白底主图')} · ${escapeHtml(skill.version || '')}<br><small>hash ${escapeHtml(shortHash(skill.content_sha256))} · ${escapeHtml(skill.adapter_version || '')}</small>` : '默认方法'}</dd></div>
-            <div><dt>Provider</dt><dd>${escapeHtml(context?.provider_adapter?.model || draft.model)} · ${providerCalls === 1 ? '1 次调用' : '最多 2 次（含素材识别）'}</dd></div>
+            <div><dt>模型</dt><dd>${escapeHtml(selectedModel?.display_name || context?.provider_adapter?.model || draft.model)} · ${providerCalls === 1 ? '1 次调用' : '最多 2 次（含素材识别）'}</dd></div>
           </dl>
         ` : `<p>${previewing ? '正在从账本编译执行上下文…' : '要求已变化，请重新核对后再提交。'}</p>`}
       </section>
@@ -346,6 +358,7 @@ export function createInfiniteCanvasWorkspaceController({
   let imageAiPreviewing = false;
   let imageAiSubmitting = false;
   let imageAiDraftError = '';
+  let imageAiAdmission = null;
   let conversationInput = '';
   let conversationError = '';
   let conversationReviewing = false;
@@ -685,6 +698,7 @@ export function createInfiniteCanvasWorkspaceController({
       videoDraftError = '';
       imageAiDraft = null;
       imageAiDraftError = '';
+      imageAiAdmission = null;
       conversationInput = '';
       conversationError = '';
       conversationReviewing = false;
@@ -733,6 +747,7 @@ export function createInfiniteCanvasWorkspaceController({
         previewing: imageAiPreviewing,
         submitting: imageAiSubmitting,
         error: imageAiDraftError,
+        modelAdmission: imageAiAdmission,
       }) : ''}
     `;
     inspector.dataset.mode = imageAiDraft || videoDraft ? 'review' : 'details';
@@ -907,6 +922,7 @@ export function createInfiniteCanvasWorkspaceController({
       }
       imageAiDraft = null;
       imageAiDraftError = '';
+      imageAiAdmission = null;
       renderInspector(selectedElement).then(() => {
         query('[data-spatial-conversation-field]')?.focus?.({ preventScroll: true });
       });
@@ -1514,6 +1530,7 @@ export function createInfiniteCanvasWorkspaceController({
     }));
     if (!selectionIsCurrent()) throw new Error('当前选区已变化，请重新核对修改');
     selectedAsset = asset;
+    imageAiAdmission = reference ? (seed?.modelAdmission || null) : null;
     imageAiDraft = createSpatialImageAiDraft(definition.action, {
       ...defaults,
       canvasId: session.canvasId,
@@ -1522,6 +1539,7 @@ export function createInfiniteCanvasWorkspaceController({
       sourceResultId: exactResult ? String(refs.result_id || '') : '',
       productProfileVersionId: String(refs.product_profile_version_id || ''),
       userRequest: String(seed?.userRequest || defaults?.userRequest || ''),
+      model: reference ? String(seed?.model || '') : defaults?.model,
       outputRatio: reference ? String(seed?.outputRatio || defaults?.outputRatio || 'original') : defaults?.outputRatio,
       outputResolution: reference ? String(seed?.outputResolution || defaults?.outputResolution || '2k') : defaults?.outputResolution,
       promptVersion: reference ? 'prompt_v1' : defaults?.promptVersion,
@@ -1673,6 +1691,7 @@ export function createInfiniteCanvasWorkspaceController({
       await persistImageAiJobAssociation(job, session);
       if (!canvasSessionIsCurrent(session)) return job;
       imageAiDraft = null;
+      imageAiAdmission = null;
       if (submittedDraft.inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE) {
         conversationInput = '';
         conversationError = '';
@@ -2325,6 +2344,11 @@ export function createInfiniteCanvasWorkspaceController({
           }
           return openCanvasReferencePreview({ element: selectedElement }, input);
         },
+        onReferenceAdmission: (request) => api.getProviderModelAdmission({
+          taskKind: request?.taskKind,
+          ratio: request?.ratio,
+          resolution: request?.resolution,
+        }),
         onSelectionChange: (element) => {
           if (canvasSessionIsCurrent(session)) renderInspector(element);
         },
@@ -2780,6 +2804,7 @@ export function createInfiniteCanvasWorkspaceController({
       if (conversation) conversationInput = imageAiDraft.userRequest;
       imageAiDraft = null;
       imageAiDraftError = '';
+      imageAiAdmission = null;
       return renderInspector(selectedElement).then(() => {
         if (conversation) query('[data-spatial-conversation-field]')?.focus?.({ preventScroll: true });
       });
@@ -2789,6 +2814,7 @@ export function createInfiniteCanvasWorkspaceController({
       const action = imageAiDraft?.action || '';
       imageAiDraft = null;
       imageAiDraftError = '';
+      imageAiAdmission = null;
       return onImageAiClassic(action, context);
     }
     if (event.target.closest('[data-spatial-video-cancel]')) {
