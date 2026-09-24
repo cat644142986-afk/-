@@ -95,7 +95,9 @@ def _blocked_text_to_image() -> dict[str, str]:
 
 
 def _generic_candidate(model_id: str) -> dict[str, Any]:
-    contract = capability_contract(model_id)
+    # Overlay v1 is sealed. New exact-id candidate adapters are projected by
+    # model_candidate_validation instead of mutating this historical baseline.
+    contract = capability_contract(model_id, "generic-image")
     return {
         "provider_model_id": model_id,
         "status": "candidate",
@@ -482,4 +484,3 @@ for _entry in overlay_definition()["catalog_v1_models"]:
     _validate_overlay(_entry)
 for _entry in LEGACY_EXECUTION_OVERLAYS.values():
     _validate_overlay(_entry)
-

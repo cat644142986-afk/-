@@ -1,0 +1,48 @@
+{
+  "schema_version": "pa-candidate-canary-fixture-v1",
+  "id": "reference-generate-packaging-logo-v1",
+  "task_kind": "reference-generate",
+  "reference": {
+    "semantics": "exact-single-result",
+    "asset_role": "result_main",
+    "fixture_path": "../generation_quality/generated/packaging-text-brand.png",
+    "sha256": "2a6afca49fcaf0e1d050ae3447e818db408e94ed781a928a50a9c3083bd2f56f",
+    "width": 640,
+    "height": 640,
+    "lineage_parent_required": true
+  },
+  "user_request": "以当前结果为精确参考，生成暖灰色商业摄影场景；严格保留 PA TEA、250g 包装文字、Logo、包装结构与珊瑚品牌色。",
+  "intent_locks": {
+    "subject_shape": true,
+    "product_count": true,
+    "packaging_text": true,
+    "logo": true,
+    "brand_color": true
+  },
+  "output": {
+    "ratio": "1:1",
+    "resolution": "2k"
+  },
+  "execution": {
+    "input_surface": "canvas-reference",
+    "prompt_version": "prompt_v1",
+    "generation_strategy": "single_pass",
+    "max_attempts": 1,
+    "automatic_paid_retry": false,
+    "provider_call_confirmed": false
+  },
+  "candidate_models": [
+    {
+      "provider_model_id": "tt-image-2",
+      "expected_adapter_contract": "gpt-image-2"
+    },
+    {
+      "provider_model_id": "banana-2",
+      "expected_adapter_contract": "banana-2"
+    },
+    {
+      "provider_model_id": "banana-pro",
+      "expected_adapter_contract": "banana-pro"
+    }
+  ]
+}

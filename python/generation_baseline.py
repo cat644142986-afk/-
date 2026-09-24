@@ -50,6 +50,24 @@ _CAPABILITY_CONTRACTS: dict[str, dict[str, Any]] = {
         "response_mode": "async-task",
         "poll_endpoint": "/v1/skills/task-status",
     },
+    "banana-2": {
+        "family": "banana-2",
+        "status": "request-shape-checked",
+        "endpoint": "/v1/media/generate",
+        "reference_parameter": "params.images[]",
+        "output_parameters": ["aspectRatio", "imageSize"],
+        "response_mode": "async-task",
+        "poll_endpoint": "/v1/skills/task-status",
+    },
+    "banana-pro": {
+        "family": "banana-pro",
+        "status": "request-shape-checked",
+        "endpoint": "/v1/media/generate",
+        "reference_parameter": "params.images[]",
+        "output_parameters": ["aspectRatio", "imageSize"],
+        "response_mode": "async-task",
+        "poll_endpoint": "/v1/skills/task-status",
+    },
     "generic-image": {
         "family": "generic-image",
         "status": "compatibility-only",
@@ -216,6 +234,16 @@ def resolve_material_prompt_route(
 
 def prompt_adapter_profile(model: str) -> dict[str, str]:
     model_key = str(model or "").strip().lower()
+    if model_key == "banana-2":
+        return {
+            "id": "banana-2-reference-v1",
+            "directive": "以精确参考图为内容和品牌依据，只执行本次创作要求并保持未点名约束",
+        }
+    if model_key == "banana-pro":
+        return {
+            "id": "banana-pro-reference-v1",
+            "directive": "以精确参考图为内容和品牌依据，只执行本次创作要求并保持未点名约束",
+        }
     if model_key.startswith("gemini-") and "image" in model_key:
         return {
             "id": "gemini-image-compact-v1",
@@ -476,6 +504,8 @@ def capability_contract(model: str, provider_family: str = "") -> dict[str, Any]
     if not family:
         if model_key.startswith("gpt-image-2") or model_key == "tt-image-2":
             family = "gpt-image-2"
+        elif model_key in {"banana-2", "banana-pro"}:
+            family = model_key
         elif model_key.startswith("gemini-") and "image" in model_key:
             family = "gemini-image"
         else:

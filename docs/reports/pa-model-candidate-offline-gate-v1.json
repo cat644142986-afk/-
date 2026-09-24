@@ -1,0 +1,59 @@
+{
+  "format_version": 1,
+  "kind": "product-atelier-model-candidate-offline-gate",
+  "status": "offline-verified",
+  "source_checkpoint": "980edc3c55eb680a9070f5e05d6c4a8d3b465f97",
+  "candidate_validation": {
+    "schema_version": "pa-model-candidate-validation-v1",
+    "revision": "2026-09-24.1",
+    "sha256": "ba317e1e6bf6f88f9667a0ba4ffd2fe85971aa32f513c05f5ff03aae635bacbc"
+  },
+  "fixture": {
+    "id": "reference-generate-packaging-logo-v1",
+    "path": "tests/fixtures/model_candidate_validation/reference-generate-v1.json",
+    "json_sha256": "92f1737bb37d3dbbe9b86df3b31ba87c6ef2b9d9b414cf5e25ed5722acdb7dd2",
+    "reference_path": "tests/fixtures/generation_quality/generated/packaging-text-brand.png",
+    "reference_sha256": "2a6afca49fcaf0e1d050ae3447e818db408e94ed781a928a50a9c3083bd2f56f",
+    "semantics": "exact-single-result",
+    "protected_content": ["PA TEA", "250g", "Logo", "packaging structure", "coral brand color"],
+    "ratio": "1:1",
+    "resolution": "2k",
+    "max_attempts": 1
+  },
+  "results": {
+    "tt-image-2": {
+      "offline_work_repeated": false,
+      "adapter_contract": "gpt-image-2",
+      "admission": "needs_canary"
+    },
+    "banana-2": {
+      "adapter_contract": "banana-2",
+      "provider_parameters": {"aspectRatio": "1:1", "imageSize": "2K", "images": "single exact Result"},
+      "governor": "existing execution-context and prompt_v1 compiled prompt",
+      "offline_gate": "passed",
+      "admission": "needs_canary"
+    },
+    "banana-pro": {
+      "adapter_contract": "banana-pro",
+      "provider_parameters": {"aspectRatio": "1:1", "imageSize": "2K", "images": "single exact Result"},
+      "governor": "existing execution-context and prompt_v1 compiled prompt",
+      "offline_gate": "passed",
+      "admission": "needs_canary",
+      "evidence_inherited_from_banana_2": false
+    }
+  },
+  "post_gate_classification": {
+    "eligible": [],
+    "needs_identity": [],
+    "needs_adapter": [],
+    "needs_offline_gate": [],
+    "needs_canary": ["tt-image-2", "banana-2", "banana-pro"]
+  },
+  "boundaries": [
+    "No exact-route Provider behavior or image quality is claimed by this offline Gate.",
+    "No evidence is inherited across tt-image-2, banana-2, banana-pro or any legacy id.",
+    "No task kind other than reference-generate is admitted by this evidence.",
+    "No Composer, Smart Router, schema or release state changed."
+  ],
+  "provider_generation_calls": 0
+}

@@ -57,6 +57,20 @@ class OutputSpecTests(unittest.TestCase):
         self.assertEqual(gemini["provider_params"]["aspectRatio"], "16:9")
         self.assertEqual(gemini["provider_params"]["imageSize"], "4K")
 
+    def test_banana_models_use_exact_independent_adapter_families(self) -> None:
+        banana_2 = server.resolve_output_spec(
+            "banana-2", "1:1", "2k", (640, 640)
+        )
+        banana_pro = server.resolve_output_spec(
+            "banana-pro", "1:1", "2k", (640, 640)
+        )
+
+        expected = {"aspectRatio": "1:1", "imageSize": "2K"}
+        self.assertEqual(banana_2["provider_params"], expected)
+        self.assertEqual(banana_pro["provider_params"], expected)
+        self.assertEqual(banana_2["provider_family"], "banana-2")
+        self.assertEqual(banana_pro["provider_family"], "banana-pro")
+
     def test_submit_uses_plural_reference_array_and_top_level_prompt(self) -> None:
         spec = server.resolve_output_spec("gpt-image-2", "4:5", "2k", (800, 1000))
         with mock.patch.object(

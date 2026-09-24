@@ -2942,6 +2942,188 @@ class DurableJobApiTests(unittest.TestCase):
             second = run_round(scene["elements"][1], first_result, "reference-second")
             self.assertEqual(second["items"][0]["source_asset_id"], first_result)
 
+    def test_banana_candidate_adapters_pass_frozen_result_reference_gate(self) -> None:
+        vault = self.root / "candidate-knowledge-vault"
+        (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+        server.KNOWLEDGE = server.KnowledgeCompiler(vault)
+        fixture = json.loads((
+            Path(__file__).parent / "fixtures" / "model_candidate_validation"
+            / "reference-generate-v1.json"
+        ).read_text(encoding="utf-8"))
+        reference_bytes = (
+            Path(__file__).parent / "fixtures" / "generation_quality" / "generated"
+            / "packaging-text-brand.png"
+        ).read_bytes()
+        self.assertEqual(
+            hashlib.sha256(reference_bytes).hexdigest(),
+            fixture["reference"]["sha256"],
+        )
+        ui_context = {
+            "input_surface": server.SPATIAL_CANVAS_REFERENCE_SURFACE,
+            "contract_version": server.SPATIAL_CANVAS_REFERENCE_CONTRACT,
+        }
+        with self.live_client() as client:
+            imported = client.post(
+                "/api/assets/import",
+                files={"file": ("candidate-source.png", reference_bytes, "image/png")},
+            )
+            self.assertEqual(imported.status_code, 200, imported.text)
+            source = imported.json()
+            stored_source = self.ledger.get_asset(source["id"])
+            result_path = self.output_dir / "frozen-packaging-result.png"
+            result_path.write_bytes(reference_bytes)
+            selected_result = self.ledger.add_asset(
+                stored_source["session_id"],
+                "result_main",
+                parent_asset_id=source["id"],
+                path=str(result_path),
+                name=result_path.name,
+                mime="image/png",
+                width=fixture["reference"]["width"],
+                height=fixture["reference"]["height"],
+                sha256=fixture["reference"]["sha256"],
+            )
+            profile_payload = product_profile_payload(source["id"])
+            profile_payload["name"] = "PA TEA 250g"
+            profile_payload["specification"]["display"] = "PA TEA 250g"
+            profile_payload["specification"]["net_content"] = "250g"
+            profile_payload["packaging_texts"][0]["content"] = "PA TEA、250g"
+            profile_payload["logos"][0]["name"] = "PA TEA Logo"
+            profile = self.ledger.save_product_profile(
+                expected_revision=0,
+                client_request_id="candidate-adapter-profile-v1",
+                profile=profile_payload,
+            )
+            profile_version_id = profile["version"]["id"]
+            result_element = {
+                "id": "candidate-exact-result",
+                "type": "image",
+                "x": 120,
+                "y": 80,
+                "width": 640,
+                "height": 640,
+                "isDeleted": False,
+                "customData": {
+                    "asset_id": selected_result["id"],
+                    "result_id": selected_result["id"],
+                    "task_id": None,
+                    "product_profile_version_id": profile_version_id,
+                    "lineage_parent_id": source["id"],
+                },
+            }
+            canvas = self.ledger.create_spatial_canvas(
+                name="Candidate Adapter Gate",
+                client_request_id="candidate-adapter-canvas-v1",
+                scene={
+                    "schema_version": 1,
+                    "elements": [result_element],
+                    "app_state": {
+                        "viewBackgroundColor": "#d4d0cb",
+                        "currentItemRoughness": 0,
+                        "currentItemStrokeStyle": "solid",
+                        "currentItemFillStyle": "solid",
+                        "gridSize": 20,
+                        "gridStep": 5,
+                        "gridModeEnabled": False,
+                        "zoom": {"value": 1},
+                        "scrollX": 0,
+                        "scrollY": 0,
+                    },
+                    "files": {},
+                },
+            )
+            brief = {
+                "objective": "以当前结果为精确参考创作新的商业视觉方案",
+                "user_request": fixture["user_request"],
+                "output_kind": "ecommerce-main-image",
+                "output_spec": fixture["output"],
+                "intent_locks": fixture["intent_locks"],
+            }
+
+            for model_id in ("banana-2", "banana-pro"):
+                preview_response = client.post("/api/knowledge/compile", json={
+                    **brief,
+                    "mode": "single",
+                    "command_id": server.SPATIAL_IMAGE_AI_COMMAND_ID,
+                    "source_asset_ids": [selected_result["id"]],
+                    "model": model_id,
+                    "prompt_version": fixture["execution"]["prompt_version"],
+                    "generation_strategy": fixture["execution"]["generation_strategy"],
+                    "design_skill_id": "",
+                    "spatial_action": server.SPATIAL_RESULT_VARIATION_ACTION,
+                    "spatial_canvas_id": canvas["id"],
+                    "spatial_source_element_id": result_element["id"],
+                    "ui_context": ui_context,
+                })
+                self.assertEqual(preview_response.status_code, 200, preview_response.text)
+                preview_bundle = preview_response.json()
+                spatial = preview_bundle["spatial_context"]
+                self.assertEqual(spatial["source_asset_id"], selected_result["id"])
+                self.assertEqual(spatial["lineage_parent_id"], selected_result["id"])
+
+                execute_parameters = {
+                    "batch": 1,
+                    "variations": 1,
+                    "model": model_id,
+                    "brief": brief,
+                    "intent_locks": fixture["intent_locks"],
+                    "output_ratio": fixture["output"]["ratio"],
+                    "output_resolution": fixture["output"]["resolution"],
+                    "prompt_version": fixture["execution"]["prompt_version"],
+                    "prompt_version_source": "user",
+                    "generation_strategy": fixture["execution"]["generation_strategy"],
+                    "generation_strategy_source": "user",
+                    "design_skill_id": "",
+                    "spatial_action": server.SPATIAL_RESULT_VARIATION_ACTION,
+                    "provider_call_confirmed": True,
+                    "automatic_paid_retry": False,
+                    "execution_context": preview_bundle["execution_context"],
+                    "ui_context": ui_context,
+                }
+                response = client.post(
+                    f"/api/commands/{server.SPATIAL_IMAGE_AI_COMMAND_ID}/execute",
+                    json={
+                        "client_request_id": f"candidate-adapter-{model_id}",
+                        "source_asset_ids": [selected_result["id"]],
+                        "max_attempts": fixture["execution"]["max_attempts"],
+                        "spatial_canvas_id": canvas["id"],
+                        "spatial_source_element_id": result_element["id"],
+                        "parameters": execute_parameters,
+                    },
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                completed = self.wait_for_job(response.json()["job"]["id"])
+                self.assertEqual(completed["status"], "completed", completed)
+                self.assertEqual(completed["snapshot"]["source_asset_ids"], [selected_result["id"]])
+                self.assertEqual(completed["snapshot"]["parameters"]["model"], model_id)
+                self.assertEqual(completed["paid_call_authorization"]["max_calls"], 1)
+                self.assertEqual(completed["items"][0]["attempt_count"], 1)
+                self.assert_result_lineage(client, completed, {selected_result["id"]: 2})
+
+                traces = client.get(f"/api/jobs/{completed['id']}/traces").json()["traces"]
+                output_spec = next(item for item in traces if item["stage"] == "output.spec")
+                self.assertEqual(output_spec["output"]["provider_family"], model_id)
+                self.assertEqual(
+                    output_spec["output"]["provider_params"],
+                    {"aspectRatio": "1:1", "imageSize": "2K"},
+                )
+                provider = next(
+                    item for item in traces if item["stage"] == "provider.image.1-1"
+                )
+                self.assertEqual(provider["parameters"]["model"], model_id)
+                self.assertEqual(
+                    provider["parameters"]["capability_contract"]["family"],
+                    model_id,
+                )
+                prompt = next(item for item in traces if item["stage"] == "prompt.primary")
+                self.assertIn("PA TEA", prompt["compiled_prompt"])
+                self.assertIn("250g", prompt["compiled_prompt"])
+                self.assertIn("Logo", prompt["compiled_prompt"])
+                receipts = self.ledger.list_provider_call_receipts(completed["id"])
+                self.assertEqual(len(receipts), 1)
+                self.assertEqual(receipts[0]["model"], model_id)
+                self.assertEqual(receipts[0]["status"], "completed")
+
     def test_canvas_conversation_two_rounds_bind_current_selection_without_prompt_history(self) -> None:
         vault = self.root / "knowledge-vault"
         (vault / "20 知识库" / "设计知识").mkdir(parents=True)

@@ -263,6 +263,20 @@ class GenerationBaselineTests(unittest.TestCase):
         self.assertEqual(unknown["family"], "generic-image")
         self.assertEqual(unknown["status"], "compatibility-only")
 
+        banana_2 = capability_contract("banana-2")
+        banana_pro = capability_contract("banana-pro")
+        self.assertEqual(banana_2["family"], "banana-2")
+        self.assertEqual(banana_pro["family"], "banana-pro")
+        self.assertEqual(banana_2["status"], "request-shape-checked")
+        self.assertEqual(banana_pro["status"], "request-shape-checked")
+        self.assertEqual(
+            banana_2["output_parameters"], ["aspectRatio", "imageSize"]
+        )
+        self.assertEqual(
+            banana_pro["output_parameters"], ["aspectRatio", "imageSize"]
+        )
+        self.assertNotEqual(banana_2["family"], banana_pro["family"])
+
     def test_offline_summary_keeps_missing_cost_visible(self) -> None:
         traces = [
             {

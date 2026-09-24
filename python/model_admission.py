@@ -283,6 +283,7 @@ def evaluate_model_admission(
         "eligible": category == "eligible",
         "checks": checks,
         "validation_plan": copy.deepcopy(VALIDATION_PLANS.get(raw_id)),
+        "validation_evidence": copy.deepcopy(model.get("candidate_validation")),
     }
 
 

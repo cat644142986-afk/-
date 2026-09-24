@@ -146,6 +146,7 @@ try:
         build_model_identity_resolution,
     )
     from model_admission import build_composer_admission
+    from model_candidate_validation import apply_candidate_validation_overlay
 except ImportError:  # Allows importing as python.server during local tests.
     from python.asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
     from python.canvas_export import CanvasExportError, render_canvas_png
@@ -271,6 +272,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         build_model_identity_resolution,
     )
     from python.model_admission import build_composer_admission
+    from python.model_candidate_validation import apply_candidate_validation_overlay
 
 # ======================== GUI MODE STDOUT GUARD ========================
 # When running as windowed (no console) exe, sys.stdout/sys.stderr may be None.
@@ -518,6 +520,8 @@ def resolve_output_spec(
     model_key = str(model or "").strip()
     is_gpt_image_2 = model_key.startswith("gpt-image-2") or model_key == "tt-image-2"
     is_gemini_image = model_key.startswith("gemini-") and "image" in model_key
+    is_banana_2 = model_key == "banana-2"
+    is_banana_pro = model_key == "banana-pro"
 
     if ratio_name == "original":
         desired_ratio = source_ratio
@@ -526,13 +530,21 @@ def resolve_output_spec(
         desired_ratio = OUTPUT_RATIO_NUMBERS[ratio_name]
         desired_label = ratio_name
 
-    if is_gemini_image:
-        effective_ratio = _nearest_ratio_name(desired_ratio, GEMINI_IMAGE_RATIOS)
+    if is_gemini_image or is_banana_2 or is_banana_pro:
+        supported_ratios = (
+            GEMINI_IMAGE_RATIOS
+            if is_gemini_image or is_banana_2
+            else {key: value for key, value in GEMINI_IMAGE_RATIOS.items()
+                  if key not in {"1:4", "4:1", "1:8", "8:1"}}
+        )
+        effective_ratio = _nearest_ratio_name(desired_ratio, supported_ratios)
         provider_params = {
             "aspectRatio": effective_ratio,
             "imageSize": resolution.upper(),
         }
-        provider_family = "gemini-image"
+        provider_family = (
+            model_key if is_banana_2 or is_banana_pro else "gemini-image"
+        )
         provider_size = resolution.upper()
     elif is_gpt_image_2:
         if ratio_name == "original":
@@ -6371,7 +6383,7 @@ async def get_provider_image_capabilities(connection_id: str):
             catalog_status=catalog_status,
         )
     return attach_identity_to_capability_overlay(
-        capability_overlay, identity_resolution
+        apply_candidate_validation_overlay(capability_overlay), identity_resolution
     )
 
 
