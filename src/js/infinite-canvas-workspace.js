@@ -192,11 +192,13 @@ function imageAiDraftHtml(draft, asset, {
   `;
   const admittedModels = Array.isArray(modelAdmission?.models)
     ? modelAdmission.models : [];
+  const recommendedModelId = String(modelAdmission?.routing?.recommended_provider_model_id || '');
+  const routingSummary = String(modelAdmission?.routing?.summary || '');
   const selectedModel = admittedModels.find((item) => (
     String(item?.provider_model_id || '') === String(draft.model || '')
   ));
   const modelOptions = admittedModels.map((item) => `
-    <option value="${escapeHtml(item.provider_model_id)}"${item.provider_model_id === draft.model ? ' selected' : ''}>${escapeHtml(item.display_name || item.provider_model_id)}</option>
+    <option value="${escapeHtml(item.provider_model_id)}"${item.provider_model_id === draft.model ? ' selected' : ''}>${escapeHtml(item.display_name || item.provider_model_id)}${item.provider_model_id === recommendedModelId ? ' · PA 推荐' : ''}</option>
   `).join('');
   const telemetry = selectedModel?.telemetry || {};
   const billing = telemetry?.billing || {};
@@ -204,7 +206,7 @@ function imageAiDraftHtml(draft, asset, {
     <form class="spatial-white-form" data-spatial-image-ai-form novalidate>
       <div class="spatial-white-form__heading"><span>CANVAS NATIVE AI</span><strong>${escapeHtml(definition.title)}</strong><small>提交前核对本次真正生效的上下文</small></div>
       <label class="spatial-white-form__wide"><span>本次要求</span><textarea data-spatial-image-ai-field="userRequest" maxlength="1200" rows="4" ${busy ? 'disabled' : ''}>${escapeHtml(draft.userRequest)}</textarea><small>主体结构、数量、包装文字与 Logo 始终锁定。</small></label>
-      ${draft.inputSurface === SPATIAL_CANVAS_REFERENCE_SURFACE ? `<label class="spatial-white-form__wide"><span>生成模型</span><select data-spatial-image-ai-field="model" ${busy ? 'disabled' : ''}>${modelOptions}</select><small>只显示 ${escapeHtml(draft.outputRatio)} / ${escapeHtml(draft.outputResolution.toUpperCase())} 已验证模型；切换后必须重新核对上下文。</small></label>${selectedModel ? `<details class="spatial-model-details"><summary>模型与证据详情</summary><dl><div><dt>模型 ID</dt><dd>${escapeHtml(selectedModel.provider_model_id)}</dd></div><div><dt>适配器</dt><dd>${escapeHtml(selectedModel.adapter?.contract || '')} · ${escapeHtml(selectedModel.adapter?.version || '')}</dd></div><div><dt>Provider</dt><dd>LK / AI模型中心</dd></div><div><dt>单次 canary</dt><dd>${Number(telemetry.provider_elapsed_ms || 0) ? `${(Number(telemetry.provider_elapsed_ms) / 1000).toFixed(1)} 秒` : '—'} · ${escapeHtml(billing.cost ?? '—')} ${escapeHtml(billing.unit || '')}</dd></div><div><dt>通道证据</dt><dd>${escapeHtml(telemetry.channel_group || '—')}</dd></div></dl><small>单次验证证据，不代表质量、速度或成本排名。</small></details>` : ''}` : ''}
+      ${draft.inputSurface === SPATIAL_CANVAS_REFERENCE_SURFACE ? `<label class="spatial-white-form__wide"><span>生成模型</span><select data-spatial-image-ai-field="model" ${busy ? 'disabled' : ''}>${modelOptions}</select><small>只显示 ${escapeHtml(draft.outputRatio)} / ${escapeHtml(draft.outputResolution.toUpperCase())} 已验证模型；切换后必须重新核对上下文。</small>${routingSummary ? `<small class="spatial-model-route">${escapeHtml(routingSummary)}；可手动选择，不会静默切换。</small>` : ''}</label>${selectedModel ? `<details class="spatial-model-details"><summary>模型与证据详情</summary><dl><div><dt>模型 ID</dt><dd>${escapeHtml(selectedModel.provider_model_id)}</dd></div><div><dt>选择方式</dt><dd>${selectedModel.provider_model_id === recommendedModelId ? 'PA 运行建议' : '用户手动选择'}</dd></div><div><dt>适配器</dt><dd>${escapeHtml(selectedModel.adapter?.contract || '')} · ${escapeHtml(selectedModel.adapter?.version || '')}</dd></div><div><dt>Provider</dt><dd>LK / AI模型中心</dd></div><div><dt>单次 canary</dt><dd>${Number(telemetry.provider_elapsed_ms || 0) ? `${(Number(telemetry.provider_elapsed_ms) / 1000).toFixed(1)} 秒` : '—'} · ${escapeHtml(billing.cost ?? '—')} ${escapeHtml(billing.unit || '')}</dd></div><div><dt>通道证据</dt><dd>${escapeHtml(telemetry.channel_group || '—')}</dd></div></dl><small>推荐只使用已验证能力、当前参数及单次成本/耗时证据；不代表质量排名。</small></details>` : ''}` : ''}
       <label class="spatial-white-form__wide"><span>设计方法</span><select data-spatial-image-ai-field="designSkillId" ${busy ? 'disabled' : ''}>${skillOptions}</select><small>只读贡献设计规则，不执行脚本或 Provider。</small></label>
       <section class="spatial-context-preview" data-spatial-image-ai-preview aria-live="polite">
         ${preview ? `
@@ -220,7 +222,7 @@ function imageAiDraftHtml(draft, asset, {
       </section>
       <p class="spatial-white-form__status" data-spatial-image-ai-status aria-live="polite"${error ? ' data-error="true" tabindex="-1"' : ''}>${escapeHtml(error || (preview ? '上下文已冻结；点击确认后才会创建正式任务。' : '尚未发起 Provider 调用。'))}</p>
       <div class="spatial-white-form__actions">
-        ${draft.inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE ? '' : `<button type="button" data-spatial-image-ai-classic ${busy ? 'disabled' : ''}>到经典页调整</button>`}
+        ${draft.inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE || draft.inputSurface === SPATIAL_CANVAS_REFERENCE_SURFACE ? '' : `<button type="button" data-spatial-image-ai-classic ${busy ? 'disabled' : ''}>到经典页调整</button>`}
         <button type="button" data-spatial-image-ai-cancel ${busy ? 'disabled' : ''}>取消</button>
         <button type="submit" class="is-primary" ${busy ? 'disabled' : ''}>${primaryLabel}</button>
       </div>
@@ -480,8 +482,7 @@ export function createInfiniteCanvasWorkspaceController({
     query('#btn-spatial-delete').hidden = !record;
     const shellToggle = query('#btn-spatial-shell-toggle');
     if (shellToggle) {
-      shellToggle.hidden = !record;
-      shellToggle.textContent = shellMode === 'transplant' ? '旧界面' : '试用新界面';
+      shellToggle.hidden = true;
     }
   }
 
@@ -731,6 +732,22 @@ export function createInfiniteCanvasWorkspaceController({
       } catch (_) { /* the immutable reference is still enough for actions */ }
     }
     if (epoch !== inspectorEpoch) return;
+    const referenceReview = (
+      imageAiDraft?.inputSurface === SPATIAL_CANVAS_REFERENCE_SURFACE
+      && imageAiDraft?.sourceAssetId === refs.asset_id
+    );
+    if (referenceReview) {
+      inspector.innerHTML = imageAiDraftHtml(imageAiDraft, selectedAsset, {
+        previewing: imageAiPreviewing,
+        submitting: imageAiSubmitting,
+        error: imageAiDraftError,
+        modelAdmission: imageAiAdmission,
+      });
+      inspector.dataset.mode = 'composer-review';
+      inspector.hidden = false;
+      renderProductShell();
+      return;
+    }
     const headerKind = videoElement ? 'VIDEO' : refs.result_id ? 'RESULT' : refs.task_id ? 'TASK' : 'ASSET';
     inspector.innerHTML = `
       <header><span>${headerKind}</span><button type="button" data-spatial-inspector-close aria-label="收起对象操作">×</button></header>

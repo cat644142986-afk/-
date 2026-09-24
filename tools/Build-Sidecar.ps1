@@ -232,6 +232,7 @@ try {
             "python/model_capability_overlay.py",
             "python/model_identity.py",
             "python/model_admission.py",
+            "python/model_router.py",
             "python/model_candidate_validation.py",
             "python/model_candidate_canary.py",
             "python/atelier_ledger.py",

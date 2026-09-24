@@ -149,6 +149,7 @@ try:
         build_composer_admission,
         build_composer_model_selection,
     )
+    from model_router import attach_smart_route
     from model_candidate_validation import apply_candidate_validation_overlay
     from model_candidate_canary import apply_provider_canary_overlay
 except ImportError:  # Allows importing as python.server during local tests.
@@ -279,6 +280,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         build_composer_admission,
         build_composer_model_selection,
     )
+    from python.model_router import attach_smart_route
     from python.model_candidate_validation import apply_candidate_validation_overlay
     from python.model_candidate_canary import apply_provider_canary_overlay
 
@@ -6444,12 +6446,12 @@ def _freeze_reference_model_admission(
     ratio = str(frozen.get("output_ratio") or "").strip().lower()
     resolution = str(frozen.get("output_resolution") or "").strip().lower()
     capabilities = _provider_image_capabilities(LK_CONNECTION_ID)
-    selection = build_composer_model_selection(
+    selection = attach_smart_route(build_composer_model_selection(
         capabilities,
         task_kind=task_kind,
         output_ratio=ratio,
         output_resolution=resolution,
-    )
+    ))
     selected = next(
         (
             item for item in selection.get("models", [])
@@ -6498,6 +6500,26 @@ def _freeze_reference_model_admission(
             "category": "eligible",
             "no_silent_model_substitution": True,
             "no_silent_parameter_downgrade": True,
+        },
+        "routing": {
+            "schema_version": (selection.get("routing") or {}).get("schema_version"),
+            "revision": (selection.get("routing") or {}).get("revision"),
+            "policy_sha256": (selection.get("routing") or {}).get("policy_sha256"),
+            "decision_sha256": (selection.get("routing") or {}).get("decision_sha256"),
+            "recommended_provider_model_id": (
+                selection.get("routing") or {}
+            ).get("recommended_provider_model_id"),
+            "selected_provider_model_id": model_id,
+            "selection_relation": (
+                "recommended"
+                if model_id == (selection.get("routing") or {}).get("recommended_provider_model_id")
+                else "manual-override"
+            ),
+            "reason_codes": copy.deepcopy(
+                (selection.get("routing") or {}).get("reason_codes") or []
+            ),
+            "evidence_boundary": (selection.get("routing") or {}).get("evidence_boundary"),
+            "no_execution_fallback": True,
         },
     }
     snapshot["snapshot_sha256"] = hashlib.sha256(
@@ -6556,12 +6578,12 @@ async def get_provider_model_admission(
                     "message": "task_kind、ratio 和 resolution 必须同时提供",
                 },
             )
-        response["selection"] = build_composer_model_selection(
+        response["selection"] = attach_smart_route(build_composer_model_selection(
             capabilities,
             task_kind=task_kind,
             output_ratio=ratio,
             output_resolution=resolution,
-        )
+        ))
     return response
 
 

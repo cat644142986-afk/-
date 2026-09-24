@@ -73,11 +73,14 @@ test('prototype shares the existing Excalidraw host and PA action contract', () 
   assert.match(island, /<CanvasTransplantShell/);
   assert.match(shell, /data-spatial-action=\{imageAction\}/);
   assert.match(shell, /data-spatial-conversation-form/);
+  assert.match(shell, /className=\{`pa-canvas-composer/);
+  assert.doesNotMatch(shell, /className=\{`pa-transplant__composer/);
   assert.match(shell, /CanvasReferencePicker.*CanvasReferenceTray/);
   assert.match(retake, /Retake Whiteboard v0\.1\.3/);
   assert.match(shell, /onReferenceReview\?\.\(/);
   assert.doesNotMatch(shell, /data-spatial-reference/);
   assert.match(workspace, /openCanvasReferencePreview\(/);
+  assert.match(workspace, /inspector\.dataset\.mode = 'composer-review'/);
   assert.doesNotMatch(workspace, /data-spatial-image-ai-field="outputRatio"/);
   assert.match(workspace, /openCanvasConversationPreview\(conversationInput/);
   assert.match(workspace, /shellMode: initialShellMode = 'legacy'/);
@@ -85,6 +88,8 @@ test('prototype shares the existing Excalidraw host and PA action contract', () 
   assert.match(css, /\[data-shell="transplant"\].*\.layer-ui__wrapper__footer-left \{ transform: none !important; \}/);
   assert.match(shell, /aria-expanded=\{arrangeOpen\}.*>对齐<\/button>/);
   assert.match(css, /\[data-arrange-open="true"\].*\.selected-shape-actions \{ transform: none !important;/);
+  assert.doesNotMatch(css, /\.app-shell\.is-spatial-workspace\s*\{\s*grid-template-columns:/);
+  assert.match(css, /\.spatial-shell-toggle \{ display: none; \}/);
 });
 
 test('Excalidraw upgrade gate keeps native align/distribute projection explicit', () => {

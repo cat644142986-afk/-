@@ -1618,20 +1618,9 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .spatial-command-menu { padding-top: 72px; }
 }
 
-/* Product Atelier Canvas Shell: Excalidraw stays the spatial engine, not the product chrome; the surface stays quiet and desktop-native. */
-.app-shell.is-spatial-workspace { grid-template-columns: 58px minmax(0,1fr); background: var(--paper); }
-.app-shell.is-spatial-workspace .app-rail { padding: 10px 7px; border-right: 1px solid var(--line); background: var(--paper); }
-.app-shell.is-spatial-workspace .brand-mark { width: 42px; height: 42px; border-radius: 7px; }
-.app-shell.is-spatial-workspace .task-presence__scene { width: 38px; height: 38px; }
-.app-shell.is-spatial-workspace .rail-cluster { width: 42px; margin-top: 12px; padding: 0; gap: 3px; border-radius: 0; background: transparent; box-shadow: none; }
-.app-shell.is-spatial-workspace .rail-cluster--utility { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
-.app-shell.is-spatial-workspace .rail-cluster--identity { margin-top: auto; }
-.app-shell.is-spatial-workspace .rail-button,
-.app-shell.is-spatial-workspace .rail-connection { width: 40px; min-height: 40px; border-radius: 7px; box-shadow: none; }
-.app-shell.is-spatial-workspace .rail-button:hover { transform: none; background: var(--paper-2); }
-.app-shell.is-spatial-workspace .rail-button.active { background: var(--dark); color: var(--yellow); box-shadow: none; }
-.app-shell.is-spatial-workspace .rail-connection { height: 40px; background: var(--paper-2); }
-.app-shell.is-spatial-workspace .conn-dot { top: 1px; right: 1px; }
+/* Product Atelier Canvas Shell: Excalidraw stays the spatial engine, not the product chrome.
+   The formal App rail keeps the same structure and visual
+   language as every other workspace. */
 .spatial-page { padding: 0; }
 .spatial-workspace { border: 0; border-radius: 0; }
 .spatial-workspace[data-view="editor"] { grid-template-rows: 52px minmax(0,1fr) 26px; }
@@ -1734,8 +1723,6 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 }
 
 @media (max-width: 760px) {
-  .app-shell.is-spatial-workspace { grid-template-columns: 52px minmax(0,1fr); }
-  .app-shell.is-spatial-workspace .app-rail { padding-inline: 5px; }
   .spatial-workspace[data-view="editor"] .spatial-toolbar__identity h2 { max-width: 30vw; }
   .spatial-context-bar__topline { align-items: flex-start; flex-direction: column; gap: 3px; padding-block: 6px; }
   .spatial-context-bar__actions { align-self: stretch; overflow-x: auto; }
@@ -1761,8 +1748,7 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 
 /* Parallel Canvas Interaction Transplant prototype. The legacy Shell stays
    mounted as a fallback; only the product surface changes. */
-.spatial-workspace[data-view="editor"] .spatial-shell-toggle { display: inline-flex; width: auto; padding: 0 9px; color: var(--ink-3); font-size: 11px; }
-.spatial-workspace[data-view="editor"] .spatial-shell-toggle[hidden] { display: none; }
+.spatial-workspace[data-view="editor"] .spatial-shell-toggle { display: none; }
 .spatial-editor[data-shell="transplant"] .spatial-tool-strip,
 .spatial-editor[data-shell="transplant"] .spatial-context-bar { display: none !important; }
 .spatial-editor[data-shell="transplant"] .spatial-empty-launcher { z-index: 9; right: 16px; top: 56px; }
@@ -1792,11 +1778,11 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .pa-transplant__selection-row .is-primary { background: var(--dark); color: #fff; }
 .pa-transplant__selection-row .is-primary:hover { background: var(--ink-2); color: #fff; }
 .pa-transplant__hint { padding: 0 8px; color: var(--ink-3); font-size: var(--type-micro); white-space: nowrap; }
-.pa-transplant__composer { display: grid; min-width: 0; gap: 4px; border-top: 1px solid var(--line); }
+.pa-canvas-composer { position: absolute; z-index: 8; right: auto; bottom: 14px; left: 50%; display: grid; width: min(720px,calc(100% - 32px)); min-width: 0; gap: 4px; padding: 5px; transform: translateX(-50%); border: 1px solid var(--line); border-radius: 10px; background: var(--paper); box-shadow: 0 12px 36px rgb(30 29 27 / .16); pointer-events: auto; }
 .pa-transplant__composer-main { display: flex; align-items: center; min-width: 0; gap: 6px; }
-.pa-transplant__composer textarea { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 37px; max-height: 110px; padding: 8px 10px; resize: none; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: var(--type-caption); line-height: 1.45; letter-spacing: 0; user-select: text; }
-.pa-transplant__composer.is-open { grid-template-columns: 1fr; }
-.pa-transplant__composer.is-open textarea { min-height: 75px; }
+.pa-canvas-composer textarea { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 37px; max-height: 110px; padding: 8px 10px; resize: none; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: var(--type-caption); line-height: 1.45; letter-spacing: 0; user-select: text; }
+.pa-canvas-composer.is-open { grid-template-columns: 1fr; }
+.pa-canvas-composer.is-open textarea { min-height: 75px; }
 .pa-transplant__composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 5px 4px 9px; }
 .pa-transplant__composer-footer small { min-width: 0; overflow: hidden; color: var(--ink-3); font-size: var(--type-micro); text-overflow: ellipsis; white-space: nowrap; }
 .pa-transplant__composer-footer button { background: var(--dark); color: #fff; }
@@ -1844,6 +1830,7 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .pa-reference-controls__group > div { display: flex; flex-wrap: wrap; gap: 5px; }
 .pa-reference-controls__group button { min-height: 28px; padding: 0 9px; border: 1px solid var(--line-2); background: var(--paper-2); color: var(--ink-2); }
 .pa-reference-controls__group button.is-selected { border-color: var(--coral); background: var(--coral-soft); color: var(--coral-deep); }
+.pa-canvas-composer .pa-reference-controls__popover { top: auto; bottom: calc(100% + 8px); }
 /* Reproject Excalidraw's native zoom controls; its action owns zoom math and
    history. Keep the rest of its footer out of the transplant shell. */
 .spatial-editor[data-shell="transplant"] .spatial-canvas-host .excalidraw .layer-ui__wrapper__footer { display: flex !important; }
@@ -1949,6 +1936,7 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   outline-offset: 2px;
 }
 .pa-transplant__selection,
+.pa-canvas-composer,
 .pa-transplant__popover,
 .pa-reference-tray__preview,
 .pa-reference-picker,
@@ -1972,17 +1960,17 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   font-weight: 700;
 }
 .pa-transplant__hint { color: var(--canvas-ui-text-muted); font-size: 10px; }
-.pa-transplant__composer { gap: 5px; border-color: var(--canvas-ui-border-subtle); }
+.pa-canvas-composer { gap: 5px; border-color: var(--canvas-ui-border); background: var(--canvas-ui-surface); }
 .pa-transplant__composer-main { gap: 8px; }
-.pa-transplant__composer textarea {
+.pa-canvas-composer textarea {
   min-height: 40px;
   padding: 9px 10px;
   color: var(--canvas-ui-text);
   font-size: 12px;
   line-height: 1.5;
 }
-.pa-transplant__composer textarea::placeholder { color: var(--canvas-ui-text-muted); opacity: .84; }
-.pa-transplant__composer.is-open textarea { min-height: 76px; }
+.pa-canvas-composer textarea::placeholder { color: var(--canvas-ui-text-muted); opacity: .84; }
+.pa-canvas-composer.is-open textarea { min-height: 76px; }
 .pa-transplant__composer-footer { gap: 9px; padding: 1px 5px 5px 9px; }
 .pa-transplant__composer-footer small { color: var(--canvas-ui-text-muted); font-size: 10px; }
 .pa-model-selector { position: relative; display: flex; align-items: center; flex: 0 1 168px; min-width: 112px; gap: 4px; pointer-events: auto; }
@@ -1994,6 +1982,8 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   font-size: 10px; font-weight: 650; text-overflow: ellipsis;
 }
 .pa-model-selector select:disabled { color: var(--canvas-ui-text-muted); opacity: .64; }
+.pa-model-selector__route { flex: 0 0 auto; padding: 3px 6px; border: 1px solid var(--canvas-ui-border); border-radius: 999px; color: var(--canvas-ui-text-muted); font-size: 9px; font-weight: 700; white-space: nowrap; }
+.pa-model-selector__route.is-recommended { border-color: color-mix(in srgb,var(--canvas-ui-accent) 38%,var(--canvas-ui-border)); background: var(--canvas-ui-accent-soft); color: var(--canvas-ui-accent-strong); }
 .pa-model-selector__details { position: relative; flex: 0 0 auto; }
 .pa-model-selector__details > summary,
 .spatial-model-details > summary { cursor: pointer; color: var(--canvas-ui-text-muted); font-size: 10px; font-weight: 700; list-style: none; }
@@ -2084,6 +2074,17 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .spatial-editor .spatial-inspector input,
 .spatial-editor .spatial-inspector textarea,
 .spatial-editor .spatial-inspector select { color: var(--canvas-ui-text); }
+.spatial-editor .spatial-inspector[data-mode="composer-review"] {
+  top: auto;
+  right: auto;
+  bottom: 14px;
+  left: 50%;
+  width: min(720px,calc(100% - 32px));
+  max-height: calc(100% - 28px);
+  transform: translateX(-50%);
+}
+.spatial-editor .spatial-inspector[data-mode="composer-review"] .spatial-white-form { border-top: 0; }
+.spatial-model-route { color: var(--canvas-ui-accent-strong) !important; }
 
 /* Canvas-only notifications. Other Product Atelier pages retain their formal
    release styling. */
@@ -2107,17 +2108,19 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
   .pa-transplant button { min-height: 32px; padding-inline: 8px; }
   .pa-transplant__selection { max-width: calc(100% - 20px); padding: 4px; }
   .pa-transplant__selection-row { min-height: 35px; }
-  .pa-transplant__composer.is-open textarea { min-height: 62px; }
+  .pa-canvas-composer.is-open textarea { min-height: 62px; }
   .pa-reference-picker { max-height: calc(100vh - 20px); }
   .pa-reference-controls__popover { max-height: calc(100vh - 64px); }
 }
 
 @media (max-width: 760px) {
+  .pa-canvas-composer { right: 10px; bottom: 10px; left: 10px; width: auto; transform: none; }
   .pa-transplant__composer-footer { flex-wrap: wrap; }
   .pa-transplant__composer-footer small { flex: 1 1 100%; }
   .pa-model-selector { flex: 1 1 160px; }
   .pa-reference-controls__popover { right: auto; left: 0; }
   .app-shell.is-spatial-workspace .toast-wrap { right: 8px; }
+  .spatial-editor .spatial-inspector[data-mode="composer-review"] { right: 8px; bottom: 8px; left: 8px; width: auto; max-height: calc(100% - 16px); transform: none; }
 }
 
 @media (max-height: 680px) {

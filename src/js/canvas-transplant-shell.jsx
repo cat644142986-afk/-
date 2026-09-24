@@ -129,7 +129,7 @@ export function CanvasTransplantShell({
   const placement = frame && hostRect
     ? anchoredSurface(frame, hostRect.width, hostRect.height, {
       preferredWidth: selected.length > 1 ? 330 : 490,
-      surfaceHeight: eligible && composerOpen ? 170 : 56,
+      surfaceHeight: 56,
     })
     : null;
   const imageAction = refs.result_id === refs.asset_id ? 'generate-image' : 'white-background';
@@ -255,7 +255,8 @@ export function CanvasTransplantShell({
             </div>
           </>}
         </div>
-        {eligible && <form className={`pa-transplant__composer${composerOpen ? ' is-open' : ''}`} ref={composerRef} data-spatial-conversation-form={activeReference ? undefined : ''} onSubmit={activeReference ? reviewReference : undefined} noValidate>
+      </section>}
+      {eligible && !reviewing && <form className={`pa-canvas-composer${composerOpen ? ' is-open' : ''}`} ref={composerRef} data-spatial-conversation-form={activeReference ? undefined : ''} onSubmit={activeReference ? reviewReference : undefined} onPointerDown={preventCanvasPointer} noValidate>
           <div className="pa-transplant__composer-main">
           <CanvasReferenceTray image={activeReference} onAdd={openReferencePicker} onRemove={() => { setReference(null); setReferenceError(''); }} addButtonRef={referenceAddRef} />
           <label className="sr-only" htmlFor="pa-transplant-message">{activeReference ? '描述参考生成的新方案' : '告诉 AI 下一步怎么改'}</label>
@@ -281,7 +282,6 @@ export function CanvasTransplantShell({
           </div>
           {composerOpen && <div className="pa-transplant__composer-footer"><small data-spatial-conversation-status aria-live="polite">{referenceError || modelAdmissionError || business.conversationError || '当前选区 · 核对不会调用 Provider'}</small>{activeReference && <><CanvasModelSelector admission={modelAdmission} value={selectedModel} loading={modelAdmissionLoading} error="" onChange={(model) => { setSelectedModel(model); setReferenceError(''); }} /><CanvasReferenceControls ratio={referenceRatio} resolution={referenceResolution} onChange={(patch) => { if (patch.ratio) setReferenceRatio(patch.ratio); if (patch.resolution) setReferenceResolution(patch.resolution); setReferenceError(''); }} /></>}<button type="submit" disabled={reviewing || (activeReference && (modelAdmissionLoading || !selectedModelEvidence))}>{activeReference ? '核对生成' : '核对修改'}</button></div>}
         </form>}
-      </section>}
       {pickerAnchor && <CanvasReferencePicker anchor={pickerAnchor} images={referenceOptions} selectedImage={selectedPickerImage} onSelectImage={setPickerSelectedId} onConfirm={confirmReference} onCancel={closePicker} />}
     </div>
   );

@@ -1262,6 +1262,7 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
         "python/model_capability_overlay.py": "model capability overlay",
         "python/model_identity.py": "model identity resolution",
         "python/model_admission.py": "model admission policy",
+        "python/model_router.py": "smart model routing policy",
         "python/model_candidate_validation.py": "model candidate validation evidence",
         "python/model_candidate_canary.py": "model candidate Provider evidence",
         "python/command_registry.py": "command registry",

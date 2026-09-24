@@ -2972,6 +2972,10 @@ class DurableJobApiTests(unittest.TestCase):
                 self.assertEqual(admission["output"], {"ratio": "1:1", "resolution": "2k"})
                 self.assertEqual(admission["adapter"]["version"], "lk-media-generate-v1")
                 self.assertEqual(admission["admission"]["category"], "eligible")
+                self.assertEqual(admission["routing"]["selection_relation"], "recommended")
+                self.assertEqual(
+                    admission["routing"]["selected_provider_model_id"], "tt-image-2",
+                )
                 self.assertTrue(admission["catalog_snapshot"]["normalized_catalog_sha256"])
                 self.assertEqual(completed["paid_call_authorization"]["max_calls"], 1)
                 self.assert_result_lineage(client, completed, {source_id: 2})
@@ -3037,6 +3041,10 @@ class DurableJobApiTests(unittest.TestCase):
                 admitted.json()["selection"]["eligible_provider_model_ids"],
                 ["tt-image-2", "banana-2", "banana-pro"],
             )
+            routing = admitted.json()["selection"]["routing"]
+            self.assertEqual(routing["schema_version"], "pa-smart-router-v1")
+            self.assertEqual(routing["recommended_provider_model_id"], "tt-image-2")
+            self.assertTrue(routing["policy"]["no_quality_ranking"])
             unsupported_admission = client.get(
                 f"/api/provider-connections/{LK_CONNECTION_ID}/model-admission",
                 params={
@@ -3188,6 +3196,18 @@ class DurableJobApiTests(unittest.TestCase):
                 self.assertEqual(admission["canonical_model_id"], f"pa:image:lk-ai-model-center:{model_id}")
                 self.assertEqual(admission["output"], {"ratio": "1:1", "resolution": "2k"})
                 self.assertEqual(admission["adapter"]["contract"], model_id)
+                self.assertEqual(
+                    admission["routing"]["selected_provider_model_id"], model_id,
+                )
+                self.assertEqual(
+                    admission["routing"]["selection_relation"],
+                    "manual-override",
+                )
+                self.assertEqual(
+                    admission["routing"]["recommended_provider_model_id"],
+                    "tt-image-2",
+                )
+                self.assertTrue(admission["routing"]["no_execution_fallback"])
                 self.assertEqual(
                     admission["evidence"]["provider_canary"]["task_id"],
                     {
