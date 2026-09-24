@@ -79,6 +79,7 @@ try:
         credential_fingerprint,
     )
     from knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
+    from growth_system import GrowthSystem
     from memory_engine import MemoryEngine, resolve_approved_memory_rules
     from skill_context import (
         ContextSkillError,
@@ -210,6 +211,7 @@ except ImportError:  # Allows importing as python.server during local tests.
         credential_fingerprint,
     )
     from python.knowledge_engine import KnowledgeCompiler, canonicalize_vault_path
+    from python.growth_system import GrowthSystem
     from python.memory_engine import MemoryEngine, resolve_approved_memory_rules
     from python.skill_context import (
         ContextSkillError,
@@ -354,6 +356,7 @@ except Exception:
 _knowledge_path = str(_startup_config.get("knowledge_base_path", "")).strip()
 KNOWLEDGE = KnowledgeCompiler(_knowledge_path) if _knowledge_path else KnowledgeCompiler()
 MEMORY = MemoryEngine(LEDGER)
+GROWTH = GrowthSystem(LEDGER, KNOWLEDGE.vault_path)
 GROUNDING_MODEL_MANIFEST_PATH = bundled_model_manifest_path()
 CONTEXT_SKILL_ROOT = Path.home() / ".codex" / "skills"
 
@@ -1185,6 +1188,7 @@ def refresh_runtime_config() -> dict:
         canonical_path = str(canonicalize_vault_path(configured_path))
         if canonical_path != _RUNTIME_KNOWLEDGE_PATH:
             KNOWLEDGE.set_path(canonical_path)
+            GROWTH.set_path(canonical_path)
             _RUNTIME_KNOWLEDGE_PATH = canonical_path
         if str(cfg.get("knowledge_base_path") or "").strip() != canonical_path:
             updates["knowledge_base_path"] = canonical_path
@@ -2919,6 +2923,13 @@ def _active_memory_engine() -> MemoryEngine:
     return MEMORY if MEMORY.ledger is LEDGER else MemoryEngine(LEDGER)
 
 
+def _active_growth_system() -> GrowthSystem:
+    vault_path = Path(getattr(KNOWLEDGE, "vault_path", GROWTH.vault_path))
+    if GROWTH.ledger is LEDGER and GROWTH.vault_path == vault_path:
+        return GROWTH
+    return GrowthSystem(LEDGER, vault_path)
+
+
 def _review_feedback_id(review_id: str) -> str:
     return idempotent_id("fb", f"result-review:{review_id}")
 
@@ -4475,7 +4486,12 @@ def _build_job_execution_context(
     product_profile_id: str | None = None,
     expected_product_profile_revision: int | None = None,
     frozen_product_profile_version_id: str | None = None,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+]:
     product_profile, profile_context = _execution_context_product_profile(
         product_profile_id=product_profile_id,
         expected_product_profile_revision=expected_product_profile_revision,
@@ -4497,6 +4513,10 @@ def _build_job_execution_context(
         and command_id not in {LOCAL_EDIT_GENERATE_COMMAND_ID, IMAGE_TO_VIDEO_COMMAND_ID}
     )
     bundle = _live_knowledge_bundle(scope, applies_to_prompt=applies_to_prompt)
+    growth_context = None
+    if applies_to_prompt:
+        growth_context = _active_growth_system().compile(scope)
+        bundle = GrowthSystem.attach_knowledge(bundle, growth_context)
     selected_skill = None
     design_skill_id = str(parameters.get("design_skill_id") or "").strip()
     if design_skill_id:
@@ -4511,6 +4531,14 @@ def _build_job_execution_context(
             skill_root=CONTEXT_SKILL_ROOT,
         )
         bundle = attach_context_skill(bundle, selected_skill)
+    if growth_context is not None:
+        bundle = GrowthSystem.attach_cases(bundle, growth_context)
+        bundle = GrowthSystem.reserve_relevant_context(
+            bundle,
+            prompt_version=str(
+                route.get("effective_prompt_version") or requested_prompt_version
+            ),
+        )
     govern_bundle = getattr(KNOWLEDGE, "govern_execution_bundle", None)
     if applies_to_prompt and callable(govern_bundle):
         bundle = dict(govern_bundle(
@@ -4525,6 +4553,11 @@ def _build_job_execution_context(
     skill_snapshot = None
     if selected_skill is not None:
         bundle, skill_snapshot = finalize_context_skill(bundle, selected_skill)
+    growth_snapshot = None
+    if growth_context is not None:
+        bundle, growth_snapshot = GrowthSystem.finalize_snapshot(
+            bundle, growth_context
+        )
     provider_details = {
         "model": str(parameters.get("model") or ""),
         "family": str(model_contract.get("family") or ""),
@@ -4579,7 +4612,7 @@ def _build_job_execution_context(
         provider_context=provider_details,
         binding=binding,
     )
-    return manifest, bundle, skill_snapshot
+    return manifest, bundle, skill_snapshot, growth_snapshot
 
 
 def _freeze_job_execution_context(
@@ -4616,14 +4649,22 @@ def _freeze_job_execution_context(
                 )
             else:
                 frozen.pop("skill_snapshot", None)
+            if isinstance(existing_parameters.get("growth_snapshot"), dict):
+                frozen["growth_snapshot"] = copy.deepcopy(
+                    existing_parameters["growth_snapshot"]
+                )
+            else:
+                frozen.pop("growth_snapshot", None)
         else:
             frozen.pop("execution_context", None)
             frozen.pop("skill_snapshot", None)
+            frozen.pop("growth_snapshot", None)
         return frozen
 
     frozen.pop("execution_context", None)
     frozen.pop("skill_snapshot", None)
-    manifest, _bundle, skill_snapshot = _build_job_execution_context(
+    frozen.pop("growth_snapshot", None)
+    manifest, _bundle, skill_snapshot, growth_snapshot = _build_job_execution_context(
         frozen,
         mode=mode,
         source_asset_ids=source_asset_ids,
@@ -4651,6 +4692,8 @@ def _freeze_job_execution_context(
     )
     if skill_snapshot is not None:
         frozen["skill_snapshot"] = skill_snapshot
+    if growth_snapshot is not None:
+        frozen["growth_snapshot"] = growth_snapshot
     return frozen
 
 
@@ -5954,6 +5997,7 @@ async def knowledge_status():
     return {
         **KNOWLEDGE.status(),
         "design_method": context_skill_status(skill_root=CONTEXT_SKILL_ROOT),
+        "growth": _active_growth_system().status(),
     }
 
 
@@ -5965,9 +6009,14 @@ async def reload_knowledge(data: dict | None = None):
         if path:
             save_config({"knowledge_base_path": str(canonicalize_vault_path(path))})
             refresh_runtime_config()
-            return KNOWLEDGE.status()
+            return {
+                **KNOWLEDGE.status(),
+                "growth": _active_growth_system().status(),
+            }
         refresh_runtime_config()
-        return KNOWLEDGE.reload()
+        knowledge = KNOWLEDGE.reload()
+        growth = _active_growth_system().reload()
+        return {**knowledge, "growth": growth}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -6014,7 +6063,7 @@ async def compile_knowledge(data: dict):
                     "SPATIAL_EXECUTION_CONTEXT_INVALID",
                     "参考生成当前只使用现有 prompt_v1 编译链",
                 )
-        manifest, bundle, skill_snapshot = _build_job_execution_context(
+        manifest, bundle, skill_snapshot, growth_snapshot = _build_job_execution_context(
             parameters,
             mode=mode,
             source_asset_ids=source_asset_ids,
@@ -6045,6 +6094,7 @@ async def compile_knowledge(data: dict):
             **bundle,
             "execution_context": manifest,
             "skill_snapshot": skill_snapshot,
+            "growth_snapshot": growth_snapshot,
             "spatial_context": spatial_binding,
         }
     except SpatialExecutionContextError as exc:
@@ -6067,6 +6117,12 @@ async def compile_knowledge(data: dict):
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/growth/status")
+async def growth_status():
+    refresh_runtime_config()
+    return _active_growth_system().status()
 
 
 @app.get("/api/sessions")

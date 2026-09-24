@@ -11,7 +11,7 @@ export function memoryProjectionDetails({
     设计判断: `${documents} 份正式知识、${sessions} 个创作现场和 ${feedback} 条反馈共同构成当前投影。`,
     正式知识: `唯一主库当前只读加载 ${documents} 份文档、${knowledgeRules} 条规则；正式页面不会被后台修改。`,
     创作现场: `${sessions} 个会话保留各自素材、参数、知识引用与结果版本。`,
-    终稿反馈: `${feedback} 条有效反馈作为学习证据，不会直接覆盖正式知识。`,
+    终稿反馈: `${feedback} 条有效反馈保留为 Case 证据；仅相关案例会进入后续任务，跨任务偏好仍需人工批准。`,
     待审核建议: `${pending} 条建议等待人工确认；未批准前不参与未来生成。`,
   };
 }
@@ -72,6 +72,7 @@ export function createMemoryProjectionController({
     const brief = bundle.creative_brief || {};
     const intent = brief.objective || brief.user_request || query('#brief-input').value.trim();
     const memorySources = sources.filter((source) => source.relative_path === '记忆反馈/已批准');
+    const caseSources = sources.filter((source) => String(source?.relative_path || '').startsWith('经验案例/'));
     const appliedRuleTexts = [
       ...(Array.isArray(bundle.positive_rules) ? bundle.positive_rules : [])
         .map((rule) => rule.text || rule),
@@ -97,14 +98,16 @@ export function createMemoryProjectionController({
     query('#memory-trace-knowledge').textContent = currentProjection.hasTask
       ? sources.length
         ? memorySources.length
-          ? `本次引用 ${sources.length} 份依据，其中 ${memorySources.length} 条是你已批准的反馈`
-          : `本次引用 ${sources.length} 份正式知识`
+          ? `本次引用 ${sources.length} 份依据，其中 ${memorySources.length} 条是你已批准的反馈${caseSources.length ? `，${caseSources.length} 个来自相关历史 Case` : ''}`
+          : caseSources.length
+            ? `本次引用 ${sources.length} 份依据，其中 ${caseSources.length} 个来自相关历史 Case`
+            : `本次引用 ${sources.length} 份正式知识`
         : '当前任务尚未编译知识来源'
       : `${documents} 份正式知识可用；选择任务后显示实际引用`;
     query('#memory-trace-rules').textContent = currentProjection.hasTask
       ? executionRules
         ? `已应用 ${executionRules} 条可检查执行规则：${appliedRuleTexts.slice(0, 3).join('；')}${appliedRuleTexts.length > 3 ? '…' : ''}`
-        : '只采用已批准规则，不使用待审核建议'
+        : '只采用已批准规则和相关 Case，不使用待审核建议'
       : '未选择任务，不展示最后一次前端知识包';
     query('#memory-trace-feedback-title').textContent = currentProjection.hasTask
       ? currentProjection.title

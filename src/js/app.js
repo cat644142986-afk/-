@@ -2208,10 +2208,11 @@ function renderKnowledge(bundle) {
   const positiveRules = bundle.positive_rules || [];
   const negativeRules = bundle.negative_rules || [];
   const intentLockRules = bundle.intent_lock_rules || [];
+  const caseRule = (item) => String(item?.source?.relative_path || '').startsWith('经验案例/');
   const ruleEntries = [
     ...intentLockRules.map((item) => ({ kind: 'lock', label: '锁定', text: item?.text || item })),
-    ...positiveRules.map((item) => ({ kind: 'positive', label: '执行', text: item?.text || item })),
-    ...negativeRules.map((item) => ({ kind: 'negative', label: '避坑', text: item?.text || item })),
+    ...positiveRules.map((item) => ({ kind: 'positive', label: caseRule(item) ? '经验' : '执行', text: item?.text || item })),
+    ...negativeRules.map((item) => ({ kind: 'negative', label: caseRule(item) ? '经验避坑' : '避坑', text: item?.text || item })),
   ].filter((item) => String(item.text || '').trim());
   const rules = ruleEntries.length;
   $('#knowledge-summary').textContent = `${sources.length} 份依据 · ${rules} 条执行规则`;
@@ -2229,21 +2230,28 @@ function renderKnowledge(bundle) {
     const profile = executionContext.product_profile || null;
     const provider = executionContext.provider_adapter || {};
     const skillAppliedCount = Array.from(skillSnapshot?.applied_rule_ids || []).length;
+    const caseSources = sources.filter((source) => String(source?.relative_path || '').startsWith('经验案例/'));
+    const caseRuleCount = [...positiveRules, ...negativeRules].filter(caseRule).length;
     const skillDetail = skillSnapshot
       ? `${skillSnapshot.title || '已选设计方法'} · ${skillAppliedCount} 条规则生效 · ${String(skillSnapshot.content_sha256 || '').slice(0, 8)}`
       : '本次未选用设计方法';
     const approvedRuleCount = Math.max(
       0,
-      Number(summary.positive_rule_count || 0) + Number(summary.negative_rule_count || 0) - skillAppliedCount,
+      Number(summary.positive_rule_count || 0) + Number(summary.negative_rule_count || 0)
+        - skillAppliedCount - caseRuleCount,
     );
-    const approvedSourceCount = Math.max(0, Number(summary.source_count || 0) - (skillSnapshot ? 1 : 0));
+    const approvedSourceCount = Math.max(
+      0,
+      Number(summary.source_count || 0) - (skillSnapshot ? 1 : 0) - caseSources.length,
+    );
     const layers = [
       ['01', '用户本次意图', executionContext.user_intent?.user_request || executionContext.user_intent?.objective || '使用安全任务目标'],
       ['02', '画布上下文', canvas.document_id ? `已绑定画布 revision ${canvas.expected_revision ?? '?'}` : '当前从快速工作流发起'],
       ['03', '商品档案', profile ? `${profile.name || profile.sku || '已绑定档案'} · v${profile.revision}` : '本次未绑定商品档案'],
       ['04', '已批准知识', `${approvedSourceCount} 条来源 · ${approvedRuleCount} 条规则`],
       ['05', '设计方法', skillDetail],
-      ['06', 'Provider 适配', `${provider.model || '本地处理'} · ${provider.effective_prompt_version || '不使用 Prompt'}`],
+      ['06', '相关经验', caseSources.length ? `${caseSources.length} 个历史 Case · ${caseRuleCount} 条规则生效` : '本次没有命中相关历史 Case'],
+      ['07', 'Provider 适配', `${provider.model || '本地处理'} · ${provider.effective_prompt_version || '不使用 Prompt'}`],
     ];
     $('#execution-context-status').textContent = `${executionContext.binding === 'job-snapshot' ? '任务已冻结' : '提交前预览'} · ${String(executionContext.context_sha256 || '').slice(0, 8)}`;
     $('#execution-context-layers').innerHTML = layers.map(([index, title, detail]) => `<div class="source-item"><span>${index}</span><div><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail)}</small></div></div>`).join('');
@@ -2253,8 +2261,9 @@ function renderKnowledge(bundle) {
   }
   const brief = bundle.creative_brief || {};
   const memorySources = sources.filter((source) => source?.relative_path === '记忆反馈/已批准');
+  const caseSources = sources.filter((source) => String(source?.relative_path || '').startsWith('经验案例/'));
   $('#intelligence-brief').textContent = brief.objective || '本次商业图片任务';
-  $('#intelligence-context').textContent = `${MODE_CONFIG[state.currentMode].label} · ${brief.output_kind || '商业输出'} · ${Object.values(brief.intent_locks || {}).filter(Boolean).length} 项意图锁定${memorySources.length ? ` · ${memorySources.length} 条已批准记忆反馈` : ''}${bundle.trace_bound ? ' · 已绑定该任务执行记录' : ''}`;
+  $('#intelligence-context').textContent = `${MODE_CONFIG[state.currentMode].label} · ${brief.output_kind || '商业输出'} · ${Object.values(brief.intent_locks || {}).filter(Boolean).length} 项意图锁定${memorySources.length ? ` · ${memorySources.length} 条已批准记忆反馈` : ''}${caseSources.length ? ` · ${caseSources.length} 个相关历史 Case` : ''}${bundle.trace_bound ? ' · 已绑定该任务执行记录' : ''}`;
   const conflicts = bundle.conflicts || [];
   $('#knowledge-conflicts').innerHTML = conflicts.length ? conflicts.map((item) => `<div class="conflict-item"><span>!</span><p>${escapeHtml(item.message)}</p></div>`).join('') : '<div class="conflict-item ok"><span>✓</span><p>当前没有检测到规则冲突</p></div>';
 }

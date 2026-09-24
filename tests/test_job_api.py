@@ -3674,6 +3674,132 @@ class DurableJobApiTests(unittest.TestCase):
             self.assertFalse(replay.json()["created"])
             self.assertEqual(replay.json()["job"]["id"], approved_job["id"])
 
+    def test_relevant_case_from_prior_result_reaches_governor_task_and_prompt_trace(self) -> None:
+        vault = self.root / "knowledge-vault"
+        (vault / "20 知识库" / "设计知识").mkdir(parents=True)
+        server.KNOWLEDGE = server.KnowledgeCompiler(vault)
+        prior_session = self.ledger.create_session(
+            "single",
+            title="山茶饮料历史主图",
+            project_name="PA Tea Launch",
+            brand_profile="PA Tea",
+            category="food",
+            brief={"product_name": "山茶饮料", "output_kind": "ecommerce-main"},
+        )
+        prior_source = self.ledger.add_asset(
+            prior_session["id"],
+            "source",
+            name="tea-source.png",
+            mime="image/png",
+            data=png_bytes((180, 130, 90)),
+        )
+        prior_generation = self.ledger.add_generation(
+            prior_session["id"],
+            model="offline-history",
+            prompt="历史饮料主图",
+            parameters={"output_kind": "ecommerce-main", "style": "clean"},
+            status="completed",
+        )
+        prior_result = self.ledger.add_asset(
+            prior_session["id"],
+            "result_main",
+            parent_asset_id=prior_source["id"],
+            name="tea-result.png",
+            mime="image/png",
+            data=png_bytes((190, 145, 100)),
+            metadata={"generation_id": prior_generation["id"]},
+        )
+        self.ledger.update_generation(
+            prior_generation["id"],
+            result_asset_ids=[prior_result["id"]],
+        )
+        feedback = self.ledger.add_feedback(
+            prior_session["id"],
+            "adopted",
+            generation_id=prior_generation["id"],
+            asset_id=prior_result["id"],
+            reason="采用克制留白和自然柔光，包装文字保持清楚",
+            structured={
+                "result_asset_id": prior_result["id"],
+                "reason_codes": ["composition_ready", "packaging_clean"],
+            },
+            scope="result",
+        )
+
+        with self.live_client() as client:
+            source = self.import_asset(client, "growth-current.png", (90, 150, 110))
+            brief = {
+                "objective": "生成山茶饮料电商主图",
+                "user_request": "保持包装文字，画面干净克制",
+                "product_name": "山茶饮料",
+                "project_name": "PA Tea Launch",
+                "brand_profile": "PA Tea",
+                "category": "food",
+                "output_kind": "ecommerce-main",
+                "intent_locks": {"packaging_text": True},
+                "output_spec": {"ratio": "1:1", "resolution": "2k"},
+            }
+            preview_response = client.post("/api/knowledge/compile", json={
+                **brief,
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "model": "gpt-image-2",
+                "prompt_version": "prompt_v1",
+                "generation_strategy": "single_pass",
+            })
+            self.assertEqual(preview_response.status_code, 200, preview_response.text)
+            preview_bundle = preview_response.json()
+            case_source = next(
+                item for item in preview_bundle["sources"]
+                if str(item.get("relative_path") or "").startswith("经验案例/")
+            )
+            self.assertIn(feedback["id"], case_source["relative_path"])
+            self.assertEqual(preview_bundle["growth_snapshot"]["status"], "applied")
+            self.assertEqual(
+                preview_bundle["growth_snapshot"]["cases"][0]["result_asset_id"],
+                prior_result["id"],
+            )
+
+            created = self.create_job(client, {
+                "mode": "single",
+                "source_asset_ids": [source["id"]],
+                "parameters": {
+                    "batch": 1,
+                    "model": "gpt-image-2",
+                    "brief": brief,
+                    "project_name": "PA Tea Launch",
+                    "brand_profile": "PA Tea",
+                    "category": "food",
+                    "generation_strategy": "single_pass",
+                    "generation_strategy_source": "user",
+                    "prompt_version": "prompt_v1",
+                    "prompt_version_source": "user",
+                    "execution_context": preview_bundle["execution_context"],
+                },
+            })["job"]
+            completed = self.wait_for_job(created["id"])
+
+            self.assertEqual(completed["status"], "completed")
+            frozen = completed["snapshot"]["parameters"]
+            self.assertEqual(
+                frozen["execution_context"]["context_sha256"],
+                preview_bundle["execution_context"]["context_sha256"],
+            )
+            self.assertEqual(frozen["growth_snapshot"]["status"], "applied")
+            self.assertEqual(
+                frozen["growth_snapshot"]["cases"][0]["feedback_id"], feedback["id"]
+            )
+            traces = client.get(f"/api/jobs/{created['id']}/traces").json()["traces"]
+            prompt_trace = next(item for item in traces if item["stage"] == "prompt.primary")
+            self.assertIn("相关历史采用经验", prompt_trace["compiled_prompt"])
+            self.assertIn("克制留白和自然柔光", prompt_trace["compiled_prompt"])
+            self.assertTrue(any(
+                str((item.get("source") or {}).get("relative_path") or "").startswith("经验案例/")
+                for item in prompt_trace["applied_knowledge"]
+                if isinstance(item, dict)
+            ))
+            self.network_request.assert_not_called()
+
     def test_cancel_endpoint_cancels_running_adapter_without_publishing_results(self) -> None:
         self.ai_started = threading.Event()
         self.ai_release = threading.Event()
