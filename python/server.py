@@ -147,6 +147,7 @@ try:
     )
     from model_admission import build_composer_admission
     from model_candidate_validation import apply_candidate_validation_overlay
+    from model_candidate_canary import apply_provider_canary_overlay
 except ImportError:  # Allows importing as python.server during local tests.
     from python.asset_store import AssetAccessError, AssetStore, AssetStoreError, AssetValidationError
     from python.canvas_export import CanvasExportError, render_canvas_png
@@ -273,6 +274,7 @@ except ImportError:  # Allows importing as python.server during local tests.
     )
     from python.model_admission import build_composer_admission
     from python.model_candidate_validation import apply_candidate_validation_overlay
+    from python.model_candidate_canary import apply_provider_canary_overlay
 
 # ======================== GUI MODE STDOUT GUARD ========================
 # When running as windowed (no console) exe, sys.stdout/sys.stderr may be None.
@@ -6383,7 +6385,10 @@ async def get_provider_image_capabilities(connection_id: str):
             catalog_status=catalog_status,
         )
     return attach_identity_to_capability_overlay(
-        apply_candidate_validation_overlay(capability_overlay), identity_resolution
+        apply_provider_canary_overlay(
+            apply_candidate_validation_overlay(capability_overlay)
+        ),
+        identity_resolution,
     )
 
 

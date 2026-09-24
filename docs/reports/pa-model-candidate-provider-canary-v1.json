@@ -1,0 +1,78 @@
+{
+  "format_version": 1,
+  "kind": "product-atelier-model-candidate-provider-canary",
+  "status": "passed",
+  "source_checkpoint": "7f447647c5740997c56ce3e9f622b48640139d6e",
+  "canary": {
+    "schema_version": "pa-model-candidate-provider-canary-v1",
+    "revision": "2026-09-24.1",
+    "sha256": "3b121887d3a388459cfbb25ac7c9fa80862d8575e07efb253e048a425876b14a"
+  },
+  "fixture": {
+    "id": "reference-generate-packaging-logo-v1",
+    "json_sha256": "92f1737bb37d3dbbe9b86df3b31ba87c6ef2b9d9b414cf5e25ed5722acdb7dd2",
+    "reference_sha256": "2a6afca49fcaf0e1d050ae3447e818db408e94ed781a928a50a9c3083bd2f56f",
+    "semantics": "exact-single-result",
+    "ratio": "1:1",
+    "resolution": "2k",
+    "max_attempts": 1,
+    "automatic_paid_retry": false
+  },
+  "models": {
+    "tt-image-2": {
+      "status": "passed",
+      "provider_route": "/v1/media/generate -> /v1/skills/task-status",
+      "exact_model_id": "tt-image-2",
+      "channel_group": "XT2",
+      "provider_elapsed_ms": 53825.919,
+      "gate_elapsed_seconds": 121.749,
+      "billing": {"cost": 0.0359, "unit": "算力", "balance_delta": 0.04},
+      "task_id": "job_f01b7c67bc724a9ba7ed948fb80169a3",
+      "provider_task_id": "148634594",
+      "result_main_id": "ast_894f424134df4fcd80623dcbbf8e8570",
+      "result_main_sha256": "e5ef4fedbdf5c2f3bd4288ce11afa13dc46b3748d6f0d09406583f5d79449b92",
+      "receipt_status": "completed",
+      "lineage_complete": true
+    },
+    "banana-2": {
+      "status": "passed",
+      "provider_route": "/v1/media/generate -> /v1/skills/task-status",
+      "exact_model_id": "banana-2",
+      "channel_group": "MC-限时特惠",
+      "provider_elapsed_ms": 35204.842,
+      "gate_elapsed_seconds": 95.697,
+      "billing": {"cost": 0.1256, "unit": "算力", "balance_delta": 0.13},
+      "task_id": "job_1c7c16dbcd784646866595fd8f540fb0",
+      "provider_task_id": "148640296",
+      "result_main_id": "ast_b2df54d9447c49e68db8e703d4443faa",
+      "result_main_sha256": "89acacbf44cf72aad3c6226b99c6d375146898131588e3ed49efb04386562e16",
+      "receipt_status": "completed",
+      "lineage_complete": true
+    },
+    "banana-pro": {
+      "status": "passed",
+      "provider_route": "/v1/media/generate -> /v1/skills/task-status",
+      "exact_model_id": "banana-pro",
+      "channel_group": "nano",
+      "provider_elapsed_ms": 39957.692,
+      "gate_elapsed_seconds": 85.724,
+      "billing": {"cost": 0.1579, "unit": "算力", "balance_delta": 0.15},
+      "task_id": "job_e668dd6932a6444491efc65d6c9a29f9",
+      "provider_task_id": "148642217",
+      "result_main_id": "ast_bb5e01674ef848c2a65c369fcec84f89",
+      "result_main_sha256": "c4e7f13e8c264fa24e6a23a6465eacf369d6da4c551b2ee074fa061f906483f8",
+      "receipt_status": "completed",
+      "lineage_complete": true
+    }
+  },
+  "classification": {
+    "eligible": ["tt-image-2", "banana-2", "banana-pro"],
+    "needs_canary": []
+  },
+  "provider_generation_calls": 3,
+  "boundaries": [
+    "Evidence applies only to reference-generate with the frozen 1:1/2K single-Result fixture.",
+    "No quality ranking or evidence for other task kinds is inferred.",
+    "No Composer, Smart Router or release state changed."
+  ]
+}

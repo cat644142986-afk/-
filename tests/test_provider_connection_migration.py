@@ -185,7 +185,7 @@ class ProviderCredentialMigrationTests(unittest.TestCase):
         self.assertNotEqual(tt_identity, legacy_identity)
         self.assertEqual(
             capabilities["summary"]["composer_eligible_canonical_model_ids"],
-            [],
+            [tt_identity],
         )
 
         admission = asyncio.run(
@@ -195,8 +195,10 @@ class ProviderCredentialMigrationTests(unittest.TestCase):
             item for item in admission["candidates"]
             if item["provider_model_id"] == "tt-image-2"
         )
-        self.assertEqual(tt_admission["category"], "needs_canary")
-        self.assertEqual(admission["summary"]["eligible_canonical_model_ids"], [])
+        self.assertEqual(tt_admission["category"], "eligible")
+        self.assertEqual(
+            admission["summary"]["eligible_canonical_model_ids"], [tt_identity]
+        )
 
 
 if __name__ == "__main__":
