@@ -40,17 +40,22 @@ if (-not [string]::Equals(
 )) {
     throw "Packaged sidecar manifest does not match ExpectedGitCommit"
 }
-$tempBase = [System.IO.Path]::GetFullPath((Join-Path ([System.IO.Path]::GetTempPath()) "ProductAtelier-Growth-Acceptance"))
-if (-not (Test-Path -LiteralPath $tempBase)) {
-    New-Item -ItemType Directory -Path $tempBase | Out-Null
-}
-$runRoot = [System.IO.Path]::GetFullPath((Join-Path $tempBase ([guid]::NewGuid().ToString("N"))))
-if (-not $runRoot.StartsWith($tempBase + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+$tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+$runName = "ProductAtelier-app-test-growth-" + [guid]::NewGuid().ToString("N")
+$runRoot = [System.IO.Path]::GetFullPath((Join-Path $tempBase $runName))
+if (
+    -not [string]::Equals(
+        [System.IO.Path]::GetFullPath((Split-Path -Parent $runRoot)),
+        $tempBase.TrimEnd([System.IO.Path]::DirectorySeparatorChar),
+        [System.StringComparison]::OrdinalIgnoreCase
+    ) -or
+    -not ([System.IO.Path]::GetFileName($runRoot)).StartsWith("ProductAtelier-app-test-growth-", [System.StringComparison]::Ordinal)
+) {
     throw "Invalid isolated Growth acceptance path"
 }
-$dataDir = Join-Path $runRoot "data"
-$knowledgeRoot = Join-Path $runRoot "knowledge"
-$webviewData = Join-Path $runRoot "webview"
+$dataDir = $runRoot
+$knowledgeRoot = Join-Path $runRoot "no-knowledge-vault"
+$webviewData = Join-Path $runRoot "webview2-user-data"
 $legacySentinel = Join-Path $runRoot "no-legacy-config.json"
 New-Item -ItemType Directory -Path $dataDir,$knowledgeRoot,$webviewData | Out-Null
 
@@ -76,6 +81,7 @@ $previous = @{
     knowledge = $env:PRODUCT_ATELIER_KNOWLEDGE_BASE
     isolation = $env:PRODUCT_ATELIER_CANDIDATE_ISOLATION
     webviewUser = $env:WEBVIEW2_USER_DATA_FOLDER
+    webviewArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 }
 $app = $null
 $trackedSidecarPids = @()
@@ -86,6 +92,7 @@ try {
     $env:PRODUCT_ATELIER_KNOWLEDGE_BASE = $knowledgeRoot
     $env:PRODUCT_ATELIER_CANDIDATE_ISOLATION = "1"
     $env:WEBVIEW2_USER_DATA_FOLDER = $webviewData
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $null
     $app = Start-Process -FilePath $AppExe -WorkingDirectory $PortableDir -WindowStyle Hidden -PassThru
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -151,19 +158,27 @@ try {
         -Body ([System.Text.Encoding]::UTF8.GetBytes($payload)) `
         -TimeoutSec 20
 
-    $caseSource = @($preview.sources | Where-Object { ([string]$_.relative_path).StartsWith("经验案例/") })
-    $obsidianSource = @($preview.sources | Where-Object { ([string]$_.relative_path).StartsWith("Obsidian/") })
-    if ($caseSource.Count -ne 1) { throw "Relevant Case was not compiled into packaged preview" }
-    if ($obsidianSource.Count -ne 1) { throw "Relevant approved Obsidian page was not compiled into packaged preview" }
+    $caseSource = @($preview.sources | Where-Object { ([string]$_.id).StartsWith("case:") })
+    $obsidianSource = @($preview.sources | Where-Object { ([string]$_.id).StartsWith("obsidian:") })
+    $sourcePaths = @($preview.sources | ForEach-Object { [string]$_.relative_path }) -join ", "
+    if ($caseSource.Count -ne 1) {
+        throw "Relevant Case was not compiled into packaged preview (sources: $sourcePaths)"
+    }
+    if ($obsidianSource.Count -ne 1) {
+        throw "Relevant approved Obsidian page was not compiled into packaged preview (sources: $sourcePaths)"
+    }
     $compiledText = @(
         $preview.positive_rules | ForEach-Object { [string]$_.text }
         $preview.negative_rules | ForEach-Object { [string]$_.text }
     ) -join "`n"
-    if ($compiledText -notmatch "相关历史采用经验" -or $compiledText -notmatch "克制留白") {
+    if ($compiledText -notmatch "PAGROWTHCASEMARKER") {
         throw "Historical Case did not change the packaged Governor rules"
     }
-    if ($compiledText -notmatch "相关 Obsidian 知识" -or $compiledText -notmatch "包装四周") {
-        throw "Approved Obsidian knowledge did not change the packaged Governor rules"
+    if ($compiledText -notmatch "PAGROWTHKNOWLEDGEMARKER") {
+        $positiveEvidence = @($preview.positive_rules | ForEach-Object {
+            "$( [string]$_.id )=$( [string]$_.text )"
+        }) -join " | "
+        throw "Approved Obsidian knowledge did not change the packaged Governor rules ($positiveEvidence)"
     }
     if ([string]$preview.growth_snapshot.status -cne "applied") {
         throw "Growth snapshot was not frozen as applied"
@@ -234,6 +249,7 @@ try {
     $env:PRODUCT_ATELIER_KNOWLEDGE_BASE = $previous.knowledge
     $env:PRODUCT_ATELIER_CANDIDATE_ISOLATION = $previous.isolation
     $env:WEBVIEW2_USER_DATA_FOLDER = $previous.webviewUser
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $previous.webviewArguments
     if ($app -and -not $app.HasExited) {
         [void]$app.CloseMainWindow()
         try { Wait-Process -Id $app.Id -Timeout 6 -ErrorAction Stop }
@@ -247,7 +263,14 @@ try {
     }
     if (Test-Path -LiteralPath $runRoot) {
         $resolvedRun = [System.IO.Path]::GetFullPath($runRoot)
-        if (-not $resolvedRun.StartsWith($tempBase + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if (
+            -not [string]::Equals(
+                [System.IO.Path]::GetFullPath((Split-Path -Parent $resolvedRun)),
+                $tempBase.TrimEnd([System.IO.Path]::DirectorySeparatorChar),
+                [System.StringComparison]::OrdinalIgnoreCase
+            ) -or
+            -not ([System.IO.Path]::GetFileName($resolvedRun)).StartsWith("ProductAtelier-app-test-growth-", [System.StringComparison]::Ordinal)
+        ) {
             throw "Refusing to clean a path outside the isolated Growth acceptance root"
         }
         Remove-Item -LiteralPath $resolvedRun -Recurse -Force

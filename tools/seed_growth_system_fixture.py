@@ -40,7 +40,7 @@ tags: [食品, 饮料, 主图]
 ---
 # 饮料主图经验
 
-- 包装四周保留克制留白，并保持文字和 Logo 清楚可读
+- 包装四周保留克制留白，并保持文字和 Logo 清楚可读（PAGROWTHKNOWLEDGEMARKER）
 
 关联 [[品牌调性维度|品牌调性]]。
 """,
@@ -88,7 +88,7 @@ tags: [食品, 饮料, 主图]
         "adopted",
         generation_id=generation["id"],
         asset_id=result["id"],
-        reason="采用克制留白和自然柔光，包装文字保持清楚",
+        reason="采用克制留白和自然柔光，包装文字保持清楚（PAGROWTHCASEMARKER）",
         structured={
             "result_asset_id": result["id"],
             "reason_codes": ["composition_ready", "packaging_clean"],
