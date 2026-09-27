@@ -65,6 +65,7 @@ const REQUIRED_MUTATION_COMMANDS = new Set([
   'command:transform-layer',
   'command:toggle-layer',
   'command:toggle-layer-lock',
+  'command:delete-layer',
   'command:local-edit-compose',
 ]);
 const LOCAL_EDIT_GENERATE_COMMAND = 'command:local-edit-generate';
@@ -283,7 +284,9 @@ export function createCanvasController({
   }
 
   function activeLayer() {
-    return activeDocument()?.layers?.find((layer) => layer.id === selectedLayerId) || null;
+    return activeDocument()?.layers?.find((layer) => (
+      layer.id === selectedLayerId && !layer.deleted
+    )) || null;
   }
 
   function layerName(layer) {
@@ -936,7 +939,9 @@ export function createCanvasController({
     }
     entry.pendingSave = null;
     if (mode === currentMode) {
-      selectedLayerId = entry.document?.layers?.some((layer) => layer.id === selectedLayerId)
+      selectedLayerId = entry.document?.layers?.some((layer) => (
+        layer.id === selectedLayerId && !layer.deleted
+      ))
         ? selectedLayerId
         : '';
       updateDocumentMeta();
@@ -1181,11 +1186,12 @@ export function createCanvasController({
     const entry = entryFor();
     const document = entry.document;
     const artboard = activeArtboard();
+    const activeLayerCount = document?.layers?.filter((layer) => !layer.deleted).length || 0;
     query('#canvas-mode-label').textContent = document ? `${currentMode} · revision ${entry.currentRevision}` : `${currentMode} · 尚未创建`;
-    query('#canvas-layer-count').textContent = `${document?.layers?.length || 0} 图层`;
+    query('#canvas-layer-count').textContent = `${activeLayerCount} 图层`;
     query('#canvas-artboard-spec').textContent = `${artboard.export.pixel_width} × ${artboard.export.pixel_height} px`;
     const empty = query('#canvas-empty-state');
-    if (empty) empty.hidden = Boolean(document?.layers?.length);
+    if (empty) empty.hidden = Boolean(activeLayerCount);
   }
 
   function updateHistoryControls() {
@@ -1217,6 +1223,27 @@ export function createCanvasController({
       query('#canvas-transform-rotation').value = String(Math.round(layer.transform.rotation_degrees));
     }
     setInteractionDisabled(entryFor().saving || entryFor().blocked);
+    const deleteButton = query('#canvas-delete-layer');
+    if (deleteButton) deleteButton.disabled = !layer || layer.locked || entryFor().saving || entryFor().blocked;
+  }
+
+  async function deleteSelectedLayer() {
+    const document = activeDocument();
+    const layer = activeLayer();
+    const entry = entryFor();
+    if (!document || !layer || layer.locked || entry.saving || entry.blocked) return false;
+    appendLayerMutation(document, layer.id, {
+      deleted: true,
+      visible: false,
+      locked: true,
+    }, 'command:delete-layer');
+    selectedLayerId = '';
+    renderLists();
+    updateHistoryControls();
+    await renderCanvas();
+    scheduleSave(0);
+    toast('图层已从精修画布移除；可使用撤销恢复', 'success');
+    return true;
   }
 
   function layerRowMarkup(layer) {
@@ -1235,7 +1262,9 @@ export function createCanvasController({
 
   function renderLayerList() {
     const host = query('#canvas-layer-list');
-    const layers = [...(activeDocument()?.layers || [])].sort((a, b) => b.z_index - a.z_index);
+    const layers = [...(activeDocument()?.layers || [])]
+      .filter((layer) => !layer.deleted)
+      .sort((a, b) => b.z_index - a.z_index);
     const segment = segmentedItems(layers, layerVisibleLimit);
     host.innerHTML = segment.items.length
       ? segment.items.map(layerRowMarkup).join('')
@@ -1246,7 +1275,9 @@ export function createCanvasController({
   }
 
   function assetRowMarkup(asset, document) {
-    const added = Boolean(document?.layers?.some((layer) => layer.source.kind === 'asset' && layer.source.id === asset.id));
+    const added = Boolean(document?.layers?.some((layer) => (
+      !layer.deleted && layer.source.kind === 'asset' && layer.source.id === asset.id
+    )));
     const thumbnail = assetUrl(asset, 'thumbnail');
     const dimensions = asset.width && asset.height ? `${asset.width} × ${asset.height}` : '像素信息待补充';
     return `<article class="canvas-asset-row">
@@ -1304,6 +1335,13 @@ export function createCanvasController({
     const layer = activeDocument()?.layers?.find((item) => item.id === layerId);
     const object = objectByLayer.get(layerId);
     if (!layer || !object || !canvas) return;
+    if (layer.deleted) {
+      if (canvas.getActiveObject() === object) canvas.discardActiveObject();
+      canvas.remove(object);
+      objectByLayer.delete(layerId);
+      canvas.requestRenderAll();
+      return;
+    }
     if (String(object.get('sourceAssetId') || '') !== String(layer.source.id)) {
       reloadObjectFromLayer(layerId);
       return;
@@ -1329,6 +1367,10 @@ export function createCanvasController({
   async function reloadObjectFromLayer(layerId) {
     const layer = activeDocument()?.layers?.find((item) => item.id === layerId);
     if (!layer || !canvas) return;
+    if (layer.deleted) {
+      syncObjectFromLayer(layerId);
+      return;
+    }
     const requestedSourceId = String(layer.source.id);
     const replacement = await fabricObjectForLayer(layer);
     const currentLayer = activeDocument()?.layers?.find((item) => item.id === layerId);
@@ -1351,7 +1393,7 @@ export function createCanvasController({
 
   function setSelectedLayer(layerId, focusRow = false) {
     const layer = activeDocument()?.layers?.find((item) => item.id === layerId);
-    if (!layer) return;
+    if (!layer || layer.deleted) return;
     selectedLayerId = layerId;
     const object = objectByLayer.get(layerId);
     if (object && !layer.locked) {
@@ -2147,7 +2189,9 @@ export function createCanvasController({
     });
     artboardObject.set('objectRole', 'artboard');
     canvas.add(artboardObject);
-    const layers = [...(activeDocument()?.layers || [])].sort((a, b) => a.z_index - b.z_index);
+    const layers = [...(activeDocument()?.layers || [])]
+      .filter((layer) => !layer.deleted)
+      .sort((a, b) => a.z_index - b.z_index);
     for (let offset = 0; offset < layers.length; offset += 12) {
       const batch = layers.slice(offset, offset + 12);
       const objects = await Promise.all(batch.map(fabricObjectForLayer));
@@ -2264,6 +2308,13 @@ export function createCanvasController({
         entry.document = createCanvasDocument(currentMode, asset);
         layer = entry.document.layers[0];
         entry.dirty = true;
+      } else if (layer?.deleted) {
+        appendLayerMutation(entry.document, layer.id, {
+          deleted: false,
+          visible: true,
+          locked: false,
+        }, 'command:delete-layer');
+        entry.dirty = true;
       } else if (!layer) {
         const added = addAssetLayer(entry.document, asset);
         layer = added.layer;
@@ -2322,6 +2373,10 @@ export function createCanvasController({
   }
 
   async function syncHistoryMutation(operation) {
+    if (Boolean(operation?.mutation?.before?.deleted) !== Boolean(operation?.mutation?.after?.deleted)) {
+      await renderCanvas();
+      return;
+    }
     if (operationReplacesLayerSource(operation)) {
       await reloadObjectFromLayer(operation.mutation.target_layer_id);
     } else syncObjectFromLayer(operation.mutation.target_layer_id);
@@ -2550,6 +2605,7 @@ export function createCanvasController({
     query('#canvas-export').addEventListener('click', exportArtboard);
     query('#canvas-return-spatial').addEventListener('click', returnToSpatial);
     query('#canvas-apply-transform').addEventListener('click', applyTransform);
+    query('#canvas-delete-layer').addEventListener('click', deleteSelectedLayer);
     query('#canvas-save-retry').addEventListener('click', runCanvasRecovery);
     query('#canvas-save-reload').addEventListener('click', runCanvasRecovery);
     query('#local-edit-save-roi').addEventListener('click', saveLocalRoi);
@@ -2662,6 +2718,11 @@ export function createCanvasController({
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
         event.preventDefault();
         redo();
+        return;
+      }
+      if (['Delete', 'Backspace'].includes(event.key) && layer && !layer.locked) {
+        event.preventDefault();
+        deleteSelectedLayer();
         return;
       }
       if (!layer || layer.locked || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;

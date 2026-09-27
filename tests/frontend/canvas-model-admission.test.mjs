@@ -49,7 +49,7 @@ test('unsupported parameter response cannot silently substitute a model', () => 
   };
   assert.deepEqual(eligibleComposerModels(unsupported), []);
   assert.equal(initialComposerModel(unsupported), '');
-  assert.equal(initialComposerModel(unsupported, 'banana-2'), 'banana-2');
+  assert.equal(initialComposerModel(unsupported, 'banana-2'), '');
   assert.equal(composerRecommendation(unsupported), null);
   assert.equal(admittedComposerModel(unsupported, 'banana-2'), null);
 });

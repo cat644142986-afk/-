@@ -1234,6 +1234,11 @@ async function handleSpatialFineEdit(context, localMode = 'inpaint') {
     const originSceneVersionId = String(originRecord?.current_version_id || '');
     if (!originSceneVersionId) throw new Error('来源无限画布尚未完成保存');
     const originElementId = String(context.element?.id || '');
+    const job = await spatialJob(context).catch(() => null);
+    const targetMode = job?.mode && MODE_CONFIG[job.mode] ? job.mode : 'single';
+    if (refs.asset_id && !refs.result_id) {
+      await API.restoreAssetToCollection(MODE_CONFIG[targetMode].collection, refs.asset_id);
+    }
     const handoff = await API.prepareSpatialEditHandoff({
       client_request_id: `spatial-edit:${originCanvasId}:${originSceneVersionId}:${originElementId}`,
       origin_canvas_id: originCanvasId,
@@ -1241,9 +1246,8 @@ async function handleSpatialFineEdit(context, localMode = 'inpaint') {
       origin_element_id: originElementId,
       source_asset_id: String(refs.asset_id),
     }, { timeoutMs: 12000 });
-    const job = await spatialJob(context).catch(() => null);
-    if (job?.mode && MODE_CONFIG[job.mode] && state.currentMode !== job.mode) {
-      switchMode(job.mode, true, false);
+    if (state.currentMode !== targetMode) {
+      switchMode(targetMode, true, false);
     }
     switchPage('process');
     await canvasController.openAsset(refs.asset_id, {

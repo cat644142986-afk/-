@@ -119,6 +119,18 @@ _COMMANDS: tuple[dict[str, Any], ...] = (
         "supports_canvas": True,
     },
     {
+        "id": "command:delete-layer",
+        "label": "删除或恢复图层",
+        "mode": None,
+        "engine_key": "canvas-local",
+        "min_sources": 0,
+        "max_sources": 0,
+        "cost_policy": "free-local",
+        "execution_kind": "canvas-mutation",
+        "existing_quick_mode": False,
+        "supports_canvas": True,
+    },
+    {
         "id": "command:local-edit-compose",
         "label": "应用局部编辑",
         "mode": None,

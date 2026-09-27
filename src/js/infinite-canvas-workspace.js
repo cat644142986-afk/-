@@ -25,6 +25,7 @@ import {
 import {
   SPATIAL_CANVAS_CONVERSATION_SURFACE,
   SPATIAL_CANVAS_REFERENCE_SURFACE,
+  SPATIAL_CUTOUT_ACTION,
   SPATIAL_IMAGE_AI_COMMAND_ID,
   SPATIAL_IMAGE_AI_SKILL_ID,
   SPATIAL_RESULT_VARIATION_ACTION,
@@ -177,14 +178,15 @@ function imageAiDraftHtml(draft, asset, {
   const skill = preview?.skillSnapshot || null;
   const summary = context?.summary || {};
   const definition = spatialImageAiDefinition(draft.action, draft);
-  const providerCalls = draft.productProfileVersionId ? 1 : 2;
+  const localCutout = draft.action === SPATIAL_CUTOUT_ACTION;
+  const providerCalls = localCutout ? 0 : draft.productProfileVersionId ? 1 : 2;
   const busy = previewing || submitting;
   const primaryLabel = submitting
     ? '正在创建任务'
     : previewing
       ? '正在核对上下文'
       : preview
-        ? `确认并创建任务 · ${providerCalls === 1 ? '1 次调用' : '最多 2 次调用'}`
+        ? (localCutout ? '确认并创建本地抠图任务 · 0 次付费调用' : `确认并创建任务 · ${providerCalls === 1 ? '1 次调用' : '最多 2 次调用'}`)
         : '重新核对执行上下文';
   const skillOptions = `
     <option value=""${draft.designSkillId ? '' : ' selected'}>默认方法 · 不额外引用</option>
@@ -207,7 +209,7 @@ function imageAiDraftHtml(draft, asset, {
       <div class="spatial-white-form__heading"><span>CANVAS NATIVE AI</span><strong>${escapeHtml(definition.title)}</strong><small>提交前核对本次真正生效的上下文</small></div>
       <label class="spatial-white-form__wide"><span>本次要求</span><textarea data-spatial-image-ai-field="userRequest" maxlength="1200" rows="4" ${busy ? 'disabled' : ''}>${escapeHtml(draft.userRequest)}</textarea><small>主体结构、数量、包装文字与 Logo 始终锁定。</small></label>
       ${draft.inputSurface === SPATIAL_CANVAS_REFERENCE_SURFACE ? `<label class="spatial-white-form__wide"><span>生成模型</span><select data-spatial-image-ai-field="model" ${busy ? 'disabled' : ''}>${modelOptions}</select><small>只显示 ${escapeHtml(draft.outputRatio)} / ${escapeHtml(draft.outputResolution.toUpperCase())} 已验证模型；切换后必须重新核对上下文。</small>${routingSummary ? `<small class="spatial-model-route">${escapeHtml(routingSummary)}；可手动选择，不会静默切换。</small>` : ''}</label>${selectedModel ? `<details class="spatial-model-details"><summary>模型与证据详情</summary><dl><div><dt>模型 ID</dt><dd>${escapeHtml(selectedModel.provider_model_id)}</dd></div><div><dt>选择方式</dt><dd>${selectedModel.provider_model_id === recommendedModelId ? 'PA 运行建议' : '用户手动选择'}</dd></div><div><dt>适配器</dt><dd>${escapeHtml(selectedModel.adapter?.contract || '')} · ${escapeHtml(selectedModel.adapter?.version || '')}</dd></div><div><dt>Provider</dt><dd>LK / AI模型中心</dd></div><div><dt>单次 canary</dt><dd>${Number(telemetry.provider_elapsed_ms || 0) ? `${(Number(telemetry.provider_elapsed_ms) / 1000).toFixed(1)} 秒` : '—'} · ${escapeHtml(billing.cost ?? '—')} ${escapeHtml(billing.unit || '')}</dd></div><div><dt>通道证据</dt><dd>${escapeHtml(telemetry.channel_group || '—')}</dd></div></dl><small>推荐只使用已验证能力、当前参数及单次成本/耗时证据；不代表质量排名。</small></details>` : ''}` : ''}
-      <label class="spatial-white-form__wide"><span>设计方法</span><select data-spatial-image-ai-field="designSkillId" ${busy ? 'disabled' : ''}>${skillOptions}</select><small>只读贡献设计规则，不执行脚本或 Provider。</small></label>
+      ${localCutout ? '' : `<label class="spatial-white-form__wide"><span>设计方法</span><select data-spatial-image-ai-field="designSkillId" ${busy ? 'disabled' : ''}>${skillOptions}</select><small>只读贡献设计规则，不执行脚本或 Provider。</small></label>`}
       <section class="spatial-context-preview" data-spatial-image-ai-preview aria-live="polite">
         ${preview ? `
           <dl>
@@ -216,17 +218,16 @@ function imageAiDraftHtml(draft, asset, {
             <div><dt>Product Profile</dt><dd>${draft.productProfileVersionId ? `已冻结 · ${escapeHtml(shortHash(draft.productProfileVersionId))}` : '未绑定 · 将先识别素材'}</dd></div>
             <div><dt>Approved Knowledge</dt><dd>${Number(summary.source_count || 0)} 条来源 · ${Number(summary.positive_rule_count || 0) + Number(summary.negative_rule_count || 0)} 条规则</dd></div>
             <div><dt>设计方法</dt><dd>${skill ? `${escapeHtml(skill.title || '食品饮料白底主图')} · ${escapeHtml(skill.version || '')}<br><small>hash ${escapeHtml(shortHash(skill.content_sha256))} · ${escapeHtml(skill.adapter_version || '')}</small>` : '默认方法'}</dd></div>
-            <div><dt>模型</dt><dd>${escapeHtml(selectedModel?.display_name || context?.provider_adapter?.model || draft.model)} · ${providerCalls === 1 ? '1 次调用' : '最多 2 次（含素材识别）'}</dd></div>
+            <div><dt>执行</dt><dd>${localCutout ? '本地抠图 · 0 次 Provider 调用' : `${escapeHtml(selectedModel?.display_name || context?.provider_adapter?.model || draft.model)} · ${providerCalls === 1 ? '1 次调用' : '最多 2 次（含素材识别）'}`}</dd></div>
           </dl>
         ` : `<p>${previewing ? '正在从账本编译执行上下文…' : '要求已变化，请重新核对后再提交。'}</p>`}
       </section>
       <p class="spatial-white-form__status" data-spatial-image-ai-status aria-live="polite"${error ? ' data-error="true" tabindex="-1"' : ''}>${escapeHtml(error || (preview ? '上下文已冻结；点击确认后才会创建正式任务。' : '尚未发起 Provider 调用。'))}</p>
       <div class="spatial-white-form__actions">
-        ${draft.inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE || draft.inputSurface === SPATIAL_CANVAS_REFERENCE_SURFACE ? '' : `<button type="button" data-spatial-image-ai-classic ${busy ? 'disabled' : ''}>到经典页调整</button>`}
         <button type="button" data-spatial-image-ai-cancel ${busy ? 'disabled' : ''}>取消</button>
         <button type="submit" class="is-primary" ${busy ? 'disabled' : ''}>${primaryLabel}</button>
       </div>
-      <p class="spatial-white-form__source">来源：${escapeHtml(asset?.name || draft.sourceAssetId)}${draft.inputSurface === SPATIAL_CANVAS_REFERENCE_SURFACE ? ` · ${escapeHtml(draft.outputRatio)} / ${escapeHtml(draft.outputResolution.toUpperCase())}` : ''} · 失败后不自动付费重试</p>
+      <p class="spatial-white-form__source">来源：${escapeHtml(asset?.name || draft.sourceAssetId)}${draft.inputSurface === SPATIAL_CANVAS_REFERENCE_SURFACE ? ` · ${escapeHtml(draft.outputRatio)} / ${escapeHtml(draft.outputResolution.toUpperCase())}` : ''} · ${localCutout ? '本地执行，可失败重试' : '失败后不自动付费重试'}</p>
     </form>
   `;
 }
@@ -370,6 +371,60 @@ export function createInfiniteCanvasWorkspaceController({
   const notifiedVideoJobs = new Set();
   const activeImageAiJobIds = new Set();
   const notifiedImageAiJobs = new Set();
+  const creativeDrafts = new Map();
+
+  function currentCreativeDraft(canvasId = currentId) {
+    return creativeDrafts.get(String(canvasId || '')) || null;
+  }
+
+  function updateCreativeDraft(patch = {}) {
+    if (!currentId) return null;
+    const prior = currentCreativeDraft() || {
+      sourceElementId: '', sourceAssetId: '', reference: null, prompt: '',
+      ratio: '1:1', resolution: '2k', model: '', open: false,
+    };
+    const next = { ...prior, ...patch };
+    if (!next.sourceElementId || !next.sourceAssetId) return prior;
+    creativeDrafts.set(currentId, next);
+    conversationInput = String(next.prompt || '').slice(0, 1200);
+    renderProductShell();
+    return next;
+  }
+
+  function clearCreativeDraft(canvasId = currentId) {
+    const targetId = String(canvasId || '');
+    const draft = creativeDrafts.get(targetId);
+    creativeDrafts.delete(targetId);
+    conversationInput = '';
+    conversationError = '';
+    if (
+      imageAiDraft
+      && imageAiDraft.canvasId === targetId
+      && [SPATIAL_CANVAS_CONVERSATION_SURFACE, SPATIAL_CANVAS_REFERENCE_SURFACE]
+        .includes(imageAiDraft.inputSurface)
+      && (!draft?.sourceElementId || imageAiDraft.sourceElementId === draft.sourceElementId)
+    ) {
+      imageAiDraft = null;
+      imageAiDraftError = '';
+      imageAiAdmission = null;
+    }
+    renderProductShell();
+  }
+
+  async function restoreCreativeDraftSelection() {
+    const draft = currentCreativeDraft();
+    if (!draft?.sourceAssetId) return null;
+    const element = await mountedIsland?.selectBusinessReference?.({
+      element_id: draft.sourceElementId,
+      asset_id: draft.sourceAssetId,
+    });
+    if (!element) {
+      setSpatialStatus('草稿绑定的图片已不在当前画布；请清空草稿后重新开始', { kind: 'error' });
+      return null;
+    }
+    await renderInspector(element);
+    return element;
+  }
 
   function setSpatialStatus(text, { kind = '', action = '', actionLabel = '' } = {}) {
     const status = query('#spatial-save-state');
@@ -516,7 +571,11 @@ export function createInfiniteCanvasWorkspaceController({
     const contextBar = query('#spatial-context-bar');
     const zeroComposer = query('#spatial-zero-composer');
     if (!empty || !contextBar) return;
-    const reviewing = Boolean(imageAiDraft || videoDraft);
+    const selectedRefs = selectedElement?.customData || {};
+    const reviewing = Boolean(
+      (imageAiDraft && imageAiDraft.sourceElementId === selectedElement?.id)
+      || (videoDraft && videoDraft.sourceAssetId === selectedRefs.asset_id)
+    );
     if (shellMode === 'transplant') {
       const showZeroComposer = zeroComposerOpen && !reviewing;
       empty.hidden = !showZeroComposer;
@@ -528,6 +587,7 @@ export function createInfiniteCanvasWorkspaceController({
         reviewing,
         conversationInput,
         conversationError,
+        creativeDraft: currentCreativeDraft(),
       });
       return;
     }
@@ -648,6 +708,7 @@ export function createInfiniteCanvasWorkspaceController({
       pendingScenes.delete(canvasId);
       savingScenes.delete(canvasId);
       sceneConflicts.delete(canvasId);
+      creativeDrafts.delete(canvasId);
       if (currentId === canvasId) {
         openEpoch += 1;
         stopVideoPolling();
@@ -695,13 +756,10 @@ export function createInfiniteCanvasWorkspaceController({
     const selectionChanged = String(element?.id || '') !== String(selectedElement?.id || '');
     if (selectionChanged) {
       closeNativeAiCommandMenu({ restoreFocus: false });
-      videoDraft = null;
-      videoDraftError = '';
-      imageAiDraft = null;
-      imageAiDraftError = '';
-      imageAiAdmission = null;
-      conversationInput = '';
-      conversationError = '';
+      if (imageAiDraft && String(imageAiDraft.sourceElementId || '') !== String(element?.id || '')) {
+        imageAiDraft = { ...imageAiDraft, preview: null, requestId: '' };
+        imageAiDraftError = '选区已变化；草稿仍保留，返回原图片后重新核对';
+      }
       conversationReviewing = false;
       selectedAsset = null;
       detailsOpen = false;
@@ -779,10 +837,10 @@ export function createInfiniteCanvasWorkspaceController({
     const refs = selectedElement.customData || {};
     const assetId = String(refs.asset_id || '');
     if (!assetId) return [];
-    const action = refs.result_id
-      ? (String(refs.result_id) === assetId ? SPATIAL_RESULT_VARIATION_ACTION : '')
-      : SPATIAL_WHITE_BACKGROUND_ACTION;
-    return action ? [spatialImageAiDefinition(action)] : [];
+    const actions = refs.result_id
+      ? (String(refs.result_id) === assetId ? [SPATIAL_RESULT_VARIATION_ACTION] : [])
+      : [SPATIAL_CUTOUT_ACTION, SPATIAL_WHITE_BACKGROUND_ACTION];
+    return actions.map((action) => spatialImageAiDefinition(action));
   }
 
   function closeNativeAiCommandMenu({ restoreFocus = true } = {}) {
@@ -1556,7 +1614,10 @@ export function createInfiniteCanvasWorkspaceController({
       sourceResultId: exactResult ? String(refs.result_id || '') : '',
       productProfileVersionId: String(refs.product_profile_version_id || ''),
       userRequest: String(seed?.userRequest || defaults?.userRequest || ''),
-      model: reference ? String(seed?.model || '') : defaults?.model,
+      designSkillId: definition.action === SPATIAL_CUTOUT_ACTION ? '' : defaults?.designSkillId,
+      model: definition.action === SPATIAL_CUTOUT_ACTION
+        ? 'local-rembg/birefnet-general'
+        : reference ? String(seed?.model || '') : defaults?.model,
       outputRatio: reference ? String(seed?.outputRatio || defaults?.outputRatio || 'original') : defaults?.outputRatio,
       outputResolution: reference ? String(seed?.outputResolution || defaults?.outputResolution || '2k') : defaults?.outputResolution,
       promptVersion: reference ? 'prompt_v1' : defaults?.promptVersion,
@@ -1642,7 +1703,9 @@ export function createInfiniteCanvasWorkspaceController({
     if (submit) {
       submit.disabled = imageAiPreviewing || imageAiSubmitting;
       submit.textContent = imageAiDraft.preview
-        ? `确认并创建任务 · ${imageAiDraft.productProfileVersionId ? '1 次调用' : '最多 2 次调用'}`
+        ? (imageAiDraft.action === SPATIAL_CUTOUT_ACTION
+          ? '确认并创建本地抠图任务 · 0 次付费调用'
+          : `确认并创建任务 · ${imageAiDraft.productProfileVersionId ? '1 次调用' : '最多 2 次调用'}`)
         : '重新核对执行上下文';
     }
     if (status) {
@@ -1691,7 +1754,7 @@ export function createInfiniteCanvasWorkspaceController({
       imageAiDraftError = '';
       await renderInspector(sourceElement);
       const response = await api.executeCommand(
-        SPATIAL_IMAGE_AI_COMMAND_ID,
+        submission.commandId || SPATIAL_IMAGE_AI_COMMAND_ID,
         submission.payload,
         { timeoutMs: 15000 },
       );
@@ -1709,7 +1772,9 @@ export function createInfiniteCanvasWorkspaceController({
       if (!canvasSessionIsCurrent(session)) return job;
       imageAiDraft = null;
       imageAiAdmission = null;
-      if (submittedDraft.inputSurface === SPATIAL_CANVAS_CONVERSATION_SURFACE) {
+      if ([SPATIAL_CANVAS_CONVERSATION_SURFACE, SPATIAL_CANVAS_REFERENCE_SURFACE]
+        .includes(submittedDraft.inputSurface)) {
+        clearCreativeDraft(submittedDraft.canvasId);
         conversationInput = '';
         conversationError = '';
       }
@@ -2334,6 +2399,7 @@ export function createInfiniteCanvasWorkspaceController({
       const record = await adapter.open(id);
       if (!record || epoch !== openEpoch) return;
       currentId = record.id;
+      conversationInput = String(currentCreativeDraft()?.prompt || '');
       syncEditorHeading();
       const runtime = await ensureRuntime();
     const host = query('#spatial-canvas-host');
@@ -2361,6 +2427,9 @@ export function createInfiniteCanvasWorkspaceController({
           }
           return openCanvasReferencePreview({ element: selectedElement }, input);
         },
+        onCreativeDraftChange: (patch) => updateCreativeDraft(patch),
+        onCreativeDraftClear: () => clearCreativeDraft(),
+        onRestoreCreativeDraft: () => restoreCreativeDraftSelection(),
         onReferenceAdmission: (request) => api.getProviderModelAdmission({
           taskKind: request?.taskKind,
           ratio: request?.ratio,

@@ -6,6 +6,8 @@ import {
   SPATIAL_CANVAS_CONVERSATION_SURFACE,
   SPATIAL_CANVAS_REFERENCE_CONTRACT,
   SPATIAL_CANVAS_REFERENCE_SURFACE,
+  SPATIAL_CUTOUT_ACTION,
+  SPATIAL_CUTOUT_COMMAND_ID,
   SPATIAL_IMAGE_AI_COMMAND_ID,
   SPATIAL_IMAGE_AI_SKILL_ID,
   SPATIAL_RESULT_VARIATION_ACTION,
@@ -19,6 +21,30 @@ import {
   spatialImageAiPreviewPayload,
   updateSpatialImageAiDraft,
 } from '../../src/js/spatial-native-image-ai.js';
+
+test('cutout reuses the governed Canvas task and recovery contract without a Provider call', () => {
+  const draft = createSpatialImageAiDraft(SPATIAL_CUTOUT_ACTION, {
+    canvasId: 'spatial:cutout-canvas',
+    sourceElementId: 'source-element',
+    sourceAssetId: 'ast:source',
+    designSkillId: '',
+  });
+  const preview = spatialImageAiPreviewPayload(draft);
+  assert.equal(preview.command_id, SPATIAL_CUTOUT_COMMAND_ID);
+  assert.equal(preview.mode, 'cutout-batch');
+  assert.equal(preview.design_skill_id, '');
+  assert.deepEqual(preview.cutout_selection, { strategy: 'foreground' });
+
+  const frozen = applySpatialImageAiPreview(draft, previewBundle(draft));
+  const submission = spatialImageAiCommandPayload(frozen, () => 'spatial-cutout:fixed');
+  assert.equal(submission.commandId, SPATIAL_CUTOUT_COMMAND_ID);
+  assert.equal(submission.payload.parameters.provider_call_confirmed, false);
+  assert.deepEqual(submission.payload.parameters.cutout_selection, { strategy: 'foreground' });
+  assert.equal(isSpatialImageAiJob({
+    snapshot: { command_id: SPATIAL_CUTOUT_COMMAND_ID },
+    parameters: { spatial_action: SPATIAL_CUTOUT_ACTION },
+  }), true);
+});
 
 function previewBundle(draft) {
   return {

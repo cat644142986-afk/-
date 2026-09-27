@@ -111,6 +111,7 @@ function layerFromAsset(asset, artboard, index) {
     z_index: index,
     visible: true,
     locked: false,
+    deleted: false,
   };
 }
 
@@ -156,6 +157,7 @@ export function layerSnapshot(layer) {
     z_index: layer.z_index,
     visible: layer.visible,
     locked: layer.locked,
+    deleted: Boolean(layer.deleted),
   };
   if (arguments[1]?.includeSource) snapshot.source = clone(layer.source);
   return snapshot;
@@ -170,6 +172,7 @@ function mergeSnapshot(before, patch = {}) {
     z_index: patch.z_index ?? before.z_index,
     visible: patch.visible ?? before.visible,
     locked: patch.locked ?? before.locked,
+    deleted: patch.deleted ?? Boolean(before.deleted),
   };
   if (before.source || patch.source) snapshot.source = clone(patch.source || before.source);
   return snapshot;
@@ -178,7 +181,7 @@ function mergeSnapshot(before, patch = {}) {
 function recomputeSourceAssetIds(document) {
   document.source_asset_ids = [...new Set(
     document.layers
-      .filter((layer) => layer.source?.kind === 'asset')
+      .filter((layer) => !layer.deleted && layer.source?.kind === 'asset')
       .map((layer) => String(layer.source.id)),
   )];
 }
@@ -188,6 +191,7 @@ function applySnapshot(document, layer, snapshot) {
   layer.z_index = snapshot.z_index;
   layer.visible = snapshot.visible;
   layer.locked = snapshot.locked;
+  layer.deleted = Boolean(snapshot.deleted);
   if (snapshot.source) layer.source = clone(snapshot.source);
   recomputeSourceAssetIds(document);
 }

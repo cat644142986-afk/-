@@ -90,13 +90,14 @@ export function CanvasReferenceTray({ image, onAdd, onRemove, addButtonRef }) {
   </div>;
 }
 
-function ParameterOptions({ label, options, selected, onSelect }) {
+function ParameterOptions({ label, options, selected, onSelect, disabledOptions = [] }) {
+  const disabled = new Set(disabledOptions);
   return <section className="pa-reference-controls__group"><strong>{label}</strong><div>
-    {options.map((option) => <button key={option} type="button" className={option === selected ? 'is-selected' : ''} aria-pressed={option === selected} onClick={() => onSelect(option)}>{option === '2k' ? '2K' : option === '4k' ? '4K' : option}</button>)}
+    {options.map((option) => <button key={option} type="button" disabled={disabled.has(option)} className={option === selected ? 'is-selected' : ''} aria-pressed={option === selected} onClick={() => onSelect(option)}>{option === '2k' ? '2K' : option === '4k' ? '4K' : option}</button>)}
   </div></section>;
 }
 
-export function CanvasReferenceControls({ ratio, resolution, onChange }) {
+export function CanvasReferenceControls({ ratio, resolution, onChange, compatibleOutputs = [] }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const buttonRef = useRef(null);
@@ -121,11 +122,20 @@ export function CanvasReferenceControls({ ratio, resolution, onChange }) {
       document.removeEventListener('keydown', onKeyDown, true);
     };
   }, [open]);
+  const pairs = Array.from(compatibleOutputs || []);
+  const allowedRatios = new Set(pairs.map((item) => String(item?.ratio || '').toLowerCase()));
+  const allowedResolutions = new Set(pairs.map((item) => String(item?.resolution || '').toLowerCase()));
+  const currentSupported = !pairs.length || pairs.some((item) => (
+    String(item?.ratio || '').toLowerCase() === String(ratio || '').toLowerCase()
+    && String(item?.resolution || '').toLowerCase() === String(resolution || '').toLowerCase()
+  ));
+  const fallback = pairs[0] || null;
   return <div ref={rootRef} className="pa-reference-controls" aria-label="图像参数">
     <button ref={buttonRef} type="button" className="pa-reference-controls__button" aria-expanded={open} onClick={() => setOpen((value) => !value)}><span>画幅 {ratio} · {resolution.toUpperCase()}</span><span aria-hidden="true">⌄</span></button>
     {open && <div className="pa-reference-controls__popover" role="dialog" aria-label="图像参数">
-      <ParameterOptions label="画幅" options={CANVAS_REFERENCE_RATIOS} selected={ratio} onSelect={(value) => onChange({ ratio: value })} />
-      <ParameterOptions label="质量" options={CANVAS_REFERENCE_RESOLUTIONS} selected={resolution} onSelect={(value) => onChange({ resolution: value })} />
+      {!currentSupported && fallback && <button type="button" className="pa-reference-controls__restore" onClick={() => onChange({ ratio: fallback.ratio, resolution: fallback.resolution })}>恢复已验证组合 · {fallback.ratio} / {String(fallback.resolution).toUpperCase()}</button>}
+      <ParameterOptions label="画幅" options={CANVAS_REFERENCE_RATIOS} selected={ratio} disabledOptions={pairs.length ? CANVAS_REFERENCE_RATIOS.filter((value) => !allowedRatios.has(value)) : []} onSelect={(value) => onChange({ ratio: value })} />
+      <ParameterOptions label="质量" options={CANVAS_REFERENCE_RESOLUTIONS} selected={resolution} disabledOptions={pairs.length ? CANVAS_REFERENCE_RESOLUTIONS.filter((value) => !allowedResolutions.has(value)) : []} onSelect={(value) => onChange({ resolution: value })} />
     </div>}
   </div>;
 }

@@ -39,7 +39,6 @@ export function initialComposerModel(payload, currentModel = '') {
   const models = eligibleComposerModels(payload);
   const current = String(currentModel || '');
   if (models.some((model) => model.provider_model_id === current)) return current;
-  if (current) return current;
   const recommendedId = String(composerRecommendation(payload)?.recommended_provider_model_id || '');
   if (models.some((model) => model.provider_model_id === recommendedId)) return recommendedId;
   const defaultId = String(composerSelection(payload)?.default_provider_model_id || '');

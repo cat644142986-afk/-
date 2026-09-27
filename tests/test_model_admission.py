@@ -168,6 +168,10 @@ class ModelAdmissionTests(unittest.TestCase):
             ["tt-image-2", "banana-2", "banana-pro"],
         )
         self.assertEqual(selection["default_provider_model_id"], "tt-image-2")
+        self.assertEqual(
+            selection["compatible_outputs"],
+            [{"ratio": "1:1", "resolution": "2k"}],
+        )
         self.assertTrue(selection["policy"]["telemetry_is_not_ranking"])
         self.assertNotIn("quality_score", json.dumps(selection["models"]))
         self.assertNotIn("recommended", json.dumps(selection["models"]))
@@ -192,6 +196,12 @@ class ModelAdmissionTests(unittest.TestCase):
             self.assertEqual(selection["status"], "unsupported")
             self.assertEqual(selection["eligible_provider_model_ids"], [])
             self.assertIsNone(selection["default_provider_model_id"])
+            self.assertEqual(
+                selection["compatible_outputs"],
+                ([{"ratio": "1:1", "resolution": "2k"}]
+                 if task_kind == "reference-generate"
+                 else []),
+            )
 
 
 if __name__ == "__main__":

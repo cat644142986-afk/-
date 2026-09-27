@@ -1116,6 +1116,49 @@ test('Canvas reference entry reviews the exact source or Result without creating
   harness.controller.destroy();
 });
 
+test('Composer draft survives ordinary deselection and object switches until explicit clear', async () => {
+  const harness = createHarness({ shellMode: 'transplant' });
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const source = sourceElement('canvas:a');
+  mount.options.onSelectionChange(source);
+  await settle();
+
+  mount.options.onCreativeDraftChange({
+    sourceElementId: source.id,
+    sourceAssetId: SOURCE_ASSET_ID,
+    reference: { elementId: source.id, assetId: SOURCE_ASSET_ID },
+    prompt: '保留 Logo，换成暖灰色摄影棚',
+    ratio: '1:1',
+    resolution: '2k',
+    model: 'banana-2',
+    open: true,
+  });
+  await settle();
+  mount.options.onSelectionChange(null);
+  await settle();
+  mount.options.onSelectionChange(resultElement('canvas:a'));
+  await settle();
+
+  const retained = [...mount.calls.transplantUpdates]
+    .reverse()
+    .find((item) => item?.creativeDraft)?.creativeDraft;
+  assert.equal(retained?.sourceElementId, source.id);
+  assert.equal(retained?.prompt, '保留 Logo，换成暖灰色摄影棚');
+  assert.equal(retained?.model, 'banana-2');
+
+  await mount.options.onRestoreCreativeDraft();
+  assert.deepEqual(mount.calls.selectBusinessReference.at(-1), {
+    element_id: source.id,
+    asset_id: SOURCE_ASSET_ID,
+  });
+
+  mount.options.onCreativeDraftClear();
+  await settle();
+  assert.equal(mount.calls.transplantUpdates.at(-1)?.creativeDraft, null);
+  harness.controller.destroy();
+});
+
 test('Canvas Conversation only reviews context before confirmation and accepts one exact source or Result', async () => {
   const previewCalls = [];
   let executeCalls = 0;
@@ -1318,7 +1361,7 @@ test('Inspector and Ctrl+K share the current-selection Native AI action adapter'
 
   assert.deepEqual(
     harness.controller.getCurrentNativeAiActions().map((item) => item.action),
-    ['white-background'],
+    ['cutout', 'white-background'],
   );
   const host = harness.documentRef.node('#spatial-canvas-host');
   harness.documentRef.activeElement = host;
@@ -1329,6 +1372,7 @@ test('Inspector and Ctrl+K share the current-selection Native AI action adapter'
   });
   assert.equal(shortcut.defaultPrevented, true);
   assert.equal(harness.controller.commandMenuOpen, true);
+  assert.match(harness.documentRef.node('#spatial-command-menu').innerHTML, /data-spatial-command-action="cutout"/);
   assert.match(harness.documentRef.node('#spatial-command-menu').innerHTML, /data-spatial-command-action="white-background"/);
   assert.doesNotMatch(harness.documentRef.node('#spatial-command-menu').innerHTML, /data-spatial-command-action="generate-image"/);
 

@@ -4866,7 +4866,9 @@ def _validate_job_request(mode: str, source_asset_ids: list[str], parameters: di
 LOCAL_EDIT_GENERATE_COMMAND_ID = "command:local-edit-generate"
 IMAGE_TO_VIDEO_COMMAND_ID = "command:image-to-video"
 SPATIAL_IMAGE_AI_COMMAND_ID = "command:existing-generate-single"
+SPATIAL_CUTOUT_COMMAND_ID = "command:existing-remove-background"
 SPATIAL_WHITE_BACKGROUND_COMMAND_ID = SPATIAL_IMAGE_AI_COMMAND_ID
+SPATIAL_CUTOUT_ACTION = "cutout"
 SPATIAL_WHITE_BACKGROUND_ACTION = "white-background"
 SPATIAL_RESULT_VARIATION_ACTION = "generate-image"
 SPATIAL_CANVAS_CONVERSATION_SURFACE = "canvas-conversation"
@@ -4874,8 +4876,13 @@ SPATIAL_CANVAS_CONVERSATION_CONTRACT = "canvas-conversation-input-v1"
 SPATIAL_CANVAS_REFERENCE_SURFACE = "canvas-reference"
 SPATIAL_CANVAS_REFERENCE_CONTRACT = "canvas-reference-input-v1"
 SPATIAL_IMAGE_AI_ACTIONS = {
+    SPATIAL_CUTOUT_ACTION,
     SPATIAL_WHITE_BACKGROUND_ACTION,
     SPATIAL_RESULT_VARIATION_ACTION,
+}
+SPATIAL_IMAGE_AI_COMMAND_IDS = {
+    SPATIAL_IMAGE_AI_COMMAND_ID,
+    SPATIAL_CUTOUT_COMMAND_ID,
 }
 VIDEO_OUTPUT_DIMENSIONS = {
     "1:1": (320, 320),
@@ -4966,12 +4973,15 @@ def _spatial_image_ai_binding(
         "对话修改"
         if conversation
         else "参考生成" if reference
+        else "抠图" if action_id == SPATIAL_CUTOUT_ACTION
         else "白底图" if action_id == SPATIAL_WHITE_BACKGROUND_ACTION else "生图变体"
     )
     source_label = (
         "图片"
         if conversation or reference
-        else "原始素材" if action_id == SPATIAL_WHITE_BACKGROUND_ACTION else "Result"
+        else "原始素材" if action_id in {
+            SPATIAL_CUTOUT_ACTION, SPATIAL_WHITE_BACKGROUND_ACTION
+        } else "Result"
     )
     canvas_id = str(spatial_canvas_id or "").strip()
     element_id = str(spatial_source_element_id or "").strip()
@@ -5007,7 +5017,7 @@ def _spatial_image_ai_binding(
     else:
         source_semantics_match = (
             not element_result_id
-            if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
+            if action_id in {SPATIAL_CUTOUT_ACTION, SPATIAL_WHITE_BACKGROUND_ACTION}
             else element_result_id == source_asset_id
         )
     if not element_is_image or not element_asset_matches or not source_semantics_match:
@@ -5032,7 +5042,7 @@ def _spatial_image_ai_binding(
     else:
         role_matches = (
             asset_role == "workspace_source"
-            if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
+            if action_id in {SPATIAL_CUTOUT_ACTION, SPATIAL_WHITE_BACKGROUND_ACTION}
             else asset_role.startswith("result_")
         )
     if not role_matches or str(asset.get("kind") or "image") != "image" or not str(
@@ -5087,6 +5097,8 @@ def _spatial_image_ai_binding(
             if conversation
             else f"spatial-reference:{fingerprint}"
             if reference
+            else f"spatial-cutout:{fingerprint}"
+            if action_id == SPATIAL_CUTOUT_ACTION
             else f"spatial-white-background:{fingerprint}"
             if action_id == SPATIAL_WHITE_BACKGROUND_ACTION
             else f"spatial-result-variation:{fingerprint}"
@@ -5231,7 +5243,7 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
         refresh_runtime_config()
         spatial_binding = None
         spatial_image_ai_requested = (
-            str(command["id"]) == SPATIAL_IMAGE_AI_COMMAND_ID
+            str(command["id"]) in SPATIAL_IMAGE_AI_COMMAND_IDS
             and (
                 str(request.spatial_canvas_id or "").strip()
                 or str(request.spatial_source_element_id or "").strip()
@@ -6037,7 +6049,20 @@ async def compile_knowledge(data: dict):
             if str(item).strip()
         ]
         parameters = dict(context)
-        parameters["brief"] = dict(context)
+        if mode == "cutout-batch":
+            # Local cutout has no prompt compiler. Keep preview and job-snapshot
+            # identity limited to the same user-authored brief fields instead
+            # of freezing request transport metadata into prompt_inputs.
+            parameters["brief"] = {
+                key: copy.deepcopy(context[key])
+                for key in (
+                    "objective", "user_request", "mode", "category", "platform",
+                    "output_kind", "material_profile", "intent_locks", "output_spec",
+                )
+                if key in context
+            }
+        else:
+            parameters["brief"] = dict(context)
         spatial_binding = None
         spatial_requested = bool(
             str(context.get("spatial_canvas_id") or "").strip()
@@ -6045,7 +6070,7 @@ async def compile_knowledge(data: dict):
             or str(context.get("spatial_action") or "").strip()
         )
         if spatial_requested:
-            if command_id != SPATIAL_IMAGE_AI_COMMAND_ID:
+            if command_id not in SPATIAL_IMAGE_AI_COMMAND_IDS:
                 raise SpatialExecutionContextError(
                     "SPATIAL_EXECUTION_CONTEXT_INVALID",
                     "当前命令不支持 Canvas Native AI 执行上下文",

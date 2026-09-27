@@ -1787,6 +1787,8 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .pa-transplant__composer-footer small { min-width: 0; overflow: hidden; color: var(--ink-3); font-size: var(--type-micro); text-overflow: ellipsis; white-space: nowrap; }
 .pa-transplant__composer-footer button { background: var(--dark); color: #fff; }
 .pa-transplant__composer-footer button:hover { background: var(--ink-2); color: #fff; }
+.pa-transplant__composer-footer button.is-secondary { border: 1px solid var(--line-2); background: var(--paper-2); color: var(--ink-2); }
+.pa-transplant__composer-footer button.is-secondary:hover { background: var(--canvas-ui-surface-muted,var(--paper-2)); color: var(--ink); }
 /* Retake Whiteboard v0.1.3 reference picker, tray and parameter popover,
    adapted to PA tokens and a single exact Canvas Asset/Result binding. */
 .pa-reference-tray { position: relative; flex: 0 0 auto; min-width: 0; padding-left: 5px; pointer-events: auto; }
@@ -1912,21 +1914,21 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .pa-transplant button:disabled { opacity: .48; }
 .pa-transplant__create button:first-child,
 .pa-transplant__selection-row .is-primary,
-.pa-transplant__composer-footer > button,
+.pa-transplant__composer-footer > button:not(.is-secondary),
 .pa-reference-picker__confirm {
   background: var(--dark);
   color: #fff !important;
 }
 :root[data-theme="dark"] .pa-transplant__create button:first-child,
 :root[data-theme="dark"] .pa-transplant__selection-row .is-primary,
-:root[data-theme="dark"] .pa-transplant__composer-footer > button,
+:root[data-theme="dark"] .pa-transplant__composer-footer > button:not(.is-secondary),
 :root[data-theme="dark"] .pa-reference-picker__confirm {
   background: #111315;
   color: #fff !important;
 }
 .pa-transplant__create button:first-child:hover,
 .pa-transplant__selection-row .is-primary:hover,
-.pa-transplant__composer-footer > button:hover,
+.pa-transplant__composer-footer > button:not(.is-secondary):hover,
 .pa-reference-picker__confirm:hover { background: var(--canvas-ui-accent-strong); color: #fff !important; }
 .pa-transplant button:focus-visible,
 .pa-transplant textarea:focus-visible,

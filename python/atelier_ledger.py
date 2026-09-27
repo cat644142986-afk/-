@@ -834,12 +834,14 @@ def _validate_layer_snapshot(value: Any, label: str) -> None:
         value,
         label=label,
         required={"transform", "z_index", "visible", "locked"},
-        optional={"source"},
+        optional={"source", "deleted"},
     )
     _validate_layer_transform(snapshot["transform"], f"{label}.transform")
     _canvas_integer(snapshot["z_index"], f"{label}.z_index", minimum=0)
     if not isinstance(snapshot["visible"], bool) or not isinstance(snapshot["locked"], bool):
         raise ValueError(f"{label} visibility and lock fields must be booleans")
+    if "deleted" in snapshot and not isinstance(snapshot["deleted"], bool):
+        raise ValueError(f"{label}.deleted must be a boolean")
     if "source" in snapshot:
         _validate_layer_source(snapshot["source"], f"{label}.source")
 
@@ -951,6 +953,7 @@ def normalize_canvas_document(value: Mapping[str, Any]) -> dict[str, Any]:
             raw_layer,
             label=label,
             required={"id", "artboard_id", "source", "transform", "z_index", "visible", "locked"},
+            optional={"deleted"},
         )
         layer_id = _canvas_id(layer["id"], f"{label}.id")
         if layer_id in layer_ids:
@@ -960,12 +963,14 @@ def normalize_canvas_document(value: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{label} references a missing artboard")
         source = _validate_layer_source(layer["source"], f"{label}.source")
         source_id = str(source["id"])
-        if source["kind"] == "asset":
+        if source["kind"] == "asset" and not bool(layer.get("deleted", False)):
             asset_layer_sources.add(source_id)
         _validate_layer_transform(layer["transform"], f"{label}.transform")
         _canvas_integer(layer["z_index"], f"{label}.z_index", minimum=0)
         if not isinstance(layer["visible"], bool) or not isinstance(layer["locked"], bool):
             raise ValueError(f"{label} visibility and lock fields must be booleans")
+        if "deleted" in layer and not isinstance(layer["deleted"], bool):
+            raise ValueError(f"{label}.deleted must be a boolean")
     if asset_layer_sources != set(normalized_source_ids):
         raise ValueError("CanvasDocument.source_asset_ids must match asset-backed layers")
 
@@ -4155,7 +4160,10 @@ class AtelierLedger:
         draft: sqlite3.Row,
         document: Mapping[str, Any],
     ) -> None:
-        sources = [layer["source"] for layer in document["layers"]]
+        sources = [
+            layer["source"] for layer in document["layers"]
+            if not bool(layer.get("deleted", False))
+        ]
         source_ids = list(dict.fromkeys(str(source["id"]) for source in sources))
         if source_ids:
             placeholders = ",".join("?" for _ in source_ids)
@@ -5884,6 +5892,7 @@ class AtelierLedger:
             "z_index": int(layer["z_index"]),
             "visible": bool(layer["visible"]),
             "locked": bool(layer["locked"]),
+            "deleted": bool(layer.get("deleted", False)),
         }
 
     @staticmethod
@@ -6215,6 +6224,7 @@ class AtelierLedger:
                     str(item["source"]["id"])
                     for item in next_document["layers"]
                     if item["source"]["kind"] == "asset"
+                    and not bool(item.get("deleted", False))
                 ))
                 next_document["revision"] = expected_revision
                 next_document["updated_at"] = now

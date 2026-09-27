@@ -242,6 +242,9 @@ function SpatialCanvas({
   onReady,
   onSelectionChange,
   onSelectionContextChange,
+  onCreativeDraftChange,
+  onCreativeDraftClear,
+  onRestoreCreativeDraft,
   onReferenceAdmission,
   onReferenceReview,
   initialShellMode = 'legacy',
@@ -485,6 +488,9 @@ function SpatialCanvas({
       onTool={(type) => apiRef.current?.setActiveTool({ type })}
       onReferenceAdmission={onReferenceAdmission}
       onReferenceReview={onReferenceReview}
+      onCreativeDraftChange={onCreativeDraftChange}
+      onCreativeDraftClear={onCreativeDraftClear}
+      onRestoreCreativeDraft={onRestoreCreativeDraft}
     />}
     </>
   );
@@ -619,6 +625,7 @@ export function mountInfiniteCanvas(host, options) {
       && current.reviewing === business.reviewing
       && current.conversationInput === business.conversationInput
       && current.conversationError === business.conversationError
+      && current.creativeDraft === business.creativeDraft
         ? current : business
     )),
     addBusinessItems: (items, options = {}) => insertBusinessItems(items, options),
@@ -648,6 +655,7 @@ export function mountInfiniteCanvas(host, options) {
       const elements = canvasApi.getSceneElementsIncludingDeleted();
       const target = elements.find((element) => {
         if (element?.isDeleted) return false;
+        if (references.element_id) return element.id === references.element_id;
         const refs = element?.customData || {};
         return (references.task_id && refs.task_id === references.task_id)
           || (references.result_id && refs.result_id === references.result_id)

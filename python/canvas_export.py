@@ -103,7 +103,11 @@ def render_canvas_png(
     rendered_layer_count = 0
 
     for _, layer in indexed_layers:
-        if str(layer["artboard_id"]) != str(artboard["id"]) or not layer["visible"]:
+        if (
+            str(layer["artboard_id"]) != str(artboard["id"])
+            or not layer["visible"]
+            or bool(layer.get("deleted", False))
+        ):
             continue
         image = _source_image(layer, resolve_source_path)
         transformed = image.transform(

@@ -2464,6 +2464,105 @@ class DurableJobApiTests(unittest.TestCase):
             )
             self.network_request.assert_not_called()
 
+    def test_spatial_cutout_stays_in_canvas_and_reuses_local_task_result_lineage(self) -> None:
+        with self.live_client() as client:
+            source = self.import_asset(client, "spatial-cutout.png", (70, 120, 180))
+            source_element = {
+                "id": "source-cutout",
+                "type": "image",
+                "x": 120,
+                "y": 80,
+                "width": 420,
+                "height": 300,
+                "isDeleted": False,
+                "customData": {
+                    "asset_id": source["id"],
+                    "result_id": None,
+                    "task_id": None,
+                    "product_profile_version_id": None,
+                    "lineage_parent_id": None,
+                },
+            }
+            scene = {
+                "schema_version": 1,
+                "elements": [source_element],
+                "app_state": {
+                    "viewBackgroundColor": "#d4d0cb",
+                    "currentItemRoughness": 0,
+                    "currentItemStrokeStyle": "solid",
+                    "currentItemFillStyle": "solid",
+                    "gridSize": 20,
+                    "gridStep": 5,
+                    "gridModeEnabled": False,
+                    "zoom": {"value": 1},
+                    "scrollX": 0,
+                    "scrollY": 0,
+                },
+                "files": {},
+            }
+            canvas = self.ledger.create_spatial_canvas(
+                name="Canvas 本地抠图",
+                client_request_id="spatial-cutout-canvas",
+                scene=scene,
+            )
+            brief = {
+                "objective": "生成透明背景的前景主体",
+                "user_request": "移除背景，完整保留前景主体和透明边缘",
+                "output_kind": "cutout",
+            }
+            preview_response = client.post("/api/knowledge/compile", json={
+                **brief,
+                "mode": "cutout-batch",
+                "command_id": server.SPATIAL_CUTOUT_COMMAND_ID,
+                "source_asset_ids": [source["id"]],
+                "model": "local-rembg/birefnet-general",
+                "cutout_selection": {"strategy": "foreground"},
+                "spatial_action": server.SPATIAL_CUTOUT_ACTION,
+                "spatial_canvas_id": canvas["id"],
+                "spatial_source_element_id": source_element["id"],
+            })
+            self.assertEqual(preview_response.status_code, 200, preview_response.text)
+            preview_bundle = preview_response.json()
+            preview = preview_bundle["execution_context"]
+            spatial = preview_bundle["spatial_context"]
+            self.assertEqual(
+                preview["canvas_context"]["operation_id"],
+                f"spatial-cutout:{spatial['fingerprint']}",
+            )
+
+            command_response = client.post(
+                f"/api/commands/{server.SPATIAL_CUTOUT_COMMAND_ID}/execute",
+                json={
+                    "client_request_id": "spatial-cutout-job",
+                    "source_asset_ids": [source["id"]],
+                    "max_attempts": 1,
+                    "spatial_canvas_id": canvas["id"],
+                    "spatial_source_element_id": source_element["id"],
+                    "parameters": {
+                        "brief": brief,
+                        "spatial_action": server.SPATIAL_CUTOUT_ACTION,
+                        "provider_call_confirmed": False,
+                        "automatic_paid_retry": False,
+                        "cutout_selection": {"strategy": "foreground"},
+                        "execution_context": preview,
+                    },
+                },
+            )
+            self.assertEqual(command_response.status_code, 200, command_response.text)
+            completed = self.wait_for_job(command_response.json()["job"]["id"])
+            self.assertEqual(completed["status"], "completed")
+            self.assertIsNone(completed["paid_call_authorization"])
+            self.assertEqual(
+                completed["snapshot"]["parameters"]["spatial_action"],
+                server.SPATIAL_CUTOUT_ACTION,
+            )
+            self.assertEqual(
+                completed["snapshot"]["parameters"]["spatial_context_fingerprint"],
+                spatial["fingerprint"],
+            )
+            self.assert_result_lineage(client, completed, {source["id"]: 1})
+            self.network_request.assert_not_called()
+
     def test_spatial_white_background_uses_semantic_canvas_anchor_and_exact_profile(self) -> None:
         vault = self.root / "knowledge-vault"
         (vault / "20 知识库" / "设计知识").mkdir(parents=True)

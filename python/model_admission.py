@@ -437,6 +437,28 @@ def build_composer_model_selection(
         for item in admission["candidates"]
         if isinstance(item, Mapping)
     }
+    compatible_outputs: list[dict[str, str]] = []
+    compatible_output_keys: set[tuple[str, str]] = set()
+    for model_id in FOCUS_CANDIDATE_IDS:
+        source = by_id.get(model_id)
+        evaluated = admitted_by_id.get(model_id) or {}
+        if not isinstance(source, Mapping) or evaluated.get("eligible") is not True:
+            continue
+        overlay = source.get("overlay")
+        overlay = overlay if isinstance(overlay, Mapping) else {}
+        tested_output = overlay.get("tested_output")
+        tested_output = tested_output if isinstance(tested_output, Mapping) else {}
+        for pair in tested_output.get("pairs") or []:
+            if not isinstance(pair, Mapping):
+                continue
+            key = (
+                str(pair.get("ratio") or "").strip().lower(),
+                str(pair.get("resolution") or "").strip().lower(),
+            )
+            if not all(key) or key in compatible_output_keys:
+                continue
+            compatible_output_keys.add(key)
+            compatible_outputs.append({"ratio": key[0], "resolution": key[1]})
     selected_models = []
     for model_id in FOCUS_CANDIDATE_IDS:
         source = by_id.get(model_id)
@@ -506,6 +528,7 @@ def build_composer_model_selection(
         "eligible_provider_model_ids": eligible_ids,
         "default_provider_model_id": default_id if default_id in eligible_ids else None,
         "models": selected_models,
+        "compatible_outputs": compatible_outputs,
         "policy": {
             "no_silent_model_substitution": True,
             "no_silent_parameter_downgrade": True,

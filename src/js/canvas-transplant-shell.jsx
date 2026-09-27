@@ -17,23 +17,25 @@ import {
 // dismissal follows Retake. PA owns all business actions and execution.
 export function CanvasTransplantShell({
   api, view, business, onTool, onReferenceReview, onReferenceAdmission,
+  onCreativeDraftChange, onCreativeDraftClear, onRestoreCreativeDraft,
 }) {
-  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(Boolean(business.creativeDraft?.open));
   const [moreOpen, setMoreOpen] = useState(false);
   const [annotateOpen, setAnnotateOpen] = useState(false);
   const [arrangeOpen, setArrangeOpen] = useState(false);
   const [compositionActive, setCompositionActive] = useState(false);
-  const [reference, setReference] = useState(null);
+  const [reference, setReference] = useState(business.creativeDraft?.reference || null);
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const [pickerSelectedId, setPickerSelectedId] = useState('');
-  const [referencePrompt, setReferencePrompt] = useState('');
-  const [referenceRatio, setReferenceRatio] = useState('1:1');
-  const [referenceResolution, setReferenceResolution] = useState('2k');
+  const [referencePrompt, setReferencePrompt] = useState(business.creativeDraft?.prompt || '');
+  const [referenceRatio, setReferenceRatio] = useState(business.creativeDraft?.ratio || '1:1');
+  const [referenceResolution, setReferenceResolution] = useState(business.creativeDraft?.resolution || '2k');
   const [referenceError, setReferenceError] = useState('');
   const [modelAdmission, setModelAdmission] = useState(null);
   const [modelAdmissionLoading, setModelAdmissionLoading] = useState(false);
   const [modelAdmissionError, setModelAdmissionError] = useState('');
-  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedModel, setSelectedModel] = useState(business.creativeDraft?.model || '');
+  const [admissionRetry, setAdmissionRetry] = useState(0);
   const [, setHostLayoutVersion] = useState(0);
   const composerRef = useRef(null);
   const referenceAddRef = useRef(null);
@@ -51,6 +53,43 @@ export function CanvasTransplantShell({
       ? business.asset?.role?.startsWith('result_')
       : !refs.result_id && business.asset?.role === 'workspace_source'));
   const reviewing = Boolean(business.reviewing);
+  const draftSourceElementId = String(business.creativeDraft?.sourceElementId || reference?.elementId || '');
+  const draftSourceAssetId = String(business.creativeDraft?.sourceAssetId || reference?.assetId || '');
+  const draftMatchesSelection = !draftSourceElementId || draftSourceElementId === String(one?.id || '');
+
+  function persistCreativeDraft(patch = {}, source = one) {
+    const sourceRefs = source?.customData || {};
+    onCreativeDraftChange?.({
+      sourceElementId: draftSourceElementId || String(source?.id || ''),
+      sourceAssetId: draftSourceAssetId || String(sourceRefs.asset_id || ''),
+      reference,
+      prompt: referencePrompt,
+      ratio: referenceRatio,
+      resolution: referenceResolution,
+      model: selectedModel,
+      open: composerOpen,
+      ...patch,
+    });
+  }
+
+  useEffect(() => {
+    const draft = business.creativeDraft;
+    if (!draft?.sourceElementId) {
+      setReference(null);
+      setReferencePrompt('');
+      setReferenceRatio('1:1');
+      setReferenceResolution('2k');
+      setSelectedModel('');
+      setComposerOpen(false);
+      return;
+    }
+    setReference(draft.reference || null);
+    setReferencePrompt(String(draft.prompt || ''));
+    setReferenceRatio(String(draft.ratio || '1:1'));
+    setReferenceResolution(String(draft.resolution || '2k'));
+    setSelectedModel(String(draft.model || ''));
+    setComposerOpen(Boolean(draft.open));
+  }, [business.creativeDraft]);
 
   useLayoutEffect(() => {
     const host = document.getElementById('spatial-canvas-host');
@@ -78,10 +117,6 @@ export function CanvasTransplantShell({
   }, [arrangeOpen]);
 
   useEffect(() => {
-    if (reference?.elementId !== one?.id) {
-      setReference(null);
-      setComposerOpen(false);
-    }
     setPickerAnchor(null);
     setMoreOpen(false);
     setAnnotateOpen(false);
@@ -139,7 +174,7 @@ export function CanvasTransplantShell({
     api?.getSceneElementsIncludingDeleted?.(), files, business.elementId, business.asset,
   );
   const selectedPickerImage = referenceOptions.find((image) => image.elementId === pickerSelectedId);
-  const activeReference = activeCanvasReference(reference, one?.id, referenceOptions);
+  const activeReference = activeCanvasReference(reference, reference?.elementId, referenceOptions);
   const selectedModelEvidence = admittedComposerModel(modelAdmission, selectedModel);
   const tool = view.appState?.activeTool?.type || 'selection';
   const preventCanvasPointer = (event) => event.stopPropagation();
@@ -163,7 +198,11 @@ export function CanvasTransplantShell({
       if (canceled) return;
       const selection = composerSelection(payload);
       setModelAdmission(selection);
-      setSelectedModel((current) => initialComposerModel(selection, current));
+      setSelectedModel((current) => {
+        const next = initialComposerModel(selection, current);
+        if (next !== current) persistCreativeDraft({ model: next });
+        return next;
+      });
       if (selection?.status !== 'ready') {
         setModelAdmissionError('当前任务与参数组合暂无已验证模型；不会自动切换或降级');
       }
@@ -175,7 +214,7 @@ export function CanvasTransplantShell({
       if (!canceled) setModelAdmissionLoading(false);
     });
     return () => { canceled = true; };
-  }, [activeReference?.elementId, onReferenceAdmission, referenceRatio, referenceResolution]);
+  }, [activeReference?.elementId, onReferenceAdmission, referenceRatio, referenceResolution, admissionRetry]);
 
   function openReferencePicker(event) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -193,6 +232,12 @@ export function CanvasTransplantShell({
     }
     setReference(image);
     setComposerOpen(true);
+    persistCreativeDraft({
+      sourceElementId: image.elementId,
+      sourceAssetId: image.assetId,
+      reference: image,
+      open: true,
+    }, image);
     setReferenceError('');
     closePicker(false);
     requestAnimationFrame(() => composerRef.current?.querySelector('textarea')?.focus());
@@ -201,8 +246,8 @@ export function CanvasTransplantShell({
   function reviewReference(event) {
     event.preventDefault();
     const message = String(composerRef.current?.querySelector('textarea')?.value || '').trim();
-    if (!activeReference || activeReference.elementId !== one?.id) {
-      setReferenceError('参考图已变化，请重新选择');
+    if (!activeReference || !draftMatchesSelection || activeReference.elementId !== one?.id) {
+      setReferenceError('草稿仍保留，请先返回草稿绑定的图片');
       return;
     }
     if (message.length < 2) {
@@ -247,6 +292,7 @@ export function CanvasTransplantShell({
         <div className="pa-transplant__selection-row">
           <strong>{selected.length > 1 ? `${selected.length} 个对象` : kind}</strong>
           {selected.length > 1 ? <><span className="pa-transplant__hint">Ctrl+G 组合 · Delete 删除</span><button type="button" ref={arrangeRef} aria-expanded={arrangeOpen} onClick={() => setArrangeOpen(!arrangeOpen)}>对齐</button></> : <>
+            {one?.type === 'image' && refs.asset_id && !refs.result_id && <button type="button" data-spatial-action="cutout">抠图</button>}
             {one?.type === 'image' && refs.asset_id && <button type="button" data-spatial-action={imageAction} className="is-primary">{imageLabel}</button>}
             {refs.asset_id && <button type="button" data-spatial-action="fine-edit">Fabric 精修</button>}
             <div className="pa-transplant__popover-anchor" ref={moreRef}>
@@ -256,11 +302,11 @@ export function CanvasTransplantShell({
           </>}
         </div>
       </section>}
-      {eligible && !reviewing && <form className={`pa-canvas-composer${composerOpen ? ' is-open' : ''}`} ref={composerRef} data-spatial-conversation-form={activeReference ? undefined : ''} onSubmit={activeReference ? reviewReference : undefined} onPointerDown={preventCanvasPointer} noValidate>
+      {(eligible || draftSourceElementId) && !reviewing && <form className={`pa-canvas-composer${composerOpen ? ' is-open' : ''}`} ref={composerRef} data-spatial-conversation-form={activeReference ? undefined : ''} onSubmit={activeReference ? reviewReference : undefined} onPointerDown={preventCanvasPointer} noValidate>
           <div className="pa-transplant__composer-main">
-          <CanvasReferenceTray image={activeReference} onAdd={openReferencePicker} onRemove={() => { setReference(null); setReferenceError(''); }} addButtonRef={referenceAddRef} />
+          <CanvasReferenceTray image={activeReference} onAdd={openReferencePicker} onRemove={() => { setReference(null); setReferenceError(''); persistCreativeDraft({ reference: null }); }} addButtonRef={referenceAddRef} />
           <label className="sr-only" htmlFor="pa-transplant-message">{activeReference ? '描述参考生成的新方案' : '告诉 AI 下一步怎么改'}</label>
-          <textarea id="pa-transplant-message" data-spatial-conversation-field={activeReference ? undefined : ''} maxLength="1200" rows={composerOpen ? 3 : 1} placeholder={activeReference ? '描述希望参考这张图片生成的新方案' : '告诉 AI 下一步怎么改'} defaultValue={activeReference ? referencePrompt : business.conversationInput || ''} key={`${one.id}:${reviewing}:${activeReference ? 'reference' : 'conversation'}`} onChange={activeReference ? (event) => setReferencePrompt(event.target.value) : undefined} onFocus={() => setComposerOpen(true)} onCompositionStart={() => setCompositionActive(true)} onCompositionEnd={() => setCompositionActive(false)} onKeyDownCapture={(event) => {
+          <textarea id="pa-transplant-message" data-spatial-conversation-field={activeReference ? undefined : ''} maxLength="1200" rows={composerOpen ? 3 : 1} placeholder={activeReference ? '描述希望参考这张图片生成的新方案' : '告诉 AI 下一步怎么改'} value={referencePrompt} onChange={(event) => { const prompt = event.target.value; setReferencePrompt(prompt); persistCreativeDraft({ prompt, open: true }); }} onFocus={() => { setComposerOpen(true); persistCreativeDraft({ open: true }); }} onCompositionStart={() => setCompositionActive(true)} onCompositionEnd={() => setCompositionActive(false)} onKeyDownCapture={(event) => {
             // Workspace's document capture listener handles Ctrl+Enter; IME
             // composition must not submit, while all other keys stay in text.
             if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !compositionActive && !event.nativeEvent?.isComposing) {
@@ -280,7 +326,7 @@ export function CanvasTransplantShell({
             stopComposerKeyboardEvent(event);
           }} />
           </div>
-          {composerOpen && <div className="pa-transplant__composer-footer"><small data-spatial-conversation-status aria-live="polite">{referenceError || modelAdmissionError || business.conversationError || '当前选区 · 核对不会调用 Provider'}</small>{activeReference && <><CanvasModelSelector admission={modelAdmission} value={selectedModel} loading={modelAdmissionLoading} error="" onChange={(model) => { setSelectedModel(model); setReferenceError(''); }} /><CanvasReferenceControls ratio={referenceRatio} resolution={referenceResolution} onChange={(patch) => { if (patch.ratio) setReferenceRatio(patch.ratio); if (patch.resolution) setReferenceResolution(patch.resolution); setReferenceError(''); }} /></>}<button type="submit" disabled={reviewing || (activeReference && (modelAdmissionLoading || !selectedModelEvidence))}>{activeReference ? '核对生成' : '核对修改'}</button></div>}
+          {composerOpen && <div className="pa-transplant__composer-footer"><small data-spatial-conversation-status aria-live="polite">{referenceError || modelAdmissionError || business.conversationError || (!draftMatchesSelection ? '草稿已保留 · 返回原图片后继续' : '当前选区 · 核对不会调用 Provider')}</small>{!draftMatchesSelection && <button type="button" className="is-secondary" onClick={() => onRestoreCreativeDraft?.()}>返回草稿对象</button>}{modelAdmissionError && activeReference && <button type="button" className="is-secondary" onClick={() => setAdmissionRetry((value) => value + 1)}>重试模型检查</button>}{activeReference && <><CanvasModelSelector admission={modelAdmission} value={selectedModel} loading={modelAdmissionLoading} error="" onChange={(model) => { setSelectedModel(model); setReferenceError(''); persistCreativeDraft({ model }); }} /><CanvasReferenceControls ratio={referenceRatio} resolution={referenceResolution} compatibleOutputs={modelAdmission?.compatible_outputs || []} onChange={(patch) => { const ratio = patch.ratio || referenceRatio; const resolution = patch.resolution || referenceResolution; setReferenceRatio(ratio); setReferenceResolution(resolution); setReferenceError(''); persistCreativeDraft({ ratio, resolution }); }} /></>}<button type="button" className="is-secondary" onClick={() => { onCreativeDraftClear?.(); setReference(null); setReferencePrompt(''); setComposerOpen(false); setReferenceError(''); }}>清空</button><button type="submit" disabled={!draftMatchesSelection || reviewing || (activeReference && (modelAdmissionLoading || !selectedModelEvidence))}>{activeReference ? '核对生成' : '核对修改'}</button></div>}
         </form>}
       {pickerAnchor && <CanvasReferencePicker anchor={pickerAnchor} images={referenceOptions} selectedImage={selectedPickerImage} onSelectImage={setPickerSelectedId} onConfirm={confirmReference} onCancel={closePicker} />}
     </div>

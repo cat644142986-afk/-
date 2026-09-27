@@ -332,6 +332,26 @@ test('outpaint freezes explicit output placement transition and one paid call wi
   );
 });
 
+test('deleting a Fabric layer is reversible and removes only active source membership', () => {
+  const document = createCanvasDocument('single', asset('asset:first'));
+  const layer = document.layers[0];
+  appendLayerMutation(document, layer.id, {
+    deleted: true,
+    visible: false,
+    locked: true,
+  }, 'command:delete-layer');
+  assert.equal(layer.deleted, true);
+  assert.deepEqual(document.source_asset_ids, []);
+  undoCanvas(document);
+  assert.equal(layer.deleted, false);
+  assert.equal(layer.visible, true);
+  assert.equal(layer.locked, false);
+  assert.deepEqual(document.source_asset_ids, ['asset:first']);
+  redoCanvas(document);
+  assert.equal(layer.deleted, true);
+  assert.deepEqual(document.source_asset_ids, []);
+});
+
 test('a failed Fabric-to-spatial handoff retains the committed child payload for the visible retry', async () => {
   const nodes = new Map();
   const node = (selector) => {
@@ -412,6 +432,7 @@ test('a Fabric read failure exposes a read retry and succeeds without invoking s
             'command:transform-layer',
             'command:toggle-layer',
             'command:toggle-layer-lock',
+            'command:delete-layer',
             'command:local-edit-compose',
           ].map((id) => ({ id })),
         };
@@ -475,6 +496,7 @@ test('concurrent Fabric recovery reads share one hydration and cannot race the v
             'command:transform-layer',
             'command:toggle-layer',
             'command:toggle-layer-lock',
+            'command:delete-layer',
             'command:local-edit-compose',
           ].map((id) => ({ id })),
         };

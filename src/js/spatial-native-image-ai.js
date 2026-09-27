@@ -1,4 +1,6 @@
 export const SPATIAL_IMAGE_AI_COMMAND_ID = 'command:existing-generate-single';
+export const SPATIAL_CUTOUT_COMMAND_ID = 'command:existing-remove-background';
+export const SPATIAL_CUTOUT_ACTION = 'cutout';
 export const SPATIAL_WHITE_BACKGROUND_ACTION = 'white-background';
 export const SPATIAL_RESULT_VARIATION_ACTION = 'generate-image';
 export const SPATIAL_IMAGE_AI_SKILL_ID = 'comfyui-food-product-main-image';
@@ -12,6 +14,15 @@ const SETTLED_JOB_STATUSES = new Set(['completed', 'partial', 'failed', 'cancele
 const SPATIAL_CANVAS_ID = /^[a-z][a-z0-9._:-]{2,127}$/;
 
 const ACTIONS = Object.freeze({
+  [SPATIAL_CUTOUT_ACTION]: Object.freeze({
+    action: SPATIAL_CUTOUT_ACTION,
+    title: '抠图',
+    sourceKind: 'source',
+    sourceLabel: '所选原始素材',
+    defaultUserRequest: '移除背景，完整保留全部前景主体与透明边缘',
+    objective: '生成透明背景的前景主体',
+    requestPrefix: 'spatial-cutout',
+  }),
   [SPATIAL_WHITE_BACKGROUND_ACTION]: Object.freeze({
     action: SPATIAL_WHITE_BACKGROUND_ACTION,
     title: '白底图',
@@ -92,19 +103,20 @@ function intentLocks() {
 
 function creativeBrief(draft) {
   const definition = draftDefinition(draft);
+  const cutout = draft?.action === SPATIAL_CUTOUT_ACTION;
   return {
     objective: definition.objective,
     user_request: cleanText(draft.userRequest),
-    mode: 'single',
+    mode: cutout ? 'cutout-batch' : 'single',
     category: 'general',
     platform: 'ecommerce',
-    output_kind: 'ecommerce-main-image',
+    output_kind: cutout ? 'cutout' : 'ecommerce-main-image',
     material_profile: draft.materialProfile,
-    intent_locks: intentLocks(),
+    intent_locks: cutout ? {} : intentLocks(),
     output_spec: {
-      ratio: draft.outputRatio,
-      resolution: draft.outputResolution,
-      format: 'JPG+transparent PNG',
+      ratio: cutout ? 'source alpha bounds' : draft.outputRatio,
+      resolution: cutout ? 'source' : draft.outputResolution,
+      format: cutout ? 'transparent PNG' : 'JPG+transparent PNG',
     },
   };
 }
@@ -215,9 +227,11 @@ export function spatialImageAiPreviewPayload(draft) {
   const current = { ...createSpatialImageAiDraft(draft?.action, draft), ...draft };
   validateDraft(current);
   const uiContext = inputUiContext(current);
+  const cutout = current.action === SPATIAL_CUTOUT_ACTION;
   return {
     ...creativeBrief(current),
-    command_id: SPATIAL_IMAGE_AI_COMMAND_ID,
+    command_id: current.action === SPATIAL_CUTOUT_ACTION
+      ? SPATIAL_CUTOUT_COMMAND_ID : SPATIAL_IMAGE_AI_COMMAND_ID,
     source_asset_ids: [current.sourceAssetId],
     model: current.model,
     prompt_version: current.promptVersion,
@@ -227,6 +241,7 @@ export function spatialImageAiPreviewPayload(draft) {
     spatial_action: current.action,
     spatial_canvas_id: current.canvasId,
     spatial_source_element_id: current.sourceElementId,
+    ...(cutout ? { cutout_selection: { strategy: 'foreground' } } : {}),
     ...(uiContext ? { ui_context: uiContext } : {}),
   };
 }
@@ -271,8 +286,10 @@ export function spatialImageAiCommandPayload(draft, idFactory = null) {
   );
   const brief = creativeBrief(current);
   const uiContext = inputUiContext(current);
+  const cutout = current.action === SPATIAL_CUTOUT_ACTION;
   return {
     draft: { ...current, requestId: stableRequestId },
+    commandId: cutout ? SPATIAL_CUTOUT_COMMAND_ID : SPATIAL_IMAGE_AI_COMMAND_ID,
     payload: {
       client_request_id: stableRequestId,
       source_asset_ids: [current.sourceAssetId],
@@ -295,9 +312,10 @@ export function spatialImageAiCommandPayload(draft, idFactory = null) {
         generation_strategy_source: 'user',
         design_skill_id: current.designSkillId,
         spatial_action: current.action,
-        provider_call_confirmed: true,
+        provider_call_confirmed: !cutout,
         automatic_paid_retry: false,
         execution_context: current.preview.executionContext,
+        ...(cutout ? { cutout_selection: { strategy: 'foreground' } } : {}),
         ...(uiContext ? { ui_context: uiContext } : {}),
       },
     },
@@ -315,7 +333,8 @@ export function spatialImageAiAction(job) {
 
 export function isSpatialImageAiJob(job) {
   return (
-    String(job?.snapshot?.command_id || job?.command_id || '') === SPATIAL_IMAGE_AI_COMMAND_ID
+    [SPATIAL_IMAGE_AI_COMMAND_ID, SPATIAL_CUTOUT_COMMAND_ID]
+      .includes(String(job?.snapshot?.command_id || job?.command_id || ''))
     && Boolean(spatialImageAiAction(job))
   );
 }
