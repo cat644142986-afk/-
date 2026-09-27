@@ -26,6 +26,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from python.atelier_ledger import AtelierLedger, SCHEMA_VERSION  # noqa: E402
+from python.command_registry import (  # noqa: E402
+    COMMAND_REGISTRY_VERSION,
+    list_commands,
+)
 
 
 FORMAL_SOURCE_SCHEMA_VERSION = 8
@@ -45,6 +49,7 @@ VIDEO_DURATION_SECONDS = 3
 RAW_SOURCE_HASH_FORMAT = "sha256-raw-v1"
 CANONICAL_SOURCE_HASH_FORMAT = "sha256-text-lf-v1"
 CANONICAL_TEXT_SOURCE_SUFFIXES = frozenset({".py", ".json", ".spec"})
+EXPECTED_COMMAND_IDS = frozenset(command["id"] for command in list_commands())
 
 
 def _seed_v5_business_graph(
@@ -1298,19 +1303,6 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
     if packaged_schema <= FORMAL_SOURCE_SCHEMA_VERSION:
         raise RuntimeError("candidate manifest does not contain a schema upgrade")
 
-    expected_commands = {
-        "command:existing-generate-single",
-        "command:existing-generate-multi-file",
-        "command:existing-group-split",
-        "command:existing-remove-background",
-        "command:local-edit-generate",
-        "command:image-to-video",
-        "command:transform-layer",
-        "command:toggle-layer",
-        "command:toggle-layer-lock",
-        "command:local-edit-compose",
-    }
-
     legacy_migrations = {
         f"v{source_version}": _verify_packaged_legacy_migration(
             sidecar_dir=sidecar_dir,
@@ -1661,10 +1653,10 @@ def verify_candidate(sidecar_dir: Path) -> dict[str, Any]:
             if int(health.get("ledger", {}).get("schema_version", 0)) != packaged_schema:
                 raise RuntimeError("candidate health does not report the packaged schema")
         for commands in (first_commands, second_commands):
-            if commands.get("contract_version") != "canvas-command-v1":
+            if commands.get("contract_version") != COMMAND_REGISTRY_VERSION:
                 raise RuntimeError("command API contract version is wrong")
             command_ids = {item.get("id") for item in commands.get("commands", [])}
-            if command_ids != expected_commands:
+            if command_ids != EXPECTED_COMMAND_IDS:
                 raise RuntimeError("command API registry is incomplete")
         first_video_metrics = _validate_packaged_video_evidence(
             first_video_evidence,

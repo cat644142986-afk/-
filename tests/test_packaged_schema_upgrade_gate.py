@@ -11,6 +11,8 @@ from unittest import mock
 
 from PIL import Image
 
+from python.command_registry import list_commands
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -19,6 +21,13 @@ import verify_packaged_schema_upgrade as packaged_gate  # noqa: E402
 
 
 class PackagedSchemaUpgradeFixtureTests(unittest.TestCase):
+    def test_packaged_gate_tracks_the_canonical_command_registry(self) -> None:
+        self.assertEqual(
+            packaged_gate.EXPECTED_COMMAND_IDS,
+            frozenset(command["id"] for command in list_commands()),
+        )
+        self.assertIn("command:delete-layer", packaged_gate.EXPECTED_COMMAND_IDS)
+
     def test_manifest_source_hash_format_only_defaults_when_field_is_absent(self) -> None:
         self.assertEqual(
             packaged_gate._manifest_source_hash_format({}),
