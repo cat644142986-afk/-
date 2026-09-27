@@ -1614,14 +1614,14 @@ export function createInfiniteCanvasWorkspaceController({
       sourceResultId: exactResult ? String(refs.result_id || '') : '',
       productProfileVersionId: String(refs.product_profile_version_id || ''),
       userRequest: String(seed?.userRequest || defaults?.userRequest || ''),
-      designSkillId: definition.action === SPATIAL_CUTOUT_ACTION ? '' : defaults?.designSkillId,
       model: definition.action === SPATIAL_CUTOUT_ACTION
         ? 'local-rembg/birefnet-general'
         : reference ? String(seed?.model || '') : defaults?.model,
       outputRatio: reference ? String(seed?.outputRatio || defaults?.outputRatio || 'original') : defaults?.outputRatio,
       outputResolution: reference ? String(seed?.outputResolution || defaults?.outputResolution || '2k') : defaults?.outputResolution,
       promptVersion: reference ? 'prompt_v1' : defaults?.promptVersion,
-      designSkillId: reference ? '' : defaults?.designSkillId,
+      designSkillId: (reference || definition.action === SPATIAL_CUTOUT_ACTION)
+        ? '' : defaults?.designSkillId,
       inputSurface,
     });
     imageAiDraftError = '';

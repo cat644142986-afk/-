@@ -952,6 +952,48 @@ test('a white-background submission resolved after switching from A to B never m
   harness.controller.destroy();
 });
 
+test('local cutout never inherits a design Skill from shared Canvas AI defaults', async () => {
+  const previewCalls = [];
+  const harness = createHarness({
+    getImageAiDefaults: () => ({
+      designSkillId: 'comfyui-food-product-main-image',
+    }),
+    api: {
+      async compileKnowledge(payload) {
+        previewCalls.push(payload);
+        return {
+          execution_context: {
+            binding: 'preview',
+            context_sha256: 'a'.repeat(64),
+            summary: { source_count: 1 },
+          },
+          spatial_context: {
+            action: 'cutout',
+            spatial_canvas_id: payload.spatial_canvas_id,
+            source_element_id: payload.spatial_source_element_id,
+            source_asset_id: payload.source_asset_ids[0],
+            fingerprint: 'b'.repeat(64),
+          },
+        };
+      },
+    },
+  });
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const source = sourceElement('canvas:a');
+  mount.options.onSelectionChange(source);
+  await settle();
+
+  await harness.controller.openCanvasAiPreview('cutout', {
+    canvasId: 'canvas:a', element: source,
+  });
+
+  assert.equal(previewCalls.length, 1);
+  assert.equal(previewCalls[0].design_skill_id, '');
+  assert.equal(previewCalls[0].model, 'local-rembg/birefnet-general');
+  harness.controller.destroy();
+});
+
 test('Result variation submits the exact selected Result through the shared Canvas AI preview', async () => {
   const execution = deferred();
   const executeCalls = [];
