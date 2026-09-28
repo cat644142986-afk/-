@@ -272,6 +272,8 @@ test('production shell uses DWM system corners without a hard-clipped resize reg
   assert.match(css, /\.traffic-light--close:hover \{[^}]*background: #c42b1c/);
   assert.match(html, /<header class="spatial-toolbar" data-tauri-drag-region>/);
   assert.match(html, /id="btn-spatial-min"[\s\S]*id="btn-spatial-max"[\s\S]*id="btn-spatial-close"/);
+  assert.match(api, /export async function startWindowDragging\(\)[^{]*\{[\s\S]*appWindow\.startDragging\(\)/);
+  assert.match(app, /\.spatial-toolbar'\)\.addEventListener\('mousedown',[\s\S]*event\.button !== 0[\s\S]*event\.target\.closest\('button, input, select, textarea, a, \[contenteditable="true"\]'\)[\s\S]*API\.startWindowDragging\(\)/);
   assert.match(html, /<strong>设计依据<\/strong>/);
   assert.match(html, /<span>设计方法<\/span>/);
   assert.match(html, /id="param-design-skill"/);

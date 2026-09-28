@@ -4691,6 +4691,11 @@ function bindEvents() {
   $('#btn-spatial-min').addEventListener('click', () => API.minimizeWindow().catch(() => {}));
   $('#btn-spatial-max').addEventListener('click', () => API.toggleMaximize().catch(() => {}));
   $('#btn-spatial-close').addEventListener('click', requestAppClose);
+  $('.spatial-toolbar').addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    if (event.target.closest('button, input, select, textarea, a, [contenteditable="true"]')) return;
+    API.startWindowDragging().catch(() => {});
+  });
   const canvas = $('#preview-canvas');
   canvas.addEventListener('dragover', (event) => { event.preventDefault(); canvas.style.outline = '2px solid var(--coral)'; });
   canvas.addEventListener('dragleave', () => { canvas.style.outline = ''; });

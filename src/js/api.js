@@ -857,6 +857,10 @@ export async function openInFolder(path) { return invoke('open_in_folder', { pat
 
 // Window controls
 export async function minimizeWindow() { const appWindow = currentWindow(); return appWindow ? appWindow.minimize() : false; }
+export async function startWindowDragging() {
+  const appWindow = currentWindow();
+  return appWindow ? appWindow.startDragging() : false;
+}
 export async function toggleMaximize() {
   const appWindow = currentWindow();
   if (!appWindow) return false;
