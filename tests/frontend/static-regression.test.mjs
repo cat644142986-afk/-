@@ -242,26 +242,32 @@ test('unsupported Folder action is absent and export handles all result roles in
   assert.match(css, /\.result-actions \{[^}]*repeat\(3,minmax\(0,1fr\)\)/);
 });
 
-test('production shell delegates caption, corners, resize and system controls to Windows', () => {
+test('production shell uses DWM system corners without a hard-clipped resize region', () => {
   assert.doesNotMatch(html, /class="rail-button"[^>]*data-page="compare"/);
   assert.match(html, /id="btn-open-compare"/);
   assert.doesNotMatch(html, /class="studio-meta-grid"/);
   assert.match(html, /class="studio-context-panel workspace-announcer"/);
   assert.doesNotMatch(html, /studio-review-panel|终稿候选已准备/);
-  assert.match(css, /\.studio-grid \{[^}]*grid-template-columns: minmax\(0, 1\.55fr\) minmax\(310px, \.9fr\)[^}]*grid-template-rows: minmax\(330px, 1fr\) 72px/);
-  assert.match(css, /--radius-panel: 16px/);
-  assert.match(css, /--radius-card: 12px/);
-  assert.match(css, /--radius-control: 8px/);
+  assert.match(css, /\.studio-grid \{[^}]*grid-template-columns: minmax\(0, 1\.55fr\) minmax\(310px, \.9fr\)[^}]*grid-template-rows: minmax\(330px, 1fr\) 160px/);
+  assert.match(css, /--radius-panel: 27px/);
+  assert.match(css, /--radius-card: 19px/);
+  assert.match(css, /--radius-control: 14px/);
   assert.doesNotMatch(css, /--radius-shell/);
   assert.match(css, /\.app-shell \{[^}]*border-radius: 0/);
-  assert.doesNotMatch(mainRust, /DWMWA_WINDOW_CORNER_PREFERENCE|DWMWA_BORDER_COLOR|SetWindowRgn/);
-  assert.match(tauriConfig, /"decorations": true/);
-  assert.match(tauriConfig, /"shadow": true/);
+  assert.match(mainRust, /DWMWA_WINDOW_CORNER_PREFERENCE/);
+  assert.match(mainRust, /DWMWA_BORDER_COLOR/);
+  assert.match(mainRust, /let border_color = 0xFFFF_FFFEu32/);
+  assert.match(mainRust, /DWMWCP_ROUND/);
+  assert.doesNotMatch(mainRust, /WINDOW_CORNER_RADIUS_LOGICAL/);
+  assert.doesNotMatch(mainRust, /CreateRoundRectRgn/);
+  assert.match(mainRust, /SetWindowRgn/);
+  assert.match(tauriConfig, /"shadow": false/);
   assert.match(tauriConfig, /"backgroundColor": "#F4F1EB"/);
   assert.match(css, /\.canvas-card,[^}]*box-shadow: none/);
   assert.match(css, /\.task-dock \{[^}]*grid-row: 1 \/ 3/);
-  assert.match(css, /\.rail-cluster \{[^}]*border-radius: 16px;[^}]*background: var\(--paper\)/);
-  assert.doesNotMatch(html, /traffic-lights|btn-close-dot|btn-spatial-close/);
+  assert.match(css, /\.rail-cluster \{[^}]*border-radius: 29px;[^}]*background: var\(--paper\)/);
+  assert.match(css, /\.traffic-light \{[^}]*width: 28px; height: 28px/);
+  assert.match(css, /\.traffic-light::before \{[^}]*width: 12px; height: 12px/);
   assert.match(html, /<strong>设计依据<\/strong>/);
   assert.match(html, /<span>设计方法<\/span>/);
   assert.match(html, /id="param-design-skill"/);

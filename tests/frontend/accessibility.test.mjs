@@ -79,8 +79,7 @@ test('key interface tokens preserve readable light and dark surface contrast', a
   assert.match(css, /:root\[data-colorway="mono"\] \.task-dock \{[\s\S]*?background: var\(--paper\);[\s\S]*?color: var\(--ink\);/);
   assert.match(css, /\.primary-button \{[^}]+color: var\(--on-accent\)/);
   assert.match(css, /\.rail-connection \{[^}]+color: var\(--ink\)/);
-  assert.match(css, /--focus-ring: #2563eb/);
-  assert.match(css, /button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible \{ outline: 2px solid var\(--focus-ring\)/);
+  assert.match(css, /textarea:focus-visible \{ outline: 3px solid var\(--coral-deep\)/);
   assert.doesNotMatch(css, /letter-spacing:\s*-/);
   assert.doesNotMatch(css, /font-size:\s*clamp\([^;]*(?:vw|vh|vmin|vmax)/);
 });

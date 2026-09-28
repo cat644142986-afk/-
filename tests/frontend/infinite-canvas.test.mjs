@@ -36,7 +36,7 @@ test('production dependencies pin the approved Excalidraw and React versions', (
 });
 
 test('spatial workspace is a primary route and the old Studio switch is gone', () => {
-  assert.match(html, /data-page="canvas"[^>]*aria-label="画布"/);
+  assert.match(html, /data-page="canvas"[^>]*aria-label="无限画布"/);
   assert.match(html, /id="page-canvas"[^>]*data-page-name="canvas"/);
   assert.match(html, /id="spatial-canvas-list"/);
   assert.match(html, /id="btn-spatial-new"/);
