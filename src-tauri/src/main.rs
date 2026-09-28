@@ -2023,36 +2023,10 @@ fn set_window_pos_size(
 
 #[cfg(windows)]
 fn apply_windows_window_chrome<R: tauri::Runtime>(window: &tauri::Window<R>) -> Result<(), String> {
-    use std::ffi::c_void;
-    use windows::Win32::Graphics::Dwm::{
-        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
-    };
-    use windows::Win32::Graphics::Gdi::SetWindowRgn;
-
-    let hwnd = window.hwnd().map_err(|error| error.to_string())?;
-    // Clear the legacy GDI region first. HRGN clipping is binary and produced
-    // visible stair-step edges at fractional DPI. Windows 11 DWM owns the
-    // composited outer edge; older Windows versions safely fall back to a
-    // rectangular opaque window if the corner attribute is unsupported.
-    unsafe {
-        SetWindowRgn(hwnd, None, true);
-    }
-    let corner_preference = DWMWCP_ROUND;
-    let border_color = 0xFFFF_FFFEu32;
-    unsafe {
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_WINDOW_CORNER_PREFERENCE,
-            std::ptr::from_ref(&corner_preference).cast::<c_void>(),
-            std::mem::size_of_val(&corner_preference) as u32,
-        );
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_BORDER_COLOR,
-            std::ptr::from_ref(&border_color).cast::<c_void>(),
-            std::mem::size_of_val(&border_color) as u32,
-        );
-    }
+    // Native decorations own the caption, border, shadow, rounded corners,
+    // Snap behavior, and DPI transitions. Keep this hook as a no-op so the
+    // shared setup path remains stable without overriding Windows chrome.
+    let _ = window;
     Ok(())
 }
 

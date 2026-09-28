@@ -1076,15 +1076,6 @@ async function bindAppCloseLifecycle() {
   return false;
 }
 
-async function requestAppClose() {
-  try {
-    const requested = await API.closeApp();
-    if (requested === false) window.close();
-  } catch (error) {
-    toast(`无法请求关闭窗口：${formatApiError(error, '窗口控制暂不可用')}`, 'error', 6000);
-  }
-}
-
 function spatialItemForResult(item, overrides = {}) {
   const assetId = String(item?.asset_id || item?.id || '');
   return spatialItemFromAsset({
@@ -4685,12 +4676,6 @@ function bindEvents() {
   settingsController.bind();
   $('#modal-backdrop').addEventListener('click', closeModal);
   $('#modal-close').addEventListener('click', closeModal);
-  $('#btn-min-dot').addEventListener('click', () => API.minimizeWindow().catch(() => {}));
-  $('#btn-max-dot').addEventListener('click', () => API.toggleMaximize().catch(() => {}));
-  $('#btn-close-dot').addEventListener('click', requestAppClose);
-  $('#btn-spatial-min').addEventListener('click', () => API.minimizeWindow().catch(() => {}));
-  $('#btn-spatial-max').addEventListener('click', () => API.toggleMaximize().catch(() => {}));
-  $('#btn-spatial-close').addEventListener('click', requestAppClose);
   const canvas = $('#preview-canvas');
   canvas.addEventListener('dragover', (event) => { event.preventDefault(); canvas.style.outline = '2px solid var(--coral)'; });
   canvas.addEventListener('dragleave', () => { canvas.style.outline = ''; });

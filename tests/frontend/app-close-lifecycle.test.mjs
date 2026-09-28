@@ -191,9 +191,10 @@ test('browser development mode exposes harmless close lifecycle fallbacks', asyn
   assert.equal(await API.closeApp(), false);
 });
 
-test('application wiring saves before exit and both custom close buttons share the request path', () => {
+test('application wiring saves before the native Windows close request completes', () => {
   const app = read('src/js/app.js');
   const api = read('src/js/api.js');
+  const html = read('src/index.html');
 
   assert.match(app, /onStart:\s*\(\)\s*=>\s*setAppCloseInteractionLocked\(true\)/);
   assert.match(app, /await infiniteCanvasWorkspace\.prepareForClose\(\)[\s\S]{0,180}return infiniteCanvasWorkspace\.prepareForClose\(\)/);
@@ -203,8 +204,8 @@ test('application wiring saves before exit and both custom close buttons share t
   assert.match(app, /保存确认失败：\$\{failureReason\}/);
   assert.match(app, /completeClose:\s*\(\)\s*=>\s*API\.completeAppClose\(\)/);
   assert.match(app, /API\.onAppCloseRequested\(appCloseCoordinator\.handleCloseRequested\)/);
-  assert.match(app, /btn-close-dot'\)\.addEventListener\('click', requestAppClose\)/);
-  assert.match(app, /btn-spatial-close'\)\.addEventListener\('click', requestAppClose\)/);
+  assert.doesNotMatch(html, /traffic-lights|btn-close-dot|btn-spatial-close/);
+  assert.doesNotMatch(app, /requestAppClose|btn-close-dot|btn-spatial-close/);
   assert.match(app, /窗口未关闭，最后修改尚未保存/);
   assert.match(api, /appWindow\.onCloseRequested\(handler\)/);
   assert.match(api, /invoke\('complete_close_app'\)/);

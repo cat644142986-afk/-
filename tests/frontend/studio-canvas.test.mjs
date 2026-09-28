@@ -551,7 +551,7 @@ test('production canvas uses SQLite APIs and is wired into the Studio lifecycle'
   assert.match(appSource, /if \(view === 'canvas'\) workflowDock\.close\(false\)/);
   assert.doesNotMatch(htmlSource, /data-studio-view="quick"/);
   assert.doesNotMatch(htmlSource, /data-studio-view="canvas"/);
-  assert.match(htmlSource, /data-page="canvas"[^>]*aria-label="无限画布"/);
+  assert.match(htmlSource, /data-page="canvas"[^>]*aria-label="画布"/);
   assert.match(htmlSource, /id="page-canvas"[^>]*data-page-name="canvas"/);
   assert.match(htmlSource, /id="studio-fabric-canvas"/);
   assert.match(controllerSource, /api\.getCanvasRois\(entry\.currentVersionId, layer\.id/);
