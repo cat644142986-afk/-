@@ -266,8 +266,12 @@ test('production shell uses DWM system corners without a hard-clipped resize reg
   assert.match(css, /\.canvas-card,[^}]*box-shadow: none/);
   assert.match(css, /\.task-dock \{[^}]*grid-row: 1 \/ 3/);
   assert.match(css, /\.rail-cluster \{[^}]*border-radius: 29px;[^}]*background: var\(--paper\)/);
-  assert.match(css, /\.traffic-light \{[^}]*width: 28px; height: 28px/);
-  assert.match(css, /\.traffic-light::before \{[^}]*width: 12px; height: 12px/);
+  assert.match(css, /\.traffic-light \{[^}]*width: 44px; height: 32px;[^}]*border-radius: 0/);
+  assert.match(css, /\.traffic-light--min::before \{[^}]*width: 10px; height: 1px/);
+  assert.match(css, /\.traffic-light--max::before \{[^}]*border: 1px solid currentColor/);
+  assert.match(css, /\.traffic-light--close:hover \{[^}]*background: #c42b1c/);
+  assert.match(html, /<header class="spatial-toolbar" data-tauri-drag-region>/);
+  assert.match(html, /id="btn-spatial-min"[\s\S]*id="btn-spatial-max"[\s\S]*id="btn-spatial-close"/);
   assert.match(html, /<strong>设计依据<\/strong>/);
   assert.match(html, /<span>设计方法<\/span>/);
   assert.match(html, /id="param-design-skill"/);

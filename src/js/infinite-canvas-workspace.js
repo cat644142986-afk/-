@@ -372,6 +372,7 @@ export function createInfiniteCanvasWorkspaceController({
   const activeImageAiJobIds = new Set();
   const notifiedImageAiJobs = new Set();
   const creativeDrafts = new Map();
+  let catalogBootstrapAttempted = false;
 
   function currentCreativeDraft(canvasId = currentId) {
     return creativeDrafts.get(String(canvasId || '')) || null;
@@ -435,12 +436,30 @@ export function createInfiniteCanvasWorkspaceController({
         syncError = error;
       }
     }
+    const admissionRequest = {
+      taskKind: request?.taskKind,
+      ratio: request?.ratio,
+      resolution: request?.resolution,
+    };
     try {
-      return await api.getProviderModelAdmission({
-        taskKind: request?.taskKind,
-        ratio: request?.ratio,
-        resolution: request?.resolution,
-      });
+      let admission = await api.getProviderModelAdmission(admissionRequest);
+      const selection = admission?.selection || admission;
+      const readiness = selection?.provider_readiness || admission?.provider_readiness;
+      if (
+        request.refreshCatalog !== true
+        && !catalogBootstrapAttempted
+        && readiness?.status === 'catalog-unavailable'
+        && readiness?.recovery_action === 'sync-catalog'
+      ) {
+        catalogBootstrapAttempted = true;
+        try {
+          await api.syncProvider('provider_lk_primary');
+        } catch (error) {
+          syncError = error;
+        }
+        admission = await api.getProviderModelAdmission(admissionRequest);
+      }
+      return admission;
     } catch (error) {
       throw syncError || error;
     }

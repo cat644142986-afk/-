@@ -77,7 +77,7 @@
   --canvas-ui-accent: #d95f42;
   --canvas-ui-accent-strong: #a9402a;
   --canvas-ui-accent-soft: rgba(217, 95, 66, .12);
-  --canvas-ui-focus: #c94f34;
+  --canvas-ui-focus: #52677f;
   --canvas-ui-radius-control: 8px;
   --canvas-ui-radius-surface: 12px;
   --canvas-ui-shadow-surface: 0 7px 22px rgba(27, 29, 32, .11), 0 1px 2px rgba(27, 29, 32, .06);
@@ -124,7 +124,7 @@
   --canvas-ui-accent: #ff896a;
   --canvas-ui-accent-strong: #ffad98;
   --canvas-ui-accent-soft: rgba(255, 137, 106, .15);
-  --canvas-ui-focus: #ff9a80;
+  --canvas-ui-focus: #9eb7d3;
   --canvas-ui-shadow-surface: 0 9px 26px rgba(0, 0, 0, .28), 0 1px 2px rgba(0, 0, 0, .32);
   --canvas-ui-shadow-overlay: 0 20px 52px rgba(0, 0, 0, .42), 0 2px 8px rgba(0, 0, 0, .32);
 }
@@ -269,13 +269,14 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .page-heading__line p { overflow: hidden; margin: 0; padding-left: 12px; border-left: 1px solid var(--line-2); color: var(--ink-2); font-size: 12px; font-weight: 650; white-space: nowrap; text-overflow: ellipsis; }
 .header-actions, .traffic-lights { display: flex; align-items: center; }
 .header-actions { gap: 10px; }
-.traffic-lights { gap: 1px; padding-left: 5px; }
-.traffic-light { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border-radius: 50%; background: transparent; cursor: pointer; transition: background .16s ease; }
-.traffic-light::before { content: ""; width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.14); }
-.traffic-light:hover { background: rgba(31,36,41,.06); }
-.traffic-light--close::before { background: var(--window-close); }
-.traffic-light--min::before { background: var(--window-minimize); }
-.traffic-light--max::before { background: var(--window-maximize); }
+.traffic-lights { gap: 0; padding-left: 5px; }
+.traffic-light { display: grid; place-items: center; width: 44px; height: 32px; padding: 0; border-radius: 0; background: transparent; color: var(--ink-2); cursor: pointer; transition: background .12s ease, color .12s ease; }
+.traffic-light::before { content: ""; display: block; box-sizing: border-box; }
+.traffic-light:hover { background: rgba(31,36,41,.08); color: var(--ink); }
+.traffic-light--min::before { width: 10px; height: 1px; background: currentColor; }
+.traffic-light--max::before { width: 10px; height: 10px; border: 1px solid currentColor; }
+.traffic-light--close::before { content: "×"; width: auto; height: auto; font: 18px/1 "Segoe UI Symbol", "Segoe UI", sans-serif; }
+.traffic-light--close:hover { background: #c42b1c; color: #fff; }
 .knowledge-pill { display: flex; align-items: center; gap: 9px; width: 178px; height: 52px; padding: 6px 12px 6px 10px; border: 1px solid var(--line); border-radius: 26px; background: var(--paper); cursor: pointer; box-shadow: 0 8px 19px rgba(50,43,35,.055); }
 .knowledge-pill > span:nth-child(2) { display: grid; gap: 1px; text-align: left; }
 .knowledge-pill strong { font-size: 12px; }
@@ -1644,8 +1645,7 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .spatial-workspace[data-view="editor"] .spatial-generate-button { background: var(--paper-2); color: var(--ink); }
 .spatial-workspace[data-view="editor"] .spatial-generate-button svg { color: var(--coral-deep); }
 .spatial-workspace[data-view="editor"] .spatial-traffic-lights { padding-left: 8px; border-left: 1px solid var(--line); }
-.spatial-workspace[data-view="editor"] .traffic-light { width: 24px; height: 24px; }
-.spatial-workspace[data-view="editor"] .traffic-light::before { width: 10px; height: 10px; }
+.spatial-workspace[data-view="editor"] .traffic-light { width: 44px; height: 32px; }
 .spatial-workspace[data-view="editor"] .spatial-status { padding: 0 10px; background: var(--paper); }
 .spatial-workspace[data-view="editor"] .spatial-status strong { font-size: 8px; }
 
@@ -1934,8 +1934,8 @@ input[type="range"] { width: 100%; accent-color: var(--coral); }
 .pa-transplant textarea:focus-visible,
 .pa-transplant select:focus-visible,
 .pa-reference-picker button:focus-visible {
-  outline: 2px solid var(--canvas-ui-focus);
-  outline-offset: 2px;
+  outline: 1px solid var(--canvas-ui-focus);
+  outline-offset: 1px;
 }
 .pa-transplant__selection,
 .pa-canvas-composer,

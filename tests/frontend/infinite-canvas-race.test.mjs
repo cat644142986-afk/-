@@ -1245,6 +1245,58 @@ test('Composer admission only syncs Catalog on explicit recovery and still reads
   harness.controller.destroy();
 });
 
+test('Composer admission bootstraps a missing read-only Catalog once and exposes eligible models', async () => {
+  const calls = [];
+  let admissionCount = 0;
+  const unavailable = {
+    selection: {
+      status: 'unavailable',
+      provider_readiness: {
+        status: 'catalog-unavailable',
+        can_execute: false,
+        recovery_action: 'sync-catalog',
+      },
+      eligible_provider_model_ids: [],
+      models: [],
+    },
+  };
+  const ready = {
+    selection: {
+      status: 'ready',
+      provider_readiness: { status: 'ready', can_execute: true },
+      eligible_provider_model_ids: ['tt-image-2', 'banana-2', 'banana-pro'],
+      models: ['tt-image-2', 'banana-2', 'banana-pro'].map((provider_model_id) => ({ provider_model_id })),
+    },
+  };
+  const harness = createHarness({
+    shellMode: 'transplant',
+    api: {
+      async syncProvider(connectionId) {
+        calls.push(['sync', connectionId]);
+        return { ok: true };
+      },
+      async getProviderModelAdmission(request) {
+        calls.push(['admission', request]);
+        admissionCount += 1;
+        return admissionCount === 1 ? unavailable : ready;
+      },
+    },
+  });
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+  const request = { taskKind: 'reference-generate', ratio: '1:1', resolution: '2k' };
+
+  const bootstrapped = await mount.options.onReferenceAdmission(request);
+  assert.equal(bootstrapped, ready);
+  assert.deepEqual(calls.map((item) => item[0]), ['admission', 'sync', 'admission']);
+  assert.equal(calls[1][1], 'provider_lk_primary');
+
+  const repeated = await mount.options.onReferenceAdmission(request);
+  assert.equal(repeated, ready);
+  assert.deepEqual(calls.map((item) => item[0]), ['admission', 'sync', 'admission', 'admission']);
+  harness.controller.destroy();
+});
+
 test('Canvas Conversation only reviews context before confirmation and accepts one exact source or Result', async () => {
   const previewCalls = [];
   let executeCalls = 0;
