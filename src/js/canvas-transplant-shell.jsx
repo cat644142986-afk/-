@@ -6,6 +6,7 @@ import { activeCanvasReference, canvasReferenceOptions } from './canvas-referenc
 import { CanvasModelSelector } from './canvas-model-selector.jsx';
 import {
   admittedComposerModel,
+  composerAdmissionProblem,
   composerAdmissionRequest,
   composerSelection,
   initialComposerModel,
@@ -34,8 +35,10 @@ export function CanvasTransplantShell({
   const [modelAdmission, setModelAdmission] = useState(null);
   const [modelAdmissionLoading, setModelAdmissionLoading] = useState(false);
   const [modelAdmissionError, setModelAdmissionError] = useState('');
+  const [modelAdmissionRecovery, setModelAdmissionRecovery] = useState(null);
   const [selectedModel, setSelectedModel] = useState(business.creativeDraft?.model || '');
   const [admissionRetry, setAdmissionRetry] = useState(0);
+  const admissionRefreshRef = useRef(false);
   const [, setHostLayoutVersion] = useState(0);
   const composerRef = useRef(null);
   const referenceAddRef = useRef(null);
@@ -185,15 +188,19 @@ export function CanvasTransplantShell({
       setModelAdmission(null);
       setModelAdmissionLoading(false);
       setModelAdmissionError('');
+      setModelAdmissionRecovery(null);
       return undefined;
     }
     let canceled = false;
     setModelAdmissionLoading(true);
     setModelAdmissionError('');
+    setModelAdmissionRecovery(null);
     const request = composerAdmissionRequest({
       ratio: referenceRatio,
       resolution: referenceResolution,
     });
+    request.refreshCatalog = admissionRefreshRef.current;
+    admissionRefreshRef.current = false;
     Promise.resolve(onReferenceAdmission(request)).then((payload) => {
       if (canceled) return;
       const selection = composerSelection(payload);
@@ -203,13 +210,16 @@ export function CanvasTransplantShell({
         if (next !== current) persistCreativeDraft({ model: next });
         return next;
       });
-      if (selection?.status !== 'ready') {
-        setModelAdmissionError('当前任务与参数组合暂无已验证模型；不会自动切换或降级');
+      const problem = composerAdmissionProblem(selection);
+      if (problem) {
+        setModelAdmissionError(problem.message);
+        setModelAdmissionRecovery(problem.recoveryAction);
       }
     }).catch((error) => {
       if (canceled) return;
       setModelAdmission(null);
       setModelAdmissionError(String(error?.detail?.message || error?.message || error));
+      setModelAdmissionRecovery('retry-admission');
     }).finally(() => {
       if (!canceled) setModelAdmissionLoading(false);
     });
@@ -326,7 +336,7 @@ export function CanvasTransplantShell({
             stopComposerKeyboardEvent(event);
           }} />
           </div>
-          {composerOpen && <div className="pa-transplant__composer-footer"><small data-spatial-conversation-status aria-live="polite">{referenceError || modelAdmissionError || business.conversationError || (!draftMatchesSelection ? '草稿已保留 · 返回原图片后继续' : '当前选区 · 核对不会调用 Provider')}</small>{!draftMatchesSelection && <button type="button" className="is-secondary" onClick={() => onRestoreCreativeDraft?.()}>返回草稿对象</button>}{modelAdmissionError && activeReference && <button type="button" className="is-secondary" onClick={() => setAdmissionRetry((value) => value + 1)}>重试模型检查</button>}{activeReference && <><CanvasModelSelector admission={modelAdmission} value={selectedModel} loading={modelAdmissionLoading} error="" onChange={(model) => { setSelectedModel(model); setReferenceError(''); persistCreativeDraft({ model }); }} /><CanvasReferenceControls ratio={referenceRatio} resolution={referenceResolution} compatibleOutputs={modelAdmission?.compatible_outputs || []} onChange={(patch) => { const ratio = patch.ratio || referenceRatio; const resolution = patch.resolution || referenceResolution; setReferenceRatio(ratio); setReferenceResolution(resolution); setReferenceError(''); persistCreativeDraft({ ratio, resolution }); }} /></>}<button type="button" className="is-secondary" onClick={() => { onCreativeDraftClear?.(); setReference(null); setReferencePrompt(''); setComposerOpen(false); setReferenceError(''); }}>清空</button><button type="submit" disabled={!draftMatchesSelection || reviewing || (activeReference && (modelAdmissionLoading || !selectedModelEvidence))}>{activeReference ? '核对生成' : '核对修改'}</button></div>}
+          {composerOpen && <div className="pa-transplant__composer-footer"><small data-spatial-conversation-status aria-live="polite">{referenceError || modelAdmissionError || business.conversationError || (!draftMatchesSelection ? '草稿已保留 · 返回原图片后继续' : '当前选区 · 核对不会调用 Provider')}</small>{!draftMatchesSelection && <button type="button" className="is-secondary" onClick={() => onRestoreCreativeDraft?.()}>返回草稿对象</button>}{modelAdmissionError && activeReference && modelAdmissionRecovery && <button type="button" className="is-secondary" onClick={() => { admissionRefreshRef.current = modelAdmissionRecovery === 'sync-catalog'; setAdmissionRetry((value) => value + 1); }}>重试模型检查</button>}{activeReference && <><CanvasModelSelector admission={modelAdmission} value={selectedModel} loading={modelAdmissionLoading} error="" onChange={(model) => { setSelectedModel(model); setReferenceError(''); persistCreativeDraft({ model }); }} /><CanvasReferenceControls ratio={referenceRatio} resolution={referenceResolution} compatibleOutputs={modelAdmission?.compatible_outputs || []} onChange={(patch) => { const ratio = patch.ratio || referenceRatio; const resolution = patch.resolution || referenceResolution; setReferenceRatio(ratio); setReferenceResolution(resolution); setReferenceError(''); persistCreativeDraft({ ratio, resolution }); }} /></>}<button type="button" className="is-secondary" onClick={() => { onCreativeDraftClear?.(); setReference(null); setReferencePrompt(''); setComposerOpen(false); setReferenceError(''); }}>清空</button><button type="submit" disabled={!draftMatchesSelection || reviewing || (activeReference && (modelAdmissionLoading || !selectedModelEvidence))}>{activeReference ? '核对生成' : '核对修改'}</button></div>}
         </form>}
       {pickerAnchor && <CanvasReferencePicker anchor={pickerAnchor} images={referenceOptions} selectedImage={selectedPickerImage} onSelectImage={setPickerSelectedId} onConfirm={confirmReference} onCancel={closePicker} />}
     </div>

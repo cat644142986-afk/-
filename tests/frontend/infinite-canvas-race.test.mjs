@@ -1201,6 +1201,50 @@ test('Composer draft survives ordinary deselection and object switches until exp
   harness.controller.destroy();
 });
 
+test('Composer admission only syncs Catalog on explicit recovery and still reads stale fallback after sync failure', async () => {
+  const calls = [];
+  const staleSelection = {
+    selection: {
+      status: 'ready',
+      provider_readiness: { status: 'stale-usable', can_execute: true },
+      eligible_provider_model_ids: ['banana-2'],
+      models: [{ provider_model_id: 'banana-2' }],
+    },
+  };
+  const harness = createHarness({
+    shellMode: 'transplant',
+    api: {
+      async syncProvider(connectionId) {
+        calls.push(['sync', connectionId]);
+        throw new Error('read-only sync unavailable');
+      },
+      async getProviderModelAdmission(request) {
+        calls.push(['admission', request]);
+        return staleSelection;
+      },
+    },
+  });
+  harness.controller.bind();
+  const mount = await activateAndOpen(harness, 'canvas:a');
+
+  const normal = await mount.options.onReferenceAdmission({
+    taskKind: 'reference-generate', ratio: '1:1', resolution: '2k',
+  });
+  assert.equal(normal, staleSelection);
+  assert.deepEqual(calls.map((item) => item[0]), ['admission']);
+
+  const recovered = await mount.options.onReferenceAdmission({
+    taskKind: 'reference-generate', ratio: '1:1', resolution: '2k', refreshCatalog: true,
+  });
+  assert.equal(recovered, staleSelection);
+  assert.deepEqual(calls.map((item) => item[0]), ['admission', 'sync', 'admission']);
+  assert.equal(calls[1][1], 'provider_lk_primary');
+  assert.deepEqual(calls[2][1], {
+    taskKind: 'reference-generate', ratio: '1:1', resolution: '2k',
+  });
+  harness.controller.destroy();
+});
+
 test('Canvas Conversation only reviews context before confirmation and accepts one exact source or Result', async () => {
   const previewCalls = [];
   let executeCalls = 0;

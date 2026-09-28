@@ -208,6 +208,10 @@ class DurableJobApiTests(unittest.TestCase):
             secret_ref="ProductAtelier-Test/provider/lk/primary",
             api_base=LK_API_BASE,
         )
+        self.catalog_store.set_credential(
+            LK_CONNECTION_ID,
+            "sha256:offline-job-api-fixture",
+        )
         self.catalog_store.record_snapshot(
             LK_CONNECTION_ID,
             raw_catalog={"fixture": "job-api"},

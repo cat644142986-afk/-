@@ -10,6 +10,7 @@ from python.model_admission import (
     admission_sha256,
     build_composer_admission,
     build_composer_model_selection,
+    build_provider_model_readiness,
     evaluate_model_admission,
 )
 from python.model_candidate_canary import apply_provider_canary_overlay
@@ -64,6 +65,46 @@ def verified_capability_fixture():
 
 
 class ModelAdmissionTests(unittest.TestCase):
+    def test_provider_readiness_distinguishes_recovery_without_blocking_stale_snapshot(self) -> None:
+        base = {
+            "credential_fingerprint": "sha256:test",
+            "connection_status": "configured",
+            "catalog_status": "unavailable",
+            "last_error_code": None,
+        }
+        self.assertEqual(
+            build_provider_model_readiness(
+                {**base, "credential_fingerprint": ""}, has_snapshot=False
+            )["status"],
+            "credential-required",
+        )
+        unavailable = build_provider_model_readiness(base, has_snapshot=False)
+        self.assertEqual(unavailable["status"], "catalog-unavailable")
+        self.assertFalse(unavailable["can_execute"])
+        self.assertEqual(unavailable["recovery_action"], "sync-catalog")
+
+        failed = build_provider_model_readiness(
+            {**base, "connection_status": "error", "last_error_code": "CATALOG_TIMEOUT"},
+            has_snapshot=False,
+        )
+        self.assertEqual(failed["status"], "sync-failed")
+        self.assertFalse(failed["can_execute"])
+
+        stale = build_provider_model_readiness(
+            {**base, "connection_status": "error", "catalog_status": "stale"},
+            has_snapshot=True,
+        )
+        self.assertEqual(stale["status"], "stale-usable")
+        self.assertTrue(stale["can_execute"])
+        self.assertTrue(stale["uses_stale_catalog"])
+
+        ready = build_provider_model_readiness(
+            {**base, "connection_status": "connected", "catalog_status": "fresh"},
+            has_snapshot=True,
+        )
+        self.assertEqual(ready["status"], "ready")
+        self.assertTrue(ready["can_execute"])
+
     def test_focused_candidates_are_classified_by_first_missing_gate(self) -> None:
         result = build_composer_admission(capability_fixture())
         by_id = {item["provider_model_id"]: item for item in result["candidates"]}

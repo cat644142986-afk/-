@@ -39,6 +39,7 @@ TARGET_TASK_KIND = "reference-generate"
 REQUIRED_EVIDENCE_LEVEL = "provider-verified"
 COMPOSER_SELECTION_SCHEMA_VERSION = "pa-composer-model-selection-v1"
 COMPOSER_SELECTION_REVISION = "2026-09-24.1"
+PROVIDER_READINESS_SCHEMA_VERSION = "pa-provider-model-readiness-v1"
 EVIDENCE_RANK = {
     "none": 0,
     "catalog-only": 1,
@@ -52,6 +53,66 @@ ADAPTER_READY_STATUSES = frozenset({
     "provider-verified",
     "provider-verified-bounded-path",
 })
+
+
+def build_provider_model_readiness(
+    connection: Mapping[str, Any],
+    *,
+    has_snapshot: bool,
+) -> dict[str, Any]:
+    """Describe whether model admission can be used or how it can recover.
+
+    The readiness view deliberately contains no credential material.  A stale
+    immutable Catalog snapshot remains usable; only a missing snapshot blocks
+    admission and requires a read-only Catalog sync.
+    """
+    credential_configured = bool(
+        connection.get("credential_configured")
+        if "credential_configured" in connection
+        else connection.get("credential_fingerprint")
+    )
+    connection_status = str(connection.get("connection_status") or "disconnected").lower()
+    catalog_status = str(connection.get("catalog_status") or "unavailable").lower()
+    last_error_code = str(connection.get("last_error_code") or "")
+
+    if not credential_configured:
+        status = "credential-required"
+        can_execute = False
+        recovery_action = "connect-provider"
+        reason = "尚未连接 LK / AI模型中心账户"
+    elif not has_snapshot and (connection_status == "error" or last_error_code):
+        status = "sync-failed"
+        can_execute = False
+        recovery_action = "sync-catalog"
+        reason = "模型目录同步失败；草稿已保留，可重试只读目录同步"
+    elif not has_snapshot:
+        status = "catalog-unavailable"
+        can_execute = False
+        recovery_action = "sync-catalog"
+        reason = "尚未取得模型目录；草稿已保留，可同步目录后继续"
+    elif catalog_status == "fresh" and connection_status == "connected":
+        status = "ready"
+        can_execute = True
+        recovery_action = None
+        reason = "当前模型目录可用"
+    else:
+        status = "stale-usable"
+        can_execute = True
+        recovery_action = "sync-catalog"
+        reason = "目录刷新失败或已过期；继续使用最后一次可追溯快照"
+
+    return {
+        "schema_version": PROVIDER_READINESS_SCHEMA_VERSION,
+        "status": status,
+        "can_execute": can_execute,
+        "uses_stale_catalog": status == "stale-usable",
+        "recovery_action": recovery_action,
+        "reason": reason,
+        "connection_status": connection_status,
+        "catalog_status": catalog_status,
+        "has_snapshot": bool(has_snapshot),
+        "last_error_code": last_error_code or None,
+    }
 
 
 VALIDATION_PLANS: dict[str, dict[str, Any]] = {

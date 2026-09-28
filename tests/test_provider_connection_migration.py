@@ -200,6 +200,73 @@ class ProviderCredentialMigrationTests(unittest.TestCase):
             admission["summary"]["eligible_canonical_model_ids"], [tt_identity]
         )
 
+    def test_admission_route_exposes_catalog_recovery_and_stale_fallback(self) -> None:
+        self.store.set_credential(LK_CONNECTION_ID, "sha256:readiness-fixture")
+        unavailable = asyncio.run(server.get_provider_model_admission(
+            LK_CONNECTION_ID,
+            task_kind="reference-generate",
+            ratio="1:1",
+            resolution="2k",
+        ))
+        self.assertEqual(
+            unavailable["selection"]["provider_readiness"]["status"],
+            "catalog-unavailable",
+        )
+        self.assertFalse(
+            unavailable["selection"]["provider_readiness"]["can_execute"]
+        )
+        with self.assertRaises(server.ModelAdmissionError) as blocked:
+            server._freeze_reference_model_admission(
+                {
+                    "model": "tt-image-2",
+                    "output_ratio": "1:1",
+                    "output_resolution": "2k",
+                },
+                idempotency_key="readiness-no-catalog-fixture",
+            )
+        self.assertEqual(blocked.exception.code, "MODEL_CATALOG_UNAVAILABLE")
+
+        self.store.mark_sync_failure(
+            LK_CONNECTION_ID,
+            code="CATALOG_NETWORK_ERROR",
+            message="fixture outage",
+        )
+        failed = asyncio.run(server.get_provider_model_admission(
+            LK_CONNECTION_ID,
+            task_kind="reference-generate",
+            ratio="1:1",
+            resolution="2k",
+        ))
+        self.assertEqual(
+            failed["selection"]["provider_readiness"]["status"],
+            "sync-failed",
+        )
+
+        self.store.record_snapshot(
+            LK_CONNECTION_ID,
+            raw_catalog={"models": []},
+            normalized_catalog={"models": []},
+            endpoint_status={"status": "complete", "generation_calls": 0},
+        )
+        self.store.mark_sync_failure(
+            LK_CONNECTION_ID,
+            code="CATALOG_NETWORK_ERROR",
+            message="fixture refresh outage",
+        )
+        stale = asyncio.run(server.get_provider_model_admission(
+            LK_CONNECTION_ID,
+            task_kind="reference-generate",
+            ratio="1:1",
+            resolution="2k",
+        ))
+        self.assertEqual(
+            stale["selection"]["provider_readiness"]["status"],
+            "stale-usable",
+        )
+        self.assertTrue(
+            stale["selection"]["provider_readiness"]["can_execute"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   admittedComposerModel,
+  composerAdmissionProblem,
   composerAdmissionRequest,
   composerRecommendation,
   eligibleComposerModels,
@@ -52,4 +53,41 @@ test('unsupported parameter response cannot silently substitute a model', () => 
   assert.equal(initialComposerModel(unsupported, 'banana-2'), '');
   assert.equal(composerRecommendation(unsupported), null);
   assert.equal(admittedComposerModel(unsupported, 'banana-2'), null);
+});
+
+test('Provider readiness separates catalog recovery from unsupported parameters', () => {
+  const unavailable = {
+    ...selection,
+    provider_readiness: {
+      status: 'catalog-unavailable',
+      can_execute: false,
+      recovery_action: 'sync-catalog',
+      reason: '尚未取得模型目录；草稿已保留，可同步目录后继续',
+    },
+  };
+  assert.deepEqual(eligibleComposerModels(unavailable), []);
+  assert.deepEqual(composerAdmissionProblem(unavailable), {
+    code: 'catalog-unavailable',
+    message: '尚未取得模型目录；草稿已保留，可同步目录后继续',
+    recoveryAction: 'sync-catalog',
+  });
+
+  const stale = {
+    ...selection,
+    provider_readiness: {
+      status: 'stale-usable',
+      can_execute: true,
+      recovery_action: 'sync-catalog',
+    },
+  };
+  assert.equal(eligibleComposerModels(stale).length, 3);
+  assert.equal(composerAdmissionProblem(stale), null);
+
+  assert.deepEqual(composerAdmissionProblem({
+    status: 'unsupported', eligible_provider_model_ids: [], models: [],
+  }), {
+    code: 'unsupported-parameters',
+    message: '当前任务与参数组合暂无已验证模型；不会自动切换或降级',
+    recoveryAction: null,
+  });
 });

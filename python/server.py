@@ -149,6 +149,7 @@ try:
     from model_admission import (
         build_composer_admission,
         build_composer_model_selection,
+        build_provider_model_readiness,
     )
     from model_router import attach_smart_route
     from model_candidate_validation import apply_candidate_validation_overlay
@@ -281,6 +282,7 @@ except ImportError:  # Allows importing as python.server during local tests.
     from python.model_admission import (
         build_composer_admission,
         build_composer_model_selection,
+        build_provider_model_readiness,
     )
     from python.model_router import attach_smart_route
     from python.model_candidate_validation import apply_candidate_validation_overlay
@@ -6501,6 +6503,17 @@ def _provider_image_capabilities(connection_id: str) -> dict[str, Any]:
     )
 
 
+def _provider_model_readiness(connection_id: str) -> dict[str, Any]:
+    if connection_id != LK_CONNECTION_ID:
+        raise HTTPException(status_code=404, detail="Provider connection not found")
+    connection = PROVIDER_CATALOG_STORE.get_connection(connection_id)
+    latest = PROVIDER_CATALOG_STORE.latest_snapshot(connection_id)
+    return build_provider_model_readiness(
+        connection,
+        has_snapshot=latest is not None,
+    )
+
+
 def _freeze_reference_model_admission(
     parameters: Mapping[str, Any],
     *,
@@ -6526,6 +6539,17 @@ def _freeze_reference_model_admission(
     task_kind = "reference-generate"
     ratio = str(frozen.get("output_ratio") or "").strip().lower()
     resolution = str(frozen.get("output_resolution") or "").strip().lower()
+    readiness = _provider_model_readiness(LK_CONNECTION_ID)
+    if readiness.get("can_execute") is not True:
+        error_codes = {
+            "credential-required": "PROVIDER_CREDENTIAL_REQUIRED",
+            "sync-failed": "MODEL_CATALOG_SYNC_FAILED",
+            "catalog-unavailable": "MODEL_CATALOG_UNAVAILABLE",
+        }
+        raise ModelAdmissionError(
+            error_codes.get(str(readiness.get("status") or ""), "MODEL_PROVIDER_NOT_READY"),
+            str(readiness.get("reason") or "Provider 模型目录当前不可用"),
+        )
     capabilities = _provider_image_capabilities(LK_CONNECTION_ID)
     selection = attach_smart_route(build_composer_model_selection(
         capabilities,
@@ -6648,7 +6672,9 @@ async def get_provider_model_admission(
 ):
     """Return the read-only Composer admission view; never routes a task."""
     capabilities = _provider_image_capabilities(connection_id)
+    readiness = _provider_model_readiness(connection_id)
     response = build_composer_admission(capabilities)
+    response["provider_readiness"] = readiness
     requested = [task_kind, ratio, resolution]
     if any(str(value or "").strip() for value in requested):
         if not all(str(value or "").strip() for value in requested):
@@ -6665,6 +6691,7 @@ async def get_provider_model_admission(
             output_ratio=ratio,
             output_resolution=resolution,
         ))
+        response["selection"]["provider_readiness"] = copy.deepcopy(readiness)
     return response
 
 

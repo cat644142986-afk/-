@@ -426,6 +426,26 @@ export function createInfiniteCanvasWorkspaceController({
     return element;
   }
 
+  async function requestReferenceAdmission(request = {}) {
+    let syncError = null;
+    if (request.refreshCatalog === true) {
+      try {
+        await api.syncProvider('provider_lk_primary');
+      } catch (error) {
+        syncError = error;
+      }
+    }
+    try {
+      return await api.getProviderModelAdmission({
+        taskKind: request?.taskKind,
+        ratio: request?.ratio,
+        resolution: request?.resolution,
+      });
+    } catch (error) {
+      throw syncError || error;
+    }
+  }
+
   function setSpatialStatus(text, { kind = '', action = '', actionLabel = '' } = {}) {
     const status = query('#spatial-save-state');
     const button = query('#spatial-recovery-action');
@@ -2430,11 +2450,7 @@ export function createInfiniteCanvasWorkspaceController({
         onCreativeDraftChange: (patch) => updateCreativeDraft(patch),
         onCreativeDraftClear: () => clearCreativeDraft(),
         onRestoreCreativeDraft: () => restoreCreativeDraftSelection(),
-        onReferenceAdmission: (request) => api.getProviderModelAdmission({
-          taskKind: request?.taskKind,
-          ratio: request?.ratio,
-          resolution: request?.resolution,
-        }),
+        onReferenceAdmission: requestReferenceAdmission,
         onSelectionChange: (element) => {
           if (canvasSessionIsCurrent(session)) renderInspector(element);
         },

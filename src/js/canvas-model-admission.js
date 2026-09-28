@@ -13,8 +13,35 @@ export function composerSelection(payload) {
   return selection && typeof selection === 'object' ? selection : null;
 }
 
+export function composerProviderReadiness(payload) {
+  const selection = composerSelection(payload);
+  const readiness = selection?.provider_readiness || payload?.provider_readiness || null;
+  return readiness && typeof readiness === 'object' ? readiness : null;
+}
+
+export function composerAdmissionProblem(payload) {
+  const selection = composerSelection(payload);
+  const readiness = composerProviderReadiness(payload);
+  if (readiness?.can_execute === false) {
+    return {
+      code: String(readiness.status || 'provider-not-ready'),
+      message: String(readiness.reason || '模型目录当前不可用'),
+      recoveryAction: readiness.recovery_action || null,
+    };
+  }
+  if (selection?.status !== 'ready') {
+    return {
+      code: 'unsupported-parameters',
+      message: '当前任务与参数组合暂无已验证模型；不会自动切换或降级',
+      recoveryAction: null,
+    };
+  }
+  return null;
+}
+
 export function eligibleComposerModels(payload) {
   const selection = composerSelection(payload);
+  if (composerProviderReadiness(payload)?.can_execute === false) return [];
   return Array.isArray(selection?.models) ? selection.models.filter((model) => (
     model && selection.eligible_provider_model_ids?.includes(model.provider_model_id)
   )) : [];
