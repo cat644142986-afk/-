@@ -1,0 +1,142 @@
+{
+  "contract_id": "product-atelier-canvas-replacement-v1",
+  "contract_version": 1,
+  "status": "stage_1_closed",
+  "created_at": "2026-09-29",
+  "baseline": {
+    "branch": "codex/excalidraw-infinite-canvas",
+    "source_commit": "4a0eb09275395951a3cd862850d128e5b48a3774",
+    "formal_release_path": "D:\\ProductAtelier-Desktop\\release\\ProductAtelier-Portable\\Product Atelier.exe",
+    "formal_release_commit": "4a0eb09275395951a3cd862850d128e5b48a3774",
+    "contract_version": "2026-09-23.1",
+    "ledger_schema_version": 10,
+    "formal_release_must_remain_unchanged_until_stage": 7
+  },
+  "reference": {
+    "repository": "hero8152/Infinite-Canvas",
+    "commit": "67f49e4b9a0ac090bad1f5bd62ae385f8fb5394e",
+    "role": "behavioral_and_presentation_reference_only",
+    "source_copy_allowed": false,
+    "reason": "upstream license prohibits modified commercial packaging without authorization and requires derivatives to remain open source"
+  },
+  "approved_reuse": {
+    "canvas_foundation": {
+      "package": "@xyflow/react",
+      "version_family": "12.12.x",
+      "license": "MIT"
+    },
+    "accessible_controls": {
+      "package": "react-aria-components",
+      "version_family": "1.21.x",
+      "license": "Apache-2.0"
+    },
+    "pixel_editor": {
+      "package": "fabric",
+      "version": "7.4.0",
+      "role": "reuse_existing_pa_integration"
+    }
+  },
+  "pa_authoritative_systems": [
+    "asset",
+    "result",
+    "task_attempt_receipt",
+    "lineage",
+    "execution_context",
+    "governor",
+    "provider_catalog",
+    "model_identity",
+    "capability_overlay",
+    "model_admission",
+    "smart_router",
+    "provider_adapter",
+    "canvas_persistence",
+    "fabric_handoff",
+    "restart_recovery"
+  ],
+  "required_states": [
+    "empty_canvas",
+    "content_without_selection",
+    "single_asset",
+    "single_result",
+    "multi_selection",
+    "composer_editing",
+    "model_selection",
+    "governor_preview",
+    "task_running",
+    "task_success",
+    "task_failure_or_interruption",
+    "fabric_roundtrip",
+    "small_window"
+  ],
+  "creative_draft_policy": {
+    "survives": [
+      "ordinary_deselect",
+      "blank_canvas_click",
+      "object_switch",
+      "governor_cancel",
+      "admission_failure",
+      "provider_failure",
+      "fabric_entry_and_return"
+    ],
+    "may_clear_only_on": [
+      "explicit_user_clear",
+      "explicit_user_cancel_draft",
+      "successful_task_acceptance"
+    ]
+  },
+  "model_picker": {
+    "native_select_allowed": false,
+    "searchable": true,
+    "keyboard_complete": true,
+    "eligible_only": true,
+    "silent_fallback_allowed": false,
+    "provider_detail_primary_ui": false,
+    "switch_invalidates_governor_preview": true,
+    "required_failure_layers": [
+      "connection",
+      "catalog",
+      "identity",
+      "adapter",
+      "capability_evidence",
+      "parameter_combination"
+    ]
+  },
+  "stage_2_entry_gate": {
+    "parallel_prototype": true,
+    "formal_release_mutation_allowed": false,
+    "provider_calls_allowed": 0,
+    "required_delta": [
+      "import_paste_drop",
+      "select_box_select_multi_select",
+      "move_aspect_resize",
+      "copy_duplicate_delete",
+      "undo_redo",
+      "group",
+      "explicit_reference_edge",
+      "minimap",
+      "viewport_restore",
+      "normal_and_small_window",
+      "dpi_100_125_150"
+    ]
+  },
+  "rejection_criteria": [
+    "low_feature_canvas_claimed_complete",
+    "restricted_source_or_asset_copy",
+    "user_artwork_restyled_by_ui_theme",
+    "unexplained_disabled_action",
+    "draft_loss_on_ordinary_navigation",
+    "silent_model_or_parameter_fallback",
+    "automatic_paid_retry",
+    "second_task_result_provider_or_persistence_system",
+    "private_dom_order_dependency",
+    "unrelated_page_jump_for_canvas_owned_work",
+    "formal_release_change_before_full_validation"
+  ],
+  "stage_1_changes": {
+    "product_code_changed": false,
+    "schema_changed": false,
+    "package_changed": false,
+    "desktop_shortcut_changed": false,
+    "provider_calls": 0
+  }
+}
