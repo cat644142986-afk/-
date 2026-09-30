@@ -6,6 +6,15 @@ Branch: `codex/excalidraw-infinite-canvas`
 
 Foundation: `@xyflow/react` 12.12.0 (MIT)
 
+## Status correction after user review
+
+The user rejected the product presentation of checkpoint `709566d`. Its engine
+evidence remains technical evidence only, not a passed product UI Gate. The raw
+multi-selection overlay, resize chrome and angular reference edge are superseded
+by the isolated Stage 2B node-interaction correction. See
+`canvas-replacement-stage-2b-node-interaction-2026-09-30.md`. Stage 2B also adds
+native packaged pointer evidence; neither checkpoint permits formal replacement.
+
 ## Outcome
 
 The mature canvas-core prototype is isolated from Product Atelier production

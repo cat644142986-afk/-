@@ -1,7 +1,7 @@
 {
   "contract_id": "product-atelier-canvas-replacement-v1",
   "contract_version": 1,
-  "status": "stage_2_checkpoint",
+  "status": "stage_2b_product_review_pending",
   "created_at": "2026-09-29",
   "baseline": {
     "branch": "codex/excalidraw-infinite-canvas",
@@ -140,6 +140,9 @@
     "provider_calls": 0
   },
   "stage_2_checkpoint": {
+    "source_commit": "709566d",
+    "technical_foundation_status": "passed_with_recorded_boundaries",
+    "product_presentation_status": "rejected_by_user",
     "foundation": "@xyflow/react@12.12.0",
     "automated_tests": "5/5",
     "production_build": "passed",
@@ -154,5 +157,45 @@
       "packaged_dpi_100",
       "packaged_dpi_125"
     ]
+  },
+  "stage_2b_checkpoint": {
+    "source_parent_commit": "709566d",
+    "report": "docs/reports/canvas-replacement-stage-2b-node-interaction-2026-09-30.md",
+    "scope": "isolated_node_interaction_correction_not_complete_canvas_replacement",
+    "engineering_delta_status": "passed_with_recorded_boundaries",
+    "product_presentation_status": "pending_user_review",
+    "foundation": "@xyflow/react@12.12.0",
+    "icon_dependency": "lucide-react@1.31.0",
+    "automated_tests": "7/7",
+    "production_build": "passed",
+    "normal_packaged_build": "passed",
+    "compact_packaged_build": "passed_same_frontend_assets",
+    "normal_package": "build/canvas-replacement-stage2b-20260930/Product Atelier Canvas Node Prototype.exe",
+    "normal_packaged_sha256": "7E01458D5341B3B2DBE063947E0F60DC1ACB79A65FB2F8AFD85B9FDE451EE5D4",
+    "compact_package": "build/canvas-replacement-stage2b-20260930/Product Atelier Canvas Node Prototype Compact.exe",
+    "compact_packaged_sha256": "53BF3198D44E23ACE9DF3EB4EFCE94F37D5773E8E03180C269266B281036F643",
+    "screenshots": "build/canvas-replacement-stage2b-20260930/screenshots",
+    "packaged_pointer_delta": [
+      "single_and_multi_selection_toolbar",
+      "edge_select_disconnect_and_undo",
+      "port_to_space_connected_empty_image_node",
+      "empty_node_native_file_import_and_undo",
+      "object_context_menu_keyboard_and_escape",
+      "compact_toolbar_and_menu_bounds",
+      "compact_to_normal_restart_node_edge_restore"
+    ],
+    "remaining_gate": [
+      "user_product_presentation_review",
+      "packaged_edge_reconnect_pointer",
+      "packaged_dpi_100",
+      "packaged_dpi_125",
+      "large_or_offscreen_selection_toolbar_bounds",
+      "composer_model_controls_and_pa_business_adapter_in_later_stages"
+    ],
+    "provider_calls": 0,
+    "schema_changed": false,
+    "formal_release_changed": false,
+    "desktop_shortcut_changed": false,
+    "merge_or_promote": false
   }
 }

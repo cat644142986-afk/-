@@ -1,0 +1,19 @@
+{
+  "productName": "Product Atelier Canvas Foundation Prototype",
+  "identifier": "com.productatelier.canvas-foundation-prototype",
+  "build": {
+    "beforeBuildCommand": "npm --prefix prototypes/canvas-replacement-v1 run build",
+    "frontendDist": "../prototypes/canvas-replacement-v1/dist"
+  },
+  "app": {
+    "windows": [{
+      "label": "main",
+      "title": "Product Atelier Canvas Foundation Prototype",
+      "width": 760, "height": 560, "minWidth": 720, "minHeight": 520,
+      "resizable": true, "fullscreen": false, "decorations": true,
+      "transparent": false, "center": true, "shadow": true,
+      "dragDropEnabled": false, "backgroundColor": "#F5F6F8"
+    }]
+  },
+  "bundle": { "active": false }
+}
