@@ -3,6 +3,14 @@ const GROUP_PADDING = 40;
 
 let sequence = 0;
 
+// Media controls isolate pointer events from the canvas, but selection still
+// belongs to React Flow's single nodes state, not a player-specific store.
+export function selectMediaNode(nodes, id, event = {}) {
+  if (!nodes.some(node => node.id === id)) return nodes;
+  const additive = event.ctrlKey || event.metaKey || event.shiftKey;
+  return nodes.map(node => ({ ...node, selected: node.id === id || Boolean(additive && node.selected) }));
+}
+
 export function nextPrototypeId(prefix = 'node') {
   sequence += 1;
   return `${prefix}_${Date.now().toString(36)}_${sequence.toString(36)}`;
@@ -36,6 +44,7 @@ export function createImageNode({
   id = nextPrototypeId('image'),
   name = '图片',
   src,
+  media,
   naturalWidth,
   naturalHeight,
   position = { x: 0, y: 0 },
@@ -53,7 +62,8 @@ export function createImageNode({
       naturalWidth: Math.max(1, finite(naturalWidth, 1)),
       naturalHeight: Math.max(1, finite(naturalHeight, 1)),
       aspectRatio: size.aspectRatio,
-      kind: 'asset',
+      kind: media?.result_id ? 'result' : 'asset',
+      ...(media ? { media } : {}),
     },
   };
 }
@@ -63,8 +73,20 @@ export function selectOnly(nodes, ids = []) {
   return nodes.map((node) => ({ ...node, selected: selected.has(node.id) }));
 }
 
+export function worldPosition(node, nodes) {
+  const byId = new Map(nodes.map((item) => [item.id, item]));
+  const position = { x: finite(node?.position?.x), y: finite(node?.position?.y) };
+  const visited = new Set([node?.id]); let parent = byId.get(node?.parentId);
+  while (parent && !visited.has(parent.id)) {
+    visited.add(parent.id); position.x += finite(parent.position?.x); position.y += finite(parent.position?.y);
+    parent = byId.get(parent.parentId);
+  }
+  return position;
+}
+
 export function duplicateSelection(nodes, edges, offset = { x: 36, y: 36 }) {
-  const roots = nodes.filter((node) => node.selected && !node.parentId);
+  const selected = new Set(nodes.filter((node) => node.selected).map((node) => node.id));
+  const roots = nodes.filter((node) => node.selected && !selected.has(node.parentId));
   if (!roots.length) return { nodes, edges, selectedIds: [] };
   const copiedIds = new Set();
   const collect = (id) => {
@@ -78,12 +100,12 @@ export function duplicateSelection(nodes, edges, offset = { x: 36, y: 36 }) {
     return {
       ...node,
       id: idMap.get(node.id),
-      parentId: node.parentId ? idMap.get(node.parentId) : undefined,
+      parentId: !root && node.parentId ? idMap.get(node.parentId) : undefined,
       position: root
-        ? { x: finite(node.position?.x) + finite(offset.x, 36), y: finite(node.position?.y) + finite(offset.y, 36) }
+        ? { x: worldPosition(node, nodes).x + finite(offset.x, 36), y: worldPosition(node, nodes).y + finite(offset.y, 36) }
         : { ...node.position },
       selected: root,
-      data: { ...node.data, name: root ? `${node.data?.name || '对象'} 副本` : node.data?.name },
+      data: { ...node.data, execution: undefined, name: root ? `${node.data?.name || '对象'} 副本` : node.data?.name },
     };
   });
   const edgeAdditions = edges.filter((edge) => copiedIds.has(edge.source) && copiedIds.has(edge.target)).map((edge) => ({
@@ -164,9 +186,13 @@ export function ungroupSelection(nodes) {
 
 export function deleteSelection(nodes, edges) {
   const removed = new Set(nodes.filter((node) => node.selected).map((node) => node.id));
-  nodes.forEach((node) => {
-    if (node.parentId && removed.has(node.parentId)) removed.add(node.id);
-  });
+  let changed = true;
+  while (changed) {
+    changed = false;
+    nodes.forEach((node) => {
+      if (node.parentId && removed.has(node.parentId) && !removed.has(node.id)) { removed.add(node.id); changed = true; }
+    });
+  }
   return {
     nodes: nodes.filter((node) => !removed.has(node.id)),
     edges: edges.filter((edge) => !removed.has(edge.source) && !removed.has(edge.target) && !edge.selected),
@@ -174,7 +200,7 @@ export function deleteSelection(nodes, edges) {
 }
 
 function serializableNode(node) {
-  const data = Object.fromEntries(Object.entries(node.data || {}).filter(([, value]) => typeof value !== 'function'));
+  const data = Object.fromEntries(Object.entries(node.data || {}).filter(([key, value]) => typeof value !== 'function' && key !== 'referenceViews'));
   return {
     id: node.id,
     type: node.type,
@@ -200,6 +226,7 @@ export function serializePrototype(nodes, edges, viewport) {
       sourceHandle: edge.sourceHandle || undefined,
       targetHandle: edge.targetHandle || undefined,
       type: edge.type || 'smoothstep',
+      kind: edge.kind || 'input',
     })),
     viewport: {
       x: finite(viewport?.x),

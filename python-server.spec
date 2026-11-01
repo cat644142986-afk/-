@@ -7,6 +7,9 @@ block_cipher = None
 
 # Only collect needed rembg sessions (birefnet ONNX only)
 hidden = [
+    'tinytag',
+    'node_scene_contract',
+    'canvas_local_derivative',
     'uvicorn.logging',
     'uvicorn.loops',
     'uvicorn.loops.auto',

@@ -311,6 +311,11 @@ export async function importAssets(files, collection = 'product') {
   Array.from(files || []).forEach(function(file) { fd.append('files', file); });
   return postForm('/api/assets/import-batch?collection=' + encodeURIComponent(collection), fd);
 }
+export async function importAudioAsset(file, collection = 'product') {
+  const data = new FormData(); data.append('file', file);
+  return postForm('/api/assets/import-audio?collection=' + encodeURIComponent(collection), data);
+}
+
 export async function importVideoAsset(file, cover, metadata, collection = 'product') {
   const fd = new FormData();
   fd.append('file', file);
@@ -319,6 +324,12 @@ export async function importVideoAsset(file, cover, metadata, collection = 'prod
   fd.append('height', String(metadata?.height || ''));
   fd.append('duration_seconds', String(metadata?.durationSeconds || ''));
   return postForm('/api/assets/import-video?collection=' + encodeURIComponent(collection), fd);
+}
+export async function applySpatialLocalDerivative(canvasId, payload, file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  ['version_id', 'element_id', 'source_asset_id', 'client_request_id', 'operation'].forEach((key) => fd.append(key, String(payload[key] || '')));
+  return postForm('/api/spatial-canvases/' + encodeURIComponent(canvasId) + '/local-derivatives', fd);
 }
 export async function importFolderSources(folderPath) {
   return fetchJSON('/api/folder-sources/import', {
@@ -838,6 +849,27 @@ export async function downloadAsset(assetId, suggestedName = '') {
     path: `browser-download:${filename}`,
     size_bytes: response.blob.size,
   };
+}
+
+// Pixel editors read the exact asset through the same checked binary API as
+// export. Do not reuse an <img> URL's non-CORS cache entry for pixel access.
+export async function getAssetBlob(assetId, options = {}) {
+  const response = await fetchBinary('/api/assets/' + encodeURIComponent(assetId) + '/content', {
+    ...options, cache: 'no-store', timeoutMs: options.timeoutMs || 120000,
+  });
+  return response.blob;
+}
+
+export async function validateNodeWorkflow(scene) {
+  const response = await fetchJSON('/api/node-workflows/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scene }) });
+  return response.scene;
+}
+
+export async function saveWorkflowBundle(name, blob) {
+  if (!isTauriRuntime) return saveBinary(name, blob);
+  if (!/\.(json|zip)$/i.test(name) || blob.size > 128 * 1024 * 1024) throw new Error('工作流导出类型或大小不受支持');
+  const encoded = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(reader.error); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.readAsDataURL(blob); });
+  return invoke('save_workflow_bundle', { suggestedName: name, dataB64: encoded });
 }
 
 export async function saveImage(suggestedName, dataB64) {

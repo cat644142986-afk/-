@@ -8,7 +8,7 @@ export const ReferenceEdge = memo(function ReferenceEdge({ id, data, selected, .
     <BaseEdge id={id} path={path} interactionWidth={22} className={`pa-reference-edge ${selected ? 'is-selected' : ''}`} />
     {selected && <EdgeLabelRenderer>
       <div className="pa-edge-tools nodrag nopan" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
-        <span>参考</span>
+        <span>{data?.kind === 'flow' ? '结果' : '输入'}</span>
         <button type="button" aria-label="断开参考连接" title="断开参考连接" onClick={() => data?.onRemove?.(id)}><X size={13} aria-hidden="true" /></button>
       </div>
     </EdgeLabelRenderer>}

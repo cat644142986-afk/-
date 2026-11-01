@@ -1,5 +1,9 @@
 # Product Atelier - AI商拍工作台
 
+> **新电脑 / 当前开发接续：先读 [START_HERE.md](START_HERE.md) 和 [AGENTS.md](AGENTS.md)。**
+> 当前节点式多媒体 Canvas 位于 `codex/excalidraw-infinite-canvas`，完整验收仍未封口。
+> 下文部分产品介绍与安装记录属于历史版本，不能替代当前交接状态或据此执行 Promote。
+
 > AI驱动的电商产品摄影桌面工作台 · Tauri v2 + FastAPI · Windows 桌面应用
 
 ## 功能特性

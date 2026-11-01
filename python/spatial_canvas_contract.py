@@ -188,6 +188,12 @@ def normalize_spatial_scene(value: Mapping[str, Any]) -> dict[str, Any]:
     """Return a canonical Excalidraw scene without file bytes or transient app state."""
     if not isinstance(value, Mapping):
         raise ValueError("SpatialScene must be an object")
+    if value.get("schema_version") == 2:
+        try:
+            from node_scene_contract import normalize_node_scene
+        except ImportError:
+            from .node_scene_contract import normalize_node_scene
+        return normalize_node_scene(value)
     item = dict(value)
     required = {"schema_version", "elements", "app_state"}
     allowed = required | {"files"}
@@ -253,6 +259,12 @@ def spatial_scene_sha256(scene: Mapping[str, Any]) -> str:
 
 def spatial_scene_references(scene: Mapping[str, Any]) -> list[dict[str, str]]:
     normalized = normalize_spatial_scene(scene)
+    if normalized["schema_version"] == 2:
+        try:
+            from node_scene_contract import node_scene_references
+        except ImportError:
+            from .node_scene_contract import node_scene_references
+        return node_scene_references(normalized)
     references: list[dict[str, str]] = []
     kind_for_field = {
         "asset_id": "asset",
@@ -276,6 +288,12 @@ def spatial_scene_references(scene: Mapping[str, Any]) -> list[dict[str, str]]:
 
 def spatial_scene_thumbnail(scene: Mapping[str, Any]) -> dict[str, Any]:
     normalized = normalize_spatial_scene(scene)
+    if normalized["schema_version"] == 2:
+        try:
+            from node_scene_contract import node_scene_thumbnail
+        except ImportError:
+            from .node_scene_contract import node_scene_thumbnail
+        return node_scene_thumbnail(normalized)
     visible = [
         element for element in normalized["elements"] if not element.get("isDeleted", False)
     ]

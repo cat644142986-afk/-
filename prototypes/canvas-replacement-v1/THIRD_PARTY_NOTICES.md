@@ -4,6 +4,24 @@ This isolated Product Atelier canvas-foundation prototype uses the following
 runtime packages. The exact installed versions and integrity hashes are frozen
 in `package-lock.json`.
 
+## Smart workbench v2 adapters
+
+- React Aria Components 1.21.1 — Apache-2.0; https://github.com/adobe/react-spectrum.
+  Public ComboBox/ListBox/Popover/Dialog focus, dismissal and collision behavior.
+  Full license: `licenses/react-aria-apache-2.0.txt`.
+- fflate 0.8.3 — MIT; https://github.com/101arrowz/fflate.
+  Copyright (c) 2026 Arjun Barrett. Bounded ZIP transfer uses this library.
+  Full license: `licenses/fflate-mit.txt`.
+- TinyTag 2.3.2 — MIT; https://github.com/tinytag/tinytag.
+  PA sidecar audio metadata adapter. Full license: `licenses/tinytag-mit.txt`.
+- Fabric 7.4.0 and the already attributed Retake reference picker/tray and
+  BeatDesign composer utilities retain PA's existing repository notices and
+  distributed `canvas-transplant-licenses/`.
+
+hero8152/Infinite-Canvas commit 67f49e4b9a0ac090bad1f5bd62ae385f8fb5394e is a
+behavior reference only. Its restricted source, CSS and assets are not copied.
+No upstream Provider, storage, task execution or scene backend is imported.
+
 ## React Flow
 
 - Package: `@xyflow/react` 12.12.0

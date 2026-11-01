@@ -1,5 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { selectMediaNode } from '../src/canvas-model.js';
+
+test('player pointer selection stays in the existing nodes state and supports additive selection', () => {
+  const nodes = [{ id: 'image', selected: true }, { id: 'video', selected: false }, { id: 'audio', selected: false }];
+  const selected = selectMediaNode(nodes, 'video');
+  assert.deepEqual(selected.map(node => node.selected), [false, true, false]);
+  const additive = selectMediaNode(nodes, 'video', { shiftKey: true });
+  assert.deepEqual(additive.map(node => node.selected), [true, true, false]);
+  assert.equal(selectMediaNode(nodes, 'missing'), nodes);
+  assert.equal(nodes[0].selected, true); assert.equal(nodes[1].selected, false);
+});
 import {
   createImageNode,
   deleteSelection,
@@ -9,6 +20,7 @@ import {
   restorePrototype,
   serializePrototype,
   ungroupSelection,
+  worldPosition,
 } from '../src/canvas-model.js';
 
 test('image nodes preserve the source aspect ratio without card/crop metadata', () => {
@@ -72,4 +84,16 @@ test('prototype persistence strips transient selection and function callbacks bu
   const restored = restorePrototype(serialized);
   assert.deepEqual(restored.viewport, { x: 42, y: -17, zoom: 1.25 });
   assert.equal(restored.nodes[0].selected, false);
+});
+
+test('a child copied alone keeps world position and never inherits a submitted Task', () => {
+  const group = { id: 'g', type: 'group', selected: false, position: { x: 100, y: 200 }, data: {} };
+  const child = { ...createImageNode({ id: 'child', src: 'original', naturalWidth: 100, naturalHeight: 100, position: { x: 10, y: 20 } }), parentId: 'g' };
+  child.data.execution = { task_id: 'job_existing' };
+  const result = duplicateSelection([group, child], []);
+  const copy = result.nodes.at(-1);
+  assert.equal(copy.parentId, undefined);
+  assert.deepEqual(copy.position, { x: 146, y: 256 });
+  assert.deepEqual(worldPosition(child, [group, child]), { x: 110, y: 220 });
+  assert.equal(copy.data.execution, undefined);
 });

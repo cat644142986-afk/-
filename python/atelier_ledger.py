@@ -3395,6 +3395,36 @@ class AtelierLedger:
         self.add_event(session_id, "asset.added", {"asset_id": asset_id, "role": role, "name": name})
         return self.get_asset(asset_id)
 
+    def register_canvas_derivative(
+        self, *, source_asset_id: str, client_request_id: str, result: dict, receipt: dict,
+    ) -> dict[str, Any]:
+        """Idempotent local pixel result in the existing Asset/lineage ledger.
+
+        No new Task or Provider attempt. A response-lost apply can be replayed
+        without producing a second Result, or changing its exact parent.
+        """
+        if not client_request_id or len(client_request_id) > 200:
+            raise ValueError("local apply requires a bounded request identity")
+        asset_id = "ast_" + hashlib.sha256(("canvas-local-v1:" + client_request_id).encode()).hexdigest()[:32]
+        frozen = {**receipt, "client_request_id": client_request_id, "local_only": True}
+        with self._immediate_connection() as connection:
+            source = connection.execute("SELECT * FROM assets WHERE id = ?", (source_asset_id,)).fetchone()
+            if source is None:
+                raise KeyError("local edit source does not exist")
+            previous = connection.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
+            if previous is not None:
+                if (previous["parent_asset_id"] != source_asset_id or previous["sha256"] != result["sha256"]
+                        or previous["metadata_json"] != encode_json(frozen)):
+                    raise IdempotencyConflictError("local apply identity belongs to a different operation")
+            else:
+                connection.execute("""INSERT INTO assets(
+                    id, session_id, parent_asset_id, role, kind, path, name, mime,
+                    width, height, sha256, metadata_json, created_at
+                ) VALUES(?, ?, ?, 'result_main', 'image', ?, ?, 'image/png', ?, ?, ?, ?, ?)""",
+                    (asset_id, source["session_id"], source_asset_id, result["path"], result["name"],
+                     result["width"], result["height"], result["sha256"], encode_json(frozen), utc_now()))
+        return self.get_asset(asset_id)
+
     def register_workspace_asset(
         self,
         *,
@@ -3413,7 +3443,7 @@ class AtelierLedger:
         if collection_key not in COLLECTION_IDS:
             raise ValueError(f"unsupported asset collection: {collection_key}")
         kind = str(kind or "").strip().lower()
-        if kind not in {"image", "video"}:
+        if kind not in {"image", "video", "audio"}:
             raise ValueError(f"unsupported workspace asset kind: {kind}")
         blob_id = new_id("blob")
         asset_id = new_id("ast")

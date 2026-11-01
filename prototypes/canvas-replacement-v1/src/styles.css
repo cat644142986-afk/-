@@ -12,6 +12,9 @@ button:disabled { cursor: default; }
 button:focus-visible { outline: 2px solid #647b98; outline-offset: 3px; }
 svg { flex-shrink: 0; }
 .pa-foundation-shell { position: relative; width: 100%; height: 100%; }
+.pa-loading-workspace { position: absolute; z-index: 200; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 12px; background: var(--soft); color: var(--muted); }
+.pa-loading-workspace p { max-width: 520px; padding-inline: 24px; text-align: center; font-size: 13px; }
+.pa-loading-workspace button, .pa-foundation-status button { border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; color: var(--ink); background: var(--surface); }
 .react-flow {
   --xy-background-color: #f5f6f8;
   --xy-background-pattern-dots-color: #cdd3dc;

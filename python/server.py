@@ -1565,6 +1565,17 @@ def build_canvas_reference_prompt(product_name: str) -> str:
         "让新方案可以与参考图在同一画布上并列比较，画面自然清晰。"
     )
 
+
+def build_canvas_design_prompt() -> str:
+    """The existing v1 compiler receives a design brief, not product retouching."""
+    return (
+        "使用本次精确输入图片，按当前用户要求完成视觉创作或修改。"
+        "用户明确指定要改变的文字、数字、颜色或区域可以且必须修改；"
+        "未被要求改变的构图、比例、字体风格、材质、品牌标志与细节保持原样。"
+        "未明确要求重新设计时不要重绘整张图；不要自动改成电商主图、白底商品摄影或增加主体。"
+        "背景和透明度服从本次明确要求；不要用棋盘格图案伪造透明通道。"
+    )
+
 def build_stage2_prompt(product_name, platter_mode="auto", product_type="food", angle="auto"):
     plate = "智能保留或去除器皿，整体协调"
     if platter_mode == "remove": plate = "无任何器皿托盘，产品直接纯白底"
@@ -2012,6 +2023,21 @@ async def health():
     }
 
 
+@app.post("/api/node-workflows/validate")
+async def validate_node_workflow(data: dict):
+    """Pure scene validation; does not register assets, tasks or execute a graph."""
+    try:
+        from node_scene_contract import normalize_node_scene
+    except ImportError:
+        from python.node_scene_contract import normalize_node_scene
+    try:
+        if set(data) != {"scene"} or not isinstance(data["scene"], dict):
+            raise ValueError("Workflow requires one scene")
+        return {"scene": normalize_node_scene(data["scene"])}
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_NODE_WORKFLOW", "message": str(error)}) from error
+
+
 @app.get("/api/ledger/status")
 async def ledger_status():
     return LEDGER.stats()
@@ -2041,7 +2067,7 @@ def workspace_asset_response(asset: dict) -> dict:
         "content_url": f"/api/assets/{asset['id']}/content",
         "download_url": f"/api/assets/{asset['id']}/content?download=true",
     }
-    if kind == "video":
+    if kind in {"video", "audio"}:
         response.update({
             "duration_seconds": metadata.get("duration_seconds"),
             "cover_url": f"/api/assets/{asset['id']}/thumbnail",
@@ -2358,6 +2384,16 @@ async def import_workspace_video_asset(
         await cover.close()
 
 
+@app.post("/api/assets/import-audio")
+async def import_workspace_audio_asset(file: UploadFile = File(...), collection: str = "product"):
+    collection = _validate_collection_key(collection)
+    try:
+        asset = await run_in_threadpool(ASSET_STORE.import_audio_stream, file.file, file.filename or "audio", collection)
+        return workspace_asset_response(asset)
+    except AssetStoreError as exc: raise_asset_http_error(exc)
+    finally: await file.close()
+
+
 class FolderSourceRequest(BaseModel):
     folder_path: str
 
@@ -2481,6 +2517,30 @@ async def import_folder_sources(request: FolderSourceRequest):
         "errors": errors,
         "count": len(imported),
     }
+
+
+@app.post("/api/spatial-canvases/{canvas_id}/local-derivatives")
+async def apply_spatial_local_derivative(canvas_id: str, file: UploadFile = File(...),
+    version_id: str = Form(...), element_id: str = Form(...), source_asset_id: str = Form(...),
+    client_request_id: str = Form(...), operation: str = Form(...)):
+    try:
+        try:
+            from canvas_local_derivative import apply_canvas_derivative
+        except ImportError:
+            from python.canvas_local_derivative import apply_canvas_derivative
+        result = await run_in_threadpool(apply_canvas_derivative,
+            ledger=LEDGER, store=ASSET_STORE, output_root=_validate_output_root(_RUNTIME_OUTPUT_ROOT, test_write=True),
+            canvas_id=canvas_id, version_id=version_id, element_id=element_id, source_asset_id=source_asset_id,
+            request_id=client_request_id, operation=operation, stream=file.file)
+        return {"asset": result_asset_response(result["asset"]), "receipt": result["receipt"]}
+    except AssetStoreError as exc:
+        raise_asset_http_error(exc)
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        await file.close()
 
 
 @app.get("/api/assets/{asset_id}")
@@ -4999,10 +5059,11 @@ def _spatial_image_ai_binding(
             "SPATIAL_EXECUTION_CONTEXT_INVALID",
             "来源无限画布不可用，请重新打开画布",
         ) from exc
-    element = next((
-        item for item in canvas.get("scene", {}).get("elements", [])
-        if not item.get("isDeleted") and str(item.get("id") or "") == element_id
-    ), None)
+    try:
+        from node_scene_contract import spatial_business_element
+    except ImportError:
+        from python.node_scene_contract import spatial_business_element
+    element = spatial_business_element(canvas.get("scene", {}), element_id)
     if not isinstance(element, dict):
         raise SpatialExecutionContextError(
             "SPATIAL_EXECUTION_CONTEXT_STALE",
@@ -5270,17 +5331,36 @@ async def execute_registered_command(command_id: str, request: CommandExecutionR
                     "参考生成当前只使用现有 prompt_v1 编译链",
                 )
         if str(command["id"]) == IMAGE_TO_VIDEO_COMMAND_ID:
+            node_envelope = {key: request.parameters[key] for key in ("node_target_id", "node_input_signature") if key in (request.parameters or {})}
             parameters = _normalize_image_to_video_job_parameters(
-                request.parameters or {},
+                {key: value for key, value in (request.parameters or {}).items() if key not in node_envelope},
                 source_asset_ids[0],
             )
             _validate_image_to_video_job_parameters(parameters)
             parameters["spatial_canvas_id"] = _image_to_video_spatial_canvas_id(
                 request.spatial_canvas_id
             )
+            if node_envelope or LEDGER.get_spatial_canvas(request.spatial_canvas_id)["scene"].get("schema_version") == 2:
+                try:
+                    from node_scene_contract import validate_node_execution_input
+                except ImportError:
+                    from python.node_scene_contract import validate_node_execution_input
+                validate_node_execution_input(LEDGER.get_spatial_canvas(request.spatial_canvas_id)["scene"],
+                    {**parameters, **node_envelope, "model": parameters["provider"], "output_resolution": "offline-fixture", "brief": {"user_request": parameters["prompt"]}},
+                    source_element_id=request.spatial_source_element_id, source_asset_id=source_asset_ids[0])
+                parameters.update(node_envelope)
         else:
             parameters = _normalize_job_parameters(mode, request.parameters or {})
         if spatial_binding is not None:
+            try:
+                from node_scene_contract import validate_node_execution_input
+            except ImportError:
+                from python.node_scene_contract import validate_node_execution_input
+            try:
+                validate_node_execution_input(LEDGER.get_spatial_canvas(request.spatial_canvas_id)["scene"], parameters,
+                    source_element_id=request.spatial_source_element_id, source_asset_id=source_asset_ids[0])
+            except ValueError as exc:
+                raise SpatialExecutionContextError("SPATIAL_EXECUTION_CONTEXT_INVALID", str(exc)) from exc
             parameters.update({
                 "spatial_action": spatial_binding["action"],
                 "spatial_canvas_id": spatial_binding["spatial_canvas_id"],
@@ -6090,6 +6170,12 @@ async def compile_knowledge(data: dict):
                     "SPATIAL_EXECUTION_CONTEXT_INVALID",
                     "参考生成当前只使用现有 prompt_v1 编译链",
                 )
+            try:
+                from node_scene_contract import validate_node_execution_input
+            except ImportError:
+                from python.node_scene_contract import validate_node_execution_input
+            validate_node_execution_input(LEDGER.get_spatial_canvas(context["spatial_canvas_id"])["scene"], parameters,
+                source_element_id=context["spatial_source_element_id"], source_asset_id=source_asset_ids[0])
         manifest, bundle, skill_snapshot, growth_snapshot = _build_job_execution_context(
             parameters,
             mode=mode,
@@ -7464,9 +7550,9 @@ def _attempt_directory(ctx):
     return directory
 
 
-def _stage_output(image, directory, name, role):
+def _stage_output(image, directory, name, role, *, format=None):
     path = directory / name
-    if role == "result_cutout":
+    if role == "result_cutout" or format == "PNG":
         image.save(native_io_path(path), "PNG")
         mime = "image/png"
     else:
@@ -7543,6 +7629,8 @@ def _execute_image_to_video_preview(ctx, source_asset, image, stage_dir, trace):
     # provider's frozen image-to-video parameter contract.
     raw_parameters.pop("execution_context", None)
     raw_parameters.pop("knowledge_refs", None)
+    raw_parameters.pop("node_target_id", None)
+    raw_parameters.pop("node_input_signature", None)
     try:
         parameters = normalize_image_to_video_parameters(
             raw_parameters,
@@ -8683,6 +8771,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
         isinstance(params.get("ui_context"), dict)
         and params["ui_context"].get("input_surface") == SPATIAL_CANVAS_REFERENCE_SURFACE
     )
+    design_input = reference_input and params.get("brief", {}).get("output_kind") == "canvas-visual-design"
     negative = (
         "模糊,低质量,变形,暗角,杂物,水印,阴影过重,噪点,失真,jpeg压缩痕迹,过度曝光,欠曝"
         if reference_input else build_negative(platter)
@@ -8695,7 +8784,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             trace,
             mode=mode,
             category=product_type,
-            output_kind="ecommerce-main",
+            output_kind="canvas-visual-design" if reference_input and params.get("brief", {}).get("output_kind") == "canvas-visual-design" else "ecommerce-main",
             platter=platter,
             angle=angle,
             fidelity=fidelity,
@@ -8704,7 +8793,7 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
             output_spec=output_spec,
         )
         template_stage1_prompt = (
-            build_canvas_reference_prompt(product_name)
+            build_canvas_design_prompt() if design_input else build_canvas_reference_prompt(product_name)
             if reference_input else make_prompt(
                 build_single_prompt(product_name, platter, product_type, angle), fidelity
             )
@@ -8784,6 +8873,16 @@ def _execute_single_job(ctx, source_asset, image, stage_dir, trace):
                     "billing": {"status": "not-applicable", "amount": 0},
                 },
             )
+        if design_input:
+            # A design reference task must not silently sharpen, JPEG encode
+            # or run slow automatic rembg after the Provider has succeeded.
+            for skipped in ("enhance", "cutout"):
+                _record_execution_trace_safe(trace, f"local.{skipped}.{index + 1}", "skipped",
+                    output={"reason": "canvas-original-pixels", "provider_calls": 0})
+            outputs.append(_run_local_stage(trace, f"local.save.main.{index + 1}",
+                lambda: _stage_output(generated, stage_dir, f"{index + 1:02d}_main.png", "result_main", format="PNG"),
+                parameters={"format": "png", "preserve_provider_pixels": True}))
+            continue
         main_image = _run_local_stage(
             trace,
             f"local.enhance.{index + 1}",

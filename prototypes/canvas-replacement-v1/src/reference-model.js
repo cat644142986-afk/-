@@ -12,7 +12,7 @@ export function createEmptyImageNode(position) {
 export function referenceConnectionAllowed(connection, nodes, edges, ignoredEdgeId = '') {
   const { source, target } = connection;
   if (!source || !target || source === target) return false;
-  if (![source, target].every((id) => nodes.some((node) => node.id === id && node.type === 'image'))) return false;
+  if (![source, target].every((id) => nodes.some((node) => node.id === id && ['image', 'video', 'audio', 'prompt', 'loop', 'clip'].includes(node.type)))) return false;
   const remaining = edges.filter((edge) => edge.id !== ignoredEdgeId);
   if (remaining.some((edge) => edge.source === source && edge.target === target)) return false;
   const visited = new Set();

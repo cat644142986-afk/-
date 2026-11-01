@@ -442,6 +442,40 @@ class AssetStore:
             if cover_spool is not None:
                 cover_spool.close()
 
+    def import_audio_stream(self, stream: BinaryIO, original_name: str, collection_key: str = "product") -> dict:
+        # TinyTag is the mature MIT metadata/container reader. No custom audio
+        # parser, transcoder, remote upload or second asset store is involved.
+        import math
+        from tinytag import TinyTag, TinyTagException
+        formats = {"audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav",
+                   "audio/flac": ".flac", "audio/ogg": ".ogg", "audio/opus": ".ogg"}
+        spool, digest, size = self._spool_and_hash(stream, max_file_bytes=self.max_video_file_bytes, label="Audio")
+        try:
+            try: tag = TinyTag.get(file_obj=spool, tags=False)
+            except TinyTagException as exc: raise AssetValidationError("Invalid audio container", code="INVALID_AUDIO") from exc
+            mime = str(tag.mime_type or "").split(";", 1)[0].strip()
+            if mime not in formats or not tag.duration or not math.isfinite(tag.duration) or not 0 < tag.duration <= 3600 or not tag.channels:
+                raise AssetValidationError("Audio must be a valid MP3/WAV/OGG/FLAC of at most one hour", code="INVALID_AUDIO")
+            target = self._expected_path(digest, formats[mime]); spool.seek(0)
+            with self._hash_lock(digest):
+                existing = self.ledger.find_workspace_asset_by_sha256(digest)
+                if existing is not None:
+                    self.resolve_asset_path(existing["id"])
+                    if existing["kind"] != "audio": raise AssetStoreError("Audio metadata conflict", code="STORAGE_METADATA_CONFLICT")
+                    return self.ledger.add_asset_to_collection(existing["id"], collection_key)
+                created = self._write_atomic(spool, target, digest)
+                try:
+                    return self.ledger.register_workspace_asset(sha256=digest, storage_path=str(target), mime=mime,
+                        # Existing blob schema requires positive dimensions.
+                        # 1x1 is a non-visual sentinel, not a claimed resolution.
+                        size_bytes=size, width=1, height=1, name=Path(original_name).name, kind="audio",
+                        metadata={"original_name": Path(original_name).name, "duration_seconds": round(tag.duration, 3),
+                                  "channels": tag.channels, "sample_rate": tag.samplerate, "metadata_adapter": "tinytag-2.3.2"}, collection_key=collection_key)
+                except Exception:
+                    if created and not self.ledger.has_asset_blob(digest): target.unlink(missing_ok=True)
+                    raise
+        finally: spool.close()
+
     def purge_asset(self, asset_id: str, *, retention_days: int = 30) -> dict:
         """Purge eligible metadata first, then remove its now-unreferenced blob file."""
         summary = self.ledger.asset_reference_summary(
@@ -498,6 +532,8 @@ class AssetStore:
 
     def thumbnail_bytes(self, asset_id: str, max_size: int = 512) -> bytes:
         asset, path = self.resolve_asset_path(asset_id)
+        if str(asset.get("kind") or "") == "audio":
+            buffer = io.BytesIO(); Image.new("RGB", (64, 64), (231, 234, 239)).save(buffer, "JPEG"); return buffer.getvalue()
         if str(asset.get("kind") or "") == "video":
             path = self._video_cover_path(asset)
         max_size = max(32, min(int(max_size), 1024))

@@ -1444,6 +1444,38 @@ fn validate_asset_id(asset_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn save_workflow_bundle(
+    app: tauri::AppHandle,
+    suggested_name: String,
+    data_b64: String,
+) -> Result<ExportSaveResult, String> {
+    use tauri_plugin_dialog::DialogExt;
+    validate_suggested_name(&suggested_name)?;
+    let extension = if suggested_name.ends_with(".json") { "json" }
+        else if suggested_name.ends_with(".zip") { "zip" }
+        else { return Err("WORKFLOW_EXPORT_TYPE: only JSON/ZIP is allowed".into()); };
+    const MAX_BYTES: usize = 128 * 1024 * 1024;
+    if data_b64.len() > MAX_BYTES.div_ceil(3) * 4 {
+        return Err("WORKFLOW_EXPORT_SIZE: bundle exceeds 128 MiB".into());
+    }
+    let bytes = base64_decode(&data_b64).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_BYTES { return Err("WORKFLOW_EXPORT_SIZE: bundle exceeds 128 MiB".into()); }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.dialog().file().set_file_name(&suggested_name).add_filter("PA 工作流", &[extension])
+        .save_file(move |path| { let _ = sender.send(path.map(|value| value.to_string())); });
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = receiver.recv().map_err(|error| error.to_string())?
+            .ok_or_else(|| "保存已取消".to_string())?;
+        let target = PathBuf::from(&path);
+        if target.is_dir() || target.symlink_metadata().is_ok_and(|metadata| !metadata.file_type().is_file()) {
+            return Err("WORKFLOW_EXPORT_PATH: destination must be a regular file".into());
+        }
+        write_export_bytes_to_path(&target, &bytes)?;
+        Ok(ExportSaveResult { path, size_bytes: bytes.len() as u64 })
+    }).await.map_err(|error| error.to_string())?
+}
+
 fn validate_suggested_name(suggested_name: &str) -> Result<(), String> {
     let invalid_character = |character: char| {
         character.is_control()
@@ -2220,6 +2252,7 @@ fn main() {
             set_app_config,
             save_base64_image,
             save_binary_asset,
+            save_workflow_bundle,
             open_in_folder,
             select_folder_dialog,
             verify_folder_exists,
